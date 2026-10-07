@@ -1,0 +1,2113 @@
+From 3c35b7392d292d81dda3800a22535315081a4a59 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 18:42:36 +0200
+Subject: [PATCH] feat(ui): resolve authored Bedrock server form scenes
+
+Evaluate loaded JSON UI templates, scoped variables, collection bindings
+and bounded native string expressions against each server form. Preserve
+original form IDs and button indices when projecting Java dialogs or
+sending a negotiated native rendering scene to a client integration.
+Keep pack texture bytes and nine-slice metadata in the converted pack,
+and include the versioned built-in UI identity in conversion fingerprints.
+
+Target Bedrock 1.26.51.1 and protocol 2193. Original native evaluator,
+variable precedence and missing-template factory controls inform the
+implementation: omit an unavailable child template while retaining its
+siblings. Optional licensed UI archives are supplied at build time;
+missing assets or unsupported scenes retain the ordinary form flow.
+Native GPU, font, full binding-controller and animation parity remain
+separate verification work. No local game installation is required.
+---
+ build.gradle                                  |  11 +
+ .../api/model/NativeFormMessage.java          |  55 ++
+ .../http/ConvertedResourcePackCache.java      |   4 +-
+ .../api/resourcepack/ui/ServerFormUi.java     | 765 ++++++++++++++++++
+ .../api/resourcepack/ui/UiExpression.java     | 304 +++++++
+ .../protocol/packet/InventoryPackets.java     | 436 +++++++---
+ .../rewriter/ResourcePackRewriter.java        |   2 +
+ .../ServerFormUiResourceRewriter.java         |  35 +
+ .../protocol/storage/ResourcePackStorage.java |  14 +-
+ .../api/model/NativeFormMessageTest.java      |  51 ++
+ .../api/resourcepack/ui/ServerFormUiTest.java | 179 ++++
+ .../api/resourcepack/ui/UiExpressionTest.java |  56 ++
+ 12 files changed, 1788 insertions(+), 124 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFormMessage.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpression.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ServerFormUiResourceRewriter.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeFormMessageTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpressionTest.java
+
+diff --git a/build.gradle b/build.gradle
+index b32de43c6..91df8408c 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -226,3 +226,14 @@ class MockitoAgentArgumentProvider implements org.gradle.process.CommandLineArgu
+         return ["-javaagent:${this.classpath.singleFile}"]
+     }
+ }
++
++// The build bundles version-matched UI declarations. No native installation is consulted at runtime.
++def builtinUi = providers.gradleProperty("bedrockBuiltinUi")
++if (builtinUi.present) {
++    tasks.named("processResources") {
++        from(builtinUi.get()) {
++            into "assets/viabedrock"
++            rename { "builtin_ui.zip" }
++        }
++    }
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeFormMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeFormMessage.java
+new file mode 100644
+index 000000000..c0eea7ff2
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeFormMessage.java
+@@ -0,0 +1,55 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import java.nio.charset.StandardCharsets;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++/** A resolved resource-pack form uses the ordinary form response identifier and original indices. */
++public record NativeFormMessage(int formId, String scene) {
++
++    public static final String CHANNEL = "viabedrock:native_form";
++    public static final int MAX_PAYLOAD_BYTES = 1 << 20;
++    public static final Type<NativeFormMessage> TYPE = new Type<>(NativeFormMessage.class) {
++        @Override
++        public NativeFormMessage read(final ByteBuf buffer) {
++            if (buffer.readableBytes() > MAX_PAYLOAD_BYTES + 32
++                    || Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported native form message");
++            }
++            final int id = Types.VAR_INT.readPrimitive(buffer);
++            final int length = Types.VAR_INT.readPrimitive(buffer);
++            if (length < 0 || length > MAX_PAYLOAD_BYTES || length != buffer.readableBytes()) {
++                throw new IllegalArgumentException("Invalid native form scene length");
++            }
++            return new NativeFormMessage(id, buffer.readCharSequence(length, StandardCharsets.UTF_8).toString());
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final NativeFormMessage value) {
++            final byte[] bytes = value.scene.getBytes(StandardCharsets.UTF_8);
++            if (bytes.length > MAX_PAYLOAD_BYTES) {
++                throw new IllegalArgumentException("Native form exceeds the payload limit");
++            }
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.VAR_INT.writePrimitive(buffer, value.formId);
++            Types.VAR_INT.writePrimitive(buffer, bytes.length);
++            buffer.writeBytes(bytes);
++        }
++    };
++
++    public NativeFormMessage {
++        if (scene == null || scene.length() > MAX_PAYLOAD_BYTES) {
++            throw new IllegalArgumentException("Invalid native form scene");
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
+index 830a3f1eb..f4cdec690 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
+@@ -17,6 +17,7 @@
+  */
+ package net.raphimc.viabedrock.api.resourcepack.http;
+ 
++import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.api.resourcepack.content.Content;
+@@ -53,7 +54,7 @@ import java.util.logging.Level;
+ 
+ public class ConvertedResourcePackCache {
+ 
+-    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-and-offsets-11";
++    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-offsets-and-forms-13";
+     // Advance when the set or format of emitted resources changes independently of converter profiles.
+     private static final int RESOURCE_FORMAT_VERSION = 5;
+ 
+@@ -245,6 +246,7 @@ public class ConvertedResourcePackCache {
+ 
+     private static String fingerprint(final ResourcePackStorage storage, final String conversionVersion) {
+         final StringBuilder identity = new StringBuilder(fingerprint(storage.getPackStackTopToBottom(), conversionVersion));
++        identity.append("\nui:").append(ServerFormUi.builtinIdentity());
+         storage.getCustomBlockVisuals().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).forEach(entry -> {
+             final var visual = entry.getValue();
+             identity.append('\n').append(entry.getKey()).append(':').append(visual.bedrockState()).append(':').append(visual.modelJson())
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java
+new file mode 100644
+index 000000000..f472978b2
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java
+@@ -0,0 +1,765 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonNull;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import com.viaversion.viaversion.libs.gson.JsonParseException;
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
++import java.io.IOException;
++import java.io.InputStream;
++import java.nio.ByteBuffer;
++import java.nio.charset.StandardCharsets;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.HexFormat;
++import java.util.LinkedHashMap;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.function.UnaryOperator;
++import java.util.zip.ZipInputStream;
++import net.raphimc.viabedrock.api.model.NativeFormMessage;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.util.TextUtil;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++/** Resolves loaded JSON UI controls against an individual server form, without server-specific templates. */
++public final class ServerFormUi {
++
++    public static final int MAX_NODES = 8192;
++    public static final int MAX_BUTTONS = 1024;
++    private static final int MAX_FILE_BYTES = 1 << 20;
++    private static final Set<String> HOST_FILES = Set.of("ui/server_form.json", "ui/ui_common.json", "ui/_global_variables.json");
++    private final Map<String, Definition> definitions = new LinkedHashMap<>();
++    private final Map<String, JsonElement> globals = new HashMap<>();
++    private final Map<String, byte[]> textureFiles = new LinkedHashMap<>();
++    private boolean customized;
++    private final UnaryOperator<String> translator;
++    private final Map<Character, Integer> formattingColors;
++
++    public ServerFormUi(final ResourcePackStorage storage) {
++        this.translator = storage.getTexts()::translate;
++        this.formattingColors = storage.getTextFormatting().colors();
++        final Map<String, byte[]> builtin = Builtins.FILES;
++        this.loadFiles(builtin, false);
++        builtin.forEach((path, bytes) -> {
++            if (path.startsWith("textures/ui/")) {
++                this.textureFiles.put(path, bytes);
++            }
++        });
++        for (final ResourcePack pack : storage.getPackStackBottomToTop()) {
++            final Map<String, byte[]> files = new LinkedHashMap<>();
++            for (final String path : loadedPaths(pack)) {
++                final byte[] bytes = pack.content().get(path);
++                if (bytes != null && bytes.length <= MAX_FILE_BYTES) {
++                    files.put(path, bytes);
++                }
++            }
++            this.loadFiles(files, storage.isServerPack(pack));
++            for (final String path : pack.content().getFilesDeep("textures/ui/", "")) {
++                if (safePath(path) && (path.endsWith(".png") || path.endsWith(".json"))) {
++                    final byte[] bytes = pack.content().get(path);
++                    if (bytes.length <= 16 * MAX_FILE_BYTES && this.textureFiles.size() < 8192) {
++                        this.textureFiles.put(path, bytes);
++                    }
++                }
++            }
++        }
++    }
++
++    /** Test and tooling entry point. Files have the same load order as a resource-pack stack. */
++    public ServerFormUi(final List<Map<String, byte[]>> layers) {
++        this.translator = UnaryOperator.identity();
++        this.formattingColors = Map.of();
++        for (final Map<String, byte[]> files : layers) {
++            this.loadFiles(files, true);
++            files.forEach((path, bytes) -> {
++                if (safePath(path) && path.startsWith("textures/ui/")
++                        && (path.endsWith(".png") || path.endsWith(".json")) && bytes.length <= 16 * MAX_FILE_BYTES) {
++                    this.textureFiles.put(path, bytes);
++                }
++            });
++        }
++    }
++
++    public Map<String, byte[]> textures() {
++        return Collections.unmodifiableMap(this.textureFiles);
++    }
++
++    public JsonObject resolve(final JsonObject form) {
++        try {
++            return this.resolveScene(form);
++        } catch (final IllegalArgumentException | IllegalStateException | JsonParseException unsupported) {
++            return null;
++        }
++    }
++
++    JsonObject resolveScene(final JsonObject form) {
++        if (!this.customized || !"form".equals(string(form, "type")) || !form.has("buttons")
++                || !form.get("buttons").isJsonArray() || form.getAsJsonArray("buttons").size() > MAX_BUTTONS) {
++            return null;
++        }
++        final Session session = new Session(form);
++        final JsonObject host = this.template("server_form.third_party_server_screen", new HashSet<>());
++        final String rootName = host == null ? "server_form.main_screen_content"
++                : string(host, "$screen_content");
++        final JsonObject root = session.expand(rootName.isEmpty() ? "server_form.main_screen_content" : rootName,
++                new JsonObject(), session.initial, -1, 0);
++        if (root == null || session.actions.isEmpty()) {
++            return null;
++        }
++        final JsonObject scene = new JsonObject();
++        scene.addProperty("format", 1);
++        scene.add("root", root);
++        final JsonObject fallback = new JsonObject();
++        fallback.add("title", form.get("title"));
++        fallback.add("content", form.get("content"));
++        fallback.add("buttons", form.get("buttons").deepCopy());
++        scene.add("fallback", fallback);
++        final JsonArray missing = new JsonArray();
++        session.missingTemplates.forEach(missing::add);
++        scene.add("missing_templates", missing);
++        if (scene.toString().getBytes(StandardCharsets.UTF_8).length > NativeFormMessage.MAX_PAYLOAD_BYTES) {
++            throw new IllegalArgumentException("UI scene exceeds the payload limit");
++        }
++        return scene;
++    }
++
++    /** A Java dialog can reproduce resolved labels and source indices without the rendering channel. */
++    public static Presentation presentation(final JsonObject scene) {
++        final Map<Integer, String> labels = new LinkedHashMap<>();
++        final List<String> prose = new ArrayList<>();
++        project(scene.getAsJsonObject("root"), labels, prose);
++        final String title = prose.isEmpty() ? string(scene.getAsJsonObject("fallback"), "title") : prose.removeFirst();
++        return new Presentation(title, String.join("\n\n", prose), Collections.unmodifiableMap(labels));
++    }
++
++    private static void project(final JsonObject node, final Map<Integer, String> labels, final List<String> prose) {
++        if (node.has("visible") && !UiExpression.truth(node.get("visible"))) {
++            return;
++        }
++        if (node.has("action")) {
++            final int index = node.get("action").getAsInt();
++            if (index >= 0) {
++                final List<String> text = new ArrayList<>();
++                captions(node, text);
++                final String caption = text.isEmpty() ? string(node, "tts_name") : String.join("\n", text);
++                labels.merge(index, caption, (earlier, later) -> earlier.isBlank() ? later : earlier);
++            }
++            return;
++        }
++        if ("label".equals(string(node, "type")) && !string(node, "text").isBlank()) {
++            prose.add(string(node, "text"));
++        }
++        if (node.has("children")) {
++            for (final JsonElement child : node.getAsJsonArray("children")) {
++                project(child.getAsJsonObject(), labels, prose);
++            }
++        }
++    }
++
++    private static void captions(final JsonObject node, final List<String> text) {
++        if (node.has("visible") && !UiExpression.truth(node.get("visible"))) {
++            return;
++        }
++        if ("label".equals(string(node, "type")) && !string(node, "text").isBlank()) {
++            final String caption = string(node, "text");
++            if (!text.contains(caption)) {
++                text.add(caption);
++            }
++        }
++        if (node.has("children")) {
++            for (final JsonElement child : node.getAsJsonArray("children")) {
++                captions(child.getAsJsonObject(), text);
++            }
++        }
++    }
++
++    private void loadFiles(final Map<String, byte[]> files, final boolean server) {
++        for (final Map.Entry<String, byte[]> file : files.entrySet()) {
++            if (!safePath(file.getKey()) || file.getValue().length > MAX_FILE_BYTES || !file.getKey().endsWith(".json")) {
++                continue;
++            }
++            try {
++                final JsonElement parsed = JsonParser.parseString(new String(file.getValue(), StandardCharsets.UTF_8));
++                if (!parsed.isJsonObject()) {
++                    continue;
++                }
++                final JsonObject document = parsed.getAsJsonObject();
++                if (file.getKey().equals("ui/_global_variables.json")) {
++                    document.entrySet().forEach(entry -> this.globals.put(entry.getKey(), entry.getValue()));
++                    continue;
++                }
++                final String namespace = string(document, "namespace");
++                if (namespace.isEmpty() || namespace.length() > 128) {
++                    continue;
++                }
++                for (final Map.Entry<String, JsonElement> entry : document.entrySet()) {
++                    if (!entry.getValue().isJsonObject()) {
++                        continue;
++                    }
++                    final String[] name = entry.getKey().split("@", 2);
++                    if (this.definitions.size() >= 8192) {
++                        throw new IllegalArgumentException("Too many UI definitions");
++                    }
++                    this.definitions.put(namespace + "." + name[0],
++                            new Definition(entry.getValue().getAsJsonObject(), name.length == 2 ? (name[1].contains(".") ? name[1] : namespace + "." + name[1]) : ""));
++                }
++                this.customized |= server && file.getKey().equals("ui/server_form.json");
++            } catch (final RuntimeException malformed) {
++                // A malformed unrelated UI file cannot activate an unused control.
++            }
++        }
++    }
++
++    private JsonObject template(final String name, final Set<String> active) {
++        final Definition definition = this.definitions.get(name);
++        if (definition == null) {
++            return null;
++        }
++        if (!active.add(name) || active.size() > 64) {
++            throw new IllegalArgumentException("Recursive UI inheritance");
++        }
++        try {
++            final JsonObject result;
++            if (definition.parent.isEmpty()) {
++                result = new JsonObject();
++            } else {
++                final JsonObject parent = this.template(definition.parent, active);
++                if (parent == null) {
++                    throw new MissingControlException(definition.parent);
++                }
++                result = parent.deepCopy();
++            }
++            merge(result, definition.value);
++            return result;
++        } finally {
++            active.remove(name);
++        }
++    }
++
++    private static void merge(final JsonObject target, final JsonObject source) {
++        for (final Map.Entry<String, JsonElement> entry : source.entrySet()) {
++            // Native controls arrays replace their inherited array. They are not concatenated.
++            target.add(entry.getKey(), entry.getValue().deepCopy());
++        }
++    }
++
++    private static void declarations(final JsonObject control, final Map<String, JsonElement> values) {
++        for (final Map.Entry<String, JsonElement> entry : control.entrySet()) {
++            if (entry.getKey().startsWith("$")) {
++                final String key = entry.getKey();
++                if (entry.getValue().isJsonPrimitive() && key.equals(entry.getValue().getAsString())
++                        && values.containsKey(key)) {
++                    continue; // A declaration that forwards itself retains its enclosing scope value.
++                }
++                // Keep defaults separate: an exact value in any enclosing scope takes precedence.
++                values.put(key, entry.getValue());
++            }
++        }
++        if (control.has("variables")) {
++            final JsonElement variableSets = control.get("variables");
++            final List<JsonElement> sets = variableSets.isJsonArray() ? variableSets.getAsJsonArray().asList() : List.of(variableSets);
++            for (final JsonElement set : sets) {
++                final JsonObject variables = set.getAsJsonObject();
++                if (!variables.has("requires") || UiExpression.truth(resolveValue(variables.get("requires"), values, 0))) {
++                    variables.entrySet().stream().filter(entry -> entry.getKey().startsWith("$"))
++                            .forEach(entry -> values.put(entry.getKey(), entry.getValue()));
++                }
++            }
++        }
++    }
++
++    private static JsonElement resolveValue(final JsonElement value, final Map<String, JsonElement> values, final int depth) {
++        if (depth > 32) {
++            throw new IllegalArgumentException("Recursive UI variable");
++        }
++        if (value == null || value.isJsonNull()) {
++            return JsonNull.INSTANCE;
++        }
++        if (value.isJsonArray()) {
++            final JsonArray result = new JsonArray();
++            for (final JsonElement entry : value.getAsJsonArray()) {
++                result.add(resolveValue(entry, values, depth + 1));
++            }
++            return result;
++        }
++        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
++            return value.deepCopy();
++        }
++        final String text = value.getAsString();
++        if (text.startsWith("$") || text.startsWith("#")) {
++            final JsonElement source = values.containsKey(text) ? values.get(text) : values.get(text + "|default");
++            if (source == null) {
++                return JsonNull.INSTANCE;
++            }
++            if (text.startsWith("#")) {
++                return source; // Binding data is literal, even when a player label starts with an operator.
++            }
++            if (source == value) {
++                throw new IllegalArgumentException("Recursive UI variable");
++            }
++            return resolveValue(source, values, depth + 1);
++        }
++        if (text.startsWith("(")) {
++            return UiExpression.evaluate(text, key -> resolveValue(new JsonPrimitive(key), values, depth + 1));
++        }
++        return value;
++    }
++
++    private static String substitute(final String reference, final Map<String, JsonElement> values) {
++        String result = reference;
++        int search = 0;
++        for (int count = 0; count < 32; count++) {
++            final int start = result.indexOf('$', search);
++            if (start < 0) {
++                break;
++            }
++            int end = start + 1;
++            while (end < result.length() && (Character.isLetterOrDigit(result.charAt(end)) || result.charAt(end) == '_')) {
++                end++;
++            }
++            final String replacement = UiExpression.text(resolveValue(new JsonPrimitive(result.substring(start, end)), values, 0));
++            if (replacement.isEmpty()) {
++                // Instance names are opaque identities. An unresolved instance name does not change its explicit template.
++                if (result.indexOf('@') >= end) {
++                    search = end;
++                    continue;
++                }
++                throw new IllegalArgumentException("Missing UI control variable " + result.substring(start, end));
++            }
++            result = result.substring(0, start) + replacement + result.substring(end);
++            search = start;
++        }
++        return result.startsWith("@") ? result.substring(1) : result;
++    }
++
++    public static String builtinIdentity() {
++        return Builtins.IDENTITY;
++    }
++
++    public static String textureId(final String path) {
++        if (!safePath(path)) {
++            throw new IllegalArgumentException("Invalid UI texture");
++        }
++        return "viabedrock:textures/server_ui/" + path.replaceAll("\\.png$", "") + ".png";
++    }
++
++    private static List<String> loadedPaths(final ResourcePack pack) {
++        final Set<String> result = new LinkedHashSet<>(HOST_FILES);
++        if (pack.content().contains("ui/_ui_defs.json") && pack.content().get("ui/_ui_defs.json").length <= MAX_FILE_BYTES) {
++            try {
++                final JsonArray paths = pack.content().getJson("ui/_ui_defs.json").getAsJsonArray("ui_defs");
++                if (paths != null && paths.size() <= 512) {
++                    for (final JsonElement path : paths) {
++                        if (path.isJsonPrimitive() && safePath(path.getAsString()) && path.getAsString().startsWith("ui/")) {
++                            result.add(path.getAsString());
++                        }
++                    }
++                }
++            } catch (final RuntimeException malformed) {
++                // Invalid definitions never activate files through a directory scan.
++            }
++        }
++        return List.copyOf(result);
++    }
++
++    private static Map<String, byte[]> builtinFiles() {
++        final Map<String, byte[]> files = new LinkedHashMap<>();
++        try (InputStream source = ServerFormUi.class.getResourceAsStream("/assets/viabedrock/builtin_ui.zip")) {
++            if (source == null) {
++                return files;
++            }
++            try (ZipInputStream zip = new ZipInputStream(source)) {
++                int total = 0;
++                for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
++                    if (entry.isDirectory() || !safePath(entry.getName()) || files.size() >= 4096) {
++                        continue;
++                    }
++                    final byte[] bytes = zip.readNBytes(16 * MAX_FILE_BYTES + 1);
++                    total += bytes.length;
++                    if (bytes.length > 16 * MAX_FILE_BYTES || total > 64 * MAX_FILE_BYTES) {
++                        throw new IOException("Bundled UI exceeds limits");
++                    }
++                    files.put(entry.getName(), bytes);
++                }
++            }
++        } catch (final IOException malformed) {
++            files.clear();
++        }
++        return files;
++    }
++
++    private static boolean safePath(final String path) {
++        return path.matches("[A-Za-z0-9_./-]{1,256}") && !path.contains("..") && !path.startsWith("/");
++    }
++
++    private static String string(final JsonObject object, final String key) {
++        final JsonElement value = object.get(key);
++        return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString() ? value.getAsString() : "";
++    }
++
++    public record Presentation(String title, String content, Map<Integer, String> buttons) {
++    }
++
++    private final class Session {
++        private final JsonObject form;
++        private final Map<String, JsonElement> initial = new HashMap<>(ServerFormUi.this.globals);
++        private final Map<String, Map<String, JsonElement>> controls = new HashMap<>();
++        private final Set<Integer> actions = new HashSet<>();
++        private final Map<Integer, Map<String, JsonElement>> engineBindings = new HashMap<>();
++        private final Set<String> missingTemplates = new LinkedHashSet<>();
++        private int nodes;
++
++        private Session(final JsonObject form) {
++            this.form = form;
++            this.initial.put("#title_text", form.has("title") ? form.get("title") : new JsonPrimitive(""));
++            this.initial.put("#form_text", form.has("content") ? form.get("content") : new JsonPrimitive(""));
++            this.initial.put("#form_content_text", this.initial.get("#form_text"));
++            this.initial.put("#form_button_length", new JsonPrimitive(form.getAsJsonArray("buttons").size()));
++            this.initial.put("#is_using_gamepad", new JsonPrimitive(false));
++            this.initial.put("$is_console", new JsonPrimitive(false));
++            this.initial.put("#is_using_touch", new JsonPrimitive(false));
++        }
++
++        private JsonObject expand(final String reference, final JsonObject overrides,
++                                  final Map<String, JsonElement> inherited, final int button, final int depth) {
++            if (++this.nodes > MAX_NODES || depth > 64) {
++                throw new IllegalArgumentException("UI scene exceeds limits");
++            }
++            final String resolvedName = substitute(reference, inherited);
++            final String[] parts = resolvedName.split("@", 2);
++            final String name = parts[0];
++            final String declaredBase = parts.length == 2 ? parts[1] : name;
++            final String baseName = parts.length == 2 && !declaredBase.contains(".")
++                    ? UiExpression.text(inherited.get("$__namespace")) + "." + declaredBase : declaredBase;
++            final JsonObject base = ServerFormUi.this.template(baseName, new HashSet<>());
++            if (base == null && parts.length == 2) {
++                throw new MissingControlException(baseName);
++            }
++            final JsonObject control = base == null ? new JsonObject() : base;
++            merge(control, overrides);
++            final Map<String, JsonElement> values = new HashMap<>(inherited);
++            if (base != null && baseName.contains(".")) {
++                values.put("$__namespace", new JsonPrimitive(baseName.substring(0, baseName.indexOf('.'))));
++            }
++            values.put("#visible", new JsonPrimitive(true));
++            final boolean parentVisible = !inherited.containsKey("$__effective_visible")
++                    || UiExpression.truth(inherited.get("$__effective_visible"));
++            values.put("#enabled", new JsonPrimitive(true));
++            declarations(control, values);
++            final JsonElement collectionIndex = resolveValue(control.get("collection_index"), values, 0);
++            final int selectedButton;
++            if (control.has("collection_index")) {
++                if (!collectionIndex.isJsonPrimitive() || !collectionIndex.getAsJsonPrimitive().isNumber()
++                        || collectionIndex.getAsDouble() != collectionIndex.getAsInt()) {
++                    throw new IllegalArgumentException("Invalid UI collection index");
++                }
++                final int index = collectionIndex.getAsInt();
++                selectedButton = index >= 0 && index < this.form.getAsJsonArray("buttons").size() ? index : -1;
++            } else {
++                selectedButton = button;
++            }
++            final Map<String, JsonElement> engine = this.engine(selectedButton);
++            for (final String property : List.of("#form_button_text", "#form_button_index", "#form_button_texture", "#form_button_texture_file_system")) {
++                values.put(property, engine.get(property));
++            }
++            values.put("#visible", control.has("visible") ? resolveValue(control.get("visible"), values, 0) : new JsonPrimitive(true));
++            values.put("#enabled", control.has("enabled") ? resolveValue(control.get("enabled"), values, 0) : new JsonPrimitive(true));
++            this.bind(control, values, selectedButton);
++            this.controls.put(name, new HashMap<>(values));
++            if (UiExpression.truth(resolveValue(control.get("ignored"), values, 0))) {
++                return null;
++            }
++            final boolean visible = parentVisible && UiExpression.truth(values.get("#visible"));
++            values.put("$__effective_visible", new JsonPrimitive(visible));
++            final JsonObject node = new JsonObject();
++            node.addProperty("name", name);
++            for (final Map.Entry<String, JsonElement> entry : control.entrySet()) {
++                if (entry.getKey().startsWith("$") || Set.of("bindings", "variables", "controls", "factory", "property_bag", "modifications").contains(entry.getKey())) {
++                    continue;
++                }
++                node.add(entry.getKey(), resolveValue(entry.getValue(), values, 0));
++            }
++            for (final String property : List.of("text", "texture", "visible", "enabled", "collection_length", "maximum_grid_items")) {
++                if (values.containsKey("#" + property)) {
++                    node.add(property, values.get("#" + property));
++                }
++            }
++            node.addProperty("visible", visible);
++            if (!node.has("type")) {
++                node.addProperty("type", "panel");
++            }
++            if (node.has("texture")) {
++                final String texture = UiExpression.text(node.get("texture"));
++                if (!texture.isEmpty() && safePath(texture)) {
++                    node.addProperty("texture", textureId(texture));
++                    final byte[] metadata = ServerFormUi.this.textureFiles.get(texture.replaceAll("\\.png$", "") + ".json");
++                    if (metadata != null) {
++                        final JsonElement parsed = JsonParser.parseString(new String(metadata, StandardCharsets.UTF_8));
++                        if (parsed.isJsonObject()) {
++                            for (final String property : List.of("nineslice_size", "base_size")) {
++                                if (parsed.getAsJsonObject().has(property)) {
++                                    node.add(property, parsed.getAsJsonObject().get(property));
++                                }
++                            }
++                        }
++                    }
++                } else if (!texture.isEmpty()) {
++                    throw new IllegalArgumentException("Unsupported UI texture path");
++                }
++            }
++            if (node.has("anims") && node.get("anims").isJsonArray()) {
++                final JsonArray tracks = new JsonArray();
++                for (final JsonElement animationReference : node.getAsJsonArray("anims")) {
++                    if (!animationReference.isJsonPrimitive() || !animationReference.getAsJsonPrimitive().isString() || tracks.size() >= 16) {
++                        throw new IllegalArgumentException("Unsupported UI animation reference");
++                    }
++                    final String animationName = animationReference.getAsString().replaceFirst("^@", "");
++                    final JsonObject animation;
++                    try {
++                        animation = ServerFormUi.this.template(animationName, new HashSet<>());
++                    } catch (final MissingControlException missing) {
++                        this.missingTemplates.add(missing.getMessage());
++                        continue;
++                    }
++                    if (animation == null) {
++                        this.missingTemplates.add(animationName);
++                        continue;
++                    }
++                    final Map<String, JsonElement> animated = new HashMap<>(values);
++                    declarations(animation, animated);
++                    final JsonObject track = new JsonObject();
++                    for (final Map.Entry<String, JsonElement> entry : animation.entrySet()) {
++                        if (!entry.getKey().startsWith("$")) {
++                            track.add(entry.getKey(), resolveValue(entry.getValue(), animated, 0));
++                        }
++                    }
++                    tracks.add(track);
++                }
++                node.add("animation_tracks", tracks);
++            }
++            if ("label".equals(string(node, "type")) && node.has("text") && !node.get("text").isJsonNull()) {
++                String text = UiExpression.text(node.get("text"));
++                if (!node.has("localize") || UiExpression.truth(node.get("localize"))) {
++                    text = ServerFormUi.this.translator.apply(text);
++                }
++                node.addProperty("text", text);
++                node.addProperty("localize", false);
++                node.add("text_component", TextUtil.textComponentToGson(TextUtil.stringToTextComponent(text, ServerFormUi.this.formattingColors)));
++            }
++            if (Set.of("button", "toggle").contains(string(node, "type"))) {
++                String action = UiExpression.text(resolveValue(new JsonPrimitive("$pressed_button_name"), values, 0));
++                if (action.isEmpty() && node.has("button_mappings") && node.get("button_mappings").isJsonArray()) {
++                    for (final JsonElement mapping : node.getAsJsonArray("button_mappings")) {
++                        if (mapping.isJsonObject()) {
++                            final String target = string(mapping.getAsJsonObject(), "to_button_id");
++                            if (target.equals("button.form_button_click") || target.equals("button.menu_exit")) {
++                                action = target;
++                                break;
++                            }
++                        }
++                    }
++                }
++                if (action.equals("button.menu_exit")) {
++                    node.addProperty("action", -1);
++                } else if (action.equals("button.form_button_click") && selectedButton >= 0) {
++                    node.addProperty("action", selectedButton);
++                    if (visible) {
++                        this.actions.add(selectedButton);
++                    }
++                }
++            }
++            final JsonArray children = new JsonArray();
++            if (!visible) {
++                // Preserve this control's layout box without activating its invisible descendants.
++                node.add("children", children);
++                return node;
++            }
++            final JsonElement childControls = resolveValue(control.get("controls"), values, 0);
++            if (childControls.isJsonArray()) {
++                this.children(childControls.getAsJsonArray(), children, values, selectedButton, depth);
++            } else if (!childControls.isJsonNull()) {
++                throw new IllegalArgumentException("Invalid UI controls collection");
++            }
++            if (control.has("factory") && control.get("factory").isJsonObject()) {
++                this.factory(control.getAsJsonObject("factory"), node, children, values, selectedButton, depth);
++            }
++            if ("factory".equals(string(control, "type")) && control.has("control_ids")) {
++                this.factory(control, node, children, values, selectedButton, depth);
++            }
++            if ("grid".equals(string(control, "type")) && control.has("grid_item_template")) {
++                this.collection(UiExpression.text(resolveValue(control.get("grid_item_template"), values, 0)), children, values, depth);
++            }
++            node.add("children", children);
++            return node;
++        }
++
++        private JsonObject expandChild(final String reference, final JsonObject overrides,
++                                       final Map<String, JsonElement> inherited, final int button, final int depth) {
++            try {
++                return this.expand(reference, overrides, inherited, button, depth);
++            } catch (final MissingControlException missing) {
++                // The native factory logs a missing base and returns an empty child, retaining its siblings.
++                this.missingTemplates.add(missing.getMessage());
++                return null;
++            }
++        }
++
++        private void children(final JsonArray input, final JsonArray output, final Map<String, JsonElement> values,
++                              final int button, final int depth) {
++            for (final JsonElement element : input) {
++                if (!element.isJsonObject()) {
++                    throw new IllegalArgumentException("Invalid UI child");
++                }
++                for (final Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
++                    if (!entry.getValue().isJsonObject()) {
++                        throw new IllegalArgumentException("Invalid UI control");
++                    }
++                    final JsonObject child = this.expandChild(entry.getKey(), entry.getValue().getAsJsonObject(), values, button, depth + 1);
++                    if (child != null) {
++                        output.add(child);
++                    }
++                }
++            }
++        }
++
++        private void factory(final JsonObject factory, final JsonObject node, final JsonArray children,
++                             final Map<String, JsonElement> values, final int button, final int depth) {
++            if (factory.has("control_name")) {
++                this.collection(UiExpression.text(resolveValue(factory.get("control_name"), values, 0)), children, values, depth);
++            } else if (factory.has("control_ids") && factory.get("control_ids").isJsonObject()) {
++                final JsonObject ids = factory.getAsJsonObject("control_ids");
++                if ("factory".equals(string(node, "type"))) {
++                    final JsonElement selected = ids.get("long_form");
++                    if (selected != null) {
++                        final JsonObject child = this.expandChild(UiExpression.text(resolveValue(selected, values, 0)), new JsonObject(), values, button, depth + 1);
++                        if (child != null) {
++                            children.add(child);
++                        }
++                    }
++                } else {
++                    final String collection = UiExpression.text(values.get("#collection_length"));
++                    final JsonElement entries = values.get(collection);
++                    if (entries != null && entries.isJsonArray()) {
++                        for (final JsonElement entry : entries.getAsJsonArray()) {
++                            final JsonElement selected = ids.get(UiExpression.text(entry));
++                            if (selected != null) {
++                                final JsonObject child = this.expandChild(UiExpression.text(resolveValue(selected, values, 0)), new JsonObject(), values, button, depth + 1);
++                                if (child != null) {
++                                    children.add(child);
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++        }
++
++        private void collection(final String template, final JsonArray children, final Map<String, JsonElement> values,
++                                final int depth) {
++            if (template.isEmpty()) {
++                throw new IllegalArgumentException("Empty UI collection template");
++            }
++            for (int index = 0; index < this.form.getAsJsonArray("buttons").size(); index++) {
++                final JsonObject child = this.expandChild(template, new JsonObject(), values, index, depth + 1);
++                if (child != null) {
++                    children.add(child);
++                }
++            }
++        }
++
++        private Map<String, JsonElement> engine(final int button) {
++            return this.engineBindings.computeIfAbsent(button, index -> {
++                final Map<String, JsonElement> result = new HashMap<>(this.initial);
++                result.put("#form_button_text", new JsonPrimitive(""));
++                result.put("#form_button_index", new JsonPrimitive(-1));
++                result.put("#form_button_texture", new JsonPrimitive(""));
++                result.put("#form_button_texture_file_system", new JsonPrimitive("path"));
++                if (index >= 0) {
++                    final JsonObject element = this.form.getAsJsonArray("buttons").get(index).getAsJsonObject();
++                    result.put("#form_button_text", element.get("text"));
++                    result.put("#form_button_index", new JsonPrimitive(index));
++                    final JsonObject image = element.has("image") && element.get("image").isJsonObject()
++                            ? element.getAsJsonObject("image") : new JsonObject();
++                    result.put("#form_button_texture", image.has("data") ? image.get("data") : new JsonPrimitive(""));
++                    result.put("#form_button_texture_file_system", image.has("type") ? image.get("type") : new JsonPrimitive("path"));
++                }
++                return result;
++            });
++        }
++
++        private void bind(final JsonObject control, final Map<String, JsonElement> values, final int button) {
++            if (control.has("property_bag") && control.get("property_bag").isJsonObject()) {
++                for (final Map.Entry<String, JsonElement> entry : control.getAsJsonObject("property_bag").entrySet()) {
++                    values.put(entry.getKey(), resolveValue(entry.getValue(), values, 0));
++                }
++            }
++            final JsonElement bindings = resolveValue(control.get("bindings"), values, 0);
++            if (!bindings.isJsonArray()) {
++                return;
++            }
++            for (final JsonElement element : bindings.getAsJsonArray()) {
++                final JsonObject binding = element.getAsJsonObject();
++                final String sourceControl = string(binding, "source_control_name");
++                final Map<String, JsonElement> source = sourceControl.isEmpty() ? values : this.controls.getOrDefault(sourceControl, values);
++                final String expression = binding.has("source_property_name") ? string(binding, "source_property_name") : string(binding, "binding_name");
++                if (expression.isEmpty()) {
++                    continue;
++                }
++                final Map<String, JsonElement> engine = this.engine(button);
++                final JsonElement value = !"view".equals(string(binding, "binding_type")) && sourceControl.isEmpty() && engine.containsKey(expression)
++                        ? engine.get(expression) : resolveValue(new JsonPrimitive(expression), source, 0);
++                final String target = binding.has("target_property_name") ? string(binding, "target_property_name")
++                        : binding.has("binding_name_override") ? string(binding, "binding_name_override") : expression;
++                if (target.startsWith("#") && value != null) {
++                    values.put(target, value);
++                }
++            }
++        }
++    }
++
++    private static final class Builtins {
++        private static final Map<String, byte[]> FILES = Collections.unmodifiableMap(builtinFiles());
++        private static final String IDENTITY = identity();
++
++        private static String identity() {
++            try {
++                final var digest = MessageDigest.getInstance("SHA-256");
++                FILES.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
++                    digest.update(entry.getKey().getBytes(StandardCharsets.UTF_8));
++                    digest.update((byte) 0);
++                    digest.update(ByteBuffer.allocate(4).putInt(entry.getValue().length).array());
++                    digest.update(entry.getValue());
++                });
++                return HexFormat.of().formatHex(digest.digest());
++            } catch (final NoSuchAlgorithmException impossible) {
++                throw new IllegalStateException(impossible);
++            }
++        }
++    }
++
++    private static final class MissingControlException extends IllegalArgumentException {
++
++        private MissingControlException(final String control) {
++            super(control);
++        }
++
++    }
++
++    private record Definition(JsonObject value, String parent) {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpression.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpression.java
+new file mode 100644
+index 000000000..3316b9345
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpression.java
+@@ -0,0 +1,304 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonNull;
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
++import java.nio.charset.StandardCharsets;
++import java.util.Arrays;
++import java.util.Map;
++import java.util.function.Function;
++import java.util.regex.Pattern;
++
++/** Bounded JSON UI binding expressions. No host code or external resources are evaluated. */
++public final class UiExpression {
++
++    private static final int MAX_STRING_BYTES = 1 << 20;
++    private static final Pattern INTEGER_PREFIX = Pattern.compile("^[\\t\\n\\r ]*[+-]?[0-9]+");
++    private static final Pattern FLOAT_VALUE = Pattern.compile("[+-]?(?:[0-9]+\\.[0-9]*|[0-9]*\\.[0-9]+)(?:[eE][+-]?[0-9]+)?");
++    private static final Pattern STRING_PREFIX = Pattern.compile("%\\.[0-9]{1,5}s");
++
++    private final String input;
++    private final Function<String, JsonElement> values;
++    private int offset;
++    private int depth;
++
++    private UiExpression(final String input, final Function<String, JsonElement> values) {
++        if (input.length() > 8192) {
++            throw new IllegalArgumentException("UI expression is too long");
++        }
++        this.input = input;
++        this.values = values;
++    }
++
++    public static JsonElement evaluate(final String input, final Map<String, JsonElement> values) {
++        return evaluate(input, key -> values.getOrDefault(key, JsonNull.INSTANCE));
++    }
++
++    public static JsonElement evaluate(final String input, final Function<String, JsonElement> values) {
++        final UiExpression parser = new UiExpression(input, values);
++        final JsonElement result = parser.expression(0);
++        parser.space();
++        if (parser.offset != input.length()) {
++            throw new IllegalArgumentException("Unexpected UI expression token");
++        }
++        return result;
++    }
++
++    public static boolean truth(final JsonElement value) {
++        if (value == null || value.isJsonNull()) {
++            return false;
++        }
++        if (!value.isJsonPrimitive()) {
++            return value.isJsonArray() && !value.getAsJsonArray().isEmpty();
++        }
++        final JsonPrimitive primitive = value.getAsJsonPrimitive();
++        if (primitive.isBoolean()) {
++            return primitive.getAsBoolean();
++        }
++        if (primitive.isNumber()) {
++            return primitive.getAsDouble() != 0;
++        }
++        return !primitive.getAsString().isEmpty();
++    }
++
++    public static String text(final JsonElement value) {
++        return value == null || value.isJsonNull() ? "" : value.isJsonPrimitive() ? value.getAsString() : value.toString();
++    }
++
++    private JsonElement expression(final int minimum) {
++        if (++this.depth > 64) {
++            throw new IllegalArgumentException("UI expression is too deep");
++        }
++        try {
++            JsonElement left = this.atom();
++            while (true) {
++                this.space();
++                final int start = this.offset;
++                final String operator = this.operator();
++                final int precedence = precedence(operator);
++                if (precedence < minimum) {
++                    this.offset = start;
++                    return left;
++                }
++                left = apply(operator, left, this.expression(precedence + 1));
++            }
++        } finally {
++            this.depth--;
++        }
++    }
++
++    private JsonElement atom() {
++        this.space();
++        if (this.word("not")) {
++            return new JsonPrimitive(!truth(this.expression(6)));
++        }
++        if (this.take('(')) {
++            final JsonElement value = this.expression(0);
++            this.space();
++            if (!this.take(')')) {
++                throw new IllegalArgumentException("Unclosed UI expression");
++            }
++            return value;
++        }
++        if (this.take('-')) {
++            return number(-numeric(this.atom()));
++        }
++        if (this.take('\'')) {
++            final StringBuilder value = new StringBuilder();
++            while (this.offset < this.input.length()) {
++                final char character = this.input.charAt(this.offset++);
++                if (character == '\'') {
++                    return new JsonPrimitive(value.toString());
++                }
++                if (character == '\\' && this.offset < this.input.length()) {
++                    value.append(this.input.charAt(this.offset++));
++                } else {
++                    value.append(character);
++                }
++            }
++            throw new IllegalArgumentException("Unclosed UI string");
++        }
++        final int start = this.offset;
++        while (this.offset < this.input.length()) {
++            final char character = this.input.charAt(this.offset);
++            if (!Character.isLetterOrDigit(character) && "_$#.:".indexOf(character) < 0) {
++                break;
++            }
++            this.offset++;
++        }
++        if (start == this.offset) {
++            throw new IllegalArgumentException("Missing UI expression value");
++        }
++        final String token = this.input.substring(start, this.offset);
++        if ("true".equals(token) || "false".equals(token)) {
++            return new JsonPrimitive(Boolean.parseBoolean(token));
++        }
++        if (token.charAt(0) == '#' || token.charAt(0) == '$') {
++            final JsonElement value = this.values.apply(token);
++            return value == null ? JsonNull.INSTANCE : value;
++        }
++        try {
++            Double.parseDouble(token);
++            return generated(token);
++        } catch (final NumberFormatException invalid) {
++            throw new IllegalArgumentException("Unsupported UI expression value", invalid);
++        }
++    }
++
++    private String operator() {
++        if (this.word("or")) {
++            return "or";
++        }
++        if (this.word("and")) {
++            return "and";
++        }
++        if (this.offset < this.input.length() && "=<>+-*/".indexOf(this.input.charAt(this.offset)) >= 0) {
++            final char operator = this.input.charAt(this.offset++);
++            if ((operator == '<' || operator == '>') && this.take('=')) {
++                return operator + "=";
++            }
++            return Character.toString(operator);
++        }
++        return "";
++    }
++
++    private static int precedence(final String operator) {
++        return switch (operator) {
++            case "or" -> 0;
++            case "and" -> 1;
++            case "=", "<", ">", "<=", ">=" -> 2;
++            case "+", "-" -> 3;
++            case "*", "/" -> 4;
++            default -> -1;
++        };
++    }
++
++    private static JsonElement apply(final String operator, final JsonElement left, final JsonElement right) {
++        final boolean strings = isString(left) || isString(right);
++        return switch (operator) {
++            case "or" -> new JsonPrimitive(truth(left) || truth(right));
++            case "and" -> new JsonPrimitive(truth(left) && truth(right));
++            case "=" -> new JsonPrimitive(left == null || left.isJsonNull() || right == null || right.isJsonNull()
++                    ? strings ? text(left).equals(text(right)) : numeric(left) == numeric(right)
++                    : strings ? isString(left) && isString(right) ? text(left).equals(text(right))
++                    : (isString(left) ? text(left).isEmpty() && numeric(right) == 0 : text(right).isEmpty() && numeric(left) == 0)
++                    : numeric(left) == numeric(right));
++            case "+" -> strings ? generated(text(left) + text(right)) : arithmetic(numeric(left) + numeric(right), left, right);
++            case "-" -> strings ? generated(isString(left) && isString(right) ? text(left).replace(text(right), "") : text(left)) : arithmetic(numeric(left) - numeric(right), left, right);
++            case "*" -> isString(left) && STRING_PREFIX.matcher(text(left)).matches()
++                    ? truncate(text(right), Integer.parseInt(text(left).substring(2, text(left).length() - 1)))
++                    : isString(left) ? new JsonPrimitive("") : isString(right) ? left : arithmetic(numeric(left) * numeric(right), left, right);
++            case "/" -> {
++                if (isString(left) || isString(right)) {
++                    throw new IllegalArgumentException("Unsupported UI string division");
++                }
++                yield arithmetic(numeric(left) / numeric(right), left, right);
++            }
++            case "<" -> new JsonPrimitive(numeric(left) < numeric(right));
++            case ">" -> new JsonPrimitive(numeric(left) > numeric(right));
++            case "<=" -> new JsonPrimitive(numeric(left) <= numeric(right));
++            case ">=" -> new JsonPrimitive(numeric(left) >= numeric(right));
++            default -> throw new IllegalArgumentException("Unsupported UI operator");
++        };
++    }
++
++    private static JsonElement truncate(final String value, final int count) {
++        final byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
++        return generated(new String(Arrays.copyOf(bytes, Math.min(count, bytes.length)), StandardCharsets.UTF_8));
++    }
++
++    /** Native string operators feed their output back into the unquoted-value parser. */
++    private static JsonElement generated(final String value) {
++        if (value.length() > MAX_STRING_BYTES || value.getBytes(StandardCharsets.UTF_8).length > MAX_STRING_BYTES) {
++            throw new IllegalArgumentException("UI expression string exceeds limits");
++        }
++        final var integer = INTEGER_PREFIX.matcher(value);
++        if (integer.find()) {
++            try {
++                return new JsonPrimitive(Integer.parseInt(integer.group().trim()));
++            } catch (final NumberFormatException invalid) {
++                throw new IllegalArgumentException("UI integer exceeds native bounds", invalid);
++            }
++        }
++        if (FLOAT_VALUE.matcher(value).matches()) {
++            final float parsed = Float.parseFloat(value);
++            if (Float.isFinite(parsed)) {
++                return new JsonPrimitive(parsed);
++            }
++        }
++        if (value.equals("true") || value.equals("false")) {
++            return new JsonPrimitive(Boolean.parseBoolean(value));
++        }
++        return new JsonPrimitive(value);
++    }
++
++    private static boolean isString(final JsonElement value) {
++        return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString();
++    }
++
++    private static double numeric(final JsonElement value) {
++        if (value == null || value.isJsonNull()) {
++            return 0;
++        }
++        if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isBoolean()) {
++            return value.getAsBoolean() ? 1 : 0;
++        }
++        try {
++            return Double.parseDouble(text(value));
++        } catch (final NumberFormatException invalid) {
++            return 0;
++        }
++    }
++
++    private static JsonElement arithmetic(final double value, final JsonElement left, final JsonElement right) {
++        if (!Double.isFinite(value)) {
++            throw new IllegalArgumentException("Non-finite UI expression result");
++        }
++        final boolean integral = left.isJsonPrimitive() && right.isJsonPrimitive()
++                && left.toString().matches("-?[0-9]+") && right.toString().matches("-?[0-9]+");
++        if (integral) {
++            if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
++                throw new IllegalArgumentException("UI integer exceeds native bounds");
++            }
++            return new JsonPrimitive((int) value);
++        }
++        return new JsonPrimitive((float) value);
++    }
++
++    private static JsonElement number(final double value) {
++        if (!Double.isFinite(value)) {
++            throw new IllegalArgumentException("Non-finite UI expression result");
++        }
++        return new JsonPrimitive(value);
++    }
++
++    private void space() {
++        while (this.offset < this.input.length() && Character.isWhitespace(this.input.charAt(this.offset))) {
++            this.offset++;
++        }
++    }
++
++    private boolean take(final char character) {
++        if (this.offset < this.input.length() && this.input.charAt(this.offset) == character) {
++            this.offset++;
++            return true;
++        }
++        return false;
++    }
++
++    private boolean word(final String word) {
++        if (this.input.startsWith(word, this.offset) && (this.offset + word.length() == this.input.length()
++                || !Character.isLetterOrDigit(this.input.charAt(this.offset + word.length()))
++                && this.input.charAt(this.offset + word.length()) != '_')) {
++            this.offset += word.length();
++            return true;
++        }
++        return false;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index fb8b236b5..85c915b5e 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -17,6 +17,10 @@
+  */
+ package net.raphimc.viabedrock.protocol.packet;
+ 
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
++import net.raphimc.viabedrock.api.model.NativeFormMessage;
++
+ import com.viaversion.nbt.tag.CompoundTag;
+ import com.viaversion.nbt.tag.ListTag;
+ import com.viaversion.nbt.tag.Tag;
+@@ -210,134 +214,324 @@ public final class InventoryPackets {
+                 wrapper.cancel();
+             }
+         });
+-        protocol.registerClientbound(ClientboundBedrockPackets.MODAL_FORM_REQUEST, ClientboundPackets26_3.SHOW_DIALOG, wrapper -> {
+-            final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+-            final int id = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // id
+-            final String data = wrapper.read(BedrockTypes.STRING); // data
+-
+-            if (inventoryTracker.isAnyScreenOpen()) {
+-                final PacketWrapper modalFormResponse = PacketWrapper.create(ServerboundBedrockPackets.MODAL_FORM_RESPONSE, wrapper.user());
+-                modalFormResponse.write(BedrockTypes.UNSIGNED_VAR_INT, id); // id
+-                modalFormResponse.write(Types.BOOLEAN, false); // has response
+-                modalFormResponse.write(Types.BOOLEAN, true); // has cancel reason
+-                modalFormResponse.write(Types.BYTE, (byte) ModalFormCancelReason.UserBusy.getValue()); // cancel reason
+-                modalFormResponse.sendToServer(BedrockProtocol.class);
+-                wrapper.cancel();
+-                return;
+-            }
+-
+-            final Form form;
+-            try {
+-                form = FormSerializer.deserialize(data);
+-            } catch (final Throwable e) { // Bedrock client shows error modal form
+-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while deserializing form data: " + data, e);
+-                wrapper.cancel();
+-                return;
+-            }
+-            final ResourcePackStorage resourcePackStorage = wrapper.user().get(ResourcePackStorage.class);
+-            form.setTranslator(resourcePackStorage.getTexts()::translate);
+-            inventoryTracker.setCurrentForm(IntObjectPair.of(id, form));
+-
+-            final Identifier responseIdentifier = Identifier.of("viabedrock", "form/" + id);
+-            final CompoundTag exitButtonAdditions = new CompoundTag();
+-            exitButtonAdditions.putBoolean("exit", true);
+-            final ActionButton exitButton = new ActionButton(new StringComponent(resourcePackStorage.getTexts().get("gui.close")), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, exitButtonAdditions));
++        protocol.registerClientbound(
++                ClientboundBedrockPackets.MODAL_FORM_REQUEST,
++                ClientboundPackets26_3.SHOW_DIALOG,
++                wrapper -> {
++                    final InventoryTracker inventoryTracker =
++                            wrapper.user().get(InventoryTracker.class);
++                    final int id = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // id
++                    final String data = wrapper.read(BedrockTypes.STRING); // data
++
++                    if (inventoryTracker.isAnyScreenOpen()) {
++                        final PacketWrapper modalFormResponse =
++                                PacketWrapper.create(
++                                        ServerboundBedrockPackets.MODAL_FORM_RESPONSE,
++                                        wrapper.user());
++                        modalFormResponse.write(BedrockTypes.UNSIGNED_VAR_INT, id); // id
++                        modalFormResponse.write(Types.BOOLEAN, false); // has response
++                        modalFormResponse.write(Types.BOOLEAN, true); // has cancel reason
++                        modalFormResponse.write(
++                                Types.BYTE,
++                                (byte) ModalFormCancelReason.UserBusy.getValue()); // cancel reason
++                        modalFormResponse.sendToServer(BedrockProtocol.class);
++                        wrapper.cancel();
++                        return;
++                    }
+ 
+-            final Dialog dialog;
+-            if (form instanceof ModalForm modalForm) {
+-                final MultiActionDialog actionDialog = new MultiActionDialog(TextUtil.stringToTextComponent(form.getTitle()), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), exitButton, 1);
+-                addTextToDialog(wrapper.user(), actionDialog, modalForm.getText());
+-                final CompoundTag button1Additions = new CompoundTag();
+-                button1Additions.putInt("button_id", 0);
+-                actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(modalForm.getButton1()), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, button1Additions)));
+-                final CompoundTag button2Additions = new CompoundTag();
+-                button2Additions.putInt("button_id", 1);
+-                actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(modalForm.getButton2()), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, button2Additions)));
+-                dialog = actionDialog;
+-            } else if (form instanceof ActionForm actionForm) {
+-                if (actionForm.getElements().length == 0) { // Text only form
+-                    final NoticeDialog noticeDialog = new NoticeDialog(TextUtil.stringToTextComponent(form.getTitle()), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), exitButton);
+-                    addTextToDialog(wrapper.user(), noticeDialog, actionForm.getText());
+-                    dialog = noticeDialog;
+-                } else {
+-                    final MultiActionDialog actionDialog = new MultiActionDialog(TextUtil.stringToTextComponent(form.getTitle()), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), exitButton, 1);
+-                    addTextToDialog(wrapper.user(), actionDialog, actionForm.getText());
+-                    int buttonIndex = 0;
+-                    for (int elementIndex = 0; elementIndex < actionForm.getElements().length; elementIndex++) {
+-                        final FormElement element = actionForm.getElements()[elementIndex];
+-                        if (element instanceof ButtonFormElement button) {
+-                            final CompoundTag buttonAdditions = new CompoundTag();
+-                            buttonAdditions.putInt("button_id", buttonIndex);
+-                            actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(button.getText()), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, buttonAdditions)));
+-                            buttonIndex++;
+-                        } else if (element instanceof HeaderFormElement header) {
+-                            actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(header.getText()), new StringComponent(DIALOG_FAKE_BUTTON_TEXT), DIALOG_FAKE_BUTTON_WIDTH, exitButton.getAction()));
+-                        } else if (element instanceof LabelFormElement label) {
+-                            actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(label.getText()), new StringComponent(DIALOG_FAKE_BUTTON_TEXT), DIALOG_FAKE_BUTTON_WIDTH, exitButton.getAction()));
+-                        } else if (element instanceof DividerFormElement) {
+-                            // No op
+-                        } else {
+-                            throw new IllegalArgumentException("Unhandled form element type: " + element.getClass().getSimpleName());
+-                        }
++                    final Form form;
++                    try {
++                        form = FormSerializer.deserialize(data);
++                    } catch (final Throwable e) { // Bedrock client shows error modal form
++                        ViaBedrock.getPlatform()
++                                .getLogger()
++                                .log(
++                                        Level.WARNING,
++                                        "Error while deserializing form data: " + data,
++                                        e);
++                        wrapper.cancel();
++                        return;
+                     }
+-                    dialog = actionDialog;
+-                }
+-            } else if (form instanceof CustomForm customForm) {
+-                final MultiActionDialog actionDialog = new MultiActionDialog(TextUtil.stringToTextComponent(form.getTitle()), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), exitButton, 1);
+-                for (int elementIndex = 0; elementIndex < customForm.getElements().length; elementIndex++) {
+-                    final FormElement element = customForm.getElements()[elementIndex];
+-                    final String inputKey = String.valueOf(elementIndex);
+-                    if (element instanceof CheckboxFormElement checkbox) {
+-                        final BooleanInput booleanInput = new BooleanInput(TextUtil.stringToTextComponent(checkbox.getText()));
+-                        booleanInput.setInitial(checkbox.getDefaultValue());
+-                        actionDialog.getInputs().add(new Input(inputKey, booleanInput));
+-                    } else if (element instanceof DropdownFormElement dropdown) {
+-                        final SingleOptionInput singleOptionInput = new SingleOptionInput(new ArrayList<>(dropdown.getOptions().length), TextUtil.stringToTextComponent(dropdown.getText()));
+-                        for (int dropdownIndex = 0; dropdownIndex < dropdown.getOptions().length; dropdownIndex++) {
+-                            final String option = dropdown.getOptions()[dropdownIndex];
+-                            singleOptionInput.getOptions().add(new SingleOptionInput.Entry(String.valueOf(dropdownIndex), TextUtil.stringToTextComponent(option), dropdownIndex == dropdown.getDefaultOption()));
+-                        }
+-                        actionDialog.getInputs().add(new Input(inputKey, singleOptionInput));
+-                    } else if (element instanceof SliderFormElement slider) {
+-                        final NumberRangeInput numberRangeInput = new NumberRangeInput(TextUtil.stringToTextComponent(slider.getText()), new NumberRangeInput.Range(slider.getMin(), slider.getMax(), slider.getDefaultValue(), slider.getStep()));
+-                        actionDialog.getInputs().add(new Input(inputKey, numberRangeInput));
+-                    } else if (element instanceof StepSliderFormElement stepSlider) {
+-                        final SingleOptionInput singleOptionInput = new SingleOptionInput(new ArrayList<>(stepSlider.getSteps().length), TextUtil.stringToTextComponent(stepSlider.getText()));
+-                        for (int stepIndex = 0; stepIndex < stepSlider.getSteps().length; stepIndex++) {
+-                            final String step = stepSlider.getSteps()[stepIndex];
+-                            final String stepKey = String.valueOf(stepIndex);
+-                            singleOptionInput.getOptions().add(new SingleOptionInput.Entry(stepKey, TextUtil.stringToTextComponent(step), stepIndex == stepSlider.getDefaultStep()));
++                    final ResourcePackStorage resourcePackStorage =
++                            wrapper.user().get(ResourcePackStorage.class);
++                    form.setTranslator(resourcePackStorage.getTexts()::translate);
++                    inventoryTracker.setCurrentForm(IntObjectPair.of(id, form));
++                    final var scene = form instanceof ActionForm && resourcePackStorage.isLoadedOnJavaClient()
++                            ? resourcePackStorage.getServerFormUi().resolve(
++                                    JsonParser.parseString(data).getAsJsonObject()) : null;
++                    if (scene != null && wrapper.user().get(ChannelStorage.class).hasChannel(NativeFormMessage.CHANNEL)) {
++                        wrapper.setPacketType(ClientboundPackets26_3.CUSTOM_PAYLOAD);
++                        wrapper.write(Types.STRING, NativeFormMessage.CHANNEL);
++                        wrapper.write(NativeFormMessage.TYPE,
++                                new NativeFormMessage(id, scene.toString()));
++                        return;
++                    }
++                    final var presentation = scene == null ? null
++                            : ServerFormUi.presentation(scene);
++
++                    final Identifier responseIdentifier = Identifier.of("viabedrock", "form/" + id);
++                    final CompoundTag exitButtonAdditions = new CompoundTag();
++                    exitButtonAdditions.putBoolean("exit", true);
++                    final ActionButton exitButton =
++                            new ActionButton(
++                                    new StringComponent(
++                                            resourcePackStorage.getTexts().get("gui.close")),
++                                    DIALOG_BUTTON_WIDTH,
++                                    new CustomAllAction(responseIdentifier, exitButtonAdditions));
++
++                    final Dialog dialog;
++                    if (form instanceof ModalForm modalForm) {
++                        final MultiActionDialog actionDialog =
++                                new MultiActionDialog(
++                                        TextUtil.stringToTextComponent(form.getTitle()),
++                                        true,
++                                        false,
++                                        AfterAction.CLOSE,
++                                        new ArrayList<>(),
++                                        new ArrayList<>(),
++                                        new ArrayList<>(),
++                                        exitButton,
++                                        1);
++                        addTextToDialog(wrapper.user(), actionDialog, modalForm.getText());
++                        final CompoundTag button1Additions = new CompoundTag();
++                        button1Additions.putInt("button_id", 0);
++                        actionDialog
++                                .getActions()
++                                .add(
++                                        new ActionButton(
++                                                TextUtil.stringToTextComponent(
++                                                        modalForm.getButton1()),
++                                                DIALOG_BUTTON_WIDTH,
++                                                new CustomAllAction(
++                                                        responseIdentifier, button1Additions)));
++                        final CompoundTag button2Additions = new CompoundTag();
++                        button2Additions.putInt("button_id", 1);
++                        actionDialog
++                                .getActions()
++                                .add(
++                                        new ActionButton(
++                                                TextUtil.stringToTextComponent(
++                                                        modalForm.getButton2()),
++                                                DIALOG_BUTTON_WIDTH,
++                                                new CustomAllAction(
++                                                        responseIdentifier, button2Additions)));
++                        dialog = actionDialog;
++                    } else if (form instanceof ActionForm actionForm) {
++                        if (actionForm.getElements().length == 0) { // Text only form
++                            final NoticeDialog noticeDialog =
++                                    new NoticeDialog(
++                                            TextUtil.stringToTextComponent(presentation == null ? form.getTitle() : presentation.title()),
++                                            true,
++                                            false,
++                                            AfterAction.CLOSE,
++                                            new ArrayList<>(),
++                                            new ArrayList<>(),
++                                            exitButton);
++                            addTextToDialog(wrapper.user(), noticeDialog, actionForm.getText());
++                            dialog = noticeDialog;
++                        } else {
++                            final MultiActionDialog actionDialog =
++                                    new MultiActionDialog(
++                                            TextUtil.stringToTextComponent(presentation == null ? form.getTitle() : presentation.title()),
++                                            true,
++                                            false,
++                                            AfterAction.CLOSE,
++                                            new ArrayList<>(),
++                                            new ArrayList<>(),
++                                            new ArrayList<>(),
++                                            exitButton,
++                                            1);
++                            addTextToDialog(wrapper.user(), actionDialog, presentation == null ? actionForm.getText() : presentation.content());
++                            int buttonIndex = 0;
++                            for (int elementIndex = 0;
++                                    elementIndex < actionForm.getElements().length;
++                                    elementIndex++) {
++                                final FormElement element = actionForm.getElements()[elementIndex];
++                                if (element instanceof ButtonFormElement button) {
++                                    final int sourceIndex = buttonIndex++;
++                                    if (presentation != null && !presentation.buttons().containsKey(sourceIndex)) {
++                                        continue;
++                                    }
++                                    final CompoundTag buttonAdditions = new CompoundTag();
++                                    buttonAdditions.putInt("button_id", sourceIndex);
++                                    actionDialog
++                                            .getActions()
++                                            .add(
++                                                    new ActionButton(
++                                                            TextUtil.stringToTextComponent(
++                                                                    presentation == null || presentation.buttons().get(sourceIndex).isBlank()
++                                                                            ? button.getText() : presentation.buttons().get(sourceIndex)),
++                                                            DIALOG_BUTTON_WIDTH,
++                                                            new CustomAllAction(
++                                                                    responseIdentifier,
++                                                                    buttonAdditions)));
++                                } else if (element instanceof HeaderFormElement header) {
++                                    actionDialog
++                                            .getActions()
++                                            .add(
++                                                    new ActionButton(
++                                                            TextUtil.stringToTextComponent(
++                                                                    header.getText()),
++                                                            new StringComponent(
++                                                                    DIALOG_FAKE_BUTTON_TEXT),
++                                                            DIALOG_FAKE_BUTTON_WIDTH,
++                                                            exitButton.getAction()));
++                                } else if (element instanceof LabelFormElement label) {
++                                    actionDialog
++                                            .getActions()
++                                            .add(
++                                                    new ActionButton(
++                                                            TextUtil.stringToTextComponent(
++                                                                    label.getText()),
++                                                            new StringComponent(
++                                                                    DIALOG_FAKE_BUTTON_TEXT),
++                                                            DIALOG_FAKE_BUTTON_WIDTH,
++                                                            exitButton.getAction()));
++                                } else if (element instanceof DividerFormElement) {
++                                    // No op
++                                } else {
++                                    throw new IllegalArgumentException(
++                                            "Unhandled form element type: "
++                                                    + element.getClass().getSimpleName());
++                                }
++                            }
++                            dialog = actionDialog;
+                         }
+-                        actionDialog.getInputs().add(new Input(inputKey, singleOptionInput));
+-                    } else if (element instanceof TextFieldFormElement textField) {
+-                        final TextInput textInput = new TextInput(TextUtil.stringToTextComponent(textField.getText()));
+-                        textInput.setMaxLength(100);
+-                        textInput.setInitial(textField.getDefaultValue());
+-                        actionDialog.getInputs().add(new Input(inputKey, textInput));
+-                    } else if (element instanceof HeaderFormElement header) {
+-                        addTextToDialog(wrapper.user(), actionDialog, header.getText());
+-                    } else if (element instanceof LabelFormElement label) {
+-                        addTextToDialog(wrapper.user(), actionDialog, label.getText());
+-                    } else if (element instanceof DividerFormElement) {
+-                        if (wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_21_6)) {
+-                            final TextInput textInput = new TextInput(new StringComponent());
+-                            textInput.setLabelVisible(false);
+-                            textInput.setMaxLength(Integer.MAX_VALUE);
+-                            textInput.setMultiline(new TextInput.MultilineOptions(null, 1));
+-                            actionDialog.getInputs().add(new Input("dummy", textInput));
++                    } else if (form instanceof CustomForm customForm) {
++                        final MultiActionDialog actionDialog =
++                                new MultiActionDialog(
++                                        TextUtil.stringToTextComponent(form.getTitle()),
++                                        true,
++                                        false,
++                                        AfterAction.CLOSE,
++                                        new ArrayList<>(),
++                                        new ArrayList<>(),
++                                        new ArrayList<>(),
++                                        exitButton,
++                                        1);
++                        for (int elementIndex = 0;
++                                elementIndex < customForm.getElements().length;
++                                elementIndex++) {
++                            final FormElement element = customForm.getElements()[elementIndex];
++                            final String inputKey = String.valueOf(elementIndex);
++                            if (element instanceof CheckboxFormElement checkbox) {
++                                final BooleanInput booleanInput =
++                                        new BooleanInput(
++                                                TextUtil.stringToTextComponent(checkbox.getText()));
++                                booleanInput.setInitial(checkbox.getDefaultValue());
++                                actionDialog.getInputs().add(new Input(inputKey, booleanInput));
++                            } else if (element instanceof DropdownFormElement dropdown) {
++                                final SingleOptionInput singleOptionInput =
++                                        new SingleOptionInput(
++                                                new ArrayList<>(dropdown.getOptions().length),
++                                                TextUtil.stringToTextComponent(dropdown.getText()));
++                                for (int dropdownIndex = 0;
++                                        dropdownIndex < dropdown.getOptions().length;
++                                        dropdownIndex++) {
++                                    final String option = dropdown.getOptions()[dropdownIndex];
++                                    singleOptionInput
++                                            .getOptions()
++                                            .add(
++                                                    new SingleOptionInput.Entry(
++                                                            String.valueOf(dropdownIndex),
++                                                            TextUtil.stringToTextComponent(option),
++                                                            dropdownIndex
++                                                                    == dropdown
++                                                                            .getDefaultOption()));
++                                }
++                                actionDialog
++                                        .getInputs()
++                                        .add(new Input(inputKey, singleOptionInput));
++                            } else if (element instanceof SliderFormElement slider) {
++                                final NumberRangeInput numberRangeInput =
++                                        new NumberRangeInput(
++                                                TextUtil.stringToTextComponent(slider.getText()),
++                                                new NumberRangeInput.Range(
++                                                        slider.getMin(),
++                                                        slider.getMax(),
++                                                        slider.getDefaultValue(),
++                                                        slider.getStep()));
++                                actionDialog.getInputs().add(new Input(inputKey, numberRangeInput));
++                            } else if (element instanceof StepSliderFormElement stepSlider) {
++                                final SingleOptionInput singleOptionInput =
++                                        new SingleOptionInput(
++                                                new ArrayList<>(stepSlider.getSteps().length),
++                                                TextUtil.stringToTextComponent(
++                                                        stepSlider.getText()));
++                                for (int stepIndex = 0;
++                                        stepIndex < stepSlider.getSteps().length;
++                                        stepIndex++) {
++                                    final String step = stepSlider.getSteps()[stepIndex];
++                                    final String stepKey = String.valueOf(stepIndex);
++                                    singleOptionInput
++                                            .getOptions()
++                                            .add(
++                                                    new SingleOptionInput.Entry(
++                                                            stepKey,
++                                                            TextUtil.stringToTextComponent(step),
++                                                            stepIndex
++                                                                    == stepSlider
++                                                                            .getDefaultStep()));
++                                }
++                                actionDialog
++                                        .getInputs()
++                                        .add(new Input(inputKey, singleOptionInput));
++                            } else if (element instanceof TextFieldFormElement textField) {
++                                final TextInput textInput =
++                                        new TextInput(
++                                                TextUtil.stringToTextComponent(
++                                                        textField.getText()));
++                                textInput.setMaxLength(100);
++                                textInput.setInitial(textField.getDefaultValue());
++                                actionDialog.getInputs().add(new Input(inputKey, textInput));
++                            } else if (element instanceof HeaderFormElement header) {
++                                addTextToDialog(wrapper.user(), actionDialog, header.getText());
++                            } else if (element instanceof LabelFormElement label) {
++                                addTextToDialog(wrapper.user(), actionDialog, label.getText());
++                            } else if (element instanceof DividerFormElement) {
++                                if (wrapper.user()
++                                        .getProtocolInfo()
++                                        .protocolVersion()
++                                        .newerThanOrEqualTo(ProtocolVersion.v1_21_6)) {
++                                    final TextInput textInput =
++                                            new TextInput(new StringComponent());
++                                    textInput.setLabelVisible(false);
++                                    textInput.setMaxLength(Integer.MAX_VALUE);
++                                    textInput.setMultiline(new TextInput.MultilineOptions(null, 1));
++                                    actionDialog.getInputs().add(new Input("dummy", textInput));
++                                }
++                            } else {
++                                throw new IllegalArgumentException(
++                                        "Unhandled form element type: "
++                                                + element.getClass().getSimpleName());
++                            }
+                         }
++                        actionDialog
++                                .getActions()
++                                .add(
++                                        new ActionButton(
++                                                TextUtil.stringToTextComponent(
++                                                        resourcePackStorage
++                                                                .getTexts()
++                                                                .get("gui.submit")),
++                                                DIALOG_BUTTON_WIDTH,
++                                                new CustomAllAction(responseIdentifier, null)));
++                        dialog = actionDialog;
+                     } else {
+-                        throw new IllegalArgumentException("Unhandled form element type: " + element.getClass().getSimpleName());
++                        throw new IllegalArgumentException(
++                                "Unhandled form type: " + form.getClass().getSimpleName());
+                     }
+-                }
+-                actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(resourcePackStorage.getTexts().get("gui.submit")), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, null)));
+-                dialog = actionDialog;
+-            } else {
+-                throw new IllegalArgumentException("Unhandled form type: " + form.getClass().getSimpleName());
+-            }
+ 
+-            wrapper.write(Types.TRUSTED_COMPOUND_TAG_HOLDER, Holder.of((CompoundTag) DialogSerializer.V1_21_6.getDirectCodec().serialize(NbtConverter_v1_21_5.INSTANCE, dialog).get())); // dialog data
+-        });
++                    wrapper.write(
++                            Types.TRUSTED_COMPOUND_TAG_HOLDER,
++                            Holder.of(
++                                    (CompoundTag)
++                                            DialogSerializer.V1_21_6
++                                                    .getDirectCodec()
++                                                    .serialize(
++                                                            NbtConverter_v1_21_5.INSTANCE, dialog)
++                                                    .get())); // dialog data
++                });
+         protocol.registerClientbound(ClientboundBedrockPackets.CLOSE_FORM, ClientboundPackets26_3.CLEAR_DIALOG, wrapper -> {
+             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+             if (inventoryTracker.getCurrentForm() != null) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
+index 245bb4494..a327a45bc 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
+@@ -17,6 +17,7 @@
+  */
+ package net.raphimc.viabedrock.protocol.rewriter;
+ 
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.ServerFormUiResourceRewriter;
+ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import net.raphimc.viabedrock.api.resourcepack.content.Content;
+ import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
+@@ -43,6 +44,7 @@ public final class ResourcePackRewriter {
+     static {
+         REWRITERS.add(new GlyphSheetResourceRewriter());
+         REWRITERS.add(new ScoreboardUiResourceRewriter());
++        REWRITERS.add(new ServerFormUiResourceRewriter());
+         REWRITERS.add(new CustomItemTextureResourceRewriter());
+         REWRITERS.add(new CustomBlockResourceRewriter());
+         REWRITERS.add(new CustomAttachableResourceRewriter());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ServerFormUiResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ServerFormUiResourceRewriter.java
+new file mode 100644
+index 000000000..0be8fd2ea
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ServerFormUiResourceRewriter.java
+@@ -0,0 +1,35 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import java.util.function.Consumer;
++import java.util.function.Supplier;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
++import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++/** Native UI images retain their pixels; UI controls receive isolated Java resource identifiers. */
++public final class ServerFormUiResourceRewriter implements ResourcePackRewriter.Rewriter {
++
++    @Override
++    public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
++        submitter.accept(() -> convert(storage));
++    }
++
++    public static Content convert(final ResourcePackStorage storage) {
++        final Content result = new InMemoryContent();
++        for (final var entry : storage.getServerFormUi().textures().entrySet()) {
++            if (entry.getKey().endsWith(".png")) {
++                final String identifier = ServerFormUi.textureId(entry.getKey());
++                result.put("assets/viabedrock/" + identifier.substring("viabedrock:".length()), entry.getValue());
++            }
++        }
++        return result;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
+index c6f4f3a35..c4c221834 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
+@@ -17,6 +17,7 @@
+  */
+ package net.raphimc.viabedrock.protocol.storage;
+ 
++import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
+ import com.viaversion.viaversion.api.connection.StorableObject;
+ import net.raphimc.viabedrock.api.model.CustomBlockVisual;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+@@ -45,6 +46,7 @@ public class ResourcePackStorage implements StorableObject {
+     private final TextDefinitions texts;
+     private final TextFormattingDefinitions textFormatting;
+     private final ScoreboardUiDefinitions scoreboardUi;
++    private final ServerFormUi serverFormUi;
+     private final BlockDefinitions blocks;
+     private final BlockCullingDefinitions blockCulling;
+     private VoxelShapeRegistry.Snapshot voxelShapes = new VoxelShapeRegistry.Snapshot(List.of(), Map.of(), 0);
+@@ -72,8 +74,11 @@ public class ResourcePackStorage implements StorableObject {
+         for (ResourcePack builtinImages : builtinImagesBottomToTop) {
+             for (String path : builtinImages.content().getFilesDeep("", "")) {
+                 if (!path.equals("manifest.json") && !(path.startsWith("textures/")
+-                        && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")))) {
+-                    throw new IllegalArgumentException("Built-in image pack contains a non-image resource: " + path);
++                        && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")
++                        || (path.startsWith("textures/ui/") && path.endsWith(".json")
++                        && builtinImages.content().contains(path.substring(0, path.length() - 5) + ".png"))))
++                        && !(path.startsWith("ui/") && path.endsWith(".json"))) {
++                    throw new IllegalArgumentException("Built-in UI and image pack contains an unsupported resource: " + path);
+                 }
+             }
+             this.packStackBottomToTop.add(builtinImages);
+@@ -100,6 +105,7 @@ public class ResourcePackStorage implements StorableObject {
+         this.texts = new TextDefinitions(this);
+         this.textFormatting = new TextFormattingDefinitions(this);
+         this.scoreboardUi = new ScoreboardUiDefinitions(this);
++        this.serverFormUi = new ServerFormUi(this);
+         this.blocks = new BlockDefinitions(this);
+         this.blockCulling = new BlockCullingDefinitions(this);
+         this.items = new ItemDefinitions(this);
+@@ -189,6 +195,10 @@ public class ResourcePackStorage implements StorableObject {
+         return this.textFormatting;
+     }
+ 
++    public ServerFormUi getServerFormUi() {
++        return this.serverFormUi;
++    }
++
+     public ScoreboardUiDefinitions getScoreboardUi() {
+         return this.scoreboardUi;
+     }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeFormMessageTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeFormMessageTest.java
+new file mode 100644
+index 000000000..29e1c7578
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeFormMessageTest.java
+@@ -0,0 +1,51 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import io.netty.buffer.Unpooled;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeFormMessageTest {
++
++    @Test
++    void retainsUnsignedFormIdentityAndUnicodeSceneWithoutTrailingBytes() {
++        final var buffer = Unpooled.buffer();
++        try {
++            final var message = new NativeFormMessage(-1, "{\"caption\":\"é 😀 §a\"}");
++            NativeFormMessage.TYPE.write(buffer, message);
++            assertEquals(message, NativeFormMessage.TYPE.read(buffer));
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void rejectsUnsupportedProtocolTruncationAndOversizedUnicodePayloads() {
++        final var buffer = Unpooled.buffer();
++        try {
++            NativeFormMessage.TYPE.write(buffer, new NativeFormMessage(7, "{}"));
++            final byte[] bytes = new byte[buffer.readableBytes()];
++            buffer.getBytes(0, bytes);
++            buffer.setByte(0, 2);
++            assertThrows(IllegalArgumentException.class, () -> NativeFormMessage.TYPE.read(buffer));
++            buffer.clear().writeBytes(bytes).setByte(1, 0);
++            assertThrows(IllegalArgumentException.class, () -> NativeFormMessage.TYPE.read(buffer));
++            buffer.clear().writeBytes(bytes).writeByte(0);
++            assertThrows(IllegalArgumentException.class, () -> NativeFormMessage.TYPE.read(buffer));
++            buffer.clear().writeBytes(bytes).writerIndex(bytes.length - 1);
++            assertThrows(IllegalArgumentException.class, () -> NativeFormMessage.TYPE.read(buffer));
++            buffer.clear();
++            assertThrows(IllegalArgumentException.class, () -> NativeFormMessage.TYPE.write(buffer,
++                    new NativeFormMessage(1, "é".repeat(NativeFormMessage.MAX_PAYLOAD_BYTES / 2 + 1))));
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
+new file mode 100644
+index 000000000..2e57d4081
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
+@@ -0,0 +1,179 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import com.viaversion.viaversion.libs.gson.*;
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.HashMap;
++import java.util.Map;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class ServerFormUiTest {
++
++    private static final String UI = """
++            {"namespace":"server_form",
++             "third_party_server_screen":{"$screen_content":"server_form.main_screen_content"},
++             "main_screen_content":{"type":"grid","grid_dimensions":[2,2],
++               "factory":{"control_name":"server_form.cell"}},
++             "cell":{"type":"panel","$pressed_button_name":"button.form_button_click",
++               "bindings":[{"binding_name":"(not ((#form_button_text - 'tile:') = #form_button_text))","binding_name_override":"#visible"}],
++               "controls":[{"action@server_form.base_button":{"$label":"(#form_button_text - 'tile:')"}}]},
++             "base_button":{"type":"button","size":[80,40],"$label|default":"unbound",
++               "controls":[{"caption":{"type":"label","text":"$label","size":["100%",20]}}]}}
++            """;
++
++    private static Map<String, byte[]> definitions(final String content) {
++        return Map.of("ui/server_form.json", content.getBytes(StandardCharsets.UTF_8));
++    }
++
++    private static JsonObject form(final String... text) {
++        final JsonObject form = new JsonObject();
++        form.addProperty("type", "form");
++        form.addProperty("title", "Example");
++        form.addProperty("content", "");
++        final JsonArray buttons = new JsonArray();
++        for (final String value : text) {
++            final JsonObject button = new JsonObject();
++            button.addProperty("text", value);
++            buttons.add(button);
++        }
++        form.add("buttons", buttons);
++        return form;
++    }
++
++    @Test
++    void factoriesPreserveOriginalIndicesAcrossHiddenRowsAndApplyInheritedVariables() {
++        final var scene = new ServerFormUi(List.of(definitions(UI))).resolve(form("tile:One", "unused", "tile:Three"));
++        assertNotNull(scene);
++        final var cells = scene.getAsJsonObject("root").getAsJsonArray("children");
++        assertEquals(3, cells.size());
++        assertFalse(cells.get(1).getAsJsonObject().get("visible").getAsBoolean());
++        final var first = cells.get(0).getAsJsonObject().getAsJsonArray("children").get(0).getAsJsonObject();
++        final var third = cells.get(2).getAsJsonObject().getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals(0, first.get("action").getAsInt());
++        assertEquals(2, third.get("action").getAsInt());
++        assertEquals("One", first.getAsJsonArray("children").get(0).getAsJsonObject().get("text").getAsString());
++        assertEquals(80, first.getAsJsonArray("size").get(0).getAsInt());
++        assertEquals(3, scene.getAsJsonObject("fallback").getAsJsonArray("buttons").size());
++    }
++
++    @Test
++    void packPriorityReplacesTheNamedControlWithoutChangingItsActions() {
++        final String upper = """
++                {"namespace":"server_form","base_button":{"type":"button","size":[96,32],
++                  "controls":[{"caption":{"type":"label","text":"$label"}}]}}
++                """;
++        final var ui = new ServerFormUi(List.of(definitions(UI), definitions(upper)));
++        final var root = ui.resolve(form("tile:One")).getAsJsonObject("root");
++        final var button = root.getAsJsonArray("children").get(0).getAsJsonObject().getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals(96, button.getAsJsonArray("size").get(0).getAsInt());
++        assertEquals(0, button.get("action").getAsInt());
++    }
++
++    @Test
++    void cyclesMissingBasesAndOversizedCollectionsUseOrdinaryFormFallback() {
++        final var recursive = new ServerFormUi(List.of(definitions(UI.replace("server_form.cell", "server_form.main_screen_content"))));
++        assertNull(recursive.resolve(form("tile:One")));
++        final var missing = new ServerFormUi(List.of(definitions(UI.replace("action@server_form.base_button", "action@missing.base"))));
++        assertNull(missing.resolve(form("tile:One")));
++        final String[] many = new String[ServerFormUi.MAX_BUTTONS + 1];
++        java.util.Arrays.fill(many, "tile:One");
++        assertNull(new ServerFormUi(List.of(definitions(UI))).resolve(form(many)));
++        assertNull(new ServerFormUi(List.of(definitions(UI))).resolve(form("unused")));
++    }
++
++    @Test
++    void javaPresentationUsesResolvedCaptionsAndRetainsSparseResponseIndices() {
++        final var scene = new ServerFormUi(List.of(definitions(UI))).resolve(form("tile:One", "unused", "tile:Three"));
++        final var presentation = ServerFormUi.presentation(scene);
++        assertEquals(Map.of(0, "One", 2, "Three"), presentation.buttons());
++        assertThrows(UnsupportedOperationException.class, () -> presentation.buttons().put(1, "hidden"));
++        final String ignored = UI.replace("\"bindings\":[", "\"ignored\":true,\"bindings\":[");
++        assertNull(new ServerFormUi(List.of(definitions(ignored))).resolve(form("tile:One")));
++    }
++
++    @Test
++    void exactEnclosingValuesBeatLocalDefaultsIncludingZeroAndFalse() {
++        final String defaults = UI.replace("\"$label\":\"(#form_button_text - 'tile:')\"", "\"$label\":0")
++                .replace("\"$label|default\":\"unbound\"", "\"$label|default\":17");
++        final var scene = new ServerFormUi(List.of(definitions(defaults))).resolve(form("tile:One"));
++        assertEquals("0", ServerFormUi.presentation(scene).buttons().get(0));
++        final var boolScene = new ServerFormUi(List.of(definitions(defaults.replace("\"$label\":0", "\"$label\":false")))).resolve(form("tile:One"));
++        assertEquals("false", ServerFormUi.presentation(boolScene).buttons().get(0));
++        final var fallback = new ServerFormUi(List.of(definitions(UI.replace("\"$pressed_button_name\":", "\"$pressed_button_name|default\":")))).resolve(form("tile:One"));
++        assertEquals(0, fallback.getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject()
++                .getAsJsonArray("children").get(0).getAsJsonObject().get("action").getAsInt());
++    }
++
++    @Test
++    void missingNativeTemplatesOmitOnlyTheirChildAndKeepMappedToggleResponses() {
++        final String mapped = UI.replace("\"type\":\"button\"", "\"type\":\"toggle\",\"button_mappings\":[{\"to_button_id\":\"button.form_button_click\"}]")
++                .replace("\"$pressed_button_name\":\"button.form_button_click\",", "")
++                .replace("\"controls\":[{\"caption\"", "\"controls\":[{\"unused@missing.base\":{}},{\"caption\"");
++        final var scene = new ServerFormUi(List.of(definitions(mapped))).resolve(form("tile:One"));
++        assertNotNull(scene);
++        assertEquals(Map.of(0, "One"), ServerFormUi.presentation(scene).buttons());
++        assertEquals("missing.base", scene.getAsJsonArray("missing_templates").get(0).getAsString());
++    }
++
++    @Test
++    void bindingsOverrideAuthoredVisibilityRatherThanPermanentlyHidingTheControl() {
++        final String initiallyHidden = UI.replace("\"cell\":{\"type\":\"panel\"", "\"cell\":{\"type\":\"panel\",\"visible\":false");
++        final var scene = new ServerFormUi(List.of(definitions(initiallyHidden))).resolve(form("tile:One"));
++        assertEquals(Map.of(0, "One"), ServerFormUi.presentation(scene).buttons());
++    }
++
++    @Test
++    void collectionBindingsReadEngineDataAfterPropertyBagDefaultsAndResolveAnimationVariables() {
++        final String bound = UI.replace("\"bindings\":[", "\"property_bag\":{\"#form_button_text\":\"\"},\"bindings\":[{\"binding_type\":\"collection\",\"binding_name\":\"#form_button_text\"},")
++                .replace("\"base_button\":{", "\"fade\":{\"anim_type\":\"alpha\",\"from\":0,\"to\":1,\"duration\":\"$duration\"},\"base_button\":{\"$duration|default\":0.16,\"anims\":[\"@server_form.fade\"],");
++        final var scene = new ServerFormUi(List.of(definitions(bound))).resolve(form("tile:One"));
++        assertNotNull(scene);
++        assertEquals(Map.of(0, "One"), ServerFormUi.presentation(scene).buttons());
++        final var button = scene.getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject().getAsJsonArray("children").get(0).getAsJsonObject();
++        final var track = button.getAsJsonArray("animation_tracks").get(0).getAsJsonObject();
++        assertEquals(0.16F, track.get("duration").getAsFloat());
++        assertEquals(1, track.get("to").getAsInt());
++    }
++
++    @Test
++    void variableControlCollectionsSelectTheirOwnEngineIndicesAndIgnoreAbsentEntries() {
++        final String indexed = """
++                {"namespace":"server_form","main_screen_content":{"type":"panel",
++                   "$rows":[{"last@server_form.row":{"$index":2}},
++                            {"missing@server_form.row":{"$index":7}},
++                            {"first@server_form.row":{"$index":0}}],"controls":"$rows"},
++                 "row":{"type":"panel","collection_index":"$index","visible":false,
++                   "bindings":[{"binding_type":"view","source_property_name":"(not (#form_button_text = ''))","target_property_name":"#visible"}],
++                   "controls":[{"button":{"type":"button","$pressed_button_name":"button.form_button_click",
++                     "controls":[{"label":{"type":"label","text":"#form_button_text"}}]}}]}}
++                """;
++        final var scene = new ServerFormUi(List.of(definitions(indexed))).resolve(form("First", "Unused", "Last"));
++        assertNotNull(scene);
++        assertEquals(Map.of(2, "Last", 0, "First"), ServerFormUi.presentation(scene).buttons());
++        final var rows = scene.getAsJsonObject("root").getAsJsonArray("children");
++        assertFalse(rows.get(1).getAsJsonObject().get("visible").getAsBoolean());
++        assertEquals(2, rows.get(0).getAsJsonObject().getAsJsonArray("children").get(0).getAsJsonObject().get("action").getAsInt());
++    }
++
++    @Test
++    void textureMetadataUsesPackPriorityAndMalformedMetadataFallsBackWithoutFailingTheForm() {
++        final String textured = UI.replace("\"type\":\"button\"", "\"type\":\"button\",\"texture\":\"textures/ui/card\"");
++        final Map<String, byte[]> base = new HashMap<>(definitions(textured));
++        base.put("textures/ui/card.png", new byte[]{1, 2, 3});
++        base.put("textures/ui/card.json", "{\"nineslice_size\":2,\"base_size\":[32,32]}".getBytes(StandardCharsets.UTF_8));
++        final Map<String, byte[]> override = Map.of("textures/ui/card.json", "{\"nineslice_size\":4}".getBytes(StandardCharsets.UTF_8));
++        final var ui = new ServerFormUi(List.of(base, override));
++        final var button = ui.resolve(form("tile:One")).getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject().getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals(4, button.get("nineslice_size").getAsInt());
++        assertEquals(ServerFormUi.textureId("textures/ui/card"), button.get("texture").getAsString());
++        assertArrayEquals(new byte[]{1, 2, 3}, ui.textures().get("textures/ui/card.png"));
++        assertNull(new ServerFormUi(List.of(base, Map.of("textures/ui/card.json", "{".getBytes(StandardCharsets.UTF_8)))).resolve(form("tile:One")));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpressionTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpressionTest.java
+new file mode 100644
+index 000000000..6d8c7baa2
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpressionTest.java
+@@ -0,0 +1,56 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
++import java.util.Map;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class UiExpressionTest {
++
++    @Test
++    void nestedCollectionConditionsAndDataSlicingPreservePayloadBoundaries() {
++        final Map<String, JsonElement> values = Map.of("#payload", new JsonPrimitive("``````````Amber`Blue`Green"),
++                "$flag", new JsonPrimitive("Amber"), "#using_gamepad", new JsonPrimitive(false));
++        assertTrue(UiExpression.evaluate("(not ((#payload - $flag) = #payload) and not #using_gamepad)", values).getAsBoolean());
++        assertEquals("Amber", UiExpression.evaluate("(('%.15s' * #payload) - ('%.10s' * #payload))", values).getAsString());
++        assertEquals("BlueGreen", UiExpression.evaluate("(#payload - ('%.16s' * #payload) - '`')", values).getAsString());
++        assertEquals(7, UiExpression.evaluate("(1 + 2 * 3)", values).getAsInt());
++        assertFalse(UiExpression.evaluate("(false and true or false)", values).getAsBoolean());
++    }
++
++    @Test
++    void originalNativeStringOperatorsReparseOutputsAndRetainTypedVariableNumbers() {
++        final var values = Map.<String, JsonElement>of("$floating", new JsonPrimitive(1.5F));
++        assertFalse(UiExpression.evaluate("('123' = 123)", values).getAsBoolean());
++        assertTrue(UiExpression.evaluate("(true = 1)", values).getAsBoolean());
++        assertTrue(UiExpression.evaluate("($missing = '')", values).getAsBoolean());
++        assertEquals(123, UiExpression.evaluate("('00123' - '`')", values).getAsInt());
++        assertEquals(123, UiExpression.evaluate("(1 * ('`123`' - '`'))", values).getAsInt());
++        assertEquals(1, UiExpression.evaluate("(1 * '123')", values).getAsInt());
++        assertEquals(1231, UiExpression.evaluate("('123' + 1)", values).getAsInt());
++        assertEquals(123, UiExpression.evaluate("('123x' - 'x')", values).getAsInt());
++        assertEquals(123, UiExpression.evaluate("('%.3s' * '123abc')", values).getAsInt());
++        assertFalse(UiExpression.evaluate("('false' - '')", values).getAsBoolean());
++        assertEquals(1, UiExpression.evaluate("(1.5 + 0.5)", values).getAsInt());
++        assertEquals(0.75F, UiExpression.evaluate("($floating / 2)", values).getAsFloat());
++        assertEquals("é", UiExpression.evaluate("('%.2s' * 'éé')", values).getAsString());
++    }
++
++    @Test
++    void boundsAndSyntaxCannotEscapeTheBindingEvaluator() {
++        assertThrows(IllegalArgumentException.class, () -> UiExpression.evaluate("(".repeat(65) + "1" + ")".repeat(65), Map.of()));
++        assertThrows(IllegalArgumentException.class, () -> UiExpression.evaluate("(1 / 0)", Map.of()));
++        final var large = Map.<String, JsonElement>of("$text", new JsonPrimitive("x".repeat(600_000)));
++        assertThrows(IllegalArgumentException.class, () -> UiExpression.evaluate("($text + $text)", large));
++        assertThrows(IllegalArgumentException.class, () -> UiExpression.evaluate("(1) external", Map.of()));
++        assertThrows(IllegalArgumentException.class, () -> UiExpression.evaluate("'unterminated", Map.of()));
++        assertThrows(IllegalArgumentException.class, () -> UiExpression.evaluate("'" + "x".repeat(8192) + "'", Map.of()));
++    }
++
++}
+-- 
+2.55.0
+

@@ -228,3 +228,33 @@ Script API cannot observe the UI cursor directly; the client components and matc
 Fresh native graphical comparison, broader phase-one selection rules, and creative clone behavior remain required.
 The failed live run also records later authoritative drowning damage and a DeathInfo packet reporting drowning.
 The preceding platform fall remains unexplained. Those later events are separate from the paired cursor result.
+
+## Server-owned menu lifecycle
+
+Core distinguishes physical block containers from server-owned and actor-owned menus.
+Only physical containers close after block removal or excessive distance.
+Missing or pending chunk data leaves the binding unresolved until a complete section supplies the block state.
+A late barrel or shulker binding also updates the native request address.
+Known air positions and actor placeholder positions do not impose a physical lifetime on a server menu.
+Snapshot copies retain the binding, and generic containers use the chest title instead of `container.null`.
+
+An actual CubeCraft desktop trace uses Java 26.3 and Bedrock protocol 2193 with the previous core artifact.
+The observer verifies the loaded core contents and forwards the original traffic unchanged.
+A main-hand `USE_ITEM` for `cubecraft:social_menu` produces native `Use` (1), `Unknown` trigger (0) and `Failure` prediction (0).
+The server opens container 6 after 45 ms, with actor unique ID 51447 and position (-1012, 43, -1).
+The old core sends `CONTAINER_CLOSE` 6 ms later after its invalid-block check, and the server echoes the close 24 ms later.
+This trace establishes that right-click reaches the server and opens the menu.
+It supports the general lifecycle repair without changing item-use flags or adding server-specific rules.
+
+All eight lifecycle regression cases pass:
+
+- Known air retains contents and ignores physical distance. An actor menu ignores a misleading chest placeholder.
+- A physical chest still closes after block removal or excessive distance. Snapshot copies retain its physical binding.
+- Missing and pending chunks defer binding. A later air update resolves a server menu without closing it.
+- Late barrel and shulker updates produce the correct pickup request addresses. Physical barrel titles and custom names remain intact.
+
+The live trace verifies the old defect. The repaired desktop client remains unverified.
+The capture reaches its 512-packet limit during repeated menu opens and closes.
+Cleanup removes both observer handlers, preserves the original pipeline and keeps the connection active.
+No left-click `ATTACK` or `MODAL_FORM_REQUEST` appears in this capture, so that comparison and raw form validation remain pending.
+Raw traffic, server assets and client data remain private.

@@ -9,16 +9,23 @@ import { getTarget, getTargets, listArtifacts, root } from "./model.ts";
 import { command } from "./process.ts";
 import { sync } from "./stack.ts";
 import { prepareViaFabricPlus } from "./viafabricplus.ts";
+import { verifyBuiltinUi } from "./bedrock-ui.ts";
 
 interface Coordinates { group: string; artifact: string; version: string }
 
 const localRepo = join(root, ".stackanvil", "maven");
 
 async function builtinAssetArguments(id: string): Promise<string[]> {
-  if (id !== "viafabricplus-bedrock") return [];
+  if (id !== "viafabricplus-bedrock" && id !== "viabedrock") return [];
   const { version } = JSON.parse(await readFile(join(root, "bedrock-assets.json"), "utf8")) as { version: string };
   if (!/^\d+\.\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid bundled Bedrock asset version");
   const directory = join(root, "assets", "bedrock", version);
+  if (id === "viabedrock") {
+    const bundle = join(directory, "assets", "viabedrock", "builtin_ui.zip");
+    if (!existsSync(bundle)) return [];
+    const path = await verifyBuiltinUi(bundle, version);
+    return [`-PbedrockBuiltinUi=${path}`];
+  }
   if (!existsSync(join(directory, "assets", "viafabricplus-bedrock", "builtin", "manifest.json"))) {
     throw new Error(`Bundled Bedrock assets are missing for ${version}`);
   }

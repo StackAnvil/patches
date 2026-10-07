@@ -9,7 +9,7 @@ const fileLimit = 32 * 1024 * 1024;
 const totalLimit = 256 * 1024 * 1024;
 const libraryDirectories = new Set([
   "models", "animations", "animation_controllers", "render_controllers",
-  "entity", "sounds", "particles", "texts", "textures",
+  "entity", "sounds", "particles", "texts", "textures", "ui",
 ]);
 
 function validPath(name: string) {

@@ -1,0 +1,2118 @@
+From b6a3fb1a4f2dd1aa74bd64c1377b7b0586962e4f Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 18:45:47 +0200
+Subject: [PATCH] feat(ui): render authored Bedrock server forms
+
+Render the core-resolved resource-pack form scene through a negotiated
+client payload, preserving the original form ID and button indices. Use
+accepted pack textures and bundled licensed UI definitions without
+starting another asset download when a form opens.
+
+Keep authored control hierarchy, anchors, content dimensions, visibility,
+image borders and alpha tracks. Use Java focus, narration and pointer
+handling for responses and bounded horizontal or vertical scrolling.
+Fall back to the original ordinary form when a visible control, resource
+or dimension cannot be rendered, rather than opening an inert menu.
+
+The layout solver and polynomial animation easing remain authored-data
+implementations pending full native consumer verification. Keep native
+font metrics, asymmetric nine-slice side order, size/UV/color animations
+and named next-animation chains as explicit parity boundaries.
+---
+ .../bedrock/ViaFabricPlusBedrock.java         |   2 +
+ .../appearance/BedrockResourceLibrary.java    |  11 +-
+ ...FabricPlusBuiltinResourcePackProvider.java |   2 +-
+ .../form/BedrockFallbackFormScreen.java       | 119 +++++
+ .../screen/form/BedrockFormAnimations.java    |  88 ++++
+ .../screen/form/BedrockFormImages.java        |  97 ++++
+ .../screen/form/BedrockFormLayout.java        | 412 +++++++++++++++++
+ .../screen/form/BedrockFormPresentation.java  |  55 +++
+ .../bedrock/screen/form/BedrockFormScene.java |  97 ++++
+ .../screen/form/BedrockFormScroll.java        |  69 +++
+ .../bedrock/screen/form/BedrockFormText.java  |  20 +
+ .../screen/form/BedrockNativeFormScreen.java  | 437 ++++++++++++++++++
+ .../screen/form/BedrockNativeForms.java       |  59 +++
+ .../screen/form/NativeFormPayload.java        |  24 +
+ ...icPlusBuiltinResourcePackProviderTest.java |   4 +
+ .../screen/form/BedrockFormLayoutTest.java    | 429 +++++++++++++++++
+ 16 files changed, 1920 insertions(+), 5 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFallbackFormScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormAnimations.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImages.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayout.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormPresentation.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormScene.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormScroll.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormText.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/NativeFormPayload.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayoutTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index 4a72955..d06e6d8 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -76,6 +76,7 @@ import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
+ import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusEmoteProvider;
+ import org.apache.logging.log4j.LogManager;
+ import org.apache.logging.log4j.Logger;
++import com.viaversion.viafabricplus.bedrock.screen.form.BedrockNativeForms;
+ 
+ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+ 
+@@ -93,6 +94,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+ 
+     @Override
+     public void onPreSettingsLoading() {
++        BedrockNativeForms.register();
+         PayloadTypeRegistry.clientboundPlay().register(NativeSkinPayload.TYPE, NativeSkinPayload.CODEC);
+         // Capture the listener identity at INIT. Fabric Context.player() returns the current client player.
+         ClientPlayConnectionEvents.INIT.register((listener, client) ->
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
+index 5bfa852..9bc76e9 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
+@@ -156,21 +156,24 @@ final class BedrockResourceLibrary {
+         return this.packs.stream().map(Pack::name).toList();
+     }
+ 
+-    /** Image-only layers in native order, without replacing the core's vanilla definitions. */
++    /** Image and UI layers in native order, without replacing the core's vanilla definitions. */
+     List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> imagePacks() {
+         final List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> result = new ArrayList<>();
+         for (final Pack pack : this.packs) {
+             final var content = new net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent();
+             for (final var entry : pack.files.entrySet()) {
+                 final String path = entry.getKey();
+-                if (path.startsWith("textures/")
+-                        && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")))
++                if (path.startsWith("ui/") && path.endsWith(".json")
++                        || path.startsWith("textures/")
++                        && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")
++                            || path.endsWith(".json") && java.util.stream.Stream.of("png", "jpg", "tga")
++                                .anyMatch(extension -> pack.files.containsKey(path.substring(0, path.length() - 4) + extension))))
+                     content.put(path, entry.getValue().clone());
+             }
+             if (content.size() == 0) continue;
+             final JsonObject manifest = new JsonObject(), header = new JsonObject();
+             manifest.addProperty("format_version", 2);
+-            header.addProperty("name", "Licensed Bedrock images: " + pack.name);
++            header.addProperty("name", "Licensed Bedrock visual resources: " + pack.name);
+             header.addProperty("uuid", java.util.UUID.nameUUIDFromBytes(
+                     ("viafabricplus-bedrock/builtin-images/" + pack.name).getBytes(StandardCharsets.UTF_8)).toString());
+             final JsonArray version = new JsonArray();
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
+index b9f3f02..f9c56f5 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
+@@ -12,7 +12,7 @@ import net.raphimc.viabedrock.protocol.provider.BuiltinResourcePackProvider;
+ import java.io.IOException;
+ import java.util.List;
+ 
+-/** Supplies bundled native images on ViaBedrock's resource-pack worker. */
++/** Supplies bundled native images and UI definitions on ViaBedrock's resource-pack worker. */
+ public final class ViaFabricPlusBuiltinResourcePackProvider extends BuiltinResourcePackProvider {
+     private final LibraryLoader library;
+ 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFallbackFormScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFallbackFormScreen.java
+new file mode 100644
+index 0000000..c96fd3a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFallbackFormScreen.java
+@@ -0,0 +1,119 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import java.util.ArrayList;
++import java.util.List;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.components.Button;
++import net.minecraft.client.gui.screens.Screen;
++import net.minecraft.client.input.KeyEvent;
++import net.minecraft.client.input.MouseButtonEvent;
++import net.minecraft.network.Connection;
++import net.minecraft.network.chat.Component;
++
++/** Keeps the original form usable when an authored control or asset cannot be rendered. */
++final class BedrockFallbackFormScreen extends Screen {
++    private final Connection owner;
++    private final int formId;
++    private final BedrockFormScene.Fallback form;
++    private final Component content;
++    private final List<Button> buttons = new ArrayList<>();
++    private int scroll, contentHeight, panelWidth;
++    private boolean responded;
++
++    BedrockFallbackFormScreen(final Connection owner, final int formId, final BedrockFormScene.Fallback form) {
++        super(BedrockFormText.component(form.title()));
++        this.owner = owner;
++        this.formId = formId;
++        this.form = form;
++        this.content = BedrockFormText.component(form.content());
++    }
++
++    @Override
++    protected void init() {
++        this.buttons.clear();
++        this.panelWidth = Math.max(40, Math.min(360, this.width - 32));
++        this.contentHeight = this.font.split(this.content, this.panelWidth).size() * this.font.lineHeight;
++        for (int i = 0; i < this.form.buttons().size(); i++) {
++            final int index = i;
++            this.buttons.add(this.addRenderableWidget(Button.builder(BedrockFormText.component(this.form.buttons().get(i)),
++                _ -> this.respond(index)).bounds((this.width - this.panelWidth) / 2, 0, this.panelWidth, 20).build()));
++        }
++        this.position();
++    }
++
++    private int maximumScroll() {
++        return Math.max(0, this.contentHeight + 10 + this.buttons.size() * 24 - Math.max(1, this.height - 60));
++    }
++
++    private void position() {
++        this.scroll = Math.clamp(this.scroll, 0, this.maximumScroll());
++        for (int i = 0; i < this.buttons.size(); i++) {
++            final Button button = this.buttons.get(i);
++            button.setY(36 + this.contentHeight + i * 24 - this.scroll);
++        }
++    }
++
++    @Override
++    public void extractRenderState(final GuiGraphicsExtractor graphics, final int x, final int y, final float delta) {
++        this.extractTransparentBackground(graphics);
++        graphics.text(this.font, this.title, (this.width - this.font.width(this.title)) / 2, 12, 0xFFFFFFFF);
++        graphics.enableScissor(0, 30, this.width, this.height - 24);
++        try {
++            graphics.textWithWordWrap(this.font, this.content, (this.width - this.panelWidth) / 2,
++                30 - this.scroll, this.panelWidth, 0xFFFFFFFF, false);
++            super.extractRenderState(graphics, x, y, delta);
++        } finally {
++            graphics.disableScissor();
++        }
++    }
++
++    @Override
++    public boolean mouseScrolled(final double x, final double y, final double horizontal, final double vertical) {
++        this.scroll -= (int) (vertical * 18);
++        this.position();
++        return true;
++    }
++
++    @Override
++    public boolean keyPressed(final KeyEvent event) {
++        final boolean result = super.keyPressed(event);
++        if (this.getFocused() instanceof Button button) {
++            if (button.getY() < 30) this.scroll += button.getY() - 30;
++            else if (button.getBottom() > this.height - 24) this.scroll += button.getBottom() - (this.height - 24);
++            this.position();
++        }
++        return result;
++    }
++
++    @Override
++    public boolean mouseClicked(final MouseButtonEvent event, final boolean doubleClick) {
++        return event.y() >= 30 && event.y() < this.height - 24 && super.mouseClicked(event, doubleClick);
++    }
++
++    private void respond(final int action) {
++        if (this.responded) return;
++        this.responded = true;
++        BedrockNativeForms.respond(this.owner, this.formId, action);
++        this.minecraft.setScreenAndShow(null);
++    }
++
++    @Override
++    public void onClose() {
++        this.respond(-1);
++    }
++
++    @Override
++    public boolean isPauseScreen() {
++        return false;
++    }
++
++    @Override
++    public void tick() {
++        if (!BedrockNativeForms.current(this.owner)) this.minecraft.setScreenAndShow(null);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormAnimations.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormAnimations.java
+new file mode 100644
+index 0000000..c13e1a7
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormAnimations.java
+@@ -0,0 +1,88 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.google.gson.JsonObject;
++import java.util.ArrayList;
++import java.util.IdentityHashMap;
++import java.util.List;
++import java.util.Map;
++
++/** Plays resolved authored alpha tracks, restarting a visual branch when it becomes active again. */
++final class BedrockFormAnimations {
++    private final Map<BedrockFormScene.Node, Entry> entries = new IdentityHashMap<>();
++    private long frame;
++
++    void beginFrame() { this.frame++; }
++
++    BedrockFormPresentation.Opacity opacity(final BedrockFormScene.Node node, final long now) {
++        final Entry entry = this.entries.computeIfAbsent(node, value -> new Entry(tracks(value)));
++        final float base = Math.clamp(node.number("alpha", 1), 0, 1);
++        if (entry.tracks.isEmpty()) return new BedrockFormPresentation.Opacity(base, base);
++        if (entry.lastFrame != this.frame && entry.lastFrame != this.frame - 1) entry.started = now;
++        entry.lastFrame = this.frame;
++        float current = base, potential = base;
++        for (final Track track : entry.tracks) {
++            current = track.value((now - entry.started) / 1_000_000_000D);
++            potential = Math.max(track.from, track.to);
++        }
++        return new BedrockFormPresentation.Opacity(Math.clamp(current, 0, 1), Math.clamp(potential, 0, 1));
++    }
++
++    private static List<Track> tracks(final BedrockFormScene.Node node) {
++        final var values = node.properties().getAsJsonArray("animation_tracks");
++        if (values == null) return List.of();
++        final List<Track> tracks = new ArrayList<>();
++        for (final var value : values) {
++            final JsonObject track = value.getAsJsonObject();
++            if (!BedrockFormScene.string(track, "anim_type", "").equals("alpha")) continue;
++            tracks.add(new Track(number(track, "from", 1), number(track, "to", 1),
++                Math.clamp(number(track, "duration", 0), 0, 3600),
++                Math.clamp(number(track, "delay", number(track, "start_delay", 0)), 0, 3600), BedrockFormScene.string(track, "easing", "linear")));
++        }
++        return List.copyOf(tracks);
++    }
++
++    private static float number(final JsonObject value, final String key, final float fallback) {
++        if (!value.has(key)) return fallback;
++        final float number = value.get(key).getAsFloat();
++        if (!Float.isFinite(number)) throw new IllegalArgumentException("Non-finite native form animation");
++        return number;
++    }
++
++    private static final class Entry {
++        final List<Track> tracks;
++        long started;
++        long lastFrame = Long.MIN_VALUE;
++        Entry(final List<Track> tracks) { this.tracks = tracks; }
++    }
++
++    record Track(float from, float to, float duration, float delay, String easing) {
++        float value(final double elapsed) {
++            final float progress = duration > 0 ? (float) Math.clamp((elapsed - delay) / duration, 0, 1)
++                : elapsed < delay ? 0 : 1;
++            return this.from + (this.to - this.from) * ease(this.easing, progress);
++        }
++    }
++
++    private static float ease(final String easing, final float progress) {
++        if (easing.equals("linear")) return progress;
++        final int power = easing.endsWith("quad") ? 2 : easing.endsWith("cubic") ? 3
++            : easing.endsWith("quart") ? 4 : easing.endsWith("quint") ? 5 : 0;
++        if (power == 0) throw new IllegalArgumentException("Unsupported native form animation easing");
++        if (easing.startsWith("in_out_")) return progress < .5F ? power(2 * progress, power) / 2
++            : 1 - power(2 * (1 - progress), power) / 2;
++        if (easing.startsWith("out_")) return 1 - power(1 - progress, power);
++        if (easing.startsWith("in_")) return power(progress, power);
++        throw new IllegalArgumentException("Unsupported native form animation easing");
++    }
++
++    private static float power(final float value, final int exponent) {
++        float result = 1;
++        for (int i = 0; i < exponent; i++) result *= value;
++        return result;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImages.java
+new file mode 100644
+index 0000000..6cf1689
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImages.java
+@@ -0,0 +1,97 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.mojang.blaze3d.platform.NativeImage;
++import java.io.IOException;
++import java.util.HashMap;
++import java.util.Map;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.renderer.RenderPipelines;
++import net.minecraft.resources.Identifier;
++
++/** Uses accepted resource-pack textures; opening a form never starts another asset download. */
++final class BedrockFormImages {
++    private final Map<Identifier, Image> images = new HashMap<>();
++
++    Image image(final String texture) {
++        final Identifier id = Identifier.tryParse(texture);
++        if (id == null || !id.getNamespace().equals("viabedrock") || !id.getPath().startsWith("textures/"))
++            throw new IllegalArgumentException("Invalid native form texture");
++        final var resource = Minecraft.getInstance().getResourceManager().getResource(id)
++            .orElseThrow(() -> new IllegalArgumentException("Missing native form texture"));
++        final Image cached = this.images.get(id);
++        if (cached != null && cached.source == resource.source()) return cached;
++        if (!this.images.containsKey(id) && this.images.size() >= 256) throw new IllegalArgumentException("Too many native form textures");
++        try (final var input = resource.open(); final NativeImage pixels = NativeImage.read(input)) {
++            if (pixels.getWidth() > 4096 || pixels.getHeight() > 4096)
++                throw new IllegalArgumentException("Native form texture exceeds size limits");
++            final Image image = new Image(id, pixels.getWidth(), pixels.getHeight(), resource.source());
++            this.images.put(id, image);
++            return image;
++        } catch (final IOException error) {
++            throw new IllegalArgumentException("Could not read native form texture", error);
++        }
++    }
++
++    void draw(final GuiGraphicsExtractor graphics, final BedrockFormLayout.Box box, final int color) {
++        final BedrockFormScene.Node node = box.node();
++        final Image image = this.image(node.string("texture", ""));
++        float width = box.bounds().width(), height = box.bounds().height();
++        final float u = BedrockFormLayout.vector(node, "uv", 0, 0), v = BedrockFormLayout.vector(node, "uv", 1, 0);
++        final float sourceWidth = BedrockFormLayout.vector(node, "uv_size", 0, image.width);
++        final float sourceHeight = BedrockFormLayout.vector(node, "uv_size", 1, image.height);
++        if (sourceWidth <= 0 || sourceHeight <= 0) return;
++        if (node.flag("keep_ratio", false)) {
++            final float scale = Math.min(width / sourceWidth, height / sourceHeight);
++            width = sourceWidth * scale;
++            height = sourceHeight * scale;
++        }
++        final int x = Math.round(box.bounds().x() + (box.bounds().width() - width) / 2);
++        final int y = Math.round(box.bounds().y() + (box.bounds().height() - height) / 2);
++        final String nineKey = node.properties().has("nine_slice") ? "nine_slice" : "nineslice_size";
++        final var slice = node.properties().get(nineKey);
++        if (slice == null) {
++            blit(graphics, image, x, y, Math.round(width), Math.round(height), u, v,
++                Math.round(sourceWidth), Math.round(sourceHeight), color);
++            return;
++        }
++        final float border;
++        if (slice.isJsonArray()) {
++            final var sides = slice.getAsJsonArray();
++            border = sides.size() == 4 ? sides.get(0).getAsFloat() : 0;
++            if (sides.size() == 4) for (int side = 1; side < 4; side++)
++                if (sides.get(side).getAsFloat() != border)
++                    throw new IllegalArgumentException("Unsupported asymmetric native form nine-slice");
++        } else border = slice.isJsonPrimitive() && slice.getAsJsonPrimitive().isNumber() ? slice.getAsFloat() : 0;
++        final float borderX = border, borderY = border;
++        if (!Float.isFinite(borderX) || !Float.isFinite(borderY) || borderX < 0 || borderY < 0)
++            throw new IllegalArgumentException("Invalid native form nine-slice");
++        final float sourceBorderX = Math.min(borderX, sourceWidth / 2), sourceBorderY = Math.min(borderY, sourceHeight / 2);
++        final float targetBorderX = Math.min(sourceBorderX, width / 2), targetBorderY = Math.min(sourceBorderY, height / 2);
++        final float[] sx = {0, sourceBorderX, sourceWidth - sourceBorderX, sourceWidth};
++        final float[] sy = {0, sourceBorderY, sourceHeight - sourceBorderY, sourceHeight};
++        final float[] dx = {0, targetBorderX, width - targetBorderX, width};
++        final float[] dy = {0, targetBorderY, height - targetBorderY, height};
++        for (int row = 0; row < 3; row++) for (int column = 0; column < 3; column++) {
++            blit(graphics, image, x + Math.round(dx[column]), y + Math.round(dy[row]),
++                Math.round(dx[column + 1]) - Math.round(dx[column]), Math.round(dy[row + 1]) - Math.round(dy[row]),
++                u + sx[column], v + sy[row], Math.round(sx[column + 1] - sx[column]),
++                Math.round(sy[row + 1] - sy[row]), color);
++        }
++    }
++
++    private static void blit(final GuiGraphicsExtractor graphics, final Image image, final int x, final int y,
++                             final int width, final int height, final float u, final float v,
++                             final int sourceWidth, final int sourceHeight, final int color) {
++        if (width > 0 && height > 0 && sourceWidth > 0 && sourceHeight > 0)
++            graphics.blit(RenderPipelines.GUI_TEXTURED, image.id, x, y, u, v, width, height,
++                sourceWidth, sourceHeight, image.width, image.height, color);
++    }
++
++    record Image(Identifier id, int width, int height, Object source) {}
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayout.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayout.java
+new file mode 100644
+index 0000000..f7ab857
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayout.java
+@@ -0,0 +1,412 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.google.gson.JsonElement;
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.HashMap;
++import java.util.IdentityHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.regex.Pattern;
++
++/** Resolves authored anchors and content dimensions independently of the rendering backend. */
++public final class BedrockFormLayout {
++    private static final Pattern DIMENSION = Pattern.compile("([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))(%sm|%cm|%c|%x|%y|%|px)?");
++    private static final float LIMIT = 16384;
++    private final Metrics metrics;
++    private final Map<BedrockFormScene.Node, Map<Measurement, Size>> measured = new IdentityHashMap<>();
++    private int work;
++
++    public BedrockFormLayout(final Metrics metrics) {
++        this.metrics = metrics;
++    }
++
++    public Box layout(final BedrockFormScene.Node node, final int width, final int height,
++                      final Map<BedrockFormScene.Node, Float> scroll) {
++        this.measured.clear();
++        this.work = 0;
++        final Size size = this.measure(node, width, height);
++        final Rect viewport = new Rect(0, 0, width, height);
++        return this.place(node, viewport, size, 0, viewport, scroll);
++    }
++
++    private Size measure(final BedrockFormScene.Node node, final float parentWidth, final float parentHeight) {
++        return this.measure(node, new Measurement(parentWidth, parentHeight, 0, 0));
++    }
++
++    private Size measure(final BedrockFormScene.Node node, final Measurement environment) {
++        final Map<Measurement, Size> cache = this.measured.computeIfAbsent(node, _ -> new HashMap<>());
++        final Size previous = cache.get(environment);
++        if (previous != null) return previous;
++        if (++this.work > 65536) throw new IllegalArgumentException("Native form layout exceeds work limits");
++        final boolean container = switch (node.type()) {
++            case "screen", "panel", "factory", "collection_panel", "scroll_view", "scroll_track", "scrollbar_box" -> true;
++            default -> false;
++        };
++        final Size intrinsic = container ? new Size(environment.width, environment.height) : this.metrics.intrinsic(node);
++        float width = intrinsic.width, height = intrinsic.height;
++        for (int pass = 0; pass < 3; pass++) {
++            final float previousWidth = width, previousHeight = height;
++            final List<Size> children = this.children(node, width, height);
++            final Size content = this.content(node, children, width, height);
++            final float maximumWidth = children.stream().map(Size::width).max(Float::compare).orElse(0F);
++            final float maximumHeight = children.stream().map(Size::height).max(Float::compare).orElse(0F);
++            final boolean stack = node.type().equals("stack_panel");
++            width = dimension(node, "size", 0, environment, width, height, content.width, maximumWidth, stack ? content.width : intrinsic.width);
++            height = dimension(node, "size", 1, environment, width, height, content.height, maximumHeight, stack ? content.height : intrinsic.height);
++            width = constrain(node, 0, width, environment, width, height, content.width, maximumWidth);
++            height = constrain(node, 1, height, environment, width, height, content.height, maximumHeight);
++            if (width == previousWidth && height == previousHeight) break;
++        }
++        final Size result = new Size(width, height);
++        cache.put(environment, result);
++        return result;
++    }
++
++    private List<Size> children(final BedrockFormScene.Node node, final float width, final float height) {
++        final Grid grid = this.grid(node, width, height);
++        final float availableWidth = node.type().equals("grid") && !grid.rescaled ? width / grid.columns : width;
++        final float availableHeight = node.type().equals("grid") && !grid.rescaled && !contentDimension(node, 1)
++            ? height / grid.rows : height;
++        final List<Size> result = new ArrayList<>();
++        for (final var child : node.children()) result.add(this.measure(child, availableWidth, availableHeight));
++        for (int i = 0; i < result.size(); i++) {
++            final var child = node.children().get(i);
++            if (!siblingDimension(child)) continue;
++            float siblingWidth = 0, siblingHeight = 0;
++            for (int other = 0; other < result.size(); other++) if (other != i) {
++                siblingWidth = Math.max(siblingWidth, result.get(other).width);
++                siblingHeight = Math.max(siblingHeight, result.get(other).height);
++            }
++            result.set(i, this.measure(child, new Measurement(availableWidth, availableHeight, siblingWidth, siblingHeight)));
++        }
++        if (node.type().equals("stack_panel")) {
++            final boolean vertical = !node.string("orientation", "vertical").equals("horizontal");
++            final int axis = vertical ? 1 : 0;
++            float used = 0;
++            int fills = 0;
++            for (int i = 0; i < result.size(); i++) {
++                if (fill(node.children().get(i), axis)) fills++;
++                else used += vertical ? result.get(i).height : result.get(i).width;
++            }
++            if (fills > 0) {
++                final float remainder = Math.max(0, (vertical ? height : width) - used) / fills;
++                for (int i = 0; i < result.size(); i++) if (fill(node.children().get(i), axis))
++                    result.set(i, this.measure(node.children().get(i), vertical ? availableWidth : remainder, vertical ? remainder : availableHeight));
++            }
++        }
++        return result;
++    }
++
++    private static boolean fill(final BedrockFormScene.Node node, final int axis) {
++        final JsonElement size = node.properties().get("size");
++        return size != null && size.isJsonArray() && size.getAsJsonArray().size() == 2
++            && size.getAsJsonArray().get(axis).isJsonPrimitive() && size.getAsJsonArray().get(axis).getAsString().equals("fill");
++    }
++
++    private static boolean siblingDimension(final BedrockFormScene.Node node) {
++        for (final String key : List.of("size", "min_size", "max_size")) {
++            final JsonElement value = node.properties().get(key);
++            if (value != null && value.toString().contains("%sm")) return true;
++        }
++        return false;
++    }
++
++    private Size content(final BedrockFormScene.Node node, final List<Size> children, final float parentWidth, final float parentHeight) {
++        float width = 0, height = 0;
++        final boolean vertical = !node.string("orientation", "vertical").equals("horizontal");
++        if (node.type().equals("grid")) {
++            final Grid grid = this.grid(node, parentWidth, parentHeight);
++            final float[] widths = new float[grid.columns];
++            final float[] heights = new float[grid.rows];
++            for (int i = 0; i < children.size(); i++) {
++                final int column = grid.column(i), row = grid.row(i);
++                widths[column] = Math.max(widths[column], children.get(i).width);
++                heights[row] = Math.max(heights[row], children.get(i).height);
++            }
++            for (final float value : widths) width += value;
++            for (final float value : heights) height += value;
++        } else for (final Size child : children) {
++            if (node.type().equals("stack_panel") && !vertical) width += child.width;
++            else width = Math.max(width, child.width);
++            if (node.type().equals("stack_panel") && vertical) height += child.height;
++            else height = Math.max(height, child.height);
++        }
++        return new Size(width, height);
++    }
++
++    private Box place(final BedrockFormScene.Node node, final Rect parent, final Size size, final float parentLayer,
++                      final Rect parentClip, final Map<BedrockFormScene.Node, Float> scroll) {
++        final float[] from = anchor(node.string("anchor_from", "center"));
++        final float[] to = anchor(node.string("anchor_to", "center"));
++        final float x = parent.x + parent.width * to[0] - size.width * from[0]
++            + offset(node, 0, parent.width, size);
++        final float y = parent.y + parent.height * to[1] - size.height * from[1]
++            + offset(node, 1, parent.height, size);
++        final Rect bounds = new Rect(x, y, size.width, size.height);
++        final Rect clip = node.scroll() || node.flag("clips_children", false) ? parentClip.intersect(bounds) : parentClip;
++        final List<Size> sizes = this.children(node, size.width, size.height);
++        Size content = this.content(node, sizes, size.width, size.height);
++        final String contentName = node.string("scroll_content", "");
++        final boolean horizontalScroll = node.string("scroll_direction", "vertical").equals("horizontal");
++        final float scrollAmount = node.scroll() && contentName.isEmpty()
++            ? Math.clamp(scroll.getOrDefault(node, 0F), 0, Math.max(0,
++                horizontalScroll ? content.width - size.width : content.height - size.height)) : 0;
++        final float scrollX = horizontalScroll ? scrollAmount : 0, scrollY = horizontalScroll ? 0 : scrollAmount;
++        final float layer = parentLayer + node.number("layer", 0);
++        final List<Box> children = new ArrayList<>();
++        final boolean vertical = !node.string("orientation", "vertical").equals("horizontal");
++        final Grid grid = this.grid(node, size.width, size.height);
++        final float cellWidth = size.width / grid.columns;
++        final float cellHeight = contentDimension(node, 1) ? content.height / grid.rows : size.height / grid.rows;
++        float cursor = 0;
++        for (int i = 0; i < node.children().size(); i++) {
++            final BedrockFormScene.Node child = node.children().get(i);
++            final Size childSize = sizes.get(i);
++            final Rect childParent;
++            if (node.type().equals("stack_panel")) {
++                childParent = vertical ? new Rect(x - scrollX, y + cursor - scrollY, size.width, childSize.height)
++                    : new Rect(x + cursor - scrollX, y - scrollY, childSize.width, size.height);
++                cursor += vertical ? childSize.height : childSize.width;
++            } else if (node.type().equals("grid")) {
++                childParent = new Rect(x + grid.column(i) * cellWidth - scrollX, y + grid.row(i) * cellHeight - scrollY, cellWidth, cellHeight);
++            } else childParent = new Rect(x - scrollX, y - scrollY, size.width, size.height);
++            children.add(this.place(child, childParent, childSize, layer, clip, scroll));
++        }
++        Rect viewport = bounds;
++        if (node.scroll() && !contentName.isEmpty()) {
++            final Box contentBox = descendant(children, contentName);
++            final Box viewportBox = descendant(children, node.string("scroll_view_port", ""));
++            if (contentBox != null) {
++                viewport = viewportBox == null ? bounds : viewportBox.bounds;
++                content = new Size(Math.max(contentBox.bounds.width, contentBox.content.width),
++                    Math.max(contentBox.bounds.height, contentBox.content.height));
++                final Box thumb = descendant(children, node.string("scrollbar_box", ""));
++                final boolean horizontal = thumb != null && thumb.node.string("draggable", "vertical").equals("horizontal");
++                final float amount = Math.clamp(scroll.getOrDefault(node, 0F), 0, Math.max(0,
++                    horizontal ? content.width - viewport.width : content.height - viewport.height));
++                final Rect contentClip = clip.intersect(viewport);
++                for (int i = 0; i < children.size(); i++)
++                    children.set(i, scrollContent(children.get(i), contentBox.node, horizontal ? -amount : 0, horizontal ? 0 : -amount, contentClip));
++            }
++        }
++        children.sort(Comparator.comparingDouble(Box::layer));
++        Box result = new Box(node, bounds, clip, content, viewport, layer, List.copyOf(children));
++        if (node.scroll()) {
++            final var model = BedrockFormScroll.model(result, scroll.getOrDefault(node, 0F));
++            if (model != null) result = replace(result, model.originalThumb().node,
++                this.resize(model.originalThumb(), model.thumb(), scroll));
++        }
++        return result;
++    }
++
++    private Box resize(final Box box, final Rect bounds, final Map<BedrockFormScene.Node, Float> scroll) {
++        final List<Size> sizes = this.children(box.node, bounds.width, bounds.height);
++        final List<Box> children = new ArrayList<>();
++        for (int i = 0; i < sizes.size(); i++)
++            children.add(this.place(box.node.children().get(i), bounds, sizes.get(i), box.layer, box.clip, scroll));
++        children.sort(Comparator.comparingDouble(Box::layer));
++        return new Box(box.node, bounds, box.clip, this.content(box.node, sizes, bounds.width, bounds.height),
++            bounds, box.layer, List.copyOf(children));
++    }
++
++    private static Box replace(final Box box, final BedrockFormScene.Node target, final Box replacement) {
++        if (box.node == target) return replacement;
++        return new Box(box.node, box.bounds, box.clip, box.content, box.scrollViewport, box.layer,
++            box.children.stream().map(child -> replace(child, target, replacement)).toList());
++    }
++
++    private static Box descendant(final List<Box> children, final String name) {
++        if (name.isEmpty()) return null;
++        for (final Box child : children) {
++            if (child.node.name().equals(name)) return child;
++            final Box nested = descendant(child.children, name);
++            if (nested != null) return nested;
++        }
++        return null;
++    }
++
++    private static Box scrollContent(final Box box, final BedrockFormScene.Node content, final float x, final float y, final Rect clip) {
++        if (box.node == content) return translated(box, x, y, clip);
++        return new Box(box.node, box.bounds, box.clip, box.content, box.scrollViewport, box.layer,
++            box.children.stream().map(child -> scrollContent(child, content, x, y, clip)).toList());
++    }
++
++    private static Box translated(final Box box, final float x, final float y, final Rect parentClip) {
++        final Rect bounds = new Rect(box.bounds.x + x, box.bounds.y + y, box.bounds.width, box.bounds.height);
++        final Rect clip = box.node.scroll() || box.node.flag("clips_children", false) ? parentClip.intersect(bounds) : parentClip;
++        final Rect viewport = new Rect(box.scrollViewport.x + x, box.scrollViewport.y + y, box.scrollViewport.width, box.scrollViewport.height);
++        return new Box(box.node, bounds, clip, box.content, viewport, box.layer,
++            box.children.stream().map(child -> translated(child, x, y, clip)).toList());
++    }
++
++    private static float constrain(final BedrockFormScene.Node node, final int axis, final float size,
++                                   final Measurement environment, final float width, final float height,
++                                   final float content, final float maximum) {
++        final float minimum = dimension(node, "min_size", axis, environment, width, height, content, maximum, 0);
++        final float declaredUpper = dimension(node, "max_size", axis, environment, width, height, content, maximum, LIMIT);
++        final float upper = declaredUpper == 0 ? LIMIT : declaredUpper;
++        return Math.clamp(size, Math.min(minimum, upper), upper);
++    }
++
++    private static float dimension(final BedrockFormScene.Node node, final String key, final int axis,
++                                   final Measurement environment, final float width, final float height,
++                                   final float content, final float maximum, final float fallback) {
++        final JsonElement pair = node.properties().get(key);
++        if (pair == null || !pair.isJsonArray() || pair.getAsJsonArray().size() != 2) return bounded(fallback);
++        final float parent = axis == 0 ? environment.width : environment.height;
++        final float sibling = axis == 0 ? environment.siblingWidth : environment.siblingHeight;
++        try {
++            return dimension(pair.getAsJsonArray().get(axis), parent, content, maximum, width, height, sibling, fallback);
++        } catch (final IllegalArgumentException error) {
++            throw new IllegalArgumentException("Invalid native form dimension: " + node.name() + "." + key + "[" + axis + "]", error);
++        }
++    }
++
++    static float dimension(final JsonElement value, final float parent, final float content, final float maximum) {
++        return dimension(value, parent, content, maximum, parent, parent, maximum, 0);
++    }
++
++    private static float dimension(final JsonElement value, final float parent, final float content, final float maximum,
++                                   final float width, final float height, final float sibling, final float fallback) {
++        return bounded(signedDimension(value, parent, content, maximum, width, height, sibling, fallback));
++    }
++
++    private static float signedDimension(final JsonElement value, final float parent, final float content, final float maximum,
++                                         final float width, final float height, final float sibling, final float fallback) {
++        if (!value.isJsonPrimitive()) throw new IllegalArgumentException("Unsupported native form dimension");
++        if (value.getAsJsonPrimitive().isNumber()) return signed(value.getAsFloat());
++        final String expression = value.getAsString().replace(" ", "");
++        if (expression.equals("default")) return bounded(fallback);
++        if (expression.equals("fill")) return bounded(parent);
++        final var matcher = DIMENSION.matcher(expression);
++        float result = 0;
++        int end = 0;
++        while (matcher.find()) {
++            if (matcher.start() != end || end != 0 && expression.charAt(end) != '+' && expression.charAt(end) != '-')
++                throw new IllegalArgumentException("Unsupported native form dimension expression");
++            final float amount = Float.parseFloat(matcher.group(1));
++            final String unit = matcher.group(2);
++            result += amount * switch (unit == null ? "px" : unit) {
++                case "%" -> parent / 100;
++                case "%c" -> content / 100;
++                case "%cm" -> maximum / 100;
++                case "%x" -> width / 100;
++                case "%y" -> height / 100;
++                case "%sm" -> sibling / 100;
++                default -> 1;
++            };
++            end = matcher.end();
++        }
++        if (end == 0 || end != expression.length()) throw new IllegalArgumentException("Unsupported native form dimension expression");
++        return signed(result);
++    }
++
++    private static float offset(final BedrockFormScene.Node node, final int axis, final float parent, final Size size) {
++        final JsonElement pair = node.properties().get("offset");
++        if (pair == null || !pair.isJsonArray() || pair.getAsJsonArray().size() != 2) return 0;
++        return signedDimension(pair.getAsJsonArray().get(axis), parent, 0, 0, size.width, size.height, 0, 0);
++    }
++
++    private static boolean contentDimension(final BedrockFormScene.Node node, final int axis) {
++        final JsonElement size = node.properties().get("size");
++        return size != null && size.isJsonArray() && size.getAsJsonArray().size() == 2
++            && size.getAsJsonArray().get(axis).isJsonPrimitive() && size.getAsJsonArray().get(axis).getAsString().contains("%c");
++    }
++
++    static float vector(final BedrockFormScene.Node node, final String key, final int axis, final float fallback) {
++        final JsonElement value = node.properties().get(key);
++        if (value == null || !value.isJsonArray() || value.getAsJsonArray().size() <= axis) return fallback;
++        final float result = value.getAsJsonArray().get(axis).getAsFloat();
++        if (!Float.isFinite(result) || Math.abs(result) > LIMIT) throw new IllegalArgumentException("Invalid native form vector");
++        return result;
++    }
++
++    private static float bounded(final float value) {
++        return Math.max(0, signed(value));
++    }
++
++    private static float signed(final float value) {
++        if (!Float.isFinite(value) || Math.abs(value) > LIMIT) throw new IllegalArgumentException("Native form dimension exceeds layout limits");
++        return value;
++    }
++
++    private Grid grid(final BedrockFormScene.Node node, final float width, final float height) {
++        if (!node.type().equals("grid")) return new Grid(1, 1, true, false);
++        final boolean horizontal = !node.string("grid_fill_direction", "horizontal").equals("vertical");
++        final int count = node.children().size();
++        final boolean explicit = node.properties().has("grid_dimensions");
++        final String rescaling = node.string("grid_rescaling_type", "none");
++        int columns = Math.clamp((int) vector(node, "grid_dimensions", 0, 1), 1, 128);
++        int rows = Math.clamp((int) vector(node, "grid_dimensions", 1, 1), 1, 4096);
++        final boolean rescaled = !explicit && (rescaling.equals("horizontal") || rescaling.equals("vertical"));
++        if (rescaled) {
++            float cellWidth = 0, cellHeight = 0;
++            for (final var child : node.children()) {
++                final Size size = this.measure(child, width, height);
++                cellWidth = Math.max(cellWidth, size.width);
++                cellHeight = Math.max(cellHeight, size.height);
++            }
++            if (rescaling.equals("horizontal")) {
++                columns = cellWidth > 0 ? Math.clamp((int) Math.floor(width / cellWidth), 1, 128) : 1;
++                rows = Math.max(1, (count + columns - 1) / columns);
++            } else {
++                rows = cellHeight > 0 ? Math.clamp((int) Math.floor(height / cellHeight), 1, 4096) : 1;
++                columns = Math.max(1, (count + rows - 1) / rows);
++            }
++        }
++        if (horizontal) rows = Math.max(rows, (count + columns - 1) / columns);
++        else columns = Math.max(columns, (count + rows - 1) / rows);
++        return new Grid(columns, rows, horizontal, rescaled);
++    }
++
++    private record Grid(int columns, int rows, boolean horizontal, boolean rescaled) {
++        int column(final int index) { return this.horizontal ? index % this.columns : index / this.rows; }
++        int row(final int index) { return this.horizontal ? index / this.columns : index % this.rows; }
++    }
++
++    private static float[] anchor(final String name) {
++        return switch (name) {
++            case "top_left" -> new float[]{0, 0};
++            case "top_middle" -> new float[]{.5F, 0};
++            case "top_right" -> new float[]{1, 0};
++            case "left_middle" -> new float[]{0, .5F};
++            case "center" -> new float[]{.5F, .5F};
++            case "right_middle" -> new float[]{1, .5F};
++            case "bottom_left" -> new float[]{0, 1};
++            case "bottom_middle" -> new float[]{.5F, 1};
++            case "bottom_right" -> new float[]{1, 1};
++            default -> throw new IllegalArgumentException("Unsupported native form anchor");
++        };
++    }
++
++    public interface Metrics {
++        Size intrinsic(BedrockFormScene.Node node);
++    }
++
++    private record Measurement(float width, float height, float siblingWidth, float siblingHeight) {}
++
++    public record Size(float width, float height) {}
++    public record Box(BedrockFormScene.Node node, Rect bounds, Rect clip, Size content, Rect scrollViewport, float layer, List<Box> children) {
++        public Rect visibleBounds() {
++            return this.bounds.intersect(this.clip);
++        }
++    }
++
++    public record Rect(float x, float y, float width, float height) {
++        public Rect intersect(final Rect other) {
++            final float left = Math.max(this.x, other.x), top = Math.max(this.y, other.y);
++            return new Rect(left, top, Math.max(0, Math.min(this.x + this.width, other.x + other.width) - left),
++                Math.max(0, Math.min(this.y + this.height, other.y + other.height) - top));
++        }
++
++        public boolean contains(final double x, final double y) {
++            return x >= this.x && y >= this.y && x < this.x + this.width && y < this.y + this.height;
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormPresentation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormPresentation.java
+new file mode 100644
+index 0000000..735c6bc
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormPresentation.java
+@@ -0,0 +1,55 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.function.Predicate;
++import java.util.function.Function;
++
++/** Selects authored visual states without removing hidden controls from layout. */
++final class BedrockFormPresentation {
++    private BedrockFormPresentation() {}
++
++    static List<Draw> draws(final BedrockFormLayout.Box root, final Predicate<BedrockFormLayout.Box> hovered) {
++        return draws(root, hovered, node -> new Opacity(node.number("alpha", 1), node.number("alpha", 1)));
++    }
++
++    static List<Draw> draws(final BedrockFormLayout.Box root, final Predicate<BedrockFormLayout.Box> hovered,
++                           final Function<BedrockFormScene.Node, Opacity> opacity) {
++        final List<Draw> result = new ArrayList<>();
++        collect(root, new Opacity(1, 1), true, hovered, opacity, result);
++        return result;
++    }
++
++    private static void collect(final BedrockFormLayout.Box box, final Opacity inheritedAlpha,
++                                final boolean inheritedEnabled, final Predicate<BedrockFormLayout.Box> hovered,
++                                final Function<BedrockFormScene.Node, Opacity> opacity, final List<Draw> result) {
++        final var node = box.node();
++        if (!node.flag("visible", true) || node.flag("ignored", false)) return;
++        final Opacity local = opacity.apply(node);
++        final Opacity alpha = new Opacity(inheritedAlpha.current * Math.clamp(local.current, 0, 1),
++            inheritedAlpha.potential * Math.clamp(local.potential, 0, 1));
++        if (alpha.potential == 0) return;
++        final boolean enabled = inheritedEnabled && node.flag("enabled", true);
++        result.add(new Draw(box, alpha.current, alpha.potential, enabled));
++        final String normal = node.string("default_control", "");
++        final String hover = node.string("hover_control", normal);
++        final String pressed = node.string("pressed_control", normal);
++        final String locked = node.string("locked_control", normal);
++        final String selected = !enabled ? locked : node.interactive() && hovered.test(box) ? hover : normal;
++        for (final var child : box.children()) {
++            final String name = child.node().name();
++            if (!normal.isEmpty() && (name.equals(normal) || name.equals(hover) || name.equals(pressed) || name.equals(locked))
++                && !name.equals(selected)) continue;
++            collect(child, alpha, enabled, hovered, opacity, result);
++        }
++    }
++
++    record Opacity(float current, float potential) {}
++
++    record Draw(BedrockFormLayout.Box box, float alpha, float potential, boolean enabled) {}
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormScene.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormScene.java
+new file mode 100644
+index 0000000..b29349f
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormScene.java
+@@ -0,0 +1,97 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.google.gson.JsonElement;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Set;
++
++/** A bounded, core-resolved scene. Layout never interprets server response indices. */
++public record BedrockFormScene(Node root, Fallback fallback) {
++    private static final Set<String> TYPES = Set.of("screen", "panel", "label", "image", "button", "toggle",
++        "stack_panel", "grid", "scroll_view", "scrollbar_box", "scroll_track", "collection_panel", "factory");
++
++    public static BedrockFormScene parse(final String json) {
++        final JsonObject scene = JsonParser.parseString(json).getAsJsonObject();
++        if (scene.get("format").getAsBigDecimal().intValueExact() != 1) throw new IllegalArgumentException("Unsupported native form format");
++        final Fallback fallback = fallback(scene);
++        return new BedrockFormScene(node(scene.getAsJsonObject("root"), 0, new int[1], fallback.buttons.size(), true), fallback);
++    }
++
++    public static Fallback fallback(final String json) {
++        return fallback(JsonParser.parseString(json).getAsJsonObject());
++    }
++
++    private static Fallback fallback(final JsonObject scene) {
++        final JsonObject form = scene.getAsJsonObject("fallback");
++        if (form == null) throw new IllegalArgumentException("Missing native form fallback");
++        final List<String> buttons = new ArrayList<>();
++        if (form.has("buttons")) {
++            final var entries = form.getAsJsonArray("buttons");
++            if (entries.size() > 1024) throw new IllegalArgumentException("Too many form buttons");
++            for (final var entry : entries) buttons.add(string(entry.getAsJsonObject(), "text", ""));
++        }
++        return new Fallback(string(form, "title", ""), string(form, "content", ""), List.copyOf(buttons));
++    }
++
++    private static Node node(final JsonObject value, final int depth, final int[] count, final int buttonCount,
++                             final boolean inheritedVisible) {
++        if (depth > 64 || ++count[0] > 8192) throw new IllegalArgumentException("Native form scene exceeds layout limits");
++        final String type = string(value, "type", "panel");
++        final JsonElement visibility = value.get("visible");
++        final boolean visible = inheritedVisible && !(visibility != null && visibility.isJsonPrimitive()
++            && visibility.getAsJsonPrimitive().isBoolean() && !visibility.getAsBoolean());
++        if (visible && !TYPES.contains(type)) throw new IllegalArgumentException("Unsupported native form control: " + type);
++        final int action = value.has("action") ? value.get("action").getAsBigDecimal().intValueExact() : Integer.MIN_VALUE;
++        if (value.has("action") && (action < -1 || action >= buttonCount))
++            throw new IllegalArgumentException("Invalid native form response index");
++        final List<Node> children = new ArrayList<>();
++        if (value.has("children")) for (final JsonElement child : value.getAsJsonArray("children"))
++            children.add(node(child.getAsJsonObject(), depth + 1, count, buttonCount, visible));
++        final JsonObject properties = new JsonObject();
++        value.entrySet().stream().filter(entry -> !entry.getKey().equals("children"))
++            .forEach(entry -> properties.add(entry.getKey(), entry.getValue().deepCopy()));
++        return new Node(string(value, "name", ""), type, properties, List.copyOf(children), action);
++    }
++
++    public static String string(final JsonObject properties, final String key, final String fallback) {
++        final JsonElement value = properties.get(key);
++        return value == null || !value.isJsonPrimitive() ? fallback : value.getAsString();
++    }
++
++    public record Node(String name, String type, JsonObject properties, List<Node> children, int action) {
++        public String string(final String key, final String fallback) {
++            return BedrockFormScene.string(this.properties, key, fallback);
++        }
++
++        public float number(final String key, final float fallback) {
++            final JsonElement value = this.properties.get(key);
++            if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) return fallback;
++            final float result = value.getAsFloat();
++            if (!Float.isFinite(result)) throw new IllegalArgumentException("Non-finite native form property");
++            return result;
++        }
++
++        public boolean flag(final String key, final boolean fallback) {
++            final JsonElement value = this.properties.get(key);
++            return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isBoolean()
++                ? value.getAsBoolean() : fallback;
++        }
++
++        public boolean interactive() {
++            return this.action != Integer.MIN_VALUE;
++        }
++
++        public boolean scroll() {
++            return this.type.equals("scroll_view");
++        }
++    }
++
++    public record Fallback(String title, String content, List<String> buttons) {}
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormScroll.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormScroll.java
+new file mode 100644
+index 0000000..7ce4290
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormScroll.java
+@@ -0,0 +1,69 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++/** Pointer geometry for authored scrollbars. Native layout math remains a separate parity boundary. */
++final class BedrockFormScroll {
++    private BedrockFormScroll() {}
++
++    static boolean horizontal(final BedrockFormLayout.Box view) {
++        final var thumb = descendant(view, view.node().string("scrollbar_box", ""));
++        return thumb != null ? thumb.node().string("draggable", "vertical").equals("horizontal")
++            : view.node().string("scroll_direction", "vertical").equals("horizontal");
++    }
++
++    static float maximum(final BedrockFormLayout.Box view) {
++        return Math.max(0, horizontal(view) ? view.content().width() - view.scrollViewport().width()
++            : view.content().height() - view.scrollViewport().height());
++    }
++
++    static Model model(final BedrockFormLayout.Box view, final float offset) {
++        final var track = descendant(view, view.node().string("scrollbar_track", ""));
++        final var thumb = descendant(view, view.node().string("scrollbar_box", ""));
++        if (track == null || thumb == null) return null;
++        final boolean horizontal = horizontal(view);
++        final float maximum = maximum(view);
++        final float content = horizontal ? view.content().width() : view.content().height();
++        final float viewport = horizontal ? view.scrollViewport().width() : view.scrollViewport().height();
++        final float length = horizontal ? track.bounds().width() : track.bounds().height();
++        final int axis = horizontal ? 0 : 1;
++        final var minimum = thumb.node().properties().getAsJsonArray("min_size");
++        final float minimumLength = minimum != null && minimum.size() == 2
++            ? BedrockFormLayout.dimension(minimum.get(axis), length, 0, 0) : 0;
++        final float extent = Math.clamp(content > 0 ? length * Math.min(1, viewport / content) : length,
++            Math.clamp(minimumLength, 0, length), length);
++        final float position = maximum > 0 ? (length - extent) * Math.clamp(offset, 0, maximum) / maximum : 0;
++        final var bounds = horizontal
++            ? new BedrockFormLayout.Rect(track.bounds().x() + position, thumb.bounds().y(), extent, thumb.bounds().height())
++            : new BedrockFormLayout.Rect(thumb.bounds().x(), track.bounds().y() + position, thumb.bounds().width(), extent);
++        return new Model(thumb, track.bounds(), bounds, track.clip().intersect(thumb.clip()), maximum,
++            Math.clamp(offset, 0, maximum), horizontal);
++    }
++
++    static BedrockFormLayout.Box descendant(final BedrockFormLayout.Box box, final String name) {
++        if (name.isEmpty()) return null;
++        for (final var child : box.children()) {
++            if (child.node().name().equals(name)) return child;
++            final var found = descendant(child, name);
++            if (found != null) return found;
++        }
++        return null;
++    }
++
++    record Model(BedrockFormLayout.Box originalThumb, BedrockFormLayout.Rect track, BedrockFormLayout.Rect thumb,
++                 BedrockFormLayout.Rect clip, float maximum, float offset, boolean horizontal) {
++        boolean containsTrack(final double x, final double y) { return this.track.intersect(this.clip).contains(x, y); }
++        boolean containsThumb(final double x, final double y) { return this.thumb.intersect(this.clip).contains(x, y); }
++        float pointer(final double x, final double y) { return (float) (this.horizontal ? x : y); }
++        float start() { return this.horizontal ? this.thumb.x() : this.thumb.y(); }
++        float extent() { return this.horizontal ? this.thumb.width() : this.thumb.height(); }
++        float offsetAt(final float pointer, final float grab) {
++            final float travel = this.horizontal ? this.track.width() - this.thumb.width() : this.track.height() - this.thumb.height();
++            final float start = this.horizontal ? this.track.x() : this.track.y();
++            return travel > 0 ? Math.clamp((pointer - start - grab) / travel, 0, 1) * this.maximum : 0;
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormText.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormText.java
+new file mode 100644
+index 0000000..4d68ebd
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormText.java
+@@ -0,0 +1,20 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.google.gson.JsonParser;
++import com.mojang.serialization.JsonOps;
++import net.minecraft.network.chat.Component;
++import net.minecraft.network.chat.ComponentSerialization;
++import net.raphimc.viabedrock.api.util.TextUtil;
++
++final class BedrockFormText {
++    private BedrockFormText() {}
++
++    static Component component(final String text) {
++        return ComponentSerialization.CODEC.parse(JsonOps.INSTANCE, JsonParser.parseString(TextUtil.stringToJson(text))).getOrThrow();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormScreen.java
+new file mode 100644
+index 0000000..c5009be
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormScreen.java
+@@ -0,0 +1,437 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.mojang.serialization.JsonOps;
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.IdentityHashMap;
++import java.util.List;
++import java.util.Map;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.ComponentPath;
++import net.minecraft.client.gui.components.AbstractButton;
++import net.minecraft.client.gui.components.Tooltip;
++import net.minecraft.client.gui.narration.NarrationElementOutput;
++import net.minecraft.client.gui.navigation.FocusNavigationEvent;
++import net.minecraft.client.gui.screens.Screen;
++import net.minecraft.client.input.InputWithModifiers;
++import net.minecraft.client.input.KeyEvent;
++import net.minecraft.client.input.MouseButtonEvent;
++import net.minecraft.network.Connection;
++import net.minecraft.network.chat.Component;
++import net.minecraft.network.chat.ComponentSerialization;
++import net.minecraft.network.chat.FontDescription;
++import net.minecraft.resources.Identifier;
++import com.mojang.blaze3d.platform.InputConstants;
++
++/** Draws the authored scene, with ordinary Java event, focus, narration and response handling. */
++final class BedrockNativeFormScreen extends Screen {
++    private final Connection owner;
++    private final int formId;
++    private final BedrockFormScene scene;
++    private final BedrockFormImages images = new BedrockFormImages();
++    private final BedrockFormAnimations animations = new BedrockFormAnimations();
++    private final Map<BedrockFormScene.Node, Float> scroll = new IdentityHashMap<>();
++    private final Map<BedrockFormScene.Node, Action> actions = new IdentityHashMap<>();
++    private final Map<BedrockFormScene.Node, Component> texts = new IdentityHashMap<>();
++    private BedrockFormLayout.Box root;
++    private boolean responded;
++    private Drag drag;
++
++    BedrockNativeFormScreen(final Connection owner, final int formId, final BedrockFormScene scene) {
++        super(BedrockFormText.component(scene.fallback().title()));
++        this.owner = owner;
++        this.formId = formId;
++        this.scene = scene;
++    }
++
++    @Override
++    protected void init() {
++        this.actions.clear();
++        this.drag = null;
++        this.setDragging(false);
++        this.layout();
++        final List<BedrockFormLayout.Box> boxes = new ArrayList<>();
++        flatten(this.root, boxes);
++        boxes.sort(Comparator.comparingDouble(BedrockFormLayout.Box::layer).reversed());
++        for (final var box : boxes) if (box.node().interactive()) {
++            final Action action = this.addWidget(new Action(box));
++            this.actions.put(box.node(), action);
++        }
++        this.synchronize(this.draws(-1, -1));
++        if (!this.scene.fallback().buttons().isEmpty() && this.actions.values().stream()
++            .noneMatch(action -> action.visible && action.eligible && action.node.action() >= 0))
++            throw new IllegalArgumentException("Native form has no usable response controls");
++    }
++
++    private void layout() {
++        this.root = new BedrockFormLayout(this::intrinsic).layout(this.scene.root(), this.width, this.height, this.scroll);
++        this.positionActions(this.root);
++    }
++
++    private BedrockFormLayout.Size intrinsic(final BedrockFormScene.Node node) {
++        return switch (node.type()) {
++            case "label" -> new BedrockFormLayout.Size(this.font.width(this.text(node)) * scale(node),
++                (node.string("text", "").split("\\n", -1).length * this.font.lineHeight) * scale(node));
++            case "image" -> {
++                if (node.string("texture", "").isEmpty()) yield new BedrockFormLayout.Size(0, 0);
++                final var image = this.images.image(node.string("texture", ""));
++                yield new BedrockFormLayout.Size(image.width(), image.height());
++            }
++            case "button", "toggle" -> new BedrockFormLayout.Size(200, 20);
++            default -> new BedrockFormLayout.Size(0, 0);
++        };
++    }
++
++    private void positionActions(final BedrockFormLayout.Box box) {
++        final Action action = this.actions.get(box.node());
++        if (action != null) action.place(box);
++        for (final var child : box.children()) this.positionActions(child);
++    }
++
++    @Override
++    public void extractRenderState(final GuiGraphicsExtractor graphics, final int mouseX, final int mouseY, final float delta) {
++        this.extractTransparentBackground(graphics);
++        try {
++            final List<BedrockFormPresentation.Draw> draws = this.draws(mouseX, mouseY);
++            this.synchronize(draws);
++            draws.sort(Comparator.comparingDouble(draw -> draw.box().layer()));
++            for (final BedrockFormPresentation.Draw draw : draws) {
++                final var box = draw.box();
++                final var clip = box.clip();
++                if (draw.alpha() <= 0 || box.visibleBounds().width() <= 0 || box.visibleBounds().height() <= 0) continue;
++                graphics.enableScissor(Math.round(clip.x()), Math.round(clip.y()),
++                    Math.round(clip.x() + clip.width()), Math.round(clip.y() + clip.height()));
++                try {
++                    final var node = box.node();
++                    if (node.type().equals("image") && !node.string("texture", "").isEmpty())
++                        this.images.draw(graphics, box, color(node, draw.alpha()));
++                    else if (node.type().equals("label")) this.label(graphics, box, draw.alpha());
++                    final Action action = this.actions.get(node);
++                    if (action != null) action.extractRenderState(graphics, mouseX, mouseY, delta);
++                } finally {
++                    graphics.disableScissor();
++                }
++            }
++        } catch (final RuntimeException error) {
++            ViaFabricPlusBedrock.impl().logger().warn("Could not draw native form; opening its ordinary controls", error);
++            this.minecraft.setScreenAndShow(new BedrockFallbackFormScreen(this.owner, this.formId, this.scene.fallback()));
++        }
++    }
++
++    private List<BedrockFormPresentation.Draw> draws(final int mouseX, final int mouseY) {
++        this.animations.beginFrame();
++        final long now = System.nanoTime();
++        return BedrockFormPresentation.draws(this.root, box -> {
++            final Action action = this.actions.get(box.node());
++            return action != null && (action.isFocused() || box.visibleBounds().contains(mouseX, mouseY));
++        }, node -> this.animations.opacity(node, now));
++    }
++
++    private void synchronize(final List<BedrockFormPresentation.Draw> draws) {
++        for (final Action action : this.actions.values()) action.visible = false;
++        for (final BedrockFormPresentation.Draw draw : draws) {
++            final Action action = this.actions.get(draw.box().node());
++            if (action != null) {
++                action.visible = true;
++                action.eligible = draw.enabled() && draw.box().bounds().width() > 0 && draw.box().bounds().height() > 0;
++                action.active = action.eligible && draw.alpha() > 0;
++                action.setAlpha(draw.alpha());
++            }
++        }
++    }
++
++    private void label(final GuiGraphicsExtractor graphics, final BedrockFormLayout.Box box, final float alpha) {
++        final var node = box.node();
++        final Component text = this.text(node);
++        final float scale = scale(node);
++        final int width = Math.max(1, (int) (box.bounds().width() / scale));
++        final var lines = this.font.split(text, width);
++        final String alignment = node.string("text_alignment", "left");
++        graphics.pose().pushMatrix();
++        try {
++            graphics.pose().translate(box.bounds().x(), box.bounds().y());
++            graphics.pose().scale(scale, scale);
++            int y = 0;
++            for (final var line : lines) {
++                final int lineWidth = this.font.width(line);
++                final int x = alignment.equals("center") ? (width - lineWidth) / 2 : alignment.equals("right") ? width - lineWidth : 0;
++                graphics.text(this.font, line, x, y, color(node, alpha), node.flag("shadow", false));
++                y += this.font.lineHeight;
++            }
++        } finally {
++            graphics.pose().popMatrix();
++        }
++    }
++
++    private Component text(final BedrockFormScene.Node node) {
++        return this.texts.computeIfAbsent(node, value -> {
++            final Component text = value.properties().has("text_component")
++                ? ComponentSerialization.CODEC.parse(JsonOps.INSTANCE,
++                    value.properties().get("text_component")).getOrThrow()
++                : value.flag("localize", false) ? Component.translatable(value.string("text", ""))
++                    : BedrockFormText.component(value.string("text", ""));
++            final String font = value.string("font", "");
++            if (font.isEmpty()) return text;
++            return text.copy().withStyle(style -> style.withFont(new FontDescription.Resource(Identifier.parse(font))));
++        });
++    }
++
++    private static float scale(final BedrockFormScene.Node node) {
++        return Math.clamp(node.number("font_scale_factor", 1), .125F, 8);
++    }
++
++    private static int color(final BedrockFormScene.Node node, final float alpha) {
++        final int red = Math.round(Math.clamp(BedrockFormLayout.vector(node, "color", 0, 1), 0, 1) * 255);
++        final int green = Math.round(Math.clamp(BedrockFormLayout.vector(node, "color", 1, 1), 0, 1) * 255);
++        final int blue = Math.round(Math.clamp(BedrockFormLayout.vector(node, "color", 2, 1), 0, 1) * 255);
++        return Math.round(alpha * 255) << 24 | red << 16 | green << 8 | blue;
++    }
++
++    private Map<BedrockFormScene.Node, Boolean> interactive(final double x, final double y) {
++        final Map<BedrockFormScene.Node, Boolean> result = new IdentityHashMap<>();
++        for (final var draw : this.draws((int) x, (int) y)) if (draw.enabled() && draw.alpha() > 0) result.put(draw.box().node(), true);
++        return result;
++    }
++
++    @Override
++    public boolean mouseScrolled(final double x, final double y, final double horizontal, final double vertical) {
++        final var target = scrolling(this.root, x, y, this.interactive(x, y));
++        if (target == null) return super.mouseScrolled(x, y, horizontal, vertical);
++        final double delta = BedrockFormScroll.horizontal(target) && horizontal != 0 ? horizontal : vertical;
++        this.scroll.put(target.node(), Math.clamp(this.scroll.getOrDefault(target.node(), 0F)
++            - (float) delta * target.node().number("scroll_speed", 18), 0, BedrockFormScroll.maximum(target)));
++        this.layout();
++        return true;
++    }
++
++    @Override
++    public boolean mouseClicked(final MouseButtonEvent event, final boolean doubleClick) {
++        if (event.button() == 0) {
++            final var target = scrollbar(this.root, event.x(), event.y(), this.interactive(event.x(), event.y()));
++            if (target != null) {
++                final var model = BedrockFormScroll.model(target, this.scroll.getOrDefault(target.node(), 0F));
++                final float pointer = model.pointer(event.x(), event.y());
++                final float grab = model.containsThumb(event.x(), event.y()) ? pointer - model.start() : model.extent() / 2;
++                this.drag = new Drag(target.node(), grab);
++                this.setDragging(true);
++                this.scroll.put(target.node(), model.offsetAt(pointer, grab));
++                this.layout();
++                return true;
++            }
++        }
++        return super.mouseClicked(event, doubleClick);
++    }
++
++    @Override
++    public boolean mouseDragged(final MouseButtonEvent event, final double deltaX, final double deltaY) {
++        if (this.drag != null && event.button() == 0) {
++            final var target = find(this.root, this.drag.node);
++            final var model = target == null ? null : BedrockFormScroll.model(target, this.scroll.getOrDefault(this.drag.node, 0F));
++            if (model != null) {
++                this.scroll.put(this.drag.node, model.offsetAt(model.pointer(event.x(), event.y()),
++                    Math.min(this.drag.grab, model.extent())));
++                this.layout();
++            }
++            return true;
++        }
++        return super.mouseDragged(event, deltaX, deltaY);
++    }
++
++    @Override
++    public boolean mouseReleased(final MouseButtonEvent event) {
++        if (this.drag != null && event.button() == 0) {
++            this.drag = null;
++            this.setDragging(false);
++            return true;
++        }
++        return super.mouseReleased(event);
++    }
++
++    private static BedrockFormLayout.Box find(final BedrockFormLayout.Box box, final BedrockFormScene.Node node) {
++        if (box.node() == node) return box;
++        for (final var child : box.children()) {
++            final var found = find(child, node);
++            if (found != null) return found;
++        }
++        return null;
++    }
++
++    private BedrockFormLayout.Box scrollbar(final BedrockFormLayout.Box box, final double x, final double y,
++                                            final Map<BedrockFormScene.Node, Boolean> interactive) {
++        if (!interactive.containsKey(box.node()) || !box.clip().contains(x, y)) return null;
++        for (int i = box.children().size() - 1; i >= 0; i--) {
++            final var target = this.scrollbar(box.children().get(i), x, y, interactive);
++            if (target != null) return target;
++        }
++        if (box.node().scroll()) {
++            final var model = BedrockFormScroll.model(box, this.scroll.getOrDefault(box.node(), 0F));
++            if (model != null && model.maximum() > 0 && interactive.containsKey(model.originalThumb().node())
++                && model.containsTrack(x, y)) return box;
++        }
++        return null;
++    }
++
++    private static BedrockFormLayout.Box scrolling(final BedrockFormLayout.Box box, final double x, final double y,
++                                                   final Map<BedrockFormScene.Node, Boolean> interactive) {
++        if (!interactive.containsKey(box.node()) || !box.clip().contains(x, y)) return null;
++        for (int i = box.children().size() - 1; i >= 0; i--) {
++            final var target = scrolling(box.children().get(i), x, y, interactive);
++            if (target != null) return target;
++        }
++        return box.node().scroll() && box.bounds().contains(x, y) && BedrockFormScroll.maximum(box) > 0 ? box : null;
++    }
++
++    @Override
++    public boolean keyPressed(final KeyEvent event) {
++        if (event.key() == InputConstants.KEY_PAGEUP || event.key() == InputConstants.KEY_PAGEDOWN
++            || event.key() == InputConstants.KEY_HOME || event.key() == InputConstants.KEY_END) {
++            final var focused = this.getFocused() instanceof Action action ? action.node : null;
++            BedrockFormLayout.Box target = this.keyboardScroll(this.root, focused);
++            if (target == null) target = this.keyboardScroll(this.root, null);
++            if (target != null) {
++                final float page = BedrockFormScroll.horizontal(target) ? target.scrollViewport().width() : target.scrollViewport().height();
++                final float maximum = BedrockFormScroll.maximum(target);
++                final float previous = this.scroll.getOrDefault(target.node(), 0F);
++                final float value = switch (event.key()) {
++                    case InputConstants.KEY_HOME -> 0;
++                    case InputConstants.KEY_END -> maximum;
++                    case InputConstants.KEY_PAGEUP -> previous - page;
++                    default -> previous + page;
++                };
++                this.scroll.put(target.node(), Math.clamp(value, 0, maximum));
++                this.layout();
++                return true;
++            }
++        }
++        final boolean result = super.keyPressed(event);
++        if (this.getFocused() instanceof Action action) this.reveal(this.root, action.node);
++        return result;
++    }
++
++    private BedrockFormLayout.Box keyboardScroll(final BedrockFormLayout.Box box, final BedrockFormScene.Node focused) {
++        for (int i = box.children().size() - 1; i >= 0; i--) {
++            final var nested = this.keyboardScroll(box.children().get(i), focused);
++            if (nested != null) return nested;
++        }
++        if (!box.node().scroll() || BedrockFormScroll.maximum(box) == 0) return null;
++        if (focused != null) return find(box, focused) != null ? box : null;
++        return this.actions.values().stream().anyMatch(action -> action.visible && action.active && find(box, action.node) != null) ? box : null;
++    }
++
++    private boolean reveal(final BedrockFormLayout.Box box, final BedrockFormScene.Node focused) {
++        if (box.node() == focused) return true;
++        for (final var child : box.children()) if (this.reveal(child, focused)) {
++            if (box.node().scroll()) {
++                final var action = this.actions.get(focused);
++                final var bounds = action.box.bounds();
++                final var viewport = box.scrollViewport().intersect(box.clip());
++                final boolean horizontal = BedrockFormScroll.horizontal(box);
++                final float start = horizontal ? bounds.x() : bounds.y(), extent = horizontal ? bounds.width() : bounds.height();
++                final float viewportStart = horizontal ? viewport.x() : viewport.y(), viewportExtent = horizontal ? viewport.width() : viewport.height();
++                final float delta = start < viewportStart ? start - viewportStart
++                    : Math.max(0, start + extent - viewportStart - viewportExtent);
++                if (delta != 0) {
++                    this.scroll.put(box.node(), Math.clamp(this.scroll.getOrDefault(box.node(), 0F) + delta,
++                        0, BedrockFormScroll.maximum(box)));
++                    this.layout();
++                }
++            }
++            return true;
++        }
++        return false;
++    }
++
++    @Override
++    public void onClose() {
++        this.respond(-1);
++    }
++
++    private void respond(final int action) {
++        if (this.responded) return;
++        this.responded = true;
++        BedrockNativeForms.respond(this.owner, this.formId, action);
++        this.minecraft.setScreenAndShow(null);
++    }
++
++    @Override
++    public boolean isPauseScreen() {
++        return false;
++    }
++
++    @Override
++    public void tick() {
++        if (!BedrockNativeForms.current(this.owner)) this.minecraft.setScreenAndShow(null);
++    }
++
++    private static void flatten(final BedrockFormLayout.Box box, final List<BedrockFormLayout.Box> result) {
++        result.add(box);
++        for (final var child : box.children()) flatten(child, result);
++    }
++
++    private record Drag(BedrockFormScene.Node node, float grab) {}
++
++    private final class Action extends AbstractButton {
++        private final BedrockFormScene.Node node;
++        private BedrockFormLayout.Box box;
++        private boolean eligible;
++
++        Action(final BedrockFormLayout.Box box) {
++            super(0, 0, 1, 1, BedrockFormText.component(caption(box.node())));
++            this.node = box.node();
++            this.place(box);
++            final String tooltip = this.node.string("tooltip", "");
++            if (!tooltip.isEmpty()) this.setTooltip(Tooltip.create(BedrockFormText.component(tooltip)));
++        }
++
++        void place(final BedrockFormLayout.Box box) {
++            this.box = box;
++            final var bounds = box.bounds();
++            this.setRectangle(Math.max(1, Math.round(bounds.width())), Math.max(1, Math.round(bounds.height())),
++                Math.round(bounds.x()), Math.round(bounds.y()));
++        }
++
++        @Override
++        public void onPress(final InputWithModifiers input) {
++            BedrockNativeFormScreen.this.respond(this.node.action());
++        }
++
++        @Override
++        protected void extractContents(final GuiGraphicsExtractor graphics, final int x, final int y, final float delta) {
++            if (this.node.string("default_control", "").isEmpty()) {
++                this.extractDefaultSprite(graphics);
++                this.extractDefaultLabel(graphics.textRendererForWidget(this, GuiGraphicsExtractor.HoveredTextEffects.TOOLTIP_AND_CURSOR));
++            }
++        }
++
++        @Override
++        public ComponentPath nextFocusPath(final FocusNavigationEvent event) {
++            return this.node.flag("focus_enabled", true) ? super.nextFocusPath(event) : null;
++        }
++
++        @Override
++        public boolean isMouseOver(final double x, final double y) {
++            return this.box.visibleBounds().contains(x, y) && super.isMouseOver(x, y);
++        }
++
++        @Override
++        protected void updateWidgetNarration(final NarrationElementOutput output) {
++            this.defaultButtonNarrationText(output);
++        }
++
++        private static String caption(final BedrockFormScene.Node node) {
++            final String text = node.string("text", "");
++            if (!text.isEmpty()) return text;
++            for (final var child : node.children()) {
++                final String value = caption(child);
++                if (!value.isEmpty()) return value;
++            }
++            return node.name();
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
+new file mode 100644
+index 0000000..88741f0
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
+@@ -0,0 +1,59 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import java.util.Optional;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
++import net.minecraft.client.Minecraft;
++import net.minecraft.nbt.CompoundTag;
++import net.minecraft.network.Connection;
++import net.minecraft.network.protocol.common.ServerboundCustomClickActionPacket;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeFormMessage;
++
++public final class BedrockNativeForms {
++    private BedrockNativeForms() {}
++
++    public static void register() {
++        PayloadTypeRegistry.clientboundPlay().register(NativeFormPayload.TYPE, NativeFormPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++            ClientPlayNetworking.registerReceiver(NativeFormPayload.TYPE,
++                (payload, context) -> accept(listener.getConnection(), payload.message())));
++    }
++
++    private static void accept(final Connection owner, final NativeFormMessage message) {
++        final Minecraft client = Minecraft.getInstance();
++        client.execute(() -> {
++            if (!current(owner)) return;
++            try {
++                client.setScreenAndShow(new BedrockNativeFormScreen(owner, message.formId(), BedrockFormScene.parse(message.scene())));
++            } catch (final RuntimeException error) {
++                ViaFabricPlusBedrock.impl().logger().warn("Could not render native form; opening its ordinary controls", error);
++                try {
++                    client.setScreenAndShow(new BedrockFallbackFormScreen(owner, message.formId(), BedrockFormScene.fallback(message.scene())));
++                } catch (final RuntimeException invalid) {
++                    ViaFabricPlusBedrock.impl().logger().warn("Invalid native form fallback", invalid);
++                }
++            }
++        });
++    }
++
++    static boolean current(final Connection owner) {
++        final var listener = Minecraft.getInstance().getConnection();
++        return listener != null && listener.getConnection() == owner && owner.isConnected();
++    }
++
++    static void respond(final Connection owner, final int formId, final int button) {
++        if (!current(owner)) return;
++        final CompoundTag result = new CompoundTag();
++        if (button < 0) result.putBoolean("exit", true);
++        else result.putInt("button_id", button);
++        owner.send(new ServerboundCustomClickActionPacket(Identifier.fromNamespaceAndPath("viabedrock", "form/" + formId), Optional.of(result)));
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/NativeFormPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/NativeFormPayload.java
+new file mode 100644
+index 0000000..c59ab7c
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/NativeFormPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeFormMessage;
++
++public record NativeFormPayload(NativeFormMessage message) implements CustomPacketPayload {
++    public static final Type<NativeFormPayload> TYPE = new Type<>(Identifier.parse(NativeFormMessage.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeFormPayload> CODEC = CustomPacketPayload.codec(
++        (payload, buffer) -> NativeFormMessage.TYPE.write(buffer, payload.message),
++        buffer -> new NativeFormPayload(NativeFormMessage.TYPE.read(buffer)));
++
++    @Override
++    public Type<NativeFormPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
+index 075e9d6..736d794 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
+@@ -34,12 +34,16 @@ final class ViaFabricPlusBuiltinResourcePackProviderTest {
+         files.put("library/vanilla_1.9/textures/items/shared.png", new byte[] {9});
+         files.put("library/vanilla_base/textures/items/CaseSensitive.jpg", new byte[] {2});
+         files.put("library/vanilla/textures/item_texture.json", new byte[] {'{', '}'});
++        files.put("library/vanilla/ui/ui_common.json", new byte[] {3});
++        files.put("library/vanilla/textures/items/shared.json", new byte[] {4});
+         files.put("library/vanilla/entity/player.entity.json", new byte[] {'{', '}'});
+         files.put("library/vanilla_1.11/manifest.json", new byte[] {'{', '}'});
+         final var library = BedrockResourceLibrary.read(files);
+         final var packs = library.imagePacks();
+         assertEquals(4, packs.size());
+         assertArrayEquals(new byte[] {1}, packs.get(0).content().get("textures/items/shared.png"));
++        assertArrayEquals(new byte[] {3}, packs.get(0).content().get("ui/ui_common.json"));
++        assertArrayEquals(new byte[] {4}, packs.get(0).content().get("textures/items/shared.json"));
+         assertArrayEquals(new byte[] {2}, packs.get(1).content().get("textures/items/CaseSensitive.jpg"));
+         assertNull(packs.get(1).content().get("textures/items/casesensitive.jpg"));
+         assertArrayEquals(new byte[] {9}, packs.get(2).content().get("textures/items/shared.png"));
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayoutTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayoutTest.java
+new file mode 100644
+index 0000000..1e73a8e
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayoutTest.java
+@@ -0,0 +1,429 @@
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import java.util.IdentityHashMap;
++import java.util.Map;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockFormLayoutTest {
++    @Test
++    void resolvesAnchorsOffsetsAndOriginalResponseIndices() {
++        final JsonObject root = node("screen", 320, 200);
++        final JsonObject button = node("button", 100, 40);
++        button.addProperty("anchor_from", "right_middle");
++        button.addProperty("anchor_to", "right_middle");
++        button.add("offset", pair(-12, 6));
++        button.addProperty("action", 3);
++        children(root, button);
++        final var box = layout(scene(root), 320, 200).children().getFirst();
++        assertEquals(new BedrockFormLayout.Rect(208, 86, 100, 40), box.bounds());
++        assertEquals(3, box.node().action());
++    }
++
++    @Test
++    void sizesStacksFromMaximumChildWidthAndSummedHeights() {
++        final JsonObject root = node("stack_panel", "100%cm + 10px", "100%c + 8px");
++        children(root, node("panel", 40, 18), node("panel", 60, 25));
++        final var box = layout(scene(root), 320, 200);
++        assertEquals(70, box.bounds().width());
++        assertEquals(51, box.bounds().height());
++        assertEquals(box.bounds().y() + 18, box.children().get(1).bounds().y());
++        assertEquals(60, box.content().width());
++        assertEquals(43, box.content().height());
++    }
++
++    @Test
++    void retainsGridRowsAndSparseFormButtonIndices() {
++        final JsonObject root = node("grid", 180, "100%c");
++        root.add("grid_dimensions", pair(3, 1));
++        final JsonObject[] cells = new JsonObject[5];
++        for (int i = 0; i < cells.length; i++) {
++            cells[i] = node("button", 60, 40);
++            cells[i].addProperty("action", i * 2);
++        }
++        children(root, cells);
++        final var box = layout(scene(root), 320, 200);
++        assertEquals(80, box.bounds().height());
++        assertEquals(box.bounds().x(), box.children().get(3).bounds().x());
++        assertEquals(box.bounds().y() + 40, box.children().get(3).bounds().y());
++        assertEquals(8, box.children().get(4).node().action());
++    }
++
++    @Test
++    void clipsScrolledChildrenWithoutRenumberingActions() {
++        final JsonObject root = node("scroll_view", 120, 70);
++        root.add("offset", pair(10, 20));
++        final JsonObject stack = node("stack_panel", "100%", "100%c");
++        final JsonObject first = node("button", 100, 30);
++        first.addProperty("action", 4);
++        children(stack, first, node("button", 100, 30), node("button", 100, 30));
++        children(root, stack);
++        final var scene = scene(root);
++        final Map<BedrockFormScene.Node, Float> scroll = new IdentityHashMap<>();
++        scroll.put(scene.root(), 15F);
++        final var box = new BedrockFormLayout(_ -> new BedrockFormLayout.Size(0, 0)).layout(scene.root(), 320, 200, scroll);
++        final var clipped = box.children().getFirst().children().getFirst();
++        assertEquals(new BedrockFormLayout.Rect(10, 20, 100, 15), clipped.visibleBounds());
++        assertFalse(clipped.visibleBounds().contains(30, 10));
++        assertTrue(clipped.visibleBounds().contains(30, 25));
++        assertEquals(4, clipped.node().action());
++    }
++
++    @Test
++    void rejectsUnsupportedControlsAndInvalidResponseIndicesButKeepsFallback() {
++        final JsonObject unknown = node("custom", 20, 20);
++        final String unknownScene = json(unknown).toString();
++        assertThrows(IllegalArgumentException.class, () -> BedrockFormScene.parse(unknownScene));
++        assertEquals(10, BedrockFormScene.fallback(unknownScene).buttons().size());
++        final JsonObject button = node("button", 100, 20);
++        button.addProperty("action", 10);
++        assertThrows(IllegalArgumentException.class, () -> scene(button));
++        button.addProperty("action", Integer.MIN_VALUE);
++        assertThrows(IllegalArgumentException.class, () -> scene(button));
++        button.addProperty("action", -1);
++        assertEquals(-1, scene(button).root().action());
++        button.add("size", pair("100% + bogus", 20));
++        assertThrows(IllegalArgumentException.class, () -> layout(scene(button), 320, 200));
++    }
++
++    @Test
++    void allocatesStackRemainderAndSelfAxisSizesWithoutClampingUnboundedMaxima() {
++        final JsonObject root = node("stack_panel", 180, 100);
++        root.addProperty("orientation", "horizontal");
++        final JsonObject fixed = node("panel", 20, "100%");
++        final JsonObject flexible = node("panel", "fill", "100%");
++        final JsonObject square = node("button", "50%", "100%x");
++        square.add("max_size", pair(0, 0));
++        square.addProperty("action", 7);
++        children(flexible, square);
++        children(root, fixed, flexible);
++        final var box = layout(scene(root), 320, 200);
++        final var remaining = box.children().get(1);
++        assertEquals(160, remaining.bounds().width());
++        assertEquals(box.bounds().x() + 20, remaining.bounds().x());
++        final var response = remaining.children().getFirst();
++        assertEquals(80, response.bounds().width());
++        assertEquals(80, response.bounds().height());
++        assertEquals(7, response.node().action());
++    }
++
++    @Test
++    void scrollsOnlyNamedContentAndKeepsTheTrackStationary() {
++        final JsonObject root = node("scroll_view", 120, 70);
++        root.addProperty("scroll_content", "items");
++        root.addProperty("scroll_view_port", "viewport");
++        final JsonObject viewport = node("panel", 100, 70);
++        viewport.addProperty("name", "viewport");
++        final JsonObject items = node("stack_panel", 100, "100%c");
++        items.addProperty("name", "items");
++        children(items, node("button", 100, 30), node("button", 100, 30), node("button", 100, 30));
++        children(viewport, items);
++        final JsonObject track = node("scroll_track", 10, 70);
++        track.add("offset", pair(110, 0));
++        children(root, viewport, track);
++        final var scene = scene(root);
++        final Map<BedrockFormScene.Node, Float> scroll = new IdentityHashMap<>();
++        scroll.put(scene.root(), 15F);
++        final var box = new BedrockFormLayout(_ -> new BedrockFormLayout.Size(0, 0)).layout(scene.root(), 320, 200, scroll);
++        assertEquals(0, box.children().get(1).bounds().y());
++        assertEquals(-15, box.children().getFirst().children().getFirst().bounds().y());
++        assertEquals(70, box.scrollViewport().height());
++        assertEquals(90, box.content().height());
++    }
++
++    @Test
++    void keepsInvisibleSiblingGeometryButSuppressesItsSubtreeAndResponse() {
++        final JsonObject root = node("stack_panel", 100, "100%c");
++        final JsonObject hidden = node("custom", 100, 40);
++        hidden.addProperty("visible", false);
++        final JsonObject hiddenAction = node("button", 100, 20);
++        hiddenAction.addProperty("action", 3);
++        children(hidden, hiddenAction);
++        final JsonObject visibleAction = node("button", 100, 20);
++        visibleAction.addProperty("action", 7);
++        children(root, hidden, visibleAction);
++        final var box = layout(scene(root), 320, 200);
++        assertEquals(60, box.bounds().height(), .001F);
++        assertEquals(box.bounds().y() + 40, box.children().get(1).bounds().y(), .001F);
++        final var draws = BedrockFormPresentation.draws(box, _ -> true);
++        assertEquals(java.util.List.of(7), draws.stream().filter(draw -> draw.box().node().interactive())
++            .map(draw -> draw.box().node().action()).toList());
++        assertFalse(draws.stream().anyMatch(draw -> draw.box().node() == box.children().getFirst().node()));
++    }
++
++    @Test
++    void selectsAuthoredHoverAndLockedVisualTreesWithoutChangingLayout() {
++        final JsonObject root = node("panel", 120, 40);
++        root.addProperty("alpha", .5);
++        final JsonObject button = node("button", 100, 30);
++        button.addProperty("action", 2);
++        button.addProperty("alpha", .5);
++        button.addProperty("default_control", "normal");
++        button.addProperty("hover_control", "hovered");
++        button.addProperty("locked_control", "locked");
++        final JsonObject normal = node("image", 100, 30), hover = node("image", 100, 30), locked = node("image", 100, 30);
++        normal.addProperty("name", "normal");
++        hover.addProperty("name", "hovered");
++        locked.addProperty("name", "locked");
++        children(button, normal, hover, locked);
++        children(root, button);
++        final var box = layout(scene(root), 320, 200);
++        final var draws = BedrockFormPresentation.draws(box, _ -> true);
++        assertEquals(box.children().getFirst().children().get(1), draws.getLast().box());
++        assertEquals(.25F, draws.getLast().alpha());
++        assertTrue(draws.getLast().enabled());
++        root.addProperty("enabled", false);
++        final var disabled = layout(scene(root), 320, 200);
++        final var lockedDraws = BedrockFormPresentation.draws(disabled, _ -> true);
++        assertEquals(disabled.children().getFirst().children().get(2), lockedDraws.getLast().box());
++        assertTrue(lockedDraws.stream().noneMatch(BedrockFormPresentation.Draw::enabled));
++        assertEquals(box.bounds(), disabled.bounds());
++    }
++
++    @Test
++    void rescalesAuthoredGridCellWidthsAndRetainsInvisibleCellsAndIndices() {
++        final JsonObject root = node("grid", 200, "100%c");
++        root.addProperty("grid_rescaling_type", "horizontal");
++        final JsonObject[] cells = new JsonObject[6];
++        for (int i = 0; i < cells.length; i++) {
++            cells[i] = node("button", "25% - 1px", "100%x");
++            cells[i].addProperty("action", i);
++        }
++        cells[1].addProperty("visible", false);
++        children(root, cells);
++        final var box = layout(scene(root), 320, 200);
++        assertEquals(98, box.bounds().height(), .001F);
++        assertEquals(box.bounds().x() + 100, box.children().get(2).bounds().x(), .001F);
++        assertEquals(box.bounds().y() + 49, box.children().get(4).bounds().y(), .001F);
++        assertEquals(49, box.children().get(4).bounds().width(), .001F);
++        final var actions = BedrockFormPresentation.draws(box, _ -> false).stream()
++            .filter(draw -> draw.box().node().interactive()).map(draw -> draw.box().node().action()).toList();
++        assertEquals(java.util.List.of(0, 2, 3, 4, 5), actions);
++    }
++
++    @Test
++    void rescalesVerticalGridAndFillsColumnsBeforeRows() {
++        final JsonObject root = node("grid", 120, 100);
++        root.addProperty("grid_rescaling_type", "vertical");
++        root.addProperty("grid_fill_direction", "vertical");
++        children(root, node("panel", 40, 30), node("panel", 40, 30), node("panel", 40, 30), node("panel", 40, 30));
++        final var box = layout(scene(root), 320, 200);
++        assertEquals(box.bounds().x(), box.children().get(2).bounds().x());
++        assertEquals(box.bounds().x() + 60, box.children().get(3).bounds().x());
++        assertEquals(box.children().getFirst().bounds().y(), box.children().get(3).bounds().y());
++        assertEquals(box.bounds().y() + 200F / 3, box.children().get(2).bounds().y(), .001F);
++    }
++
++    @Test
++    void sizesEmptyContentRelativePanelsWithoutFeedingParentHeightBackIntoTheStack() {
++        final JsonObject root = node("stack_panel", 120, "100%c");
++        final JsonObject empty = node("panel", "100%", "100%cm + 4px");
++        empty.addProperty("visible", false);
++        final JsonObject fixed = node("button", 100, 20);
++        fixed.addProperty("action", 2);
++        children(root, empty, fixed);
++        final var box = layout(scene(root), 320, 200);
++        assertEquals(24, box.bounds().height(), .001F);
++        assertEquals(4, box.children().getFirst().bounds().height(), .001F);
++        assertEquals(box.bounds().y() + 4, box.children().get(1).bounds().y(), .001F);
++    }
++
++    @Test
++    void clampsThumbDraggingAndRecomputesProportionsOnViewportResize() {
++        final JsonObject root = node("scroll_view", 120, "100%");
++        root.addProperty("scroll_content", "items");
++        root.addProperty("scroll_view_port", "viewport");
++        root.addProperty("scrollbar_track", "track");
++        root.addProperty("scrollbar_box", "thumb");
++        root.addProperty("clips_children", true);
++        final JsonObject viewport = node("panel", 110, "100%");
++        viewport.addProperty("name", "viewport");
++        final JsonObject items = node("panel", 110, 300);
++        items.addProperty("name", "items");
++        children(viewport, items);
++        final JsonObject track = node("scroll_track", 10, "100%");
++        track.addProperty("name", "track");
++        track.add("offset", pair(110, 0));
++        final JsonObject thumb = node("scrollbar_box", 10, "100%");
++        thumb.addProperty("name", "thumb");
++        thumb.addProperty("draggable", "vertical");
++        thumb.add("min_size", pair(0, 12));
++        final JsonObject image = node("image", "100%", "100%");
++        children(thumb, image);
++        children(track, thumb);
++        children(root, viewport, track);
++        final var scene = scene(root);
++        final Map<BedrockFormScene.Node, Float> scroll = new IdentityHashMap<>();
++        scroll.put(scene.root(), 100F);
++        final var solver = new BedrockFormLayout(_ -> new BedrockFormLayout.Size(0, 0));
++        final var box = solver.layout(scene.root(), 320, 100, scroll);
++        final var model = BedrockFormScroll.model(box, 100);
++        assertEquals(200, model.maximum());
++        assertEquals(100F / 3, model.thumb().height(), .001F);
++        assertEquals(100F / 3, model.thumb().y(), .001F);
++        assertEquals(100, model.offsetAt(model.start() + 5, 5), .001F);
++        assertEquals(200, model.offsetAt(1000, 5));
++        assertEquals(0, model.offsetAt(-100, 5));
++        assertTrue(model.containsThumb(115, model.start() + 5));
++        assertFalse(model.containsTrack(121, model.start() + 5));
++        assertEquals(model.thumb(), model.originalThumb().bounds());
++        assertEquals(model.thumb().height(), model.originalThumb().children().getFirst().bounds().height(), .001F);
++        scroll.put(scene.root(), 200F);
++        final var resized = solver.layout(scene.root(), 320, 150, scroll);
++        final var resizedModel = BedrockFormScroll.model(resized, 200);
++        assertEquals(150, resizedModel.maximum());
++        assertEquals(150, resizedModel.offset());
++        assertEquals(75, resizedModel.thumb().height());
++        assertEquals(75, resizedModel.thumb().y());
++    }
++
++    @Test
++    void scrollsHorizontalContentAndPreservesAuthoredThumbCrossAxisSize() {
++        final JsonObject root = node("scroll_view", 100, 40);
++        root.addProperty("scroll_content", "items");
++        root.addProperty("scroll_view_port", "viewport");
++        root.addProperty("scrollbar_track", "track");
++        root.addProperty("scrollbar_box", "thumb");
++        final JsonObject viewport = node("panel", 100, 30);
++        viewport.addProperty("name", "viewport");
++        final JsonObject items = node("panel", 250, 30);
++        items.addProperty("name", "items");
++        children(viewport, items);
++        final JsonObject track = node("scroll_track", 100, 10);
++        track.addProperty("name", "track");
++        track.add("offset", pair(0, 30));
++        final JsonObject thumb = node("scrollbar_box", "100%", 6);
++        thumb.addProperty("name", "thumb");
++        thumb.addProperty("draggable", "horizontal");
++        children(track, thumb);
++        children(root, viewport, track);
++        final var scene = scene(root);
++        final Map<BedrockFormScene.Node, Float> scroll = new IdentityHashMap<>();
++        scroll.put(scene.root(), 75F);
++        final var box = new BedrockFormLayout(_ -> new BedrockFormLayout.Size(0, 0)).layout(scene.root(), 320, 200, scroll);
++        final var model = BedrockFormScroll.model(box, 75);
++        assertTrue(model.horizontal());
++        assertEquals(150, model.maximum());
++        assertEquals(40, model.thumb().width());
++        assertEquals(6, model.thumb().height());
++        assertEquals(30, model.thumb().x());
++        assertEquals(-75, box.children().getFirst().children().getFirst().bounds().x());
++        assertEquals(75, model.offsetAt(32, 2), .001F);
++    }
++
++    @Test
++    void replacesZeroAuthoredAlphaWithRevealTrackAndMultipliesParentOpacity() {
++        final JsonObject root = node("panel", 120, 40);
++        root.addProperty("alpha", .5);
++        final JsonObject button = node("button", 100, 30);
++        button.addProperty("alpha", 0);
++        button.addProperty("action", 2);
++        final JsonObject track = new JsonObject();
++        track.addProperty("anim_type", "alpha");
++        track.addProperty("from", 0);
++        track.addProperty("to", 1);
++        track.addProperty("duration", .16);
++        track.addProperty("easing", "out_quad");
++        final JsonArray tracks = new JsonArray();
++        tracks.add(track);
++        button.add("animation_tracks", tracks);
++        children(root, button);
++        final var box = layout(scene(root), 320, 200);
++        final var timeline = new BedrockFormAnimations();
++        timeline.beginFrame();
++        final var initial = BedrockFormPresentation.draws(box, _ -> false, node -> timeline.opacity(node, 1_000_000_000L));
++        assertEquals(0, initial.getLast().alpha());
++        assertEquals(.5F, initial.getLast().potential());
++        assertEquals(2, initial.getLast().box().node().action());
++        timeline.beginFrame();
++        final var middle = BedrockFormPresentation.draws(box, _ -> false, node -> timeline.opacity(node, 1_080_000_000L));
++        assertEquals(.375F, middle.getLast().alpha(), .001F);
++        timeline.beginFrame();
++        final var completed = BedrockFormPresentation.draws(box, _ -> false, node -> timeline.opacity(node, 2_000_000_000L));
++        assertEquals(.5F, completed.getLast().alpha());
++    }
++
++    @Test
++    void restartsHoverBranchAlphaOnReentryAndPreservesDelay() {
++        final JsonObject root = node("button", 120, 40);
++        root.addProperty("action", 1);
++        root.addProperty("default_control", "default");
++        root.addProperty("hover_control", "hover");
++        final JsonObject normal = node("image", 120, 40), hover = node("image", 120, 40);
++        normal.addProperty("name", "default");
++        hover.addProperty("name", "hover");
++        final JsonObject track = new JsonObject();
++        track.addProperty("anim_type", "alpha");
++        track.addProperty("from", 0);
++        track.addProperty("to", 1);
++        track.addProperty("duration", .1);
++        track.addProperty("delay", .02);
++        track.addProperty("easing", "linear");
++        final JsonArray tracks = new JsonArray();
++        tracks.add(track);
++        hover.add("animation_tracks", tracks);
++        children(root, normal, hover);
++        final var box = layout(scene(root), 320, 200);
++        final var timeline = new BedrockFormAnimations();
++        timeline.beginFrame();
++        BedrockFormPresentation.draws(box, _ -> true, node -> timeline.opacity(node, 1_000_000_000L));
++        timeline.beginFrame();
++        final var progressed = BedrockFormPresentation.draws(box, _ -> true, node -> timeline.opacity(node, 1_070_000_000L));
++        assertEquals(.5F, progressed.getLast().alpha(), .001F);
++        timeline.beginFrame();
++        BedrockFormPresentation.draws(box, _ -> false, node -> timeline.opacity(node, 1_080_000_000L));
++        timeline.beginFrame();
++        final var restarted = BedrockFormPresentation.draws(box, _ -> true, node -> timeline.opacity(node, 2_000_000_000L));
++        assertEquals(0, restarted.getLast().alpha());
++        assertEquals(1, restarted.getLast().potential());
++    }
++
++    private static BedrockFormLayout.Box layout(final BedrockFormScene scene, final int width, final int height) {
++        return new BedrockFormLayout(_ -> new BedrockFormLayout.Size(0, 0)).layout(scene.root(), width, height, Map.of());
++    }
++
++    private static BedrockFormScene scene(final JsonObject root) {
++        return BedrockFormScene.parse(json(root).toString());
++    }
++
++    private static JsonObject json(final JsonObject root) {
++        final JsonObject value = new JsonObject(), fallback = new JsonObject();
++        value.addProperty("format", 1);
++        value.add("root", root);
++        final JsonArray buttons = new JsonArray();
++        for (int i = 0; i < 10; i++) {
++            final JsonObject button = new JsonObject();
++            button.addProperty("text", Integer.toString(i));
++            buttons.add(button);
++        }
++        fallback.add("buttons", buttons);
++        value.add("fallback", fallback);
++        return value;
++    }
++
++    private static JsonObject node(final String type, final Object width, final Object height) {
++        final JsonObject node = new JsonObject();
++        node.addProperty("type", type);
++        node.addProperty("anchor_from", "top_left");
++        node.addProperty("anchor_to", "top_left");
++        node.add("size", pair(width, height));
++        return node;
++    }
++
++    private static JsonArray pair(final Object first, final Object second) {
++        final JsonArray pair = new JsonArray();
++        for (final Object value : new Object[]{first, second}) {
++            if (value instanceof Number number) pair.add(number);
++            else pair.add(value.toString());
++        }
++        return pair;
++    }
++
++    private static void children(final JsonObject parent, final JsonObject... values) {
++        final JsonArray children = new JsonArray();
++        for (final JsonObject value : values) children.add(value);
++        parent.add("children", children);
++    }
++}
+-- 
+2.55.0

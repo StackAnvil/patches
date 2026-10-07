@@ -165,7 +165,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 | U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core retains received presets and resolves optional-field inheritance. It also resolves fades, FOV transitions, and default camera shake, which the add-on renders. Free-camera activation, pose transport, per-preset overrides, and native blend arithmetic now have production paths. Target tracking, splines, attachments, aim assistance, native follow cameras, built-in perspective pose parity, player-effects application, custom shake parameters, and broader lifecycle comparisons remain incomplete. |
 | U2 | Fog and HUD visibility | Incomplete | Core retains all target HUD restrictions and transports them through direct connections and ViaProxy. The add-on applies individual Java HUD restrictions and preserves local settings on reset. Fog, missing native widgets, and remaining visual comparisons are incomplete. |
 | U3 | Texture animations, toasts, credits, store requests, and inventory preferences | Incomplete | Implement target packet behavior and verify native presentation. |
-| U4 | Dynamic JSON UI and widgets | Incomplete | Extend static sidebar support with expression evaluation and applicable widgets. |
+| U4 | Dynamic JSON UI and widgets | Incomplete | Core resolves authored server-form templates, bounded expressions, collections, bindings, images, and original response indices. The add-on renders supported grids, scrolling, textures and alpha animations. Complete controller bindings, font metrics, other animation properties, and native comparisons on both routes. |
 | U5 | NPC conversations, portraits, links, and editing | Incomplete | Core Java conversations exist. Native portraits, editing, link captures, and UI comparisons remain. |
 
 The [HUD core patch](../patches/viabedrock/upstreamable/0081-retain-server-hud-visibility.pr.md) handles packet 308 instead of discarding it.
@@ -8273,3 +8273,160 @@ The original publisher returns zero for supplied geometry without the block-type
 The actual captured geometry reader and final engine consumption remain verification boundaries.
 No global lighting default changed from these supplied controls.
 World propagation, enhanced lighting, native visible results, and the complete lighting matrix remain required.
+
+## Swimming look inputs and typed lighting, October 7, 2026
+
+**Implemented and numerically verified:** Core now calculates the swimming look input from current and previous pitch.
+It preserves native float angle wrapping, negative radians, and the verified target sine-table producer.
+The add-on supplies the local player's two pitch values during negotiated flight with swimming.
+Ordinary non-flying physics retains its existing path.
+The changes belong to core `0092` and add-on `0025`.
+
+The production helper matches 26,660 original native callback cases without look or velocity bit differences.
+The actual Java 26.3 calculation differs in 17,364 velocity cases, including 8,718 flying cases.
+The maximum observed velocity difference is approximately 0.000125274.
+The fixture supplies actor rotation fields, state flags, initial velocity, and imported float remainder behavior.
+Actual native rotation construction, scheduler timing, previous-pitch lifecycle, and strict-server trajectories remain unverified.
+Private evidence is `.stackanvil/research/movement-flight/look-producer/swim-angle-comparison.json`.
+
+Core `0054` also preserves the typed behavior of named emission and dampening readers.
+A recognized compound accepts only a byte field and otherwise initializes to zero.
+An absent or non-compound component retains the legacy fallback.
+Network-NBT tests cover those distinctions and valid byte values.
+The original emission dispatcher and publisher pass 118 cases; another 18 cases compare both named readers.
+The observed filter alias, its precedence, and the existing clamp retain their current behavior.
+Final native handling of out-of-range bytes, complete alias selection, and geometry-dependent omitted dampening remain open.
+The earlier factory/default probe targeted `embedded_visual`, rather than the registered top-level geometry component.
+Its result does not establish the default of captured geometry records.
+Private evidence is under `.stackanvil/research/billboards/cached-identities/`.
+
+The combined candidate builds pass with 867 core cases, 612 add-on cases, and four proxy cases.
+Thirty core cases and 117 add-on cases skip optional fixtures.
+There are no failures or errors, and the repaired Checkstyle gate passes.
+Both downstream bundles contain all 1,260 core file entries unchanged.
+The exact new core JAR also passes all 26,660 native callback comparisons.
+Neither change has replaced the installed artifacts at this milestone.
+The preceding published HTTP change passes its complete CI build and all three operating-system permission jobs.
+Those jobs do not establish Windows or macOS game joins.
+
+## ViaProxy bundle edge cases, October 7, 2026
+
+**Verified bounded scenarios:** A fresh ordinary Java 26.3 client joins strict Bedrock 1.26.51.1 through ViaProxy over RakNet.
+The actual resource-pack acknowledgment completes before the world loads.
+Independent Script API inventory snapshots and advancing server ticks confirm the following actions:
+
+- Slot-held bundle insertion.
+- External chest cursor insertion, return, close, and reopen.
+- Stack merging, reordering, selected extraction, and compaction.
+- Fractional capacity, partial insertion, full-capacity prevention, and forbidden shulker insertion prevention.
+
+The capacity case inserts four of eight diamonds into a bundle containing fifteen eggs.
+The bundle reaches weight 64 and the cursor retains four diamonds.
+Full-capacity and forbidden-item controls retain unchanged client and server state over advancing ticks without sending an inventory request.
+These controls verify local prevention, not a native server rejection.
+
+**Known mismatch:** Right-click extraction from a cursor-held bundle sends a native Place action for the whole bundle.
+The server accepts that request and places the bundle in the destination slot.
+The expected extraction retains an empty bundle on the cursor and puts its diamonds in the slot.
+An ordinary Java baseline with the same pinned client class performs the expected extraction.
+The failing state and accepted request remain in the evidence; the expectation has not changed.
+The completed read-only recording correlates the incoming Java click with core cursor and dynamic-container identity before translation.
+
+These tests use core `46879d1a75d261a322aaa3c2424b9f01c549722ccdae0ff97368e594982895c6` and proxy `a38d2e6e46afbedec3400d193e59b1c5b05bd1beeac2da7bf5676661872fd212`.
+The client does not load the add-on.
+All owned test processes stop normally; shared services and all 35 installed inventory entries remain unchanged.
+The user-requested VFP client now also runs muted on the real desktop display. Test clients remain isolated on `:99`.
+Private evidence is `.stackanvil/research/inventory-bundle/live/proxy-edge/evidence-plugin-retry/runtime-evidence.json`.
+
+Nested dynamic refresh, stale-ID rejection and retry, in-use dropping, broader creative behavior, and native graphical comparisons remain required.
+These bounded passes do not establish full inventory parity.
+
+### Cursor bundle failure traced to single-slot drag
+
+The focused ViaProxy recording captures the exact incoming Java click sequence before translation.
+The client sends `QUICK_CRAFT` with start, add-slot, and end buttons 4, 5, and 6.
+The cursor retains its valid bundle tag, network identity, registered dynamic container, and four diamonds throughout that input sequence.
+The mismatch does not result from a lost bundle identity.
+
+The pinned Java 26.3 menu converts a drag over one accepted slot to a normal pickup click.
+The previous core sends a distribution Place action instead.
+The owning deferred inventory patch now delegates one eligible destination to ordinary pickup with the original mouse mode.
+Multi-slot distribution and invalid phase handling remain regression controls.
+
+The server accepts the incorrect Place request.
+The earliest independent post-response server frame confirms the whole bundle in slot 3, matching the client failure frame.
+A later frame reports a real player death and dropped inventory after the failure timeout.
+That later frame is retained separately and does not support the immediate placement comparison.
+The actual later Bedrock DeathInfo packet reports drowning, with matching drowning damage events.
+The preceding fall from the prepared platform remains unexplained; this run does not establish sustained survival behavior.
+The prior ordinary Java baseline verifies the expected UI result with the same pinned client class.
+It did not capture the exact three baseline click packets.
+Private evidence is `.stackanvil/research/inventory-bundle/live/proxy-edge/evidence-cursor-context/cursor-context-result.json`.
+
+### Single-slot fix regression gate
+
+All 15 stateful bundle action tests pass after the full 97-patch replay.
+Four tests fail on the prior implementation with the incorrect Place action.
+The controls cover duplicate additions, invalid slots, empty bundles, mismatched phases, rejection and retry, and ordinary multi-slot distribution.
+The full core build and Checkstyle gate pass: 872 tests, including 30 optional skips, with no failures or errors.
+The final downstream builds also pass: 612 add-on tests with 117 optional skips, and four proxy tests.
+All 1,260 core file entries match both downstream JARs byte for byte.
+Nine exact local artifact and manifest replacements passed the reviewed rollout, with rollback copies and 26 unrelated installed files unchanged.
+A fresh ordinary Java 26.3 ViaProxy run now verifies the corrected extraction against strict official BDS.
+The same drag sequence sends accepted Take actions for four diamonds from dynamic storage zero.
+The earliest independent post-response server frame confirms those diamonds in the destination.
+The actual client retains the empty bundle on the cursor.
+Script API does not expose the cursor; client components and matched native responses establish its identity and emptied contents.
+Healthy stationary support and dry air blocks precede the input, with advancing Survival ticks.
+Native graphical comparison and broader drag behavior remain required.
+The next live fixture verifies loaded stone support, air at the feet and head, stable position, health, and absence of water before sending input.
+It does not override health, breath, movement enforcement, or server authority.
+
+## First-person fist visibility regression, October 7, 2026
+
+**Reproduced on the real desktop client:** CubeCraft's first-person controller selects the right arm for an empty main hand.
+The matching saved humanoid skin has lowercase arm and sleeve bone names from the legacy geometry importer.
+The authored controller retains camel-case names.
+Actual and rendered item stacks are empty, but the cached arm and sleeve cubes remain hidden.
+The surface list still suppresses the ordinary Java hand.
+
+The legacy importer performs the established name conversion; this failure is a missing corresponding visibility match.
+The repair must apply the existing humanoid name convention to visibility, retain exact custom-actor matching, and preserve intentional hides and rule order.
+It belongs to the existing skin and equipped-model patches.
+The current desktop client uses the prior add-on artifact and Vulkan after its OpenGL context creation failed.
+The production visibility mismatch reproduces independently of that backend.
+A rebuilt fix, actual visible empty hand, and plain/Iris checks remain required.
+Private evidence is `.stackanvil/research/first-person-fist/fist-case-evidence-summary.json`.
+
+The first protected cursor-fix test stopped before teleport, Survival, or inventory input because its target blocks were unavailable.
+It sent no inventory requests and provides no acceptance result for the fix.
+The corrected private fixture loads the target in Creative, verifies fill results and actual support/air blocks, then transitions to Survival.
+The input gate still requires healthy stationary state outside water; enforcement, health, and breath remain unchanged.
+All owned processes stopped normally after the failed setup, and both user clients, shared services, and all installed artifacts remained unchanged.
+
+The repaired cursor fixture completes normally after acceptance. All owned client, proxy, server, launcher, display, and audio processes stop.
+Both user clients, shared services, all 35 installed entries, and the 310 source-profile files remain unchanged.
+Private evidence is `.stackanvil/research/inventory-bundle/live/proxy-edge/evidence-cursor-fixture-repair/cursor-fix-result.json`.
+
+
+### Authored server forms and actor menus
+
+The [core form resolver](../patches/viabedrock/upstreamable/0095-resolve-authored-bedrock-server-form-scenes.pr.md) uses the accepted pack stack and versioned built-in UI assets.
+The [client renderer](../patches/viafabricplus-bedrock/upstreamable/0029-render-authored-bedrock-server-forms.pr.md) preserves authored textures and response indices, with Java focus and narration.
+Supported scenes travel through the same custom payload on direct and ViaProxy routes.
+Ordinary Java clients receive a readable projection through standard dialogs.
+These paths do not establish complete JSON UI or native visual parity.
+
+Native fixtures establish expression, grid, missing-template and size-unit behavior for Bedrock 1.26.51.1.
+Private probes use real server definitions and textures with synthetic form records.
+Actual server form records and desktop rendering still require verification.
+The full replay passes 865 core tests, with 30 skipped.
+Built-in UI is optional and identified by its content in the conversion cache.
+Production loads resources from the JAR or pack provider; it does not reference a local Bedrock installation.
+
+An actual CubeCraft capture establishes the Social Menu closure cause on the previous desktop artifact.
+Right-click reaches the server, which opens an actor-backed menu.
+The old core sends a close six milliseconds later because it interprets the placeholder position as a physical block.
+Core now preserves server-owned actor menus and defers physical checks until their backing block is known.
+Eight packet and lifecycle cases pass.
+The updated desktop artifact has not yet verified that the menu remains open.
