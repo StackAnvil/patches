@@ -7575,3 +7575,58 @@ The previous zero-strength iteration's GitHub CI completes successfully.
 **Remaining:** Exact partial-face float arithmetic, native world lookup, neighbor identity, emissive custom states, and nonzero-strength flat paths require verification.
 Alternative terrain renderers, controlled visible comparisons, dimensions, time, weather, brightness, and status effects remain required.
 All other lighting, movement, combat, protocol, account, asset, and platform requirements retain their scope.
+
+## Native face interpolation arithmetic: October 7, 2026
+
+**Goal-turn classification:** Progress. Shared core arithmetic and client face mappings now reproduce the sampled native face submissions exactly.
+The full Bedrock coverage goal remains active.
+
+**Reference correction:** The preceding comparison executes one native face routine and supplies its coordinates directly for all six Java directions.
+It records that boundary, but the nine reported differences do not establish face-specific native behavior.
+This iteration executes all six original native face emission functions from Bedrock 1.26.51.1, build 51061372.
+Their submitted vertex positions establish the face axes and the physical layout of the supplied corner colors.
+With those references, the preceding Java implementation matches 6,909 of 6,912 colors exactly.
+The remaining three colors differ by one level on north and south faces.
+
+**Native evidence:** Horizontal faces interpolate X before Z. North and south faces interpolate X before Y.
+West and east faces interpolate Z before Y.
+All six routines blend two colors along the inner axis, then blend the two results along the outer axis.
+Java's four-term weighted sum changes rounding at some color-packing boundaries.
+
+The private fixture executes the six complete face emission functions with supplied cached corner colors, cuboid bounds, texture coordinates, and local positions.
+It substitutes the float floor import and intercepts mesh submission to record vertex positions and colors.
+The controlled Java ambient palette supplies corner averages; independently verified material arithmetic supplies the shaded corner colors.
+Native world lookup, neighbor-to-color assignment, the mesh writer, the GPU, and visible terrain do not execute.
+
+**Production changes:** `CustomBlockLighting.interpolate` supplies the nested float calculation in ViaBedrock core.
+The add-on maps Java's four corner averages to each native face's axes and evaluates the authored vertex coordinates.
+Color clamping follows interpolation. Directional dimming still applies once, and native light maxima remain intact.
+Full unit faces retain their corner colors. Ordinary states and unannotated custom faces retain Java's original color packing.
+The hook also handles expanded bounds and tiny insets that Java does not classify as partial faces.
+This renderer integration is required to apply the core calculation to terrain on both connection routes.
+
+**Client verification:** Direct and ViaProxy clients each load 276 custom definitions and match all 12,096 native reference colors exactly.
+Each probe covers six directions, three uneven air/stone profiles, six strengths, four directional multipliers, and seven bounds.
+Bounds include full faces, three ordinary inset sizes, expanded faces, an inset smaller than Java's threshold, and an asymmetric face.
+Each route retains 12,096 ordinary-state color controls against unannotated custom faces.
+The probes clone accepted CubeCraft faces and restore original annotations after each case.
+These are actual injected renderer evaluations against original native submitted colors, not block placements or visible image comparisons.
+Full direct and ViaProxy scene replays pass transport, resource loading, and model checks.
+The preceding intermittent ViaProxy handshake timeout remains an independent unresolved requirement.
+
+**Build verification:** The complete 97-patch core stack and 30-patch add-on stack replay successfully.
+Core passes 808 tests, including 25 optional skips, with zero failures or errors.
+The native interpolation, material, and corner-light fixtures execute; numeric controls cover endpoints, rounding, and extrapolation before clamping.
+The add-on passes 605 tests, including 117 optional skips, with zero failures or errors. ViaProxy builds successfully.
+Fresh Jenkins metadata and all four dependency checksums match the pin.
+All 1,252 core entries remain identical in the add-on bundle.
+ViaProxy retains all 1,251 core entries outside the standalone core manifest; its own manifest is expected.
+The preceding iteration's GitHub CI completes successfully.
+
+**Rollout verification:** Reviewed plans replace the distribution JAR, Maven JAR, and distribution manifest for each of the three projects.
+Fresh private rollback copies cover those nine exact files. All 26 unrelated artifacts and the existing servers remain unchanged.
+
+**Remaining:** Native world lookup, neighbor identity and color assignment, emissive custom states, and nonzero-strength flat paths require verification.
+Arbitrary model rotations, alternative terrain renderers, enhanced lighting, and controlled visible comparisons remain required.
+Dimensions, time, weather, brightness, status effects, propagation, fluid filtering, chunk boundaries, and relighting retain their native verification requirements.
+All other movement, combat, protocol, account, asset, and platform requirements retain their scope.

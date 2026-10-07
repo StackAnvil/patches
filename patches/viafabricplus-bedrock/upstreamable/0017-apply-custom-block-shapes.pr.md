@@ -155,3 +155,20 @@ The comparison supplies corner averages resolved from unannotated Java output ag
 It does not verify native world lookup, original caller orientation, block placement, or visible native images.
 Full recorded scene replays complete and pass transport, resource loading, and model verification on both routes.
 The [coverage ledger](../../../docs/bedrock-coverage.md#corner-shading-before-face-interpolation-october-7-2026) records the results and remaining scope.
+
+## Native face interpolation arithmetic
+
+The terrain hook maps Java's four shaded corner averages to the native face axes and uses the core nested interpolation helper.
+Horizontal faces interpolate X before Z. North and south faces interpolate X before Y.
+West and east faces interpolate Z before Y.
+Authored vertex coordinates also cover expanded faces and tiny insets that Java does not classify as partial faces.
+Clamping follows interpolation. Full unit faces retain their corner colors, and ordinary states retain Java's original color packing.
+
+The previous private reference generalized one native face routine across all directions.
+Executing all six original face emission functions reduces that baseline discrepancy from nine colors to three.
+The corrected client matches all 12,096 supplied native colors per route, with 12,096 ordinary-state controls.
+Cases include six directions, seven bounds, three uneven neighbor profiles, six strengths, and four directional multipliers.
+The probes clone accepted CubeCraft faces and restore their annotations.
+Native functions consume supplied corner colors and report submitted vertex positions and colors.
+Native world lookup, neighbor-to-color assignment, the mesh writer, the GPU, and visible comparisons remain unverified.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-face-interpolation-arithmetic-october-7-2026) records full route results and remaining requirements.

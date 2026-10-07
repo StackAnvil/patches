@@ -1,4 +1,4 @@
-From 45b56ee8b2fef1a33db966736d92e8f3161bc012 Mon Sep 17 00:00:00 2001
+From 3730635f88c7b43494577c8b4f668c7696447c83 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:39:38 +0200
 Subject: [PATCH] feat(blocks): apply native custom block shapes and lighting
@@ -100,6 +100,24 @@ Preserve unannotated quads and ordinary Java carriers.
 Original native interpolation and packing instructions distinguish this
 ordering in 8,393 of 18,816 controlled probes. The fixture supplies corner
 colors and does not establish native world lookup or visible parity.
+
+Use core nested interpolation for annotated partial terrain faces. Map
+Java's four ambient averages from its face adjacency order to the target
+native inner and outer axes, then pack the resulting vertex color. Both
+horizontal faces interpolate X before Z; Z faces interpolate X before Y;
+X faces interpolate Z before Y. Full unit faces retain identical
+corner colors. Ordinary states and unannotated quads keep original packing.
+
+Complete native face emission fixtures validate all six directions with
+supplied cached colors and local cuboid bounds. The previous single-face
+reference generalized its arithmetic to other axes, so it overstated the
+residual mismatch. Native world lookup, assignment of neighbor colors,
+alternative terrain renderers, and visible comparisons remain required.
+
+Evaluate authored vertex coordinates even when Java classifies a face as
+full. Expanded cuboids and tiny insets still require native interpolation;
+Java's partial-face flag does not cover those bounds. Clamp the result
+after interpolation as the native color packer does.
 ---
  .../bedrock/block/BedrockBlockFace.java       |  22 +++
  .../block/BedrockCustomBlockResources.java    |  81 +++++++++
@@ -112,7 +130,7 @@ colors and does not establish native world lookup or visible parity.
  .../block/MixinCustomBlockCollisions.java     |  39 +++++
  .../block/MixinCustomBlockConnection.java     |  24 +++
  .../block/MixinCustomBlockCulling.java        |  34 ++++
- .../block/MixinCustomBlockLighting.java       | 110 ++++++++++++
+ .../block/MixinCustomBlockLighting.java       | 136 +++++++++++++++
  .../block/MixinCustomBlockResources.java      |  24 +++
  .../block/MixinCustomBlockSession.java        |  24 +++
  .../features/block/MixinCustomBlockState.java | 162 ++++++++++++++++++
@@ -122,7 +140,7 @@ colors and does not establish native world lookup or visible parity.
  .../BedrockCustomBlockResourcesTest.java      |  91 ++++++++++
  .../block/BedrockCustomBlocksTest.java        |  89 ++++++++++
  .../block/BedrockCustomCullingTest.java       |  51 ++++++
- 21 files changed, 1187 insertions(+)
+ 21 files changed, 1213 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockFace.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
@@ -753,10 +771,10 @@ index 0000000..b7ffee9
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
 new file mode 100644
-index 0000000..a2c2cd0
+index 0000000..b057e02
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,136 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -776,7 +794,9 @@ index 0000000..a2c2cd0
 +import net.minecraft.client.resources.model.geometry.BakedQuad;
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.core.Direction;
++import net.minecraft.util.ARGB;
 +import net.minecraft.world.level.block.state.BlockState;
++import org.joml.Vector3fc;
 +import net.raphimc.viabedrock.api.model.CustomBlockLighting;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.Shadow;
@@ -809,6 +829,30 @@ index 0000000..a2c2cd0
 +                                  @Local(argsOnly = true) final BakedQuad quad) {
 +        return lighting(state, quad) == null ? original.call(first, second, third, fourth)
 +            : CustomBlockLighting.maximumLight(first, second, third, fourth);
++    }
++
++    @WrapOperation(method = "prepareQuadAmbientOcclusion", at = @At(value = "INVOKE",
++        target = "Lcom/mojang/blaze3d/vertex/QuadInstance;setColor(II)V"), require = 8, allow = 8)
++    private void nativeInterpolatedColor(final QuadInstance instance, final int vertexIndex, final int color,
++                                         final Operation<Void> original, @Local(argsOnly = true) final BlockState state,
++                                         @Local(argsOnly = true) final BakedQuad quad,
++                                         @Local(index = 42) final float first, @Local(index = 43) final float second,
++                                         @Local(index = 44) final float third, @Local(index = 45) final float fourth) {
++        if (lighting(state, quad) == null) {
++            original.call(instance, vertexIndex, color);
++            return;
++        }
++        final Vector3fc vertex = quad.position(vertexIndex);
++        // Java's corner order follows its adjacency table. Native faces group the X or Z axis first.
++        final float ambient = switch (quad.direction()) {
++            case DOWN -> CustomBlockLighting.interpolate(second, third, first, fourth, vertex.x(), vertex.z());
++            case UP -> CustomBlockLighting.interpolate(third, second, fourth, first, vertex.x(), vertex.z());
++            case NORTH -> CustomBlockLighting.interpolate(fourth, third, first, second, vertex.x(), vertex.y());
++            case SOUTH -> CustomBlockLighting.interpolate(second, third, first, fourth, vertex.x(), vertex.y());
++            case WEST -> CustomBlockLighting.interpolate(third, fourth, second, first, vertex.z(), vertex.y());
++            case EAST -> CustomBlockLighting.interpolate(second, first, third, fourth, vertex.z(), vertex.y());
++        };
++        original.call(instance, vertexIndex, ARGB.gray(Math.clamp(ambient, 0F, 1F)));
 +    }
 +
 +    // These four corner averages occur in both the full-face and partial-face paths.

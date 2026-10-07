@@ -226,3 +226,17 @@ It does not execute native world lookup or produce a visible comparison.
 The optional native fixture test verifies every resulting corner through the production helper.
 Additional controls distinguish channel maxima from averages, retain dark samples, and preserve packed smooth-channel precision.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-corner-light-maxima-october-7-2026) records terrain integration and remaining limits.
+
+## Native interpolation of shaded corners
+
+The core lighting helper now blends shaded corners along the inner axis, then blends those results along the outer axis.
+This preserves native float operation order. Java's four-term sum changes some final colors by one level.
+The helper returns the float result before color clamping, including extrapolation for authored bounds outside a unit block.
+Face selection and vertex coordinates belong to client integration; the arithmetic remains reusable in core.
+
+Numeric tests cover corner endpoints, measured color-packing boundaries, and extrapolation.
+The optional native fixture test verifies 6,912 submitted colors through the production helper.
+The fixture executes all six original target face emission functions with supplied cached colors and cuboid bounds.
+It intercepts mesh submission to record positions and colors. It does not execute native world lookup, neighbor color assignment, or the GPU.
+Both connection routes verify the integrated face mapping and expanded bounds against 12,096 native colors per route.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-face-interpolation-arithmetic-october-7-2026) records route results and remaining scope.

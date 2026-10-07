@@ -1,4 +1,4 @@
-From 21bd7441e609c54c45956ccf61429bdd27ef37aa Mon Sep 17 00:00:00 2001
+From 0911c6287dae8bf5edab9c4cd6a5cb10e4fe3241 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -176,10 +176,21 @@ Expose that calculation in the shared lighting helper so client terrain
 integration can retain native corner brightness on both routes.
 A private full-routine fixture verifies 12,288 heterogeneous corner
 samples across six directions, face planes and opaque diagonal controls.
-Neighborhood lookup and interpolation remain separate parity work.
+Neighborhood lookup and visible comparisons remain separate parity work.
+
+Interpolate shaded terrain corners along one axis and then the other,
+preserving the target native float operation order. A four-term weighted
+sum can change a final vertex color by one level. Keep the arithmetic in
+core for reuse; client terrain integration chooses the face axes.
+
+Private executable probes run all six original native face emission
+functions with supplied cached colors and cuboid bounds. They verify
+submitted vertex positions and packed colors, including the different
+axis grouping on horizontal and vertical faces. They do not establish
+native world lookup, neighbor-to-color assignment, or visible parity.
 ---
  .../api/model/CustomBlockCulling.java         | 206 +++++++
- .../api/model/CustomBlockLighting.java        |  49 ++
+ .../api/model/CustomBlockLighting.java        |  59 ++
  .../api/model/CustomBlockOffset.java          |  97 +++
  .../api/model/CustomBlockProperties.java      | 150 +++++
  .../api/model/CustomBlockVisual.java          |  27 +
@@ -204,7 +215,7 @@ Neighborhood lookup and interpolation remain separate parity work.
  .../protocol/storage/ResourcePackStorage.java |  44 +-
  .../protocol/storage/VoxelShapeRegistry.java  | 125 ++++
  .../api/model/CustomBlockCullingTest.java     |  54 ++
- .../api/model/CustomBlockLightingTest.java    |  73 +++
+ .../api/model/CustomBlockLightingTest.java    | 101 ++++
  .../api/model/CustomBlockOffsetTest.java      |  80 +++
  .../api/model/CustomBlockPropertiesTest.java  |  69 +++
  .../http/ConvertedResourcePackCacheTest.java  |  29 +
@@ -217,7 +228,7 @@ Neighborhood lookup and interpolation remain separate parity work.
  .../protocol/storage/ChunkTrackerTest.java    |  24 +
  .../storage/CustomBlockPackStorageTest.java   | 169 ++++++
  .../storage/VoxelShapeRegistryTest.java       | 130 ++++
- 39 files changed, 4264 insertions(+), 23 deletions(-)
+ 39 files changed, 4302 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockOffset.java
@@ -459,10 +470,10 @@ index 000000000..f01a834b7
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
 new file mode 100644
-index 000000000..3dec74c45
+index 000000000..17ad336e4
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,59 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -504,6 +515,16 @@ index 000000000..3dec74c45
 +        final int block = Math.max(Math.max(first & 0xFF, second & 0xFF), Math.max(third & 0xFF, fourth & 0xFF));
 +        final int sky = Math.max(Math.max((first >>> 16) & 0xFF, (second >>> 16) & 0xFF), Math.max((third >>> 16) & 0xFF, (fourth >>> 16) & 0xFF));
 +        return block | (sky << 16);
++    }
++
++    /** Interpolate shaded corners along the inner axis first, preserving native float operation order. */
++    public static float interpolate(final float lowerLower, final float upperLower,
++                                    final float lowerUpper, final float upperUpper,
++                                    final float inner, final float outer) {
++        final float inverseInner = 1F - inner;
++        final float lower = lowerLower * inverseInner + upperLower * inner;
++        final float upper = lowerUpper * inverseInner + upperUpper * inner;
++        return lower * (1F - outer) + upper * outer;
 +    }
 +
 +    /** Native terrain applies the exponent after corner averaging and directional attenuation, before tint and world light. */
@@ -3176,10 +3197,10 @@ index 000000000..d9e0da375
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
 new file mode 100644
-index 000000000..e180e29d9
+index 000000000..4ecaf2323
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,101 @@
 +package net.raphimc.viabedrock.api.model;
 +
 +import com.viaversion.viaversion.libs.gson.JsonParser;
@@ -3209,6 +3230,34 @@ index 000000000..e180e29d9
 +        assertEquals(0, CustomBlockLighting.maximumLight(0, 0, 0, 0));
 +        // Smooth channels can retain fractional levels after interpolation.
 +        assertEquals(0x00BD00E7, CustomBlockLighting.maximumLight(0x002400E7, 0x00BD0008, 0, 0x008400C9));
++    }
++
++    @Test
++    void interpolationKeepsNativeFloatGroupingAndCornerEndpoints() {
++        assertEquals(0.2F, CustomBlockLighting.interpolate(0.2F, 0.4F, 0.6F, 0.8F, 0F, 0F));
++        assertEquals(0.4F, CustomBlockLighting.interpolate(0.2F, 0.4F, 0.6F, 0.8F, 1F, 0F));
++        assertEquals(0.6F, CustomBlockLighting.interpolate(0.2F, 0.4F, 0.6F, 0.8F, 0F, 1F));
++        assertEquals(0.8F, CustomBlockLighting.interpolate(0.2F, 0.4F, 0.6F, 0.8F, 1F, 1F));
++        // A four-term weighted sum packs this native 0.6 corner blend one color level darker.
++        assertEquals(153, (int) (CustomBlockLighting.interpolate(0.6F, 0.8F, 0.4F, 0.6F, 0.875F, 0.875F) * 255F));
++        assertEquals(101, (int) (CustomBlockLighting.interpolate(0.4F, 0.3F, 0.5F, 0.4F, 0.125F, 0.125F) * 255F));
++        // Authored bounds can extend outside a unit block. Interpolation precedes color clamping.
++        assertEquals(1.5F, CustomBlockLighting.interpolate(0F, 1F, 0F, 1F, 1.5F, 0.5F));
++    }
++
++    @Test
++    void nativeFaceSubmissionsMatchInterpolation() throws Exception {
++        final String fixture = System.getProperty("stackanvil.test.nativeFaceColors");
++        Assumptions.assumeTrue(fixture != null);
++        final var cases = JsonParser.parseString(Files.readString(Path.of(fixture))).getAsJsonObject().getAsJsonArray("cases");
++        assertFalse(cases.isEmpty());
++        for (final var value : cases) {
++            final var sample = value.getAsJsonObject();
++            final var corners = sample.getAsJsonArray("corners");
++            final float actual = CustomBlockLighting.interpolate(corners.get(0).getAsFloat(), corners.get(1).getAsFloat(),
++                    corners.get(2).getAsFloat(), corners.get(3).getAsFloat(), sample.get("inner").getAsFloat(), sample.get("outer").getAsFloat());
++            assertEquals(sample.get("nativeColor").getAsInt() & 0xFF, Math.clamp((int) (actual * 255F), 0, 255));
++        }
 +    }
 +
 +    @Test
