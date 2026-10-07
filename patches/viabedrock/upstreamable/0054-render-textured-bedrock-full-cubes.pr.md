@@ -300,3 +300,19 @@ The full core suite passes 812 tests with 26 optional skips and no failures or e
 
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-terrain-neighborhood-sampling-october-7-2026) records the supplied-input boundaries.
 Runtime block flags, native propagation, cached emissive brightness, dark-result below-sampling, and visible native comparison remain required.
+
+## Typed native light components
+
+The original Bedrock 1.26.51.1 readers accept byte fields for named emission and dampening components.
+A recognized compound with a missing or differently typed field initializes its value to zero.
+An absent or non-compound component retains the legacy fallback.
+Core now preserves these distinctions when it compiles network NBT.
+
+A private executable fixture passes 118 emission dispatch and publication cases.
+Another 18 cases compare both named readers through runtime initialization and field publication.
+Tests round-trip network NBT and distinguish missing components, missing fields, non-byte values, and valid bytes.
+The fixture supplies component IDs and allocated runtime state; it does not establish native world propagation.
+
+The observed `block_light_filter` form retains its precedence and decoding.
+The existing zero-to-fifteen clamp also remains because final native handling of out-of-range bytes needs verification.
+Geometry-dependent omitted dampening and complete registered alias selection remain separate research.
