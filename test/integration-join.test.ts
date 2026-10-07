@@ -35,6 +35,19 @@ test("a Bedrock disconnect before the dwell period fails", async () => {
   expect(joined).toBe(true);
 });
 
+test("Java 26.3 system chat resolves the player for callbacks and disconnect checks", async () => {
+  let polls = 0;
+  let player: string | undefined;
+  const joined = "[06:10:50] [Server thread/INFO]: System chat: Tester joined the game";
+  await expect(waitForJoin({
+    route: "java-java", timeoutMs: 1000, dwellMs: 100, pollMs: 1,
+    serverLog: async () => ++polls > 1 ? `${joined}\n[06:10:51] [Server thread/INFO]: Tester lost connection: Disconnected` : joined,
+    clientLog: async () => "", clientAlive: () => true,
+    onJoin: (name) => { player = name; },
+  })).rejects.toThrow();
+  expect(player).toBe("Tester");
+});
+
 test("a proxy disconnect during pack negotiation fails before the join timeout", async () => {
   await expect(waitForJoin({
     route: "java-bedrock", timeoutMs: 1000, dwellMs: 100, pollMs: 1,

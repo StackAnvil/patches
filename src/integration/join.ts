@@ -30,8 +30,8 @@ export interface JoinProbe {
 export function joinedPlayer(route: JoinRoute, log: string): string | undefined {
   log = log.replace(/\x1b\[[0-9;]*m/g, "");
   if (javaBackend(route)) {
-    return /\]: ([^\r\n]+?) joined the game\b/m.exec(log)?.[1]
-      ?? /^([^\r\n]+?) joined the game\b/m.exec(log)?.[1];
+    return /\]: (?:System chat: )?([^\r\n]+?) joined the game\b/m.exec(log)?.[1]
+      ?? /^(?:System chat: )?([^\r\n]+?) joined the game\b/m.exec(log)?.[1];
   }
   return /Player Spawned:\s*(.+?)\s+xuid:/.exec(log)?.[1];
 }

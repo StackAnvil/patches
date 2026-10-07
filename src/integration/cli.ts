@@ -18,6 +18,7 @@ import { convertedGeyserTexturesMatch, geyserBedrockVersion, geyserCaseIds, geys
 import { convertedPackCount, convertedTextureMatches, installResourceProbe } from "./resource-probe.ts";
 import { connectionFailure, waitForJoin, type JoinRoute } from "./join.ts";
 import { complexGameplayCaseIds } from "./ranged-observation.ts";
+import { integrationHelp, integrationOptions } from "./options.ts";
 import { installModpack } from "./modpack.ts";
 import { configureShaders, graphicsFailures, installGraphicsProfile, readGraphicsLock, integrationPrismNames, type GraphicsProfile } from "./graphics.ts";
 
@@ -469,24 +470,28 @@ async function cleanup(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const selected = Bun.argv.slice(2);
-  const plainOnly = selected.includes("--plain-only");
-  const modpackOnly = selected.includes("--modpack-only");
-  const shaders = selected.includes("--shaders");
+  const options = integrationOptions(Bun.argv.slice(2));
+  if (options.help) {
+    console.log(integrationHelp);
+    return;
+  }
+  const plainOnly = options["plain-only"];
+  const modpackOnly = options["modpack-only"];
+  const shaders = options.shaders;
   if (shaders && plainOnly) throw new Error("--shaders requires the Fabulously Optimized client run.");
   if (plainOnly && modpackOnly) throw new Error("Choose --plain-only or --modpack-only, not both.");
-  const entityProbe = selected.includes("--entity-probe");
-  const resourceProbe = selected.includes("--resource-pack-probe");
+  const entityProbe = options["entity-probe"] ?? false;
+  const resourceProbe = options["resource-pack-probe"] ?? false;
   const resourceRun = Date.now().toString(36);
-  const gameplayProbe = selected.includes("--gameplay-probe");
-  const complexGameplay = selected.includes("--gameplay-complex");
-  const geyserProbe = selected.includes("--geyser-probe");
-  const negativeControls = selected.includes("--negative-controls");
-  const gameplayInput = selected.includes("--gameplay-cases") ? selected[selected.indexOf("--gameplay-cases") + 1] : undefined;
-  if (selected.includes("--gameplay-cases") && (!gameplayInput || gameplayInput.startsWith("--"))) {
+  const gameplayProbe = options["gameplay-probe"];
+  const complexGameplay = options["gameplay-complex"];
+  const geyserProbe = options["geyser-probe"];
+  const negativeControls = options["negative-controls"] ?? false;
+  const gameplayInput = options["gameplay-cases"];
+  if (gameplayInput !== undefined && !gameplayInput) {
     throw new Error("--gameplay-cases needs a comma-separated case list.");
   }
-  const routes: JoinRoute[] = selected.includes("--route") ? [selected[selected.indexOf("--route") + 1] as JoinRoute]
+  const routes: JoinRoute[] = options.route !== undefined ? [options.route as JoinRoute]
     : ["java-java", "java-bedrock", "bedrock-bedrock"];
   if (routes.some((route) => !["java-java", "java-bedrock", "bedrock-bedrock", "java-geyser"].includes(route))) {
     throw new Error("Use --route java-java, java-bedrock, bedrock-bedrock, or java-geyser.");
@@ -521,7 +526,7 @@ async function main(): Promise<void> {
   if ((entityProbe || gameplayCases.length || resourceProbe) && modpackOnly) throw new Error("Probe cases require the plain Java client run.");
   if (process.env.STACKANVIL_USE_DESKTOP === "1") throw new Error("Integration tests require a private display and never take desktop focus.");
   if (await activeDisplay()) throw new Error("The StackAnvil private display is already running. Stop the lab or capture session before integration tests.");
-  if (!selected.includes("--reuse-build")) await command(process.execPath, [join(root, "src", "cli.ts"), "stack", "build", "all"]);
+  if (!options["reuse-build"]) await command(process.execPath, [join(root, "src", "cli.ts"), "stack", "build", "all"]);
   const dir = join(privateRoot, "runs", new Date().toISOString().replace(/[:.]/g, "-"));
   await mkdir(dir, { recursive: true, mode: 0o700 });
   console.log(`Private logs: ${dir}`);
