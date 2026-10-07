@@ -1,8 +1,8 @@
-# Apply native fishing bite impulses
+# Apply native fishing feedback
 
 ## Behavior and dependency
 
-This patch consumes ViaBedrock's `viabedrock:fishing_bite_v1` message and its native float calculation.
+This patch consumes ViaBedrock's `viabedrock:fishing_event_v1` message and its native float calculation.
 Core handles Bedrock event decoding, actor identity, and the capability check.
 The add-on applies the impulse on the client thread, using the hook's current motion.
 It preserves horizontal motion and subtracts `0.5F` from the vertical motion with native float rounding.
@@ -65,7 +65,7 @@ Async completion requires the same world before creating a fallback.
 Cold resource and Molang preparation runs off the render thread, with at most 32 pending requests.
 Completion checks both the world and resource generation.
 The earlier synchronous path delayed the observed render callback by about 850 ms and disrupted rod input.
-The message format, connection checks, actor type, and spawn UUID remain unchanged.
+The generalized message retains the connection checks, actor type, and spawn UUID.
 
 Core reports 769 tests with zero failures and 19 optional skips.
 The add-on reports 594 tests with zero failures and 114 optional skips.
@@ -117,3 +117,28 @@ The add-on reports 596 tests with zero failures and 114 optional skips.
 ViaProxy builds against the same core, and all 1,241 core entries match both client bundles, excluding bundle metadata.
 
 Native visible comparisons, simulation, named-emitter distance behavior, fallback limits, and the full fishing matrix remain required.
+
+## Approach and tease integration
+
+The callback now accepts all three core fishing-event kinds and their retained float metadata.
+Only bite changes hook motion. Approach and tease use the current local hook position and box.
+The same connection, actor-type, and spawn UUID checks guard every event.
+Core supplies ordered emission descriptions, including the separate directions of the two approach wakes.
+Each emitter receives an independent Molang environment and a fixed world origin.
+Both approach wakes use the legacy range gate; its named fish-position emission bypasses that gate.
+Tease checks the primary water block before requesting its named splash graph.
+Unavailable wake and splash resources use directional Java fallbacks.
+Fish-position and hook graphs still have no stock Java equivalents.
+
+The core execution matrix compares 720 native approach and tease cases with production output.
+The complete core suite reports 776 tests, no failures, and 19 optional skips.
+The add-on suite reports 601 tests, no failures, and 69 optional skips with the private particle references enabled.
+Both stacks retain their unchanged standalone reference PR checks.
+Full graph simulation, pixels, additional block materials, later hook physics, and the complete fishing matrix remain open.
+
+The ordinary Java 26.3 profile has no Fabric loader, VFP, add-on, or recorder mod.
+After accepting the normal resource-pack prompt, it receives 256 directional wakes for 128 approach events, six wakes for three bites, and four tease splashes.
+The observer confirms opposing approach pairs, integral splash origins, count zero, and unit speed on all three axes.
+Its recorder finishes with spawn and movement acknowledgments.
+A later reel command arrives after the recorder stops its display, so this run does not verify stock retrieval.
+The hook disappears on disconnect. Stock fish-position graphs and complete visible parity remain unavailable or unverified.

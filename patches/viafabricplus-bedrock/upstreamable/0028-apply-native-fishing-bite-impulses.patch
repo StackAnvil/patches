@@ -1,7 +1,7 @@
-From 85189f3b427338f77a41fb38eff528b946ecd758 Mon Sep 17 00:00:00 2001
+From 17e03148a00ef73a862288f74a8ddc2b4b2d541c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 02:53:57 +0200
-Subject: [PATCH] feat(entities): apply native fishing bite impulses
+Subject: [PATCH] feat(entities): apply native fishing feedback
 
 Apply ViaBedrock's bite message to the current fishing hook on the client
 thread. Require the active connection and the exact Java spawn UUID so
@@ -22,7 +22,7 @@ WaterWake forwards to the named water-wake graph; retain its second
 emission instead of deduplicating it. Each emitter has independent Molang
 state and a fixed world origin, so reeling does not move existing effects.
 Use Java fishing particles when a licensed wake graph is unavailable.
-The wire format and spawn/connection guards remain unchanged.
+Preserve the spawn and connection guards when extending the feedback protocol.
 
 Prepare resources and independent Molang environments off the render thread.
 The cold archive load otherwise delayed live rod input by about 850 ms.
@@ -36,36 +36,49 @@ preparation. Core owns the calculation and native option semantics; only
 local camera sampling and settings presentation require this integration.
 The pinned option starts at zero and ignores changes within 0.001, without
 quantizing values. Use the native Minecraft slider with keyboard controls.
+
+Handle approach event 12 and tease event 14 through the generalized core
+fishing-event payload. Carry authoritative float metadata through direct
+connections and ViaProxy, then sample the current local hook and primary
+water block. Core owns probability, float LUT/surface calculations and
+ordered emission descriptions. Each opposing wake receives its own Molang
+direction, and only legacy emissions use the native range gate. Preserve
+bite impulses and core sound delivery. Provide directional Java wake and
+splash fallbacks when licensed graphs are unavailable.
+
+The pinned native handler executes across 720 approach/tease cases. Keep
+full rendered comparisons, non-water block materials and later hook
+simulation in the parity ledger until separately verified.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |  6 ++
- .../appearance/BedrockServerParticles.java    | 87 +++++++++++++++++++
- .../appearance/BedrockServerResources.java    |  2 +
- .../core/integration/MixinSettingsScreen.java |  4 +
- .../render/BedrockFishingFeedback.java        | 30 +++++++
- .../render/NativeFishingBitePayload.java      | 24 +++++
- .../settings/ParticleViewDistanceEntry.java   | 40 +++++++++
- .../settings/ParticleViewDistanceScreen.java  | 61 +++++++++++++
- .../bedrock/settings/BedrockSettings.java     |  5 ++
- .../settings/ParticleViewDistanceSetting.java | 45 ++++++++++
- .../viafabricplus-bedrock/lang/en_us.json     |  1 +
- .../ParticleViewDistanceSettingTest.java      | 51 +++++++++++
- 12 files changed, 356 insertions(+)
+ .../bedrock/ViaFabricPlusBedrock.java         |   6 ++
+ .../appearance/BedrockServerParticles.java    | 100 ++++++++++++++++++
+ .../appearance/BedrockServerResources.java    |   2 +
+ .../core/integration/MixinSettingsScreen.java |   4 +
+ .../render/BedrockFishingFeedback.java        |  32 ++++++
+ .../render/NativeFishingEventPayload.java     |  24 +++++
+ .../settings/ParticleViewDistanceEntry.java   |  40 +++++++
+ .../settings/ParticleViewDistanceScreen.java  |  61 +++++++++++
+ .../bedrock/settings/BedrockSettings.java     |   5 +
+ .../settings/ParticleViewDistanceSetting.java |  45 ++++++++
+ .../viafabricplus-bedrock/lang/en_us.json     |   1 +
+ .../ParticleViewDistanceSettingTest.java      |  51 +++++++++
+ 12 files changed, 371 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java
- create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingBitePayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingEventPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/settings/ParticleViewDistanceEntry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/settings/ParticleViewDistanceScreen.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/settings/ParticleViewDistanceSetting.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/settings/ParticleViewDistanceSettingTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 20f0aea..88d2ed4 100644
+index 20f0aea..4a72955 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 @@ -26,6 +26,8 @@ import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
  import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
  import com.viaversion.viafabricplus.bedrock.render.NativeActorPayload;
  import com.viaversion.viafabricplus.bedrock.render.NativeProjectileOwnerPayload;
-+import com.viaversion.viafabricplus.bedrock.render.NativeFishingBitePayload;
++import com.viaversion.viafabricplus.bedrock.render.NativeFishingEventPayload;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockFishingFeedback;
  import com.viaversion.viafabricplus.bedrock.render.BedrockProjectileOwners;
  import com.viaversion.viafabricplus.bedrock.render.NativeAnimationPayload;
@@ -74,21 +87,23 @@ index 20f0aea..88d2ed4 100644
                  (payload, context) -> CustomEntityRenderStore.accept(listener.getConnection(), payload.message())));
          ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> CustomEntityRenderStore.clear());
          PayloadTypeRegistry.clientboundPlay().register(NativeProjectileOwnerPayload.TYPE, NativeProjectileOwnerPayload.CODEC);
-+        PayloadTypeRegistry.clientboundPlay().register(NativeFishingBitePayload.TYPE, NativeFishingBitePayload.CODEC);
++        PayloadTypeRegistry.clientboundPlay().register(NativeFishingEventPayload.TYPE, NativeFishingEventPayload.CODEC);
 +        ClientPlayConnectionEvents.INIT.register((listener, client) ->
-+            ClientPlayNetworking.registerReceiver(NativeFishingBitePayload.TYPE,
++            ClientPlayNetworking.registerReceiver(NativeFishingEventPayload.TYPE,
 +                (payload, context) -> BedrockFishingFeedback.accept(listener.getConnection(), payload.message())));
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
              ClientPlayNetworking.registerReceiver(NativeProjectileOwnerPayload.TYPE,
                  (payload, context) -> BedrockProjectileOwners.accept(listener.getConnection(), payload.message())));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
-index ceb82a0..4a9d0d5 100644
+index ceb82a0..409dae9 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
-@@ -10,22 +10,109 @@ import io.netty.buffer.Unpooled;
+@@ -10,22 +10,122 @@ import io.netty.buffer.Unpooled;
  import net.minecraft.client.Minecraft;
  import net.minecraft.client.multiplayer.ClientLevel;
  import net.minecraft.core.RegistryAccess;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.block.Blocks;
 +import net.minecraft.core.particles.ParticleTypes;
  import net.minecraft.network.RegistryFriendlyByteBuf;
  import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
@@ -98,7 +113,7 @@ index ceb82a0..4a9d0d5 100644
  import net.minecraft.world.phys.Vec3;
 +import net.minecraft.server.packs.resources.ResourceManager;
  import net.raphimc.viabedrock.api.model.NativeParticlePlaybackMessage;
-+import net.raphimc.viabedrock.api.model.NativeFishingBite;
++import net.raphimc.viabedrock.api.model.NativeFishingEvent;
 +import net.raphimc.viabedrock.api.model.NativeParticleRange;
 +import net.raphimc.viabedrock.api.model.MolangVariables;
  import net.raphimc.viabedrock.protocol.model.Position3f;
@@ -115,29 +130,28 @@ index ceb82a0..4a9d0d5 100644
 +
      private BedrockServerParticles() {}
  
-+    /** Bite effects sample the current local hook and remain fixed in world space. */
-+    public static void fishingBite(final FishingHook hook) {
++    /** Fishing effects sample the current local hook and remain fixed in world space. */
++    public static void fishingEvent(final FishingHook hook, final NativeFishingEvent message) {
 +        final Minecraft minecraft = Minecraft.getInstance();
 +        final ClientLevel level = minecraft.level;
 +        if (level == null || hook.isRemoved() || level.getEntity(hook.getId()) != hook) return;
-+        final Position3f origin = NativeFishingBite.particleOrigin(
-+                new Position3f((float) hook.getX(), (float) hook.getY(), (float) hook.getZ()), (float) hook.getBoundingBox().minY);
-+        final Position3f direction = NativeFishingBite.particleDirection(hook.getBbWidth());
++        final Position3f position = new Position3f((float) hook.getX(), (float) hook.getY(), (float) hook.getZ());
++        final float boxMinY = (float) hook.getBoundingBox().minY;
++        final Position3f waterPosition = message.waterPosition(position, boxMinY);
++        final var block = level.getBlockState(new BlockPos((int) waterPosition.x(), (int) waterPosition.y(), (int) waterPosition.z()));
++        final boolean water = block.is(Blocks.WATER);
++        final float sample = message.kind() == NativeFishingEvent.Kind.APPROACH ? level.getRandom().nextFloat() : 0F;
 +        final var camera = minecraft.gameRenderer.mainCamera();
 +        final var cameraPosition = camera.position();
 +        final Position3f renderedCamera = camera.isInitialized() ? new Position3f((float) cameraPosition.x(),
 +                (float) cameraPosition.y(), (float) cameraPosition.z()) : null;
-+        // Only the middle, legacy wake passes through Level's native distance gate.
-+        final List<String> effects = NativeParticleRange.contains(origin, renderedCamera, minecraft.options.renderDistance().get(),
-+                ViaFabricPlusBedrock.impl().settings().particleViewDistance().value(), false)
-+                ? NativeFishingBite.PARTICLE_EFFECTS
-+                : List.of(NativeFishingBite.PARTICLE_EFFECTS.getFirst(), NativeFishingBite.PARTICLE_EFFECTS.getLast());
-+        final var variables = new MolangVariables(List.of(new MolangVariables.Member("variable.direction",
-+                new MolangVariables.Members(List.of(new MolangVariables.Member("x", new MolangVariables.Scalar(direction.x())),
-+                        new MolangVariables.Member("y", new MolangVariables.Scalar(direction.y())),
-+                        new MolangVariables.Member("z", new MolangVariables.Scalar(direction.z())))))));
++        final List<NativeFishingEvent.Emission> effects = message.particles(position, boxMinY, hook.getBbWidth(), sample, water)
++                .stream().filter(effect -> !effect.legacy() || NativeParticleRange.contains(effect.origin(), renderedCamera,
++                        minecraft.options.renderDistance().get(), ViaFabricPlusBedrock.impl().settings().particleViewDistance().value(), false))
++                .toList();
++        if (effects.isEmpty()) return;
 +        if (!FISHING_RESOURCES.acquire()) {
-+            for (final String effect : effects) fishingFallback(effect, level, origin);
++            for (final var effect : effects) fishingFallback(effect, level);
 +            return;
 +        }
 +        final ResourceManager manager = minecraft.getResourceManager();
@@ -149,19 +163,19 @@ index ceb82a0..4a9d0d5 100644
 +                    || BedrockServerResources.generation() != generation) return;
 +            if (error != null) {
 +                ViaFabricPlusBedrock.impl().logger().debug("Could not prepare fishing particle resources", error);
-+                for (final String effect : effects) fishingFallback(effect, level, origin);
++                for (final var effect : effects) fishingFallback(effect, level);
 +                return;
 +            }
 +            for (int index = 0; index < effects.size(); index++) {
-+                final String effect = effects.get(index);
++                final NativeFishingEvent.Emission effect = effects.get(index);
 +                try {
-+                    BedrockParticlePlayback.play(particles.resources(), effect, particles.environments().get(index),
-+                            null, position(origin), null).whenComplete((started, failure) -> minecraft.execute(() -> {
-+                        if (failure != null || !Boolean.TRUE.equals(started)) fishingFallback(effect, level, origin);
++                    BedrockParticlePlayback.play(particles.resources(), effect.identifier(), particles.environments().get(index),
++                            null, position(effect.origin()), null).whenComplete((started, failure) -> minecraft.execute(() -> {
++                        if (failure != null || !Boolean.TRUE.equals(started)) fishingFallback(effect, level);
 +                    }));
 +                } catch (RuntimeException unavailable) {
 +                    ViaFabricPlusBedrock.impl().logger().debug("Could not start fishing particle {}", effect, unavailable);
-+                    fishingFallback(effect, level, origin);
++                    fishingFallback(effect, level);
 +                }
 +            }
 +        }, minecraft::execute);
@@ -169,9 +183,13 @@ index ceb82a0..4a9d0d5 100644
 +            Thread.ofVirtual().name("Bedrock fishing resources").start(() -> {
 +                try {
 +                    final var resources = BedrockServerResources.library(manager, BedrockBuiltinAssets.load());
-+                    final List<BedrockMolang> environments = effects.stream().map(_ -> {
++                    final List<BedrockMolang> environments = effects.stream().map(effect -> {
 +                        final var environment = new BedrockMolang();
-+                        environment.variables(variables);
++                        final Position3f direction = effect.direction();
++                        environment.variables(new MolangVariables(List.of(new MolangVariables.Member("variable.direction",
++                                new MolangVariables.Members(List.of(new MolangVariables.Member("x", new MolangVariables.Scalar(direction.x())),
++                                        new MolangVariables.Member("y", new MolangVariables.Scalar(direction.y())),
++                                        new MolangVariables.Member("z", new MolangVariables.Scalar(direction.z()))))))));
 +                        return environment;
 +                    }).toList();
 +                    prepared.complete(new FishingParticles(resources, environments));
@@ -186,9 +204,17 @@ index ceb82a0..4a9d0d5 100644
 +
 +    private record FishingParticles(BedrockResourceLibrary resources, List<BedrockMolang> environments) {}
 +
-+    private static void fishingFallback(final String effect, final ClientLevel level, final Position3f origin) {
-+        if (Minecraft.getInstance().level == level && effect.equals("minecraft:water_wake_particle")) {
-+            level.addParticle(ParticleTypes.FISHING, origin.x(), origin.y(), origin.z(), 0D, 0D, 0D);
++    private static void fishingFallback(final NativeFishingEvent.Emission effect, final ClientLevel level) {
++        if (Minecraft.getInstance().level != level) return;
++        final var particle = switch (effect.identifier()) {
++            case "minecraft:water_wake_particle" -> ParticleTypes.FISHING;
++            case "minecraft:water_splash_particle" -> ParticleTypes.SPLASH;
++            default -> null;
++        };
++        if (particle != null) {
++            final Position3f origin = effect.origin();
++            final Position3f direction = effect.direction();
++            level.addParticle(particle, origin.x(), origin.y(), origin.z(), direction.x(), direction.y(), direction.z());
 +        }
 +    }
 +
@@ -232,10 +258,10 @@ index 6d19ff0..5fde823 100644
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java
 new file mode 100644
-index 0000000..85d4911
+index 0000000..3948512
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,32 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -247,30 +273,32 @@ index 0000000..85d4911
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.network.Connection;
 +import net.minecraft.world.entity.projectile.FishingHook;
-+import net.raphimc.viabedrock.api.model.NativeFishingBite;
++import net.raphimc.viabedrock.api.model.NativeFishingEvent;
 +
 +/** The translated hook receives the native impulse without Java's unrelated biting timer. */
 +public final class BedrockFishingFeedback {
 +    private BedrockFishingFeedback() {}
 +
-+    public static void accept(final Connection connection, final NativeFishingBite message) {
++    public static void accept(final Connection connection, final NativeFishingEvent message) {
 +        final Minecraft client = Minecraft.getInstance();
 +        client.execute(() -> {
 +            final var listener = client.getConnection();
 +            if (!connection.isConnected() || listener == null || listener.getConnection() != connection || client.level == null) return;
 +            final var entity = client.level.getEntity(message.entityId());
 +            if (!(entity instanceof FishingHook hook) || hook.isRemoved() || !message.uuid().equals(hook.getUUID())) return;
-+            final var motion = hook.getDeltaMovement();
-+            hook.setDeltaMovement(motion.x(), NativeFishingBite.verticalVelocity(motion.y()), motion.z());
-+            BedrockServerParticles.fishingBite(hook);
++            if (message.kind() == NativeFishingEvent.Kind.BITE) {
++                final var motion = hook.getDeltaMovement();
++                hook.setDeltaMovement(motion.x(), NativeFishingEvent.verticalVelocity(motion.y()), motion.z());
++            }
++            BedrockServerParticles.fishingEvent(hook, message);
 +        });
 +    }
 +}
-diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingBitePayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingBitePayload.java
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingEventPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingEventPayload.java
 new file mode 100644
-index 0000000..fd8d750
+index 0000000..5473c9f
 --- /dev/null
-+++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingBitePayload.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingEventPayload.java
 @@ -0,0 +1,24 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
@@ -283,16 +311,16 @@ index 0000000..fd8d750
 +import net.minecraft.network.codec.StreamCodec;
 +import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 +import net.minecraft.resources.Identifier;
-+import net.raphimc.viabedrock.api.model.NativeFishingBite;
++import net.raphimc.viabedrock.api.model.NativeFishingEvent;
 +
-+public record NativeFishingBitePayload(NativeFishingBite message) implements CustomPacketPayload {
-+    public static final Type<NativeFishingBitePayload> TYPE = new Type<>(Identifier.parse(NativeFishingBite.CHANNEL));
-+    public static final StreamCodec<RegistryFriendlyByteBuf, NativeFishingBitePayload> CODEC = CustomPacketPayload.codec(
-+            (payload, buffer) -> NativeFishingBite.TYPE.write(buffer, payload.message),
-+            buffer -> new NativeFishingBitePayload(NativeFishingBite.TYPE.read(buffer)));
++public record NativeFishingEventPayload(NativeFishingEvent message) implements CustomPacketPayload {
++    public static final Type<NativeFishingEventPayload> TYPE = new Type<>(Identifier.parse(NativeFishingEvent.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeFishingEventPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> NativeFishingEvent.TYPE.write(buffer, payload.message),
++            buffer -> new NativeFishingEventPayload(NativeFishingEvent.TYPE.read(buffer)));
 +
 +    @Override
-+    public Type<NativeFishingBitePayload> type() {
++    public Type<NativeFishingEventPayload> type() {
 +        return TYPE;
 +    }
 +}

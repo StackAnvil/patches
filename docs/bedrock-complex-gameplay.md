@@ -1012,7 +1012,7 @@ The complete fishing matrix, ordinary Java coverage, all eight coverage groups, 
 ### Fishing bite impulses, October 7, 2026
 
 **Implemented:** ViaBedrock now decodes native bite event 13 and checks that its actor is a fishing hook.
-It sends the resolved Java entity ID and spawn UUID through `viabedrock:fishing_bite_v1` when the client advertises that capability.
+It sends the resolved Java entity ID and spawn UUID through `viabedrock:fishing_event_v1` when the client advertises that capability.
 The codec validates its version, protocol, size, identity, and trailing data.
 The add-on uses the hook's current motion on the client thread.
 It applies the native float impulse and preserves both horizontal components.
@@ -1207,3 +1207,39 @@ The fixture returns to its original checksum, and both user-owned servers retain
 
 Complete fishing physics, particle behavior, audio timing, captions, displayed rewards, and native visual comparisons remain required.
 Ordinary Java fallback limits, mixed actions, account and platform checks, and every other goal requirement remain in scope.
+
+## Fishing approach and tease feedback, October 7, 2026
+
+**Implemented:** Core now handles approach event 12 and tease event 14 alongside bite event 13.
+The generalized fishing capability carries the hook's Java spawn identity and retained float fish metadata through direct and ViaProxy routes.
+Core owns event decoding, native surface and direction calculations, probability, ordering, and ordinary Java translations.
+The add-on samples the current local hook box and primary water block for native playback.
+Each approach wake receives a separate Molang direction. Named fish-position emissions bypass the legacy range gate.
+Tease emits its named splash only when the sampled primary block is water.
+
+**Verified:** The pinned Windows handler executes 720 approach and tease cases.
+Production products match their float positions, directions, counts, and call order.
+The cases cover negative heights, wrapped angles, absent or incorrectly typed metadata, the exact probability threshold, water, and dry blocks.
+Five event-11 cases execute the real fishing and base Actor dispatch without effect calls.
+The native fixture supplies provider virtuals, random samples, the float sine table, CRT floor, and opaque Molang storage.
+It does not execute GPU drawing or later hook simulation.
+
+Fresh strict BDS casts verify direct/add-on and ViaProxy/add-on production paths on Linux.
+Bounded observers verify 185 direct events and 341 proxy events against their original returned emission products.
+These include 281 changing approach offsets and both water and dry tease decisions.
+The observers retain 13,699 nonempty wake frames and 968 nonempty fish-position frames across both routes.
+Both actual reels remove the hook, and both recorders finish successfully with spawn and movement acknowledgments.
+The direct frame cap also limits its event observation; these counts describe observed prefixes.
+The final proxy build contains the same 1,243 core content files as the final add-on bundle.
+
+**Incomplete:** Tease splash requests reach the renderer but produce no visible vertices in these runs.
+Their native visual comparison and graph lifetime behavior remain open.
+Full pixels, further block-material classifications, extreme finite angle casts, rewards, captions, later physics, and the complete fishing matrix remain required.
+These results do not establish full fishing parity or replace any other gameplay requirements.
+
+The ordinary Java 26.3 profile has no Fabric loader, VFP, add-on, or recorder mod.
+After accepting the normal resource-pack prompt, it receives 256 directional wakes for 128 approach events, six wakes for three bites, and four tease splashes.
+The observer confirms opposing approach pairs, integral splash origins, count zero, and unit speed on all three axes.
+Its recorder finishes with spawn and movement acknowledgments.
+A later reel command arrives after the recorder stops its display, so this run does not verify stock retrieval.
+The hook disappears on disconnect. Stock fish-position graphs and complete visible parity remain unavailable or unverified.

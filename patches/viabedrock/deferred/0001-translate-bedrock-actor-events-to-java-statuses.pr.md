@@ -33,7 +33,7 @@ Checkstyle passes, with 768 tests, 19 optional skips, and no failures.
 
 ## Fishing bite motion
 
-For fishing hooks, native event 13 now sends `viabedrock:fishing_bite_v1` to clients that advertise this capability.
+For fishing hooks, native event 13 now sends `viabedrock:fishing_event_v1` to clients that advertise this capability.
 Core decodes the event, checks the actor type, and supplies the resolved Java entity ID and spawn UUID.
 The bounded codec rejects unsupported versions, the wrong protocol, invalid IDs, oversized messages, and trailing data.
 The client applies the impulse to its current hook motion.
@@ -165,3 +165,39 @@ Both use raw render distance 12; a 50-block camera offset rejects the default le
 Mouse, keyboard, settings search, reset, and continuous-value persistence checks pass.
 After clearing the camera, each real reel yields one server inventory reward, one durability point, and no remaining hook.
 Emitter admission and startup do not establish visible native simulation parity.
+
+## Fishing approach and tease events
+
+The capability is now `viabedrock:fishing_event_v1` for approach 12, bite 13, and tease 14.
+It carries the Java spawn identity, event kind, and current FISHX, FISHZ, and FISHANGLE floats.
+Core defaults absent or incorrectly typed entries to zero, matching the native getter.
+It sanitizes non-finite metadata before transport and rejects non-finite payload values.
+The bounded codec still rejects incorrect protocols, unsupported versions, invalid IDs, and trailing data.
+
+Approach emits two independent legacy wakes at the fish offset, with opposing horizontal directions.
+The native float sine table supplies both directions, and the surface uses `floor(boxMinY) + 0.9F`.
+A sample strictly below `0.15F` also emits the named fish-position graph.
+The named emission bypasses the legacy particle range gate.
+Tease samples the primary block at the integral offset position.
+It emits a named splash with direction `(0.1F, 0.1F, 0.1F)` only for water.
+Bite retains its additive motion message, splash sound, and three distinct particle calls.
+
+The pinned Windows function executes 720 approach and tease cases with recording provider boundaries.
+These cases cover negative heights, wrapped angles, absent metadata, wrong types, probability boundaries, water, and dry blocks.
+Production tests compare emitted positions, directions, order, and counts against those results.
+The fixture supplies random samples, a regenerated float sine table, primary block materials, CRT floor, and opaque Molang allocation.
+It does not execute graphs, GPU drawing, later physics, or sound.
+Five more cases execute event 11 and its base Actor dispatch without opaque boundaries.
+They return without particle or sound calls, including signed event-data extremes.
+
+Stock Java receives directional wake and splash mappings through core.
+The fish-position graph has no standard mapping and remains unavailable there.
+The add-on samples the current local box and block instead of a stale server position.
+Additional native block materials, complete visible comparison, later hook physics, and the full fishing matrix remain required.
+
+The ordinary Java 26.3 profile has no Fabric loader, VFP, add-on, or recorder mod.
+After accepting the normal resource-pack prompt, it receives 256 directional wakes for 128 approach events, six wakes for three bites, and four tease splashes.
+The observer confirms opposing approach pairs, integral splash origins, count zero, and unit speed on all three axes.
+Its recorder finishes with spawn and movement acknowledgments.
+A later reel command arrives after the recorder stops its display, so this run does not verify stock retrieval.
+The hook disappears on disconnect. Stock fish-position graphs and complete visible parity remain unavailable or unverified.

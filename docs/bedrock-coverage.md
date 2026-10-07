@@ -6690,3 +6690,36 @@ The fixture returns to its original checksum, and both user-owned servers retain
 
 Complete component scheduling, native visible output, actor contexts, lifecycle boundaries, and the full particle behavior matrix remain required.
 All eight coverage groups, the complete gameplay matrix, strict BDS, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain in scope.
+
+## Native fishing approach and tease, October 7, 2026
+
+Core now decodes fishing events 12, 13, and 14 into one bounded, spawn-bound capability.
+It retains float FISHX, FISHZ, and FISHANGLE metadata and supplies ordered native emission descriptions.
+Approach uses the float lookup table, opposing legacy wakes, and a strictly less-than-0.15 named-effect probability.
+Tease checks the primary water block and uses the integral sampled position for its named splash.
+The add-on samples current local bounds, keeps independent Molang directions, and applies the legacy range gate only to legacy emissions.
+Bite retains its immediate float impulse and core splash sound.
+Core supplies directional Java wake and splash mappings when the native capability is absent.
+
+The production model matches 720 executed pinned-client approach and tease cases.
+Five additional event-11 executions return without effects through real base Actor dispatch.
+These checks establish the sampled arithmetic, type defaults, probability boundary, order, and material gate.
+Resource simulation, full native visuals, additional block materials, and extreme finite lookup casts remain separate requirements.
+
+Strict BDS direct and ViaProxy add-on runs verify genuine rod input, changing approach metadata, water/dry tease decisions, nonempty wake and fish-position frames, and hook removal.
+Observers verify 526 original event products across the two routes; their render-frame observations are bounded prefixes.
+Tease splash emitters produce no visible vertices in those runs, so splash visual parity remains incomplete.
+Core has 776 tests, 19 optional skips, and no failures.
+The add-on has 601 tests with no failures; the private-reference run has 69 optional skips.
+ViaProxy builds against the same core, and both final bundles match all 1,243 core content files apart from bundle metadata.
+Both unchanged standalone reference patches still apply to their pinned upstream bases.
+
+Full fishing physics, block materials, complete packet position semantics, native GPU comparisons, fallback limits, displayed rewards, enchantments, and the complete gameplay matrix remain required.
+The full Bedrock coverage goal stays active.
+
+The ordinary Java 26.3 profile has no Fabric loader, VFP, add-on, or recorder mod.
+After accepting the normal resource-pack prompt, it receives 256 directional wakes for 128 approach events, six wakes for three bites, and four tease splashes.
+The observer confirms opposing approach pairs, integral splash origins, count zero, and unit speed on all three axes.
+Its recorder finishes with spawn and movement acknowledgments.
+A later reel command arrives after the recorder stops its display, so this run does not verify stock retrieval.
+The hook disappears on disconnect. Stock fish-position graphs and complete visible parity remain unavailable or unverified.
