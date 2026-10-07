@@ -732,3 +732,49 @@ The final client inventory contains the same 11 files. Both managed add-on copie
 The launcher changes only its launch-time field and game log. Seven other inventory files remain unchanged.
 Rollback copies remain under `.stackanvil/research/movement-confirmation/artifacts/build-rollback/` and `.stackanvil/research/movement-confirmation/java-client-rollback-1/`.
 The private display and owned processes stop. Both existing user servers retain their original process identities.
+
+
+## Past movement effects without a retained frame, October 7, 2026
+
+**Implemented, with remaining replay gaps:** Core retains the latest emitted input tick and its matching completed client frame.
+An input without a matching prediction invalidates the frame binding. Canceled inputs do not create clock references.
+The negotiated `viabedrock:movement_effect_v2` payload carries this pair for the local player, plus the original effect and exact history binding.
+The existing add-on reads the shared core codec and timeline. This state also travels through ViaProxy.
+
+For past confirmations, core uses unsigned tick ordering and the native signed 32-bit duration calculation.
+It then ages the remaining duration from the paired frame. It does not invent an evicted frame identity or a receipt-time deadline.
+Tick-zero startup effects can remain active, and long effects can survive eviction of their original frame.
+Repeated snapshots do not renew duration. Local geyser admission preserves a longer adjusted remainder.
+An expired confirmation can force removal of a locally predicted effect.
+
+**Native evidence:** The pinned 1.26.51.1 executable again passes all 16,038 constructor and application probes.
+The production duration calculator matches every constructor result, including signed duration overflow and unsigned 64-bit tick boundaries.
+The native reference test executes locally. These probes do not execute complete world movement or history rewind.
+Private evidence remains under `.stackanvil/research/movement-clock/`.
+
+**Regression checks:** Core passes 795 tests, with 22 optional skips and no failures or errors.
+The add-on passes 605 tests, with 117 optional skips and no failures or errors. ViaProxy also builds.
+The full core stack replays 97 patches. Both upstream PR checks pass.
+All 1,250 core files match the add-on and proxy bundles, excluding the manifest.
+The fix stays in the owning core patch; no add-on source change or later repair patch is necessary.
+
+**Still required:** Unbound future commands, invalidated clock bindings, queued command application, replay-controller scheduling, and complete physics rewind.
+Confirm actor replay-component creation and native simulation phase ordering.
+Verify delayed confirmations, gaps during client/server tick stalls, and complete native trajectories through direct connections and ViaProxy.
+Keep stock Java, vehicles, mixed terrain, Boar, CubeCraft, actual platform joins, and the full gameplay matrix in scope.
+
+
+**Live transport regression:** A fresh strict BDS 1.26.51.1 join through ViaProxy stays connected for 20 seconds.
+The observer records all seven effect fields in 12 confirmations. Every confirmation includes a paired input clock.
+The input tick is 33 ahead of the paired client frame. Receipt observes zero or one additional completed frame.
+These observations verify transport of distinct clock identities. They do not verify complete delayed-command replay.
+The run records 368 paired travel phases, 90 active geyser phases, and 36 bit-exact native float lift changes.
+All 269 phases after source removal leave vertical velocity unchanged. The retained effect subsequently expires.
+The observer supplies no client effect, input, or velocity values.
+
+Artifact dry runs review nine exact replacements. Each replacement preserves the other 32 inventory entries.
+The client dry run reviews 2,689 fixture/helper source files and 11 existing client inventory files.
+The final client inventory still contains 11 files. Both managed add-on copies match the reviewed artifact.
+Only those copies, the launcher launch-time field, and the game log change. The seven other files remain unchanged.
+Rollback copies remain under `.stackanvil/research/movement-clock/artifacts/build-rollback/` and `.stackanvil/research/movement-clock/java-client-rollback-1/`.
+The private display and owned processes stop. Both existing user servers retain their original process identities.
