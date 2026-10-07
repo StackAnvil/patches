@@ -6533,3 +6533,21 @@ The [complex gameplay record](bedrock-complex-gameplay.md#projectile-owner-trans
 Native visible ownership, fishing, pickup, return, and complete projectile action behavior remain required.
 The native GPU guard now refers to a previous boot and still blocks launches until graphics recovery is verified.
 All eight coverage groups, the full gameplay matrix, both routes, native baselines, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.
+
+## Fishing targets and hook lifetime, October 7, 2026
+
+ViaBedrock now translates native fishing-hook targets into standard Java metadata.
+It preserves signed actor IDs and applies Java's entity-ID-plus-one encoding.
+The existing dependency index handles late targets, unload, return, replacement, clearing, and source removal.
+No additional client channel or add-on code is required for this translation.
+
+Nineteen focused tests pass on the full stack and on pinned upstream.
+The full core build reports 765 tests with zero failures and 19 skips.
+The add-on reports 594 tests with zero failures and 114 skips; ViaProxy also builds successfully.
+The rebuilt direct and ViaProxy clients attach their fishing hooks to the actual cow and clear those attachments after native target removal.
+Water and entity cast/reel sequences remove the hooks and clear the local fishing pointer on each route.
+Both live clients use the add-on, while the target translation uses standard Java metadata.
+The [complex gameplay record](bedrock-complex-gameplay.md#fishing-targets-and-hook-lifetime-october-7-2026) records evidence and remaining boundaries.
+
+Native fishing visuals, bite events, rewards, retrieval with a live target, interrupted use, ordinary Java live coverage, and complete projectile behavior remain required.
+All eight coverage groups, the full gameplay matrix, both routes, native baselines, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.

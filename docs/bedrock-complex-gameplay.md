@@ -902,3 +902,35 @@ The guard remains enabled while graphics recovery is unverified.
 All eight original coverage groups and the complete gameplay matrix remain active.
 Strict BDS stays the primary server reference.
 Boar diagnostics, native comparisons, CubeCraft, and actual Windows/macOS joins remain required.
+
+### Fishing targets and hook lifetime, October 7, 2026
+
+**Implemented:** ViaBedrock now translates fishing-hook TARGET through standard Java `HOOKED_ENTITY` metadata.
+Bedrock uses zero for no target and signed actor IDs for hooked targets.
+Java uses zero for no target and Java entity ID plus one for a target.
+The core dependency index resolves late targets after spawning and clears the attachment when a target disappears.
+Explicit clearing, target replacement, and hook removal detach obsolete bindings.
+This translation uses no new client channel or add-on code.
+
+**Evidence:** Genuine rod input against strict BDS 1.26.51.1, build 51061372, protocol 2193 hooks a cow.
+BDS sends the cow's large negative actor ID in TARGET.
+The original direct client retains `HOOKED_ENTITY=0`, which leaves its fishing hook detached.
+The original ViaProxy cast misses the cow, so that case does not verify target translation.
+The rebuilt direct and ViaProxy clients attach to the actual cow with the correct Java offset.
+After BDS removes the cow, Java clears the attachment and preserves the hook's player owner.
+Read-only observers verify both water and entity cast/reel sequences on each route.
+Reeling removes each hook and clears the actual local player's fishing pointer.
+Both live clients use the add-on; the target translation itself uses standard Java metadata.
+
+**Tests:** Two additional sequence regressions cover offset encoding, late arrival, unload, return, clearing, replacement, and source removal.
+They serialize translated metadata through the Java codec.
+All nineteen focused tests pass on the full stack and independently on pinned upstream.
+The full core build reports 765 tests, zero failures, and 19 skips.
+The add-on reports 594 tests, zero failures, and 114 skips; ViaProxy also builds successfully.
+Bundled core files match both downstream artifacts.
+
+**Remaining:** Complete native fishing visuals, bite events, fishing rewards, retrieval with a live target, enchantments, repeated use, and interrupted use remain required.
+Water casts and reeling do not establish those behaviors.
+The water baseline also contains actor events 12, 13, and 14 while Java's observed biting field remains false.
+Their target-build behavior needs native verification before translation.
+Ordinary Java live coverage, the complete projectile matrix, all eight coverage groups, native baselines, CubeCraft, and platform joins remain required.

@@ -1,4 +1,4 @@
-From 54a222c958ad70f97b6409e004ffacab1308faed Mon Sep 17 00:00:00 2001
+From bc0d19d60374dd48ba4a8ba2a271a4057839b79e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 00:57:32 +0200
 Subject: [PATCH] fix(entities): synchronize authoritative entity references
@@ -39,6 +39,13 @@ Cover real spawn handling across projectile families, late capability
 registration, replacement, unload and return, explicit clears, malformed
 payloads, and both frontend arrival orders. Visible native comparisons and
 complete projectile action behavior remain required.
+
+Translate fishing-hook TARGET to standard Java HOOKED_ENTITY metadata.
+BDS 1.26.51.1 protocol 2193 sends zero for no target and signed native
+actor IDs after a genuine rod cast. Java 26.3 stores Java entity ID plus
+one. Retain native identity through late arrival and target unload, and
+clear Java attachment when either actor is removed. This uses ordinary
+Java metadata on direct and ViaProxy connections.
 ---
  .../model/NativeProjectileOwnerMessage.java   |  91 +++
  .../api/model/NativeProjectileOwners.java     | 115 ++++
@@ -46,12 +53,12 @@ complete projectile action behavior remain required.
  .../protocol/packet/EntityPackets.java        |   5 +-
  .../protocol/packet/MultiStatePackets.java    |   4 +
  .../protocol/packet/OtherPlayerPackets.java   |   1 +
- .../rewriter/EntityMetadataRewriter.java      |  80 +--
- .../storage/EntityReferenceTracker.java       | 221 ++++++++
+ .../rewriter/EntityMetadataRewriter.java      |  84 +--
+ .../storage/EntityReferenceTracker.java       | 222 +++++++
  .../protocol/storage/EntityTracker.java       |  19 +
  .../api/model/NativeProjectileOwnersTest.java | 181 ++++++
- .../rewriter/EntityReferenceMetadataTest.java | 533 ++++++++++++++++++
- 11 files changed, 1187 insertions(+), 65 deletions(-)
+ .../rewriter/EntityReferenceMetadataTest.java | 570 ++++++++++++++++++
+ 11 files changed, 1228 insertions(+), 66 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeProjectileOwnerMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeProjectileOwners.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EntityReferenceTracker.java
@@ -340,7 +347,7 @@ index ac0962482..6a6e6ac0e 100644
  
              final PacketWrapper setEquipment = PacketWrapper.create(ClientboundPackets26_3.SET_EQUIPMENT, wrapper.user());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-index ed40425a3..88739fc01 100644
+index ed40425a3..8a71196b8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 @@ -28,4 +28,5 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
@@ -369,7 +376,7 @@ index ed40425a3..88739fc01 100644
 +                } else if (ownerId != -1L) {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received OWNER for non-TAMEABLE_ANIMAL entity " + entity.type());
                  }
-@@ -576,64 +571,21 @@ public final class EntityMetadataRewriter {
+@@ -576,66 +571,25 @@ public final class EntityMetadataRewriter {
                  }
              }
 -            case TARGET_A -> {
@@ -443,14 +450,19 @@ index ed40425a3..88739fc01 100644
 -                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.ATTACK_TARGET), VersionedTypes.V26_3.entityDataTypes().varIntType, targetEntity.javaId()));
 +                if (entity.javaType().isOrHasParent(EntityTypes26_3.GUARDIAN)) {
 +                    javaEntityData.add(entityTracker.references().update(entity, EntityReferenceTracker.Kind.GUARDIAN_TARGET, targetId));
++                } else if (entity.javaType().is(EntityTypes26_3.FISHING_BOBBER)) {
++                    javaEntityData.add(entityTracker.references().update(entity, EntityReferenceTracker.Kind.FISHING_TARGET, targetId));
                  } else if (targetId != 0) {
-                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for non-GUARDIAN entity " + entity.type() + " with non-zero value " + targetId);
+-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for non-GUARDIAN entity " + entity.type() + " with non-zero value " + targetId);
++                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for unsupported entity " + entity.type() + " with non-zero value " + targetId);
+                 }
+             }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityReferenceTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityReferenceTracker.java
 new file mode 100644
-index 000000000..59935e901
+index 000000000..995874f83
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityReferenceTracker.java
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,222 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -632,7 +644,7 @@ index 000000000..59935e901
 +                ? new EntityData(source.getJavaEntityDataIndex(kind.field), VersionedTypes.V26_3.entityDataTypes().optionalUUIDType,
 +                target == null ? null : target.javaUuid())
 +                : new EntityData(source.getJavaEntityDataIndex(kind.field), VersionedTypes.V26_3.entityDataTypes().varIntType,
-+                target == null ? 0 : target.javaId());
++                target == null ? 0 : target.javaId() + (kind == Kind.FISHING_TARGET ? 1 : 0));
 +    }
 +
 +    public record Updates(Map<Entity, List<EntityData>> metadata, List<NativeProjectileOwnerMessage> owners) {
@@ -641,6 +653,7 @@ index 000000000..59935e901
 +    public enum Kind {
 +        OWNER(EntityDataFields.OWNERUUID, -1L, true),
 +        GUARDIAN_TARGET(EntityDataFields.ATTACK_TARGET, 0L, false),
++        FISHING_TARGET(EntityDataFields.HOOKED_ENTITY, 0L, false),
 +        WITHER_TARGET_A(EntityDataFields.TARGET_A, -1L, false),
 +        WITHER_TARGET_B(EntityDataFields.TARGET_B, -1L, false),
 +        WITHER_TARGET_C(EntityDataFields.TARGET_C, -1L, false),
@@ -894,10 +907,10 @@ index 000000000..c9cf61916
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java
 new file mode 100644
-index 000000000..8e27c7c31
+index 000000000..f28ea9650
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java
-@@ -0,0 +1,533 @@
+@@ -0,0 +1,570 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -986,7 +999,8 @@ index 000000000..8e27c7c31
 +                EntityTypes26_3.GUARDIAN, List.of(EntityDataFields.ATTACK_TARGET),
 +                EntityTypes26_3.ELDER_GUARDIAN, List.of(EntityDataFields.ATTACK_TARGET),
 +                EntityTypes26_3.WITHER, List.of(EntityDataFields.TARGET_A, EntityDataFields.TARGET_B, EntityDataFields.TARGET_C),
-+                EntityTypes26_3.WOLF, List.of(EntityDataFields.OWNERUUID)));
++                EntityTypes26_3.WOLF, List.of(EntityDataFields.OWNERUUID),
++                EntityTypes26_3.FISHING_BOBBER, List.of(EntityDataFields.HOOKED_ENTITY)));
 +        final AtomicReference<EntityTracker> storage = new AtomicReference<>();
 +        final ProtocolInfo info = (ProtocolInfo) Proxy.newProxyInstance(ProtocolInfo.class.getClassLoader(), new Class<?>[]{ProtocolInfo.class},
 +                (proxy, method, args) -> switch (method.getName()) {
@@ -1104,6 +1118,42 @@ index 000000000..8e27c7c31
 +            assertEquals(0L, (long) guardian.entityData().get(ActorDataIds.TARGET).value());
 +            assertEquals(target.javaId(), this.value(this.update(guardian, ActorDataIds.TARGET, target.uniqueId()), 0));
 +        }
++    }
++
++    @Test
++    void resolvesFishingTargetsWithJavaOffsetAndClearsRemovedTargets() {
++        final Entity hook = this.tracker.addEntity(this.actor(EntityTypes26_3.FISHING_BOBBER), false);
++        final long nativeTarget = -257698037758L;
++        assertEquals(0, this.value(this.update(hook, ActorDataIds.TARGET, 0), 0));
++        assertEquals(0, this.value(this.update(hook, ActorDataIds.TARGET, nativeTarget), 0));
++        final Entity late = this.target(nativeTarget, 41);
++        this.tracker.entitySpawned(late);
++        assertEquals(42, this.singleUpdate(hook, 0));
++        this.tracker.removeEntity(late);
++        assertEquals(0, this.singleUpdate(hook, 0));
++        assertEquals(nativeTarget, (long) hook.entityData().get(ActorDataIds.TARGET).value());
++        final Entity returned = this.target(nativeTarget, 51);
++        this.tracker.entitySpawned(returned);
++        assertEquals(52, this.singleUpdate(hook, 0));
++        assertEquals(0, this.value(this.update(hook, ActorDataIds.TARGET, 0), 0));
++        this.tracker.removeEntity(returned);
++        this.tracker.entitySpawned(this.target(nativeTarget, 61));
++        assertTrue(this.sent.isEmpty());
++    }
++
++    @Test
++    void replacesHookedTargetsAndDetachesWhenTheFishingHookIsRemoved() {
++        final Entity hook = this.tracker.addEntity(this.actor(EntityTypes26_3.FISHING_BOBBER), false);
++        final Entity first = this.target(-257698037758L, 41);
++        final Entity second = this.target(-257698037757L, 51);
++        assertEquals(42, this.value(this.update(hook, ActorDataIds.TARGET, first.uniqueId()), 0));
++        assertEquals(52, this.value(this.update(hook, ActorDataIds.TARGET, second.uniqueId()), 0));
++        this.tracker.removeEntity(first);
++        assertTrue(this.sent.isEmpty());
++        this.tracker.removeEntity(hook);
++        this.tracker.removeEntity(second);
++        this.tracker.entitySpawned(this.target(second.uniqueId(), 61));
++        assertTrue(this.sent.isEmpty());
 +    }
 +
 +    @Test

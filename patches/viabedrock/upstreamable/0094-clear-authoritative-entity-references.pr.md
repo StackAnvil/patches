@@ -46,9 +46,9 @@ Six additional regressions cover late arrival, target unload and return, coalesc
 The real actor packet handler test verifies that Java spawning precedes dependent metadata.
 Repeated spawn notifications do not emit duplicate reference updates.
 
-The full core build passes with 763 tests, zero failures, and 19 skips.
+The full core build passes with 765 tests, zero failures, and 19 skips.
 The patch applies independently to pinned upstream without StackAnvil setup.
-Its seventeen standalone tests pass with an external init script that supplies the full stack's test classpath and JUnit configuration.
+Its nineteen standalone tests pass with an external init script that supplies the full stack's test classpath and JUnit configuration.
 
 The add-on build passes with 594 tests, zero failures, and 114 skips; ViaProxy also builds successfully.
 Every original core file matches the add-on's bundled core, with only Loom's added Fabric metadata.
@@ -85,3 +85,28 @@ Known owners use real Java spawn data; updates pass through the ownership codec.
 Late updates and fishing bobber lifecycle require the companion add-on integration.
 Visible native comparisons, fishing behavior, pickup, return, and complete projectile action behavior remain required.
 This change does not establish complete entity relationship or visible beam parity.
+
+## Fishing targets
+
+BDS 1.26.51.1, build 51061372 and protocol 2193, supplies fishing-hook TARGET updates after genuine rod input.
+A new hook sends zero, then sends the hooked cow's signed actor ID.
+The original translator ignores that update, and the actual Java hook retains `HOOKED_ENTITY=0`.
+Java 26.3 decodes a positive hooked value as Java entity ID plus one.
+The core now translates that reference through its existing dependency index.
+Target removal clears the Java attachment even when Bedrock retains the native TARGET value.
+Late arrival and returning targets resolve after Java spawning.
+Explicit clearing, replacement, and hook removal detach obsolete bindings.
+No client channel is required for this metadata translation.
+
+Two additional sequence regressions exercise offset encoding, late arrival, unload, return, explicit clearing, replacement, and source removal.
+They serialize the translated results through the Java metadata codec.
+The updated patch applies independently to pinned upstream, and all nineteen targeted tests pass there.
+
+Rebuilt direct and ViaProxy clients each perform genuine water and entity casts, target removal, and reeling against strict BDS.
+Read-only client observers record actual hooked cow objects, the correct Java offset, and clearing after native target removal.
+Reeling removes each hook and clears the local player's fishing pointer.
+The live clients use the add-on on both routes.
+The target translation requires only standard Java metadata and adds no client code.
+The reviewed nine artifact replacements preserve all 26 unrelated distribution and Maven files.
+Rollback copies remain outside the active artifact directories.
+Native bite effects, rewards, live-target retrieval, interrupted use, and visible native comparisons remain required.
