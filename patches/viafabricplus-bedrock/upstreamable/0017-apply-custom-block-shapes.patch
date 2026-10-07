@@ -1,4 +1,4 @@
-From db3ea50f12fd897aa319e7289574875219f524ae Mon Sep 17 00:00:00 2001
+From 45b56ee8b2fef1a33db966736d92e8f3161bc012 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:39:38 +0200
 Subject: [PATCH] feat(blocks): apply native custom block shapes and lighting
@@ -88,7 +88,18 @@ original flat renderer and caller-provided light coordinates.
 
 A private pinned executable fixture compares both native routines across
 1,920 path pairs and 7,680 corners, including zero-strength materials.
-World lookup and partial-face interpolation remain open parity work.
+World lookup and full visible terrain comparisons remain open parity work.
+
+Shade all four ambient corners before interpolation on partial faces.
+The pinned native vertex routine interpolates already shaded RGBA, so
+applying the exponent to the weighted ambient average changes nonlinear
+material gradients. Target both corner preparation branches and require
+exactly two matching float stores per corner in the pinned Java renderer.
+Preserve unannotated quads and ordinary Java carriers.
+
+Original native interpolation and packing instructions distinguish this
+ordering in 8,393 of 18,816 controlled probes. The fixture supplies corner
+colors and does not establish native world lookup or visible parity.
 ---
  .../bedrock/block/BedrockBlockFace.java       |  22 +++
  .../block/BedrockCustomBlockResources.java    |  81 +++++++++
@@ -101,7 +112,7 @@ World lookup and partial-face interpolation remain open parity work.
  .../block/MixinCustomBlockCollisions.java     |  39 +++++
  .../block/MixinCustomBlockConnection.java     |  24 +++
  .../block/MixinCustomBlockCulling.java        |  34 ++++
- .../block/MixinCustomBlockLighting.java       |  87 ++++++++++
+ .../block/MixinCustomBlockLighting.java       | 110 ++++++++++++
  .../block/MixinCustomBlockResources.java      |  24 +++
  .../block/MixinCustomBlockSession.java        |  24 +++
  .../features/block/MixinCustomBlockState.java | 162 ++++++++++++++++++
@@ -111,7 +122,7 @@ World lookup and partial-face interpolation remain open parity work.
  .../BedrockCustomBlockResourcesTest.java      |  91 ++++++++++
  .../block/BedrockCustomBlocksTest.java        |  89 ++++++++++
  .../block/BedrockCustomCullingTest.java       |  51 ++++++
- 21 files changed, 1164 insertions(+)
+ 21 files changed, 1187 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockFace.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
@@ -742,10 +753,10 @@ index 0000000..b7ffee9
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
 new file mode 100644
-index 0000000..3d9efb9
+index 0000000..a2c2cd0
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,110 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -765,7 +776,6 @@ index 0000000..3d9efb9
 +import net.minecraft.client.resources.model.geometry.BakedQuad;
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.core.Direction;
-+import net.minecraft.util.ARGB;
 +import net.minecraft.world.level.block.state.BlockState;
 +import net.raphimc.viabedrock.api.model.CustomBlockLighting;
 +import org.spongepowered.asm.mixin.Mixin;
@@ -773,6 +783,7 @@ index 0000000..3d9efb9
 +import org.spongepowered.asm.mixin.Unique;
 +import org.spongepowered.asm.mixin.injection.At;
 +import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.ModifyVariable;
 +import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 +
 +@Mixin(BlockModelLighter.class)
@@ -800,16 +811,39 @@ index 0000000..3d9efb9
 +            : CustomBlockLighting.maximumLight(first, second, third, fourth);
 +    }
 +
-+    @WrapOperation(method = "prepareQuadAmbientOcclusion", at = @At(value = "INVOKE", target = "Lnet/minecraft/util/ARGB;gray(F)I"))
-+    private int nativeAmbientColor(final float ambient, final Operation<Integer> original,
-+                                   @Local(argsOnly = true) final BlockAndTintGetter level,
-+                                   @Local(argsOnly = true) final BlockState state,
-+                                   @Local(argsOnly = true) final BakedQuad quad) {
++    // These four corner averages occur in both the full-face and partial-face paths.
++    // Shade each corner before Java interpolates it across the face.
++    @ModifyVariable(method = "prepareQuadAmbientOcclusion", at = @At("STORE"), index = 42, require = 2, allow = 2)
++    private float nativeCornerShade1(final float ambient, @Local(argsOnly = true) final BlockAndTintGetter level,
++                                     @Local(argsOnly = true) final BlockState state, @Local(argsOnly = true) final BakedQuad quad) {
++        return shadeCorner(ambient, level, state, quad);
++    }
++
++    @ModifyVariable(method = "prepareQuadAmbientOcclusion", at = @At("STORE"), index = 43, require = 2, allow = 2)
++    private float nativeCornerShade2(final float ambient, @Local(argsOnly = true) final BlockAndTintGetter level,
++                                     @Local(argsOnly = true) final BlockState state, @Local(argsOnly = true) final BakedQuad quad) {
++        return shadeCorner(ambient, level, state, quad);
++    }
++
++    @ModifyVariable(method = "prepareQuadAmbientOcclusion", at = @At("STORE"), index = 44, require = 2, allow = 2)
++    private float nativeCornerShade3(final float ambient, @Local(argsOnly = true) final BlockAndTintGetter level,
++                                     @Local(argsOnly = true) final BlockState state, @Local(argsOnly = true) final BakedQuad quad) {
++        return shadeCorner(ambient, level, state, quad);
++    }
++
++    @ModifyVariable(method = "prepareQuadAmbientOcclusion", at = @At("STORE"), index = 45, require = 2, allow = 2)
++    private float nativeCornerShade4(final float ambient, @Local(argsOnly = true) final BlockAndTintGetter level,
++                                     @Local(argsOnly = true) final BlockState state, @Local(argsOnly = true) final BakedQuad quad) {
++        return shadeCorner(ambient, level, state, quad);
++    }
++
++    @Unique
++    private static float shadeCorner(final float ambient, final BlockAndTintGetter level,
++                                     final BlockState state, final BakedQuad quad) {
 +        final CustomBlockLighting lighting = lighting(state, quad);
-+        if (lighting == null) return original.call(ambient);
++        if (lighting == null) return ambient;
 +        final Direction direction = quad.materialInfo().shadeDirectionOverride();
-+        // Apply native material lighting before Java quantizes the vertex color.
-+        return ARGB.gray(lighting.shade(ambient, level.cardinalLighting().byFace(direction == null ? quad.direction() : direction)));
++        return lighting.shade(ambient, level.cardinalLighting().byFace(direction == null ? quad.direction() : direction));
 +    }
 +
 +    @ModifyExpressionValue(method = "prepareQuadAmbientOcclusion", at = @At(value = "INVOKE",

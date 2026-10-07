@@ -137,3 +137,21 @@ Private client probes verify caller-provided and uncached light, actual model di
 The probes temporarily set accepted face annotations to zero and wrap accepted model parts with ambient occlusion disabled.
 They restore the face annotations after each case. They do not install a separate zero-strength pack or compare native images.
 The [coverage ledger](../../../docs/bedrock-coverage.md#zero-strength-terrain-lighting-october-7-2026) records route completion and remaining requirements.
+
+## Material shading before partial-face interpolation
+
+The terrain hook now shades each corner average before Java applies the partial-face interpolation weights.
+Both Java corner-preparation branches use the core material calculation.
+Each float-local hook requires exactly two matching stores in the pinned renderer.
+The final color-packing hook is removed, and ordinary states retain their original corner averages.
+The existing zero-strength sampling and light maxima remain intact.
+
+The target native interpolation and packing instructions distinguish the ordering in 8,393 of 18,816 controlled samples.
+Private direct and ViaProxy probes each evaluate 1,728 cases, or 6,912 vertices, through the actual injected renderer.
+They cover accepted CubeCraft faces cloned into partial geometry, three uneven neighbor profiles, six strengths, and four directional multipliers.
+Each route matches 6,903 native reference colors exactly and retains 6,912 ordinary-state color controls.
+Nine reference colors differ by one level at strength one. Exact float arithmetic remains open.
+The comparison supplies corner averages resolved from unannotated Java output against the controlled air/stone palette.
+It does not verify native world lookup, original caller orientation, block placement, or visible native images.
+Full recorded scene replays complete and pass transport, resource loading, and model verification on both routes.
+The [coverage ledger](../../../docs/bedrock-coverage.md#corner-shading-before-face-interpolation-october-7-2026) records the results and remaining scope.

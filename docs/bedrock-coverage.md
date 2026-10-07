@@ -7511,7 +7511,7 @@ The preceding iteration's intermittent ViaProxy handshake timeout remains an ind
 **Interpolation evidence:** Native color interpolation follows corner shading and the material exponent.
 A private instruction fixture passes 18,816 interpolation and color-packing samples across fractional coordinates, heterogeneous corner inputs, dimming, and material strengths.
 Of these, 8,393 distinguish native ordering from an exponent applied after interpolation.
-Our current Java hook applies the exponent after weighted ambient interpolation, so partial-face material lighting remains incomplete.
+At this checkpoint, the Java hook applies the exponent after weighted interpolation. The next section records the correction.
 This fixture executes the original interpolation and packing instructions with supplied corner colors.
 It does not execute their original caller, complete mesh submission, world lookup, or visible scene.
 
@@ -7524,3 +7524,54 @@ Reviewed inventories and fresh private rollback copies cover exactly three local
 **Remaining:** Partial-face interpolation order now has a measured mismatch to fix.
 Native world lookup, neighbor identity, emissive custom states, nonzero-strength flat paths, alternative terrain renderers, and visible comparisons remain open.
 All other lighting, movement, combat, protocol, account, and platform requirements retain their scope.
+
+## Corner shading before face interpolation: October 7, 2026
+
+**Goal-turn classification:** Progress. The owning add-on patch corrects material shading order on partial custom faces.
+The full Bedrock coverage goal remains active.
+
+**Native evidence:** The pinned Bedrock 1.26.51.1 vertex routine interpolates already shaded corner colors.
+The preceding private fixture passes 18,816 native interpolation and packing outputs.
+Of these, 8,393 distinguish native ordering from an exponent applied after interpolation.
+The fixture executes original instructions with supplied colors and fractional coordinates.
+It does not execute their original caller, native world lookup, complete mesh submission, or a visible scene.
+
+**Production change:** Apply the core material shading calculation to each of Java's four corner averages before face interpolation.
+The full-face and partial-face branches use the same calculation.
+Each hook requires exactly two matching float stores in the pinned Java renderer.
+The hook removes the previous calculation at final color packing. Directional dimming still applies once.
+Zero-strength corner sampling and native light-channel maxima remain intact.
+Ordinary Java states and custom faces without lighting annotations retain their original calculations.
+Light propagation remains in ViaBedrock core; this correction requires the client's terrain renderer.
+
+**Client verification:** Direct and ViaProxy clients each load 276 custom definitions and evaluate 1,728 cases, or 6,912 vertices.
+Each route matches 6,903 supplied native reference colors exactly.
+Of the reference vertices, 1,666 distinguish shading before interpolation from the previous order.
+The private probe clones accepted full-unit CubeCraft faces into three partial-face sizes and retains full faces as controls.
+Cases cover six directions, three uneven air/stone profiles, six strengths, and four directional multipliers.
+Each route verifies 6,912 ordinary-state color controls against the unannotated custom-face path.
+The probe restores the original accepted face annotations after each case.
+The controlled five-value ambient palette resolves corner averages from unannotated Java output.
+Native interpolation consumes those supplied averages, so the comparison does not establish native neighborhood equivalence.
+These are actual injected renderer evaluations, not block placements or visible native comparisons.
+The first direct probe ran before world loading and returned no loaded world. The ready-world probe used the same JVM.
+
+**Residual differences:** Nine reference vertices per route differ by one color level at strength one.
+All sampled nonlinear strengths match the supplied native interpolation references exactly.
+All nine client values fit Java's four-term float sums; native uses nested interpolation.
+Exact corner floats and interpolation orientation still require verification.
+They remain recorded rather than counted as exact parity. The ordinary-state controls pass exactly.
+The preceding intermittent ViaProxy handshake timeout also remains open despite completed scene replays.
+
+**Build and rollout verification:** The complete 30-patch add-on stack replays and builds successfully.
+The build passes 605 tests, including 117 optional skips, with zero failures or errors.
+Fresh Jenkins metadata and all four dependency checksums match the pin.
+All 1,252 core archive entries remain identical in the add-on bundle.
+The reviewed local artifact plan replaces exactly the add-on distribution JAR, Maven JAR, and distribution manifest.
+Fresh private rollback copies cover those three files; 32 unrelated artifacts and the existing servers remain unchanged.
+Full direct and ViaProxy replays pass transport, resource loading, and model checks.
+The previous zero-strength iteration's GitHub CI completes successfully.
+
+**Remaining:** Exact partial-face float arithmetic, native world lookup, neighbor identity, emissive custom states, and nonzero-strength flat paths require verification.
+Alternative terrain renderers, controlled visible comparisons, dimensions, time, weather, brightness, and status effects remain required.
+All other lighting, movement, combat, protocol, account, asset, and platform requirements retain their scope.
