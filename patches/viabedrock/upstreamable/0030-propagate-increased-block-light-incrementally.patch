@@ -1,4 +1,4 @@
-From 633b42f3720307db6e3e742b2477ffe1b6acfd1b Mon Sep 17 00:00:00 2001
+From dc8c1ea9b97f67a9c5297761afbe0b366d1e4beb Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 03:59:09 +0200
 Subject: [PATCH] perf(lighting): propagate increased block light incrementally
@@ -40,15 +40,28 @@ raw data stays private. Script API light queries include time/weather
 adjustment, so all propagation comparisons were taken at clear noon.
 
 Retain queued lighting refreshes while the same chunk key has an older worker in flight. A server can replace a column before that worker completes; the completion discards the old column snapshot by identity, so removing the new dirty key would permanently lose its border refresh. Skip pending keys without blocking unrelated updates and remove only unloaded or dispatched keys. A failing-before regression reproduces replacement, independent dispatch, and retry after completion. This fixes an upstream scheduling edge case without establishing the cause of a reported server slowdown.
+
+Match native source emission in the same cached propagation path. An
+isolated official BDS 1.26.51.1 sealed tunnel, build 51061372 and protocol
+2193, reports zero light next to redstone dust retaining signal 15,
+soul campfire air-cell levels 9/8/7, and lit redstone/deepslate ore levels
+8/7/6. Extinguished/unlit controls remain dark. Correct source emission
+to zero, ten and nine respectively; retain ordinary campfire and furnace
+rules confirmed by the same measurements. Keep this in core for both
+direct and ViaProxy clients. Regression tests cover chunk-border full and
+incremental propagation, cache immutability and source removal. Native
+assets and probe output remain private. Rendered image parity remains open.
 ---
  .../api/chunk/light/LightEngine.java          | 168 ++++++++++++-
- .../protocol/data/BedrockMappingData.java     |  11 +-
+ .../protocol/data/BedrockMappingData.java     |  32 ++-
  .../protocol/storage/ChunkTracker.java        | 221 ++++++++++++++++--
  .../api/chunk/light/LightEngineTest.java      | 141 +++++++++++
+ .../protocol/data/BlockLightEmissionTest.java |  91 ++++++++
  .../data/BlockLightFilteringTest.java         |  97 ++++++++
  .../protocol/storage/ChunkTrackerTest.java    |  45 ++++
- 6 files changed, 659 insertions(+), 24 deletions(-)
+ 7 files changed, 762 insertions(+), 33 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightEmissionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java b/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java
@@ -265,10 +278,10 @@ index 7083d9305..96383c938 100644
       * Fills the opacity and emission arrays of the 3x3 chunk region from the java block states.
       */
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java b/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
-index 98d435ad8..8fb8c4a83 100644
+index 98d435ad8..ae1e0fe72 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
-@@ -1055,7 +1055,7 @@ public class BedrockMappingData extends MappingDataBase {
+@@ -1055,10 +1055,10 @@ public class BedrockMappingData extends MappingDataBase {
              final String identifier = blockState.namespacedIdentifier();
  
              final Integer opacity = opacityByIdentifier.get(identifier);
@@ -276,8 +289,12 @@ index 98d435ad8..8fb8c4a83 100644
 +            this.javaBlockOpacity[stateId] = (byte) getStateLightOpacity(blockState, opacity != null ? opacity : 15);
  
              // State dependent emission rules take precedence over the static values from the data asset
-             final int stateEmission = this.getStateLightEmission(blockState);
-@@ -1068,6 +1068,15 @@ public class BedrockMappingData extends MappingDataBase {
+-            final int stateEmission = this.getStateLightEmission(blockState);
++            final int stateEmission = getStateLightEmission(blockState);
+             if (stateEmission != -1) {
+                 this.javaBlockLightEmission[stateId] = (byte) stateEmission;
+             } else {
+@@ -1068,18 +1068,27 @@ public class BedrockMappingData extends MappingDataBase {
          }
      }
  
@@ -293,6 +310,65 @@ index 98d435ad8..8fb8c4a83 100644
      /**
       * Light emission of a java block state that depends on its block state properties.
       * Returns -1 if the block has no state dependent emission rule.
+      */
+-    private int getStateLightEmission(final BlockState blockState) {
++    static int getStateLightEmission(final BlockState blockState) {
+         final String identifier = blockState.identifier();
+         switch (identifier) {
+             case "campfire" -> {
+                 return blockState.hasProperty("lit", "true") ? 15 : 0;
+             }
+             case "soul_campfire" -> {
+-                return blockState.hasProperty("lit", "true") ? 13 : 0;
++                return blockState.hasProperty("lit", "true") ? 10 : 0;
+             }
+             case "furnace", "blast_furnace", "smoker" -> {
+                 return blockState.hasProperty("lit", "true") ? 13 : 0;
+@@ -1091,19 +1100,22 @@ public class BedrockMappingData extends MappingDataBase {
+                 return blockState.hasProperty("lit", "true") ? 7 : 0;
+             }
+             case "redstone_wire" -> {
+-                return Math.max(0, Math.min(15, this.parseBlockStateInt(blockState, "power", 0)));
++                return 0;
++            }
++            case "redstone_ore", "deepslate_redstone_ore" -> {
++                return blockState.hasProperty("lit", "true") ? 9 : 0;
+             }
+             case "light" -> {
+-                return Math.max(0, Math.min(15, this.parseBlockStateInt(blockState, "level", 15)));
++                return Math.max(0, Math.min(15, parseBlockStateInt(blockState, "level", 15)));
+             }
+             case "cave_vines", "cave_vines_plant" -> {
+                 return blockState.hasProperty("berries", "true") ? 14 : 0;
+             }
+             case "sea_pickle" -> {
+-                return blockState.hasProperty("waterlogged", "true") ? 3 + 3 * this.parseBlockStateInt(blockState, "pickles", 1) : 0;
++                return blockState.hasProperty("waterlogged", "true") ? 3 + 3 * parseBlockStateInt(blockState, "pickles", 1) : 0;
+             }
+             case "respawn_anchor" -> {
+-                return Math.max(0, 4 * this.parseBlockStateInt(blockState, "charges", 0) - 1);
++                return Math.max(0, 4 * parseBlockStateInt(blockState, "charges", 0) - 1);
+             }
+             case "vault" -> {
+                 return blockState.hasProperty("vault_state", "inactive") ? 6 : 12;
+@@ -1122,7 +1134,7 @@ public class BedrockMappingData extends MappingDataBase {
+             }
+             default -> {
+                 if (identifier.equals("candle") || identifier.endsWith("_candle")) {
+-                    return blockState.hasProperty("lit", "true") ? 3 * this.parseBlockStateInt(blockState, "candles", 1) : 0;
++                    return blockState.hasProperty("lit", "true") ? 3 * parseBlockStateInt(blockState, "candles", 1) : 0;
+                 }
+                 if (identifier.equals("candle_cake") || identifier.endsWith("_candle_cake")) {
+                     return blockState.hasProperty("lit", "true") ? 3 : 0;
+@@ -1147,7 +1159,7 @@ public class BedrockMappingData extends MappingDataBase {
+         }
+     }
+ 
+-    private int parseBlockStateInt(final BlockState blockState, final String property, final int fallback) {
++    private static int parseBlockStateInt(final BlockState blockState, final String property, final int fallback) {
+         try {
+             return Integer.parseInt(blockState.properties().getOrDefault(property, String.valueOf(fallback)));
+         } catch (final NumberFormatException e) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 index 12898b47f..a8e23e21c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
@@ -792,6 +868,103 @@ index 000000000..346bbe129
 +                region[4][sourceY >> 4][sourceIndex] = previousSourceState;
 +            }
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightEmissionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightEmissionTest.java
+new file mode 100644
+index 000000000..b7f9d085e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightEmissionTest.java
+@@ -0,0 +1,91 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.data;
++
++import net.raphimc.viabedrock.api.chunk.light.ChunkLight;
++import net.raphimc.viabedrock.api.chunk.light.LightEngine;
++import net.raphimc.viabedrock.api.model.BlockState;
++import org.junit.jupiter.api.Test;
++
++import java.util.Arrays;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class BlockLightEmissionTest {
++
++    @Test
++    void poweredDustDoesNotIlluminateItsNeighbors() {
++        for (int power = 0; power <= 15; power++) {
++            assertTunnel(BlockState.fromString("minecraft:redstone_wire[power=" + power + "]"), 0);
++        }
++    }
++
++    @Test
++    void matchesNativeStateDependentSourceMeasurements() {
++        final List<Measurement> measurements = List.of(
++                new Measurement("minecraft:soul_campfire[lit=true]", 10),
++                new Measurement("minecraft:soul_campfire[lit=false]", 0),
++                new Measurement("minecraft:campfire[lit=true]", 15),
++                new Measurement("minecraft:campfire[lit=false]", 0),
++                new Measurement("minecraft:redstone_ore[lit=true]", 9),
++                new Measurement("minecraft:redstone_ore[lit=false]", 0),
++                new Measurement("minecraft:deepslate_redstone_ore[lit=true]", 9),
++                new Measurement("minecraft:deepslate_redstone_ore[lit=false]", 0),
++                new Measurement("minecraft:furnace[lit=true]", 13),
++                new Measurement("minecraft:furnace[lit=false]", 0),
++                new Measurement("minecraft:blast_furnace[lit=true]", 13),
++                new Measurement("minecraft:blast_furnace[lit=false]", 0),
++                new Measurement("minecraft:smoker[lit=true]", 13),
++                new Measurement("minecraft:smoker[lit=false]", 0));
++        for (final Measurement measurement : measurements) {
++            assertTunnel(BlockState.fromString(measurement.state()), measurement.emission());
++        }
++    }
++
++    private static void assertTunnel(final BlockState source, final int measuredEmission) {
++        final int[][][] region = new int[9][1][4096];
++        for (final int[][] chunk : region) {
++            Arrays.fill(chunk[0], 1);
++        }
++        // The measured tunnel crosses a chunk boundary. Its stone enclosure excludes skylight.
++        for (int x = 8; x < 32; x++) {
++            region[4 + (x >> 4)][0][(8 << 8) | (8 << 4) | (x & 15)] = 0;
++        }
++        final byte[] opacity = {0, 15, (byte) (source.identifier().endsWith("ore")
++                || source.identifier().endsWith("furnace") || source.identifier().equals("smoker") ? 15 : 0)};
++        final byte[] emission = {0, 0, (byte) BedrockMappingData.getStateLightEmission(source)};
++        assertEquals(measuredEmission, emission[2], source.toString());
++        final ChunkLight[] previous = LightEngine.computeRegionLight(region, 1, false, emission, opacity);
++        region[4][0][(8 << 8) | (8 << 4) | 8] = 2;
++        final ChunkLight[] full = LightEngine.computeRegionLight(region, 1, false, emission, opacity);
++        final ChunkLight[] incremental = measuredEmission == 0 ? previous : LightEngine.brightenBlockLight(
++                region, 1, 8, 8, 8, emission[2], opacity, previous);
++        for (int distance = 1; distance <= 15; distance++) {
++            final int x = 8 + distance;
++            final int chunk = 4 + (x >> 4);
++            final int expected = Math.max(0, measuredEmission - distance);
++            assertEquals(expected, light(full[chunk], x & 15), source + " at " + distance);
++            assertEquals(expected, light(incremental[chunk], x & 15), source + " increment at " + distance);
++            assertEquals(0, light(previous[chunk], x & 15));
++        }
++        region[4][0][(8 << 8) | (8 << 4) | 8] = 0;
++        final ChunkLight[] removed = LightEngine.computeRegionLight(region, 1, false, emission, opacity);
++        for (int distance = 1; distance <= 15; distance++) {
++            final int x = 8 + distance;
++            assertEquals(0, light(removed[4 + (x >> 4)], x & 15));
++        }
++    }
++
++    private static int light(final ChunkLight light, final int x) {
++        final byte[] data = light.blockLight(1);
++        return data == null ? 0 : (data[(8 << 7) | (8 << 3) | (x >> 1)] >>> ((x & 1) << 2)) & 15;
++    }
++
++    private record Measurement(String state, int emission) {
 +    }
 +
 +}

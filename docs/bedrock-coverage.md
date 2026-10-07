@@ -7352,3 +7352,30 @@ Then integrate replay with exact frame bindings, snapshots, external state, inpu
 Both routes, mixed gameplay actions, strict BDS, native baselines, Boar diagnostics, and platform joins remain required.
 The preceding research commit passes [GitHub CI](https://github.com/StackAnvil/patches/actions/runs/37583682412).
 Those runner checks do not replace live game joins.
+
+## Native block-light emission, October 7, 2026
+
+An isolated official BDS 1.26.51.1 probe measured light through a sealed 16-block tunnel at clear noon.
+The server reported build 51061372 and protocol 2193. Every sampled tunnel cell had skylight zero.
+The probe recorded each source's actual block identifier and states after 30 ticks.
+This excludes cases where native updates replaced the requested source before measurement.
+
+Powered redstone dust retained signal 15 but emitted no light. Its unpowered control also left the tunnel dark.
+Soul campfires produced light 9, 8, 7 at successive air cells, which establishes source emission 10.
+Extinguished soul campfires left the tunnel dark. Lit redstone and deepslate redstone ores produced 8, 7, 6, which establishes emission 9.
+Their unlit controls left the tunnel dark. Ordinary campfires and the three furnace variants retained their existing emission rules.
+
+Core now removes false lighting around powered dust, reduces soul campfire emission from 13 to 10, and adds lit ore emission 9.
+Both direct and ViaProxy connections receive these corrected light arrays without requiring the add-on.
+Tests cover full and incremental propagation across a chunk boundary, unchanged cached arrays, and source removal.
+They exercise all 16 translated dust power values and 14 lit/unlit source states.
+
+These measurements establish source emission and tunnel propagation. They do not establish complete rendered image parity.
+Directional shading, ambient occlusion, held-item light sampling, End sky inputs, and enhanced lighting remain open.
+The native executable, world, scripts, and raw output remain private.
+
+Validation: the full 97-patch stack replays. Core build and all Checkstyle tasks pass with 800 tests, including 25 fixture skips.
+The add-on build passes with 605 tests, including 117 fixture skips. Neither suite reports failures or errors.
+ViaProxy builds successfully. All 1,250 core files match both downstream bundles, except their manifests.
+The emission regressions fail with the old rules and pass with the corrected rules.
+These checks do not include a new live Java/native screenshot comparison.
