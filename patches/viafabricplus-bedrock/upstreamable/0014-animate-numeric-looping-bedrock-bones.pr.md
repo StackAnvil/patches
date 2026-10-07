@@ -134,3 +134,13 @@ A targeted regression checks parsing across two actors, independent variables, a
 The rebuilt client reaches the CubeCraft lobby and unloads its pack with a confirmed 2 GiB heap on the macOS guest.
 A live histogram shows one shared resource library across 27 actor graphs and about 155,000 Gson map nodes.
 The lobby heap sample uses about 758 MiB before collection. This verifies one load and unload, with longer sessions still required.
+
+## Inherit native resources for the first-person hand
+
+Server animation graphs start with the checksum-verified asset library for the target Bedrock version. Accepted packs then override animations, controllers and effects in their original order. Duplicate resource identifiers inside one accepted pack retain the existing last-definition behavior. The effective server player description remains authoritative.
+
+An accepted CubeCraft pack references native player root controllers and the empty-hand animation without supplying those resources. The shared reader previously omitted them. The Java hand frame also supplies `is_using_vr = 0`, which the native empty-hand expressions require for this non-VR renderer. These changes use the resource-defined pose rather than a fixed arm transform.
+
+A private production-graph fixture resolves the original pack references and samples right-arm position `(13.5, -10, 12)` and rotation `(95, -45, 115)`. The accepted server visibility script reveals the empty hand and hides it with a compass equipped. Targeted tests cover baseline inheritance, effect lookup, accepted-pack overrides, duplicate controller formats and non-VR hand binding.
+
+The complete add-on build passes: 532 tests passed, 117 optional tests skipped, no failures. Access-widener validation passes. The reviewed candidate was installed in the desktop client, which joined CubeCraft successfully. The user confirms the arm is visible. This verifies the reported empty-hand regression; VR, all costumes and complete native visual parity remain separate checks.
