@@ -7139,3 +7139,57 @@ All eight coverage groups, both routes, the complete gameplay matrix, strict BDS
 
 The preceding documentation CI completed successfully.
 This continuation changes evidence documentation. It deploys no runtime artifacts and claims no additional live movement parity.
+
+## Native movement registration and countdown timing, October 7, 2026
+
+The original client registration now constructs 367 systems through the native manager.
+Its correction movement category contains 215 systems, in their original insertion order.
+This replaces the earlier fixture-supplied category membership for this default client configuration.
+The registration options enable the client path and leave the optional delegate empty.
+Other registration configurations remain unverified.
+
+The pinned 1.26.51.1 executable registers `GeyserBoostSystem::MovementTick` at index 287 and `MovementEffectsTick` at index 364.
+Both belong to the correction movement category. Geyser lift executes before effect countdown.
+The fixture executes original registration, manager insertion, category dispatch, replay entry, command admission, geyser lift, and countdown together.
+Across 32 cases and 160 steps, it observes 34,400 system dispatches with no mismatches in the bounded expectations.
+Cases cover durations -2, -1, 0, 1, 2, 3, 20, and 100, with earlier, matching, and future command ticks.
+An independent verifier checks command normalization, lift, expiration, and dispatch counts.
+Private scripts, queries, cases, checksums, and proof remain under `.stackanvil/research/movement-registration/`.
+
+A one-tick confirmed effect performs one lift, then expires in the original countdown.
+The production timeline previously queried the next frame and expired that effect before movement.
+Confirmed effects now age at the completed frame. Local admission keeps its next-step prediction timestamp.
+Forced transitions and preservation of longer active effects use the same phase rules.
+Repeated server snapshots retain their original clock and cannot renew duration.
+The fix stays in the owning ViaBedrock prediction patch. The add-on consumes the shared timeline without a source change.
+
+The new regression tests fail on the previous production code and pass with the fix.
+Twenty positive or infinite native cases compare directly against the production timeline.
+Core passes 798 tests, with 22 optional skips and no failures or errors.
+The existing 16,038 native effect cases and 6,780 native geyser vectors execute locally.
+All 97 core patches replay, and both north-star PR checks pass.
+
+**Verification limits:** Allocation, CRT operations, TLS guards, ECS storage, world block lookup, and system body iteration use fixture boundaries.
+All other registered system bodies return without executing physics. This fixture does not execute the complete game or world rewind.
+Zero-duration commands expose a transient native marker before countdown in this supplied phase.
+Their real packet/world phase boundary remains unverified, so those cases do not establish a production removal change.
+Profiling mode, other registration configurations, complete snapshot ownership, native clock synchronization, and live correction replay remain required.
+The full gameplay matrix, both routes, strict BDS, experimental Boar diagnostics, CubeCraft, and actual platform joins remain required.
+
+**Build and live regression:** The add-on passes 605 tests, with 117 optional skips and no failures or errors. ViaProxy builds successfully.
+All 1,250 core files match both downstream bundles, excluding the manifest. The other 44 add-on dependency JARs remain unchanged.
+The saved 97-patch stack replays to the tested source tree.
+A fresh strict BDS 1.26.51.1 join through ViaProxy stays connected for 20 seconds.
+The observer records 373 paired travel phases, 89 active geyser phases, and 36 exact float lift changes.
+All 275 phases after source removal preserve vertical velocity. The retained effect subsequently expires.
+Thirteen confirmations transport all seven effect fields and include paired input clocks.
+The observer supplies no client input, effects, motion, or world state.
+This verifies the sampled regression through ViaProxy. Direct delayed confirmations and full native trajectory replay remain required.
+
+Artifact dry runs review nine exact replacements across the core, add-on, and proxy JARs, Maven copies, and manifests.
+Each project replacement preserves its other 32 inventory entries.
+Rollback copies remain under `.stackanvil/research/movement-registration/artifacts/build-rollback/`.
+The client dry run reviews 2,689 source files and 11 existing inventory files. The final client inventory still contains 11 files.
+Both managed add-on copies match the reviewed artifact. Only those copies, launcher launch time, and the game log change.
+The seven other client files remain unchanged. Rollback copies remain under `.stackanvil/research/movement-registration/java-client-rollback-1/`.
+The private display and owned processes stop. Both existing user servers retain their original process identities.

@@ -835,3 +835,23 @@ Fixtures supply category membership, system implementations, ECS storage, and ow
 The game's registered movement order, profiling mode, complete physics replay, and live correction behavior remain unverified.
 Ordered mutable snapshots, external state, captured input, and queued commands remain production requirements.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-replay-dispatch-and-identity-snapshots-october-7-2026) records evidence and remaining verification limits.
+
+### Confirmed effects before native countdown
+
+Original client registration constructs 367 systems, including 215 in correction movement.
+Geyser movement precedes effect countdown. Native one-tick confirmations lift once, then expire.
+The shared core timeline now ages confirmations at the completed frame and keeps local admission in the next physics step.
+Repeated snapshots retain their original expiration anchor. No add-on source change or later repair patch is necessary.
+
+New regression tests fail on the previous code. Core passes 798 tests with no failures or errors and 22 optional skips.
+Twenty positive or infinite native cases compare directly against the production timeline.
+The combined native fixture executes 32 cases, 160 steps, and 34,400 registered system dispatches.
+Other system bodies, ECS iteration, allocator operations, and world inputs remain fixture boundaries.
+Zero-duration packet phase behavior, complete ownership, native clock synchronization, full physics rewind, and both-route gameplay verification remain required.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-movement-registration-and-countdown-timing-october-7-2026) records the full evidence scope.
+
+The add-on passes 605 tests. ViaProxy builds, and all 1,250 core files match both downstream bundles, excluding the manifest.
+The strict BDS join through ViaProxy stays connected for 20 seconds.
+The observer records 36 exact float lift changes, 275 unchanged phases after source removal, and subsequent effect expiration.
+The saved full stack reproduces the tested source tree.
+The coverage ledger records exact artifact replacements, preserved inventories, rollback paths, and remaining verification requirements.

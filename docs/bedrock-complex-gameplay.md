@@ -1557,3 +1557,21 @@ Actual registered phase order, profiling mode, full physics rewind, and live cor
 Production still requires complete mutable snapshots, external state, captured inputs, and queued command replay.
 Both routes and all movement, combat, item, block, inventory, and lifecycle cases remain required.
 The [coverage ledger](bedrock-coverage.md#native-replay-dispatch-and-identity-snapshots-october-7-2026) records the functions, case domains, and remaining limits.
+
+## Confirmed effects before native countdown, October 7, 2026
+
+Original client registration constructs 367 systems. Its correction movement category contains 215 systems.
+Geyser movement precedes effect countdown. A one-tick confirmed effect lifts once before expiration.
+The core timeline now preserves that first movement step while retaining local prediction timing and fixed snapshot expiration.
+New regression tests fail on the previous code. Core passes 798 tests with the fix.
+Twenty positive or infinite cases compare against original native admission, registered dispatch, lift, and countdown.
+
+The native fixture executes 32 cases and 160 steps, including zero-duration marker observations.
+Other system bodies, ECS iteration, allocation, and world inputs use explicit fixture boundaries.
+Zero-duration packet phase behavior, complete world replay, mixed actions, both routes, and all matrix scenarios remain required.
+The [coverage ledger](bedrock-coverage.md#native-movement-registration-and-countdown-timing-october-7-2026) records the evidence and remaining limits.
+
+The strict BDS regression through ViaProxy stays connected for 20 seconds.
+It records 36 exact float lift changes and 275 unchanged phases after source removal, followed by effect expiration.
+The add-on passes 605 tests. ViaProxy builds, and both bundles contain the updated core files.
+These results verify the sampled effect regression. Complete native trajectories, delayed commands, both routes, and mixed gameplay actions remain required.
