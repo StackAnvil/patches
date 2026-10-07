@@ -7041,3 +7041,17 @@ The private display and owned processes stop. Both existing user servers retain 
 **Still required:** Pending-command drain, replay-controller scheduling, actor replay-component creation, native phase ordering, and full physics rewind.
 Delayed confirmations, invalidated clocks, tick stalls, direct routes, stock Java, vehicles, Boar, CubeCraft, and actual platform joins remain open.
 The complete gameplay matrix and all eight coverage groups remain required.
+
+### Subsequent native frame capture and pending commands
+
+A further 42 cases execute the original `142bbc060` frame-capture function after command dispatch and replay.
+It moves pending commands into tick 106, retains the input object, marks the frame dirty, and clears the pending vector.
+Thirty positive or infinite commands trigger original replay, queued application, and one original countdown.
+Their original duration returns before countdown. A 100-frame command ends this phase with 99 frames, including after an earlier snapshot restoration.
+Twelve zero-mask commands do not trigger replay. The fixture does not execute their subsequent ordinary movement phase.
+All 42 cases match the independently verified transfer and component-state expectations.
+
+The fixture supplies ECS lookup, allocation, reused input objects, snapshot registries, and copy/restore callbacks.
+It uses spare ring capacity. History growth, eviction, irregular clocks, complete ownership, and native world movement remain unverified.
+Private cases and proof remain under `.stackanvil/research/movement-command-replay/pending-capture-cases.json` and `pending-capture-proof.json`.
+This evidence resolves the sampled intermediate pending states. Production command drain and full physics replay still require implementation and route verification.

@@ -800,3 +800,13 @@ It records 36 exact float lift changes and 280 unchanged phases after source rem
 No add-on source change or later repair patch is necessary.
 
 The [coverage ledger](../../../docs/bedrock-coverage.md#future-commands-and-native-queued-effect-replay-october-7-2026) records rollout inventories and remaining parity requirements.
+
+### Native pending-command transfer
+
+A further 42 native cases execute the original frame-capture function after dispatch and replay.
+It transfers pending commands into the next retained frame, preserves the input object, marks the frame dirty, and clears pending entries.
+Thirty positive or infinite commands trigger original queued application and countdown. Twelve zero-mask commands do not trigger replay.
+The transfer and bounded component-state expectations match all 42 cases.
+The fixture supplies snapshot and input boundaries and uses spare ring capacity.
+Ordinary movement for zero-mask commands, ring growth, eviction, irregular clocks, full ownership, and complete world movement remain unverified.
+The [coverage ledger](../../../docs/bedrock-coverage.md#subsequent-native-frame-capture-and-pending-commands) records the evidence and remaining production replay work.
