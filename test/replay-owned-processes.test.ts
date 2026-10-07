@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { OwnedProcesses, type ProcessEntry } from "../src/replay/owned-processes.ts";
+import { requireOwnedSilentModule, OwnedProcesses, type ProcessEntry } from "../src/replay/owned-processes.ts";
 
 function fixture() {
   const processes = new Map<number, ProcessEntry>([
@@ -45,4 +45,14 @@ test("does not adopt descendants of a reused owner", () => {
   expect(owned.all()).toEqual([{ pid: 10, startTicks: "100" }]);
   expect(() => owned.signal(10, "SIGTERM")).toThrow();
   expect(signals).toHaveLength(0);
+});
+
+test("unloads only the saved null-sink module identity in the actual pactl short protocol", () => {
+  const id = 536870918;
+  const owned = `${id}\tmodule-null-sink\tsink_name=stackanvil_silent sink_properties=device.description=StackAnvil-Silent\t\n`;
+  requireOwnedSilentModule(`7\tmodule-native-protocol-tcp\tport=4713\n${owned}`, id);
+  for (const output of [owned.replace(String(id), "8"), owned.replace("module-null-sink", "module-loopback"),
+    owned.replace("stackanvil_silent", "stackanvil_desktop_vfp"), owned.replace("StackAnvil-Silent", "Other-Sink"), owned + owned]) {
+    expect(() => requireOwnedSilentModule(output, id)).toThrow();
+  }
 });

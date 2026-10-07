@@ -15,7 +15,7 @@ import { activeDisplay, displayEnv, stopDisplay } from "../lab/display.ts";
 import { inspectJournal } from "./journal.ts";
 import { prepareFormFixture } from "./form-fixture.ts";
 import { prepareReplayPrismData, rebindReplayJavaConfig, validateReplayProfile } from "./java-profile.ts";
-import { OwnedProcesses } from "./owned-processes.ts";
+import { OwnedProcesses, requireOwnedSilentModule } from "./owned-processes.ts";
 import { requireNativeOfflineReplay, requireNativeReplayProcessNamespaces, type NativeOfflineProof } from "./native-offline.ts";
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
@@ -153,7 +153,7 @@ async function launchJava(directory: string, address: string, client: "addon" | 
   await mkdir(prism, { mode: 0o700 });
   await mkdir(join(prism, "logs"), { mode: 0o700 });
   await mkdir(join(prism, "instances"), { mode: 0o700 });
-  const readOnlyData = await prepareReplayPrismData(prismData, prism);
+  await prepareReplayPrismData(prismData, prism);
   const globalCfg = join(prism, "prismlauncher.cfg");
   if (existsSync(globalCfg)) await rebindReplayJavaConfig(globalCfg, prismData, prism);
   const instance = join(prism, "instances", name);
@@ -223,7 +223,7 @@ async function launchJava(directory: string, address: string, client: "addon" | 
   await writeFile(join(game, "stackanvil-replay-directory.txt"), directory, { mode: 0o600 });
   const launcherLog = join(directory, "launcher.log");
   service("flatpak", ["run", "--nosocket=wayland", "--socket=x11", `--filesystem=${join(root, ".stackanvil/lab")}:ro`, `--filesystem=${directory}`,
-    ...readOnlyData.map(path => `--filesystem=${path}:ro`),
+    `--filesystem=${prismData}:ro`,
     ...(client === "addon" ? [`--filesystem=${join(privateRoot, "client-assets")}`] : []),
     `--env=DISPLAY=${isolated.DISPLAY}`, `--env=XAUTHORITY=${isolated.XAUTHORITY}`, "--env=WAYLAND_DISPLAY=", "--env=QT_QPA_PLATFORM=xcb",
     "--env=SDL_VIDEODRIVER=x11", "--env=SDL_VIDEO_DRIVER=x11", "--env=SDL_VIDEO_FORCE_EGL=1", "--env=PULSE_SINK=stackanvil_silent",
@@ -501,11 +501,8 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
         if (!javaDisplayCleanup!.alive(pid)) throw new Error("Owned display process exited before teardown.");
       },
       audioModule: async id => {
-        const { stdout } = await execute("pactl", ["-f", "json", "list", "modules"]);
-        const modules = JSON.parse(stdout) as { index: number; name: string; argument: string }[];
-        if (!modules.some(module => module.index === id && module.name === "module-null-sink" && /(?:^|\s)sink_name=stackanvil_silent(?:\s|$)/.test(module.argument))) {
-          throw new Error("Owned audio module identity changed; unload refused.");
-        }
+        const { stdout } = await execute("pactl", ["list", "modules", "short"]);
+        requireOwnedSilentModule(stdout, id);
       },
     } : undefined);
     process.off("SIGINT", abort); process.off("SIGTERM", abort);

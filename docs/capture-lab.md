@@ -211,8 +211,11 @@ Keep actual render evidence separate from CPU layout results and synthetic fixtu
 ### Isolate the Java launcher
 
 Replay clients copy mutable Prism data into their private runtime directory.
-This includes cache, metadata, icons, and the Java runtime.
-Only assets and libraries use shared directories, with explicit read-only Flatpak mounts.
+This includes assets, libraries, cache, metadata, icons, and the Java runtime.
+Prism can rewrite cached asset indexes even when their checksums match.
+Copies use reflinks when available and otherwise copy the file bytes.
+The command reserves 5 GiB of free disk space beyond the full copy size.
+The original Prism directory stays read-only in the Flatpak sandbox.
 Both global and instance Java selections use the copied Prism runtime.
 External Java paths, including system runtimes, require a separate sandbox contract and are rejected by isolated replay.
 Escaping source links and write-through links in profile configuration cause preparation to stop.

@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prepareReplayPrismData, privateReplayJavaPath, rebindReplayJavaConfig, validateReplayProfile } from "../src/replay/java-profile.ts";
+import { prepareReplayPrismData, requireReplayCopySpace, privateReplayJavaPath, rebindReplayJavaConfig, validateReplayProfile } from "../src/replay/java-profile.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -22,17 +22,24 @@ async function fixture() {
   return { source, target, root };
 }
 
-test("copies mutable launcher state and Java links privately while declaring both read-only mounts", async () => {
+test("copies cached assets, libraries and launcher state privately without changing source bytes", async () => {
   const { source, target } = await fixture();
-  const mounts = await prepareReplayPrismData(source, target);
-  expect(mounts).toEqual([join(source, "assets"), join(source, "libraries")]);
-  for (const directory of ["cache", "meta", "icons"]) {
+  for (const directory of ["assets/indexes", "libraries/metadata"]) {
+    await mkdir(join(source, directory), { recursive: true });
+    await writeFile(join(source, directory, "cached.json"), "{\"revision\":1}");
+  }
+  await prepareReplayPrismData(source, target);
+  for (const directory of ["assets", "libraries", "cache", "meta", "icons"]) {
     await writeFile(join(target, directory, "entry"), "private-change");
     expect(await readFile(join(source, directory, "entry"), "utf8")).toBe("original");
   }
   expect(await readlink(join(target, "java/bin/runtime"))).toBe("java");
   expect(await readFile(join(target, "java/bin/runtime"), "utf8")).toBe("private-runtime");
-  expect(await readlink(join(target, "libraries"))).toBe(join(source, "libraries"));
+  for (const directory of ["assets/indexes", "libraries/metadata"]) {
+    await writeFile(join(target, directory, "cached.json"), "{\"revision\":2}");
+    expect(await readFile(join(source, directory, "cached.json"), "utf8")).toBe("{\"revision\":1}");
+    expect((await lstat(join(target, directory.split("/")[0]!))).isSymbolicLink()).toBe(false);
+  }
   expect(await readFile(join(target, "prismlauncher.cfg"), "utf8")).toBe("configuration");
   expect(await privateReplayJavaPath(source, target, join(source, "java/bin/runtime"))).toBe(join(target, "java/bin/runtime"));
   await expect(privateReplayJavaPath(source, target, join(source, "assets/entry"))).rejects.toThrow();
@@ -85,4 +92,12 @@ test("refuses escaping source links and existing output without changing source 
   await expect(prepareReplayPrismData(source, target)).rejects.toThrow();
   expect(await readFile(join(target, "prismlauncher.cfg"), "utf8")).toBe("owned-existing");
   await expect(prepareReplayPrismData(source, source)).rejects.toThrow();
+});
+
+test("reserves disk for full private copies even when reflink support is unavailable", () => {
+  const reserve = 5 * 1024 ** 3;
+  requireReplayCopySpace(1024, reserve + 1024);
+  expect(() => requireReplayCopySpace(1024, reserve + 1023)).toThrow();
+  expect(() => requireReplayCopySpace(-1, reserve)).toThrow();
+  expect(() => requireReplayCopySpace(1024, Number.NaN)).toThrow();
 });

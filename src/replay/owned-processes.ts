@@ -95,3 +95,13 @@ export class OwnedProcesses {
     return [...this.identities.values()];
   }
 }
+
+/** Verify the saved null-sink module ID using pactl's explicit short-format columns. */
+export function requireOwnedSilentModule(output: string, id: number): void {
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error("Invalid owned audio module ID.");
+  const matches = output.split("\n").map(line => line.split("\t")).filter(fields => fields[0] === String(id));
+  if (matches.length !== 1 || matches[0]![1] !== "module-null-sink"
+    || matches[0]![2] !== "sink_name=stackanvil_silent sink_properties=device.description=StackAnvil-Silent") {
+    throw new Error("Owned audio module identity changed; unload refused.");
+  }
+}

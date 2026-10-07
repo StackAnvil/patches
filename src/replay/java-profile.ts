@@ -1,15 +1,15 @@
 import { constants } from "node:fs";
-import { chmod, cp, lstat, readFile, readdir, readlink, realpath, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, readFile, readdir, readlink, realpath, statfs, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
-const sharedDirectories = new Set(["assets", "libraries"]);
+const reserveBytes = 5 * 1024 ** 3;
 
 function inside(directory: string, path: string): boolean {
   const name = relative(directory, path);
   return name !== ".." && !name.startsWith("../") && !isAbsolute(name);
 }
 
-async function validateTree(directory: string, path = directory): Promise<void> {
+async function validateTree(directory: string, path = directory): Promise<number> {
   const state = await lstat(path);
   if (state.isSymbolicLink()) {
     const link = await readlink(path);
@@ -17,10 +17,13 @@ async function validateTree(directory: string, path = directory): Promise<void> 
       throw new Error("Prism source contains an external symlink.");
     }
   } else if (state.isDirectory()) {
-    for (const entry of await readdir(path)) await validateTree(directory, join(path, entry));
+    let bytes = 0;
+    for (const entry of await readdir(path)) bytes += await validateTree(directory, join(path, entry));
+    return bytes;
   } else if (!state.isFile()) {
     throw new Error("Prism source contains an unsupported filesystem entry.");
   }
+  return state.isFile() ? state.size : 0;
 }
 
 export async function validateReplayProfile(source: string): Promise<void> {
@@ -60,16 +63,23 @@ export async function rebindReplayJavaConfig(path: string, source: string, targe
   await writeFile(path, cfg.replace(/^JavaPath=.+$/m, `JavaPath=${java}`), { mode: 0o600 });
 }
 
-/** Only immutable assets/libraries are shared, with mandatory read-only sandbox mounts. */
-export async function prepareReplayPrismData(source: string, target: string): Promise<string[]> {
+export function requireReplayCopySpace(bytes: number, available: number): void {
+  if (!Number.isSafeInteger(bytes) || bytes < 0 || !Number.isFinite(available) || available < bytes + reserveBytes) {
+    throw new Error("Private Prism copies require their full file size plus 5 GiB of free disk reserve.");
+  }
+}
+
+/** Prism may rewrite cached files, so every launcher directory has a private writable copy. */
+export async function prepareReplayPrismData(source: string, target: string): Promise<void> {
   if (await realpath(source) !== source || await realpath(target) !== target || inside(source, target) || inside(target, source)) {
     throw new Error("Replay Prism data must use separate real directories.");
   }
   const entries = (await readdir(source, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name)).filter(entry =>
     entry.name !== "logs" && entry.name !== "instances" && entry.name !== "stackanvil-desktop" && !entry.name.startsWith("stackanvil-lighting-"));
+  let requiredBytes = 0;
   for (const entry of entries) {
     if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) throw new Error("Unsupported Prism root entry.");
-    if (entry.isDirectory()) await validateTree(join(source, entry.name));
+    requiredBytes += entry.isDirectory() ? await validateTree(join(source, entry.name)) : (await lstat(join(source, entry.name))).size;
     try {
       await lstat(join(target, entry.name));
     } catch (error) {
@@ -78,17 +88,12 @@ export async function prepareReplayPrismData(source: string, target: string): Pr
     }
     throw new Error("Replay Prism destination already contains source data.");
   }
-  const readOnly: string[] = [];
+  const filesystem = await statfs(target);
+  requireReplayCopySpace(requiredBytes, filesystem.bavail * filesystem.bsize);
   for (const entry of entries) {
     const from = join(source, entry.name);
     const to = join(target, entry.name);
-    if (entry.isDirectory() && sharedDirectories.has(entry.name)) {
-      await symlink(from, to, "dir");
-      readOnly.push(from);
-    } else {
-      await cp(from, to, { recursive: true, force: false, errorOnExist: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
-      if (entry.isFile()) await chmod(to, 0o600);
-    }
+    await cp(from, to, { recursive: true, force: false, errorOnExist: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
+    if (entry.isFile()) await chmod(to, 0o600);
   }
-  return readOnly;
 }
