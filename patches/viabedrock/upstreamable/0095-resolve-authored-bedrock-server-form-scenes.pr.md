@@ -9,6 +9,10 @@ Ordinary Java clients receive resolved captions through Java dialogs. Clients th
 - Load named UI files in pack order and inherit templates without server-specific names or layout rules.
 - Evaluate bounded expressions, variable defaults, collection bindings, explicit collection indices and variable-defined child controls.
 - Preserve visibility, original indices and authored controls. Export accepted texture bytes with their nine-slice metadata.
+- Decode legacy `buttons` and typed `elements` through the existing form codec. Non-null `buttons` takes precedence, including an empty array.
+- Keep header, label and divider collection positions separate from button response ordinals.
+- Preserve public HTTPS image bindings for asynchronous client loading. Core does not fetch images on its packet or conversion threads.
+- Export resolved hover text and formatting for the native hover-text renderer. Keep its authored width and response ownership.
 - Include the versioned built-in UI identity in conversion fingerprints.
 - Omit missing child templates as the native factory does. Fall back to ordinary forms for unsupported or oversized scenes.
 - Accept an optional licensed UI archive at build time. Runtime code does not reference a local Bedrock installation.
@@ -17,13 +21,26 @@ Ordinary Java clients receive resolved captions through Java dialogs. Clients th
 
 Research targets official Bedrock 1.26.51.1, build 51061372, protocol 2193. Original executable controls establish native string subtraction and slicing, generated value conversion, variable precedence and missing-template factory behavior. Grid and dimension research provides further renderer evidence.
 
-Actual CubeCraft pack definitions produce Loot, Game Selector, Wardrobe and Lobby Switcher scenes with sparse original response indices. Those form inputs are synthetic. They do not establish actual packet, native screenshot or font parity.
+A bounded desktop capture records five actual CubeCraft forms: four action forms and one custom settings form.
+All four action forms resolve against the accepted pack and licensed baseline definitions.
+The custom form retains its existing settings controls.
+These packet and resolver checks do not establish native screenshots or font parity.
 
-A separate live capture confirms right-click reaches CubeCraft and opens an actor-owned Social Menu. The old core closes that menu locally. The lifecycle fix belongs to the existing server-authoritative inventory patch.
+Original native form decoding and click routines execute four private controls on the target build.
+Legacy buttons take precedence over elements; an empty legacy array wins, while null legacy buttons defer to elements.
+Typed prose retains collection positions, but only buttons increment response ordinals.
+The click routine converts the selected collection position to that ordinal before serialization.
+Transport, allocation and text translation remain fixture boundaries.
+
+A separate live capture confirms right-click reaches CubeCraft and opens an actor-owned Social Menu.
+The old core closes that menu locally.
+The repaired client retains the menu across twelve samples until a client-origin close after 1,149 ms.
+The lifecycle fix belongs to the existing server-authoritative inventory patch.
 
 ## Verification and limits
 
-The full core build passes 895 tests: 865 passed, 30 skipped, no failures. Tests cover expression bounds and native results, variable defaults, hidden indices, explicit indices, texture priority, malformed metadata and the scene wire format. The full 98-patch replay also passes.
+The full core build passes 899 tests: 869 passed, 30 skipped, no failures. Tests cover expression bounds, native results, variable defaults, hidden indices, explicit indices, texture priority, malformed metadata and the scene wire format.
+Additional cases cover both form schemas, empty and null precedence, typed factories, button ordinals, HTTPS image bindings and formatted hover text. The full 98-patch replay also passes.
 
 Native GPU rendering, font metrics, dynamic binding controllers, forward control references and additional animation types remain open. If licensed base definitions are unavailable, inherited scenes can use ordinary-form fallback. Native assets and raw captures remain private.
 

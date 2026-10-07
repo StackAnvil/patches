@@ -8418,9 +8418,18 @@ Ordinary Java clients receive a readable projection through standard dialogs.
 These paths do not establish complete JSON UI or native visual parity.
 
 Native fixtures establish expression, grid, missing-template and size-unit behavior for Bedrock 1.26.51.1.
-Private probes use real server definitions and textures with synthetic form records.
-Actual server form records and desktop rendering still require verification.
-The full replay passes 865 core tests, with 30 skipped.
+Earlier private probes use real server definitions and textures with synthetic form records.
+A subsequent desktop capture records four actual action forms and one custom settings form.
+All four action forms resolve against the accepted pack and licensed baseline, including their public HTTPS image bindings.
+The custom settings form retains its existing controls.
+The Wardrobe scene retains all sixteen bound hover-text nodes and their formatted components.
+The updated renderer still requires actual desktop verification.
+The full replay passes 869 core tests, with 30 skipped.
+
+Legacy `buttons` remains supported through the existing form codec.
+Non-null legacy buttons take precedence over `elements`, including an empty array; null legacy buttons defer to elements.
+Typed headers, labels and dividers retain collection positions without consuming button response ordinals.
+Production boundary tests cover these cases, and private native decoding and click fixtures reproduce the same semantics.
 Built-in UI is optional and identified by its content in the conversion cache.
 Production loads resources from the JAR or pack provider; it does not reference a local Bedrock installation.
 
@@ -8429,4 +8438,7 @@ Right-click reaches the server, which opens an actor-backed menu.
 The old core sends a close six milliseconds later because it interprets the placeholder position as a physical block.
 Core now preserves server-owned actor menus and defers physical checks until their backing block is known.
 Eight packet and lifecycle cases pass.
-The updated desktop artifact has not yet verified that the menu remains open.
+A second bounded desktop capture verifies twelve container-screen samples across 1,149 ms before a client-origin close.
+The invalid-block closure does not recur, and the actual screen uses the chest title.
+The connection stays active after observer cleanup.
+Native screen styling, left-click comparison and complete menu interaction parity remain open.

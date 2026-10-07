@@ -253,8 +253,14 @@ All eight lifecycle regression cases pass:
 - Missing and pending chunks defer binding. A later air update resolves a server menu without closing it.
 - Late barrel and shulker updates produce the correct pickup request addresses. Physical barrel titles and custom names remain intact.
 
-The live trace verifies the old defect. The repaired desktop client remains unverified.
+The first live trace verifies the old defect.
+A second bounded capture verifies the repaired desktop client on the same server and protocol.
+Right-click opens an actor-owned Social Menu, and twelve samples retain its container screen across 1,149 ms.
+The first close originates from the client after those samples; the invalid-block close does not recur.
+The actual desktop screen also uses the chest title.
 The capture reaches its 512-packet limit during repeated menu opens and closes.
 Cleanup removes both observer handlers, preserves the original pipeline and keeps the connection active.
-No left-click `ATTACK` or `MODAL_FORM_REQUEST` appears in this capture, so that comparison and raw form validation remain pending.
+The first capture contains no left-click `ATTACK` or `MODAL_FORM_REQUEST`.
+The second capture records five raw forms for separate resolver checks.
+It does not establish a native graphical or left-click comparison.
 Raw traffic, server assets and client data remain private.

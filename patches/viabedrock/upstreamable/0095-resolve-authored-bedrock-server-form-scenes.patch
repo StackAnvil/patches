@@ -1,4 +1,4 @@
-From 3c35b7392d292d81dda3800a22535315081a4a59 Mon Sep 17 00:00:00 2001
+From 5c5bba0396cd383c0150a976ae4a9f1bca06a347 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:42:36 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server form scenes
@@ -17,20 +17,30 @@ siblings. Optional licensed UI archives are supplied at build time;
 missing assets or unsupported scenes retain the ordinary form flow.
 Native GPU, font, full binding-controller and animation parity remain
 separate verification work. No local game installation is required.
+
+Actual protocol2193 CubeCraft forms use typed elements rather than the
+legacy buttons array. Normalize decoded forms through MCStructs and keep
+full collection positions separate from button response ordinals. Four
+original native decoder/click controls establish legacy precedence and
+header/label/divider positions, without inferring native GPU behavior.
+
+Preserve authored HTTPS image URLs and file-system bindings in the scene.
+The client renderer loads their bytes asynchronously; packet and resource
+workers do not perform network image downloads.
 ---
  build.gradle                                  |  11 +
  .../api/model/NativeFormMessage.java          |  55 ++
  .../http/ConvertedResourcePackCache.java      |   4 +-
- .../api/resourcepack/ui/ServerFormUi.java     | 765 ++++++++++++++++++
+ .../api/resourcepack/ui/ServerFormUi.java     | 810 ++++++++++++++++++
  .../api/resourcepack/ui/UiExpression.java     | 304 +++++++
  .../protocol/packet/InventoryPackets.java     | 436 +++++++---
  .../rewriter/ResourcePackRewriter.java        |   2 +
  .../ServerFormUiResourceRewriter.java         |  35 +
  .../protocol/storage/ResourcePackStorage.java |  14 +-
  .../api/model/NativeFormMessageTest.java      |  51 ++
- .../api/resourcepack/ui/ServerFormUiTest.java | 179 ++++
+ .../api/resourcepack/ui/ServerFormUiTest.java | 284 ++++++
  .../api/resourcepack/ui/UiExpressionTest.java |  56 ++
- 12 files changed, 1788 insertions(+), 124 deletions(-)
+ 12 files changed, 1938 insertions(+), 124 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFormMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpression.java
@@ -150,10 +160,10 @@ index 830a3f1eb..f4cdec690 100644
              identity.append('\n').append(entry.getKey()).append(':').append(visual.bedrockState()).append(':').append(visual.modelJson())
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java
 new file mode 100644
-index 000000000..f472978b2
+index 000000000..a2977a353
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java
-@@ -0,0 +1,765 @@
+@@ -0,0 +1,810 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -170,6 +180,7 @@ index 000000000..f472978b2
 +import com.viaversion.viaversion.libs.gson.JsonPrimitive;
 +import java.io.IOException;
 +import java.io.InputStream;
++import java.net.URI;
 +import java.nio.ByteBuffer;
 +import java.nio.charset.StandardCharsets;
 +import java.security.MessageDigest;
@@ -263,9 +274,15 @@ index 000000000..f472978b2
 +    }
 +
 +    JsonObject resolveScene(final JsonObject form) {
-+        if (!this.customized || !"form".equals(string(form, "type")) || !form.has("buttons")
-+                || !form.get("buttons").isJsonArray() || form.getAsJsonArray("buttons").size() > MAX_BUTTONS) {
++        if (!this.customized || !"form".equals(string(form, "type")) || !form.has("elements")
++                || !form.get("elements").isJsonArray() || form.getAsJsonArray("elements").size() > MAX_BUTTONS) {
 +            return null;
++        }
++        for (final JsonElement element : form.getAsJsonArray("elements")) {
++            if (!element.isJsonObject() || !Set.of("button", "header", "label", "divider")
++                    .contains(string(element.getAsJsonObject(), "type"))) {
++                return null;
++            }
 +        }
 +        final Session session = new Session(form);
 +        final JsonObject host = this.template("server_form.third_party_server_screen", new HashSet<>());
@@ -281,8 +298,19 @@ index 000000000..f472978b2
 +        scene.add("root", root);
 +        final JsonObject fallback = new JsonObject();
 +        fallback.add("title", form.get("title"));
-+        fallback.add("content", form.get("content"));
-+        fallback.add("buttons", form.get("buttons").deepCopy());
++        final List<String> content = new ArrayList<>();
++        content.add(string(form, "content"));
++        final JsonArray fallbackButtons = new JsonArray();
++        for (final JsonElement entry : form.getAsJsonArray("elements")) {
++            final JsonObject element = entry.getAsJsonObject();
++            if ("button".equals(string(element, "type"))) {
++                fallbackButtons.add(element.deepCopy());
++            } else if (!string(element, "text").isBlank()) {
++                content.add(string(element, "text"));
++            }
++        }
++        fallback.addProperty("content", String.join("\n", content));
++        fallback.add("buttons", fallbackButtons);
 +        scene.add("fallback", fallback);
 +        final JsonArray missing = new JsonArray();
 +        session.missingTemplates.forEach(missing::add);
@@ -575,16 +603,27 @@ index 000000000..f472978b2
 +        private final Map<String, JsonElement> initial = new HashMap<>(ServerFormUi.this.globals);
 +        private final Map<String, Map<String, JsonElement>> controls = new HashMap<>();
 +        private final Set<Integer> actions = new HashSet<>();
++        private final int[] buttonIndices;
 +        private final Map<Integer, Map<String, JsonElement>> engineBindings = new HashMap<>();
 +        private final Set<String> missingTemplates = new LinkedHashSet<>();
 +        private int nodes;
 +
 +        private Session(final JsonObject form) {
 +            this.form = form;
++            final JsonArray elements = form.getAsJsonArray("elements");
++            this.buttonIndices = new int[elements.size()];
++            final JsonArray types = new JsonArray();
++            int buttonIndex = 0;
++            for (int index = 0; index < elements.size(); index++) {
++                final String type = string(elements.get(index).getAsJsonObject(), "type");
++                types.add(type);
++                this.buttonIndices[index] = type.equals("button") ? buttonIndex++ : -1;
++            }
++            this.initial.put("#form_button_contents", types);
 +            this.initial.put("#title_text", form.has("title") ? form.get("title") : new JsonPrimitive(""));
 +            this.initial.put("#form_text", form.has("content") ? form.get("content") : new JsonPrimitive(""));
 +            this.initial.put("#form_content_text", this.initial.get("#form_text"));
-+            this.initial.put("#form_button_length", new JsonPrimitive(form.getAsJsonArray("buttons").size()));
++            this.initial.put("#form_button_length", new JsonPrimitive(form.getAsJsonArray("elements").size()));
 +            this.initial.put("#is_using_gamepad", new JsonPrimitive(false));
 +            this.initial.put("$is_console", new JsonPrimitive(false));
 +            this.initial.put("#is_using_touch", new JsonPrimitive(false));
@@ -617,24 +656,24 @@ index 000000000..f472978b2
 +            values.put("#enabled", new JsonPrimitive(true));
 +            declarations(control, values);
 +            final JsonElement collectionIndex = resolveValue(control.get("collection_index"), values, 0);
-+            final int selectedButton;
++            final int selectedElement;
 +            if (control.has("collection_index")) {
 +                if (!collectionIndex.isJsonPrimitive() || !collectionIndex.getAsJsonPrimitive().isNumber()
 +                        || collectionIndex.getAsDouble() != collectionIndex.getAsInt()) {
 +                    throw new IllegalArgumentException("Invalid UI collection index");
 +                }
 +                final int index = collectionIndex.getAsInt();
-+                selectedButton = index >= 0 && index < this.form.getAsJsonArray("buttons").size() ? index : -1;
++                selectedElement = index >= 0 && index < this.form.getAsJsonArray("elements").size() ? index : -1;
 +            } else {
-+                selectedButton = button;
++                selectedElement = button >= 0 && button < this.form.getAsJsonArray("elements").size() ? button : -1;
 +            }
-+            final Map<String, JsonElement> engine = this.engine(selectedButton);
++            final Map<String, JsonElement> engine = this.engine(selectedElement);
 +            for (final String property : List.of("#form_button_text", "#form_button_index", "#form_button_texture", "#form_button_texture_file_system")) {
 +                values.put(property, engine.get(property));
 +            }
 +            values.put("#visible", control.has("visible") ? resolveValue(control.get("visible"), values, 0) : new JsonPrimitive(true));
 +            values.put("#enabled", control.has("enabled") ? resolveValue(control.get("enabled"), values, 0) : new JsonPrimitive(true));
-+            this.bind(control, values, selectedButton);
++            this.bind(control, values, selectedElement);
 +            this.controls.put(name, new HashMap<>(values));
 +            if (UiExpression.truth(resolveValue(control.get("ignored"), values, 0))) {
 +                return null;
@@ -649,9 +688,11 @@ index 000000000..f472978b2
 +                }
 +                node.add(entry.getKey(), resolveValue(entry.getValue(), values, 0));
 +            }
-+            for (final String property : List.of("text", "texture", "visible", "enabled", "collection_length", "maximum_grid_items")) {
++            for (final String property : List.of("text", "hover_text", "texture", "texture_file_system", "visible", "enabled", "collection_length", "maximum_grid_items")) {
 +                if (values.containsKey("#" + property)) {
-+                    node.add(property, values.get("#" + property));
++                    final JsonElement value = values.get("#" + property);
++                    node.add(property, property.equals("collection_length") && value.isJsonArray()
++                            ? new JsonPrimitive(value.getAsJsonArray().size()) : value);
 +                }
 +            }
 +            node.addProperty("visible", visible);
@@ -660,7 +701,13 @@ index 000000000..f472978b2
 +            }
 +            if (node.has("texture")) {
 +                final String texture = UiExpression.text(node.get("texture"));
-+                if (!texture.isEmpty() && safePath(texture)) {
++                if (!texture.isEmpty() && "url".equals(string(node, "texture_file_system"))) {
++                    final URI source = URI.create(texture);
++                    if (texture.length() > 8192 || !"https".equalsIgnoreCase(source.getScheme())
++                            || source.getHost() == null || source.getUserInfo() != null || source.getFragment() != null) {
++                        throw new IllegalArgumentException("Unsupported UI texture URL");
++                    }
++                } else if (!texture.isEmpty() && safePath(texture)) {
 +                    node.addProperty("texture", textureId(texture));
 +                    final byte[] metadata = ServerFormUi.this.textureFiles.get(texture.replaceAll("\\.png$", "") + ".json");
 +                    if (metadata != null) {
@@ -707,14 +754,16 @@ index 000000000..f472978b2
 +                }
 +                node.add("animation_tracks", tracks);
 +            }
-+            if ("label".equals(string(node, "type")) && node.has("text") && !node.get("text").isJsonNull()) {
-+                String text = UiExpression.text(node.get("text"));
++            final String textProperty = "label".equals(string(node, "type")) ? "text"
++                    : "custom".equals(string(node, "type")) && "hover_text_renderer".equals(string(node, "renderer")) ? "hover_text" : "";
++            if (!textProperty.isEmpty() && node.has(textProperty) && !node.get(textProperty).isJsonNull()) {
++                String text = UiExpression.text(node.get(textProperty));
 +                if (!node.has("localize") || UiExpression.truth(node.get("localize"))) {
 +                    text = ServerFormUi.this.translator.apply(text);
 +                }
-+                node.addProperty("text", text);
++                node.addProperty(textProperty, text);
 +                node.addProperty("localize", false);
-+                node.add("text_component", TextUtil.textComponentToGson(TextUtil.stringToTextComponent(text, ServerFormUi.this.formattingColors)));
++                node.add(textProperty + "_component", TextUtil.textComponentToGson(TextUtil.stringToTextComponent(text, ServerFormUi.this.formattingColors)));
 +            }
 +            if (Set.of("button", "toggle").contains(string(node, "type"))) {
 +                String action = UiExpression.text(resolveValue(new JsonPrimitive("$pressed_button_name"), values, 0));
@@ -731,10 +780,12 @@ index 000000000..f472978b2
 +                }
 +                if (action.equals("button.menu_exit")) {
 +                    node.addProperty("action", -1);
-+                } else if (action.equals("button.form_button_click") && selectedButton >= 0) {
-+                    node.addProperty("action", selectedButton);
++                } else if (action.equals("button.form_button_click") && selectedElement >= 0
++                        && this.buttonIndices[selectedElement] >= 0) {
++                    final int responseIndex = this.buttonIndices[selectedElement];
++                    node.addProperty("action", responseIndex);
 +                    if (visible) {
-+                        this.actions.add(selectedButton);
++                        this.actions.add(responseIndex);
 +                    }
 +                }
 +            }
@@ -746,15 +797,15 @@ index 000000000..f472978b2
 +            }
 +            final JsonElement childControls = resolveValue(control.get("controls"), values, 0);
 +            if (childControls.isJsonArray()) {
-+                this.children(childControls.getAsJsonArray(), children, values, selectedButton, depth);
++                this.children(childControls.getAsJsonArray(), children, values, selectedElement, depth);
 +            } else if (!childControls.isJsonNull()) {
 +                throw new IllegalArgumentException("Invalid UI controls collection");
 +            }
 +            if (control.has("factory") && control.get("factory").isJsonObject()) {
-+                this.factory(control.getAsJsonObject("factory"), node, children, values, selectedButton, depth);
++                this.factory(control.getAsJsonObject("factory"), node, children, values, selectedElement, depth);
 +            }
 +            if ("factory".equals(string(control, "type")) && control.has("control_ids")) {
-+                this.factory(control, node, children, values, selectedButton, depth);
++                this.factory(control, node, children, values, selectedElement, depth);
 +            }
 +            if ("grid".equals(string(control, "type")) && control.has("grid_item_template")) {
 +                this.collection(UiExpression.text(resolveValue(control.get("grid_item_template"), values, 0)), children, values, depth);
@@ -807,13 +858,16 @@ index 000000000..f472978b2
 +                        }
 +                    }
 +                } else {
-+                    final String collection = UiExpression.text(values.get("#collection_length"));
-+                    final JsonElement entries = values.get(collection);
++                    final JsonElement collection = values.get("#collection_length");
++                    final JsonElement entries = collection != null && collection.isJsonArray() ? collection
++                            : values.get(UiExpression.text(collection));
 +                    if (entries != null && entries.isJsonArray()) {
++                        int index = 0;
 +                        for (final JsonElement entry : entries.getAsJsonArray()) {
++                            final int elementIndex = index++;
 +                            final JsonElement selected = ids.get(UiExpression.text(entry));
 +                            if (selected != null) {
-+                                final JsonObject child = this.expandChild(UiExpression.text(resolveValue(selected, values, 0)), new JsonObject(), values, button, depth + 1);
++                                final JsonObject child = this.expandChild(UiExpression.text(resolveValue(selected, values, 0)), new JsonObject(), values, elementIndex, depth + 1);
 +                                if (child != null) {
 +                                    children.add(child);
 +                                }
@@ -829,7 +883,7 @@ index 000000000..f472978b2
 +            if (template.isEmpty()) {
 +                throw new IllegalArgumentException("Empty UI collection template");
 +            }
-+            for (int index = 0; index < this.form.getAsJsonArray("buttons").size(); index++) {
++            for (int index = 0; index < this.form.getAsJsonArray("elements").size(); index++) {
 +                final JsonObject child = this.expandChild(template, new JsonObject(), values, index, depth + 1);
 +                if (child != null) {
 +                    children.add(child);
@@ -845,9 +899,10 @@ index 000000000..f472978b2
 +                result.put("#form_button_texture", new JsonPrimitive(""));
 +                result.put("#form_button_texture_file_system", new JsonPrimitive("path"));
 +                if (index >= 0) {
-+                    final JsonObject element = this.form.getAsJsonArray("buttons").get(index).getAsJsonObject();
-+                    result.put("#form_button_text", element.get("text"));
-+                    result.put("#form_button_index", new JsonPrimitive(index));
++                    final JsonObject element = this.form.getAsJsonArray("elements").get(index).getAsJsonObject();
++                    result.put("#form_button_text", element.has("text") ? element.get("text") : new JsonPrimitive(""));
++                    result.put("#form_button_index", new JsonPrimitive(this.buttonIndices[index]));
++                    result.put("#collection_index", new JsonPrimitive(index));
 +                    final JsonObject image = element.has("image") && element.get("image").isJsonObject()
 +                            ? element.getAsJsonObject("image") : new JsonObject();
 +                    result.put("#form_button_texture", image.has("data") ? image.get("data") : new JsonPrimitive(""));
@@ -1230,7 +1285,7 @@ index 000000000..3316b9345
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index fb8b236b5..85c915b5e 100644
+index fb8b236b5..a106ba31f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -17,6 +17,10 @@
@@ -1387,7 +1442,7 @@ index fb8b236b5..85c915b5e 100644
 +                    inventoryTracker.setCurrentForm(IntObjectPair.of(id, form));
 +                    final var scene = form instanceof ActionForm && resourcePackStorage.isLoadedOnJavaClient()
 +                            ? resourcePackStorage.getServerFormUi().resolve(
-+                                    JsonParser.parseString(data).getAsJsonObject()) : null;
++                                    JsonParser.parseString(FormSerializer.serialize(form)).getAsJsonObject()) : null;
 +                    if (scene != null && wrapper.user().get(ChannelStorage.class).hasChannel(NativeFormMessage.CHANNEL)) {
 +                        wrapper.setPacketType(ClientboundPackets26_3.CUSTOM_PAYLOAD);
 +                        wrapper.write(Types.STRING, NativeFormMessage.CHANNEL);
@@ -1863,10 +1918,10 @@ index 000000000..29e1c7578
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
 new file mode 100644
-index 000000000..2e57d4081
+index 000000000..96082ef0f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,284 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1908,10 +1963,11 @@ index 000000000..2e57d4081
 +        final JsonArray buttons = new JsonArray();
 +        for (final String value : text) {
 +            final JsonObject button = new JsonObject();
++            button.addProperty("type", "button");
 +            button.addProperty("text", value);
 +            buttons.add(button);
 +        }
-+        form.add("buttons", buttons);
++        form.add("elements", buttons);
 +        return form;
 +    }
 +
@@ -2045,6 +2101,110 @@ index 000000000..2e57d4081
 +        assertNull(new ServerFormUi(List.of(base, Map.of("textures/ui/card.json", "{".getBytes(StandardCharsets.UTF_8)))).resolve(form("tile:One")));
 +    }
 +
++    @Test
++    void decodedFormsPreserveLegacyPrecedenceAndSparseResponseIndices() {
++        final var ui = new ServerFormUi(List.of(definitions(UI)));
++        final JsonObject legacy = form("tile:One", "unused", "tile:Three");
++        legacy.add("buttons", legacy.remove("elements"));
++        final JsonObject both = legacy.deepCopy();
++        both.add("elements", form("tile:Other").getAsJsonArray("elements"));
++        for (final JsonObject input : List.of(legacy, both)) {
++            final var scene = ui.resolve(canonicalForm(input));
++            assertNotNull(scene);
++            assertEquals(Map.of(0, "One", 2, "Three"), ServerFormUi.presentation(scene).buttons());
++        }
++
++        final JsonObject nullLegacy = form("tile:Modern", "unused", "tile:Last");
++        nullLegacy.add("buttons", JsonNull.INSTANCE);
++        assertEquals(Map.of(0, "Modern", 2, "Last"), ServerFormUi.presentation(ui.resolve(canonicalForm(nullLegacy))).buttons());
++        final JsonObject emptyLegacy = both.deepCopy();
++        emptyLegacy.add("buttons", new JsonArray());
++        final JsonObject empty = canonicalForm(emptyLegacy);
++        assertTrue(empty.getAsJsonArray("elements").isEmpty());
++        assertNull(ui.resolve(empty));
++
++        final JsonObject unsupported = canonicalForm(legacy);
++        unsupported.getAsJsonArray("elements").get(1).getAsJsonObject().addProperty("type", "unsupported");
++        assertNull(ui.resolve(unsupported));
++    }
++
++    private static JsonObject canonicalForm(final JsonObject input) {
++        final var decoded = net.lenni0451.mcstructs_bedrock.forms.serializer.FormSerializer.deserialize(input.toString());
++        return JsonParser.parseString(net.lenni0451.mcstructs_bedrock.forms.serializer.FormSerializer.serialize(decoded)).getAsJsonObject();
++    }
++
++    @Test
++    void boundHttpsImagesKeepTheirFileSystemWhileInvalidUrlsUseOrdinaryControls() {
++        final String images = """
++                {"namespace":"server_form","base_button":{"type":"button",
++                 "controls":[{"image":{"type":"image","texture":"#form_button_texture",
++                  "bindings":[{"binding_name":"#form_button_texture_file_system",
++                   "binding_name_override":"#texture_file_system"}]}}]}}
++                """;
++        final JsonObject form = form("tile:One");
++        final JsonObject image = new JsonObject();
++        image.addProperty("type", "url");
++        image.addProperty("data", "https://example.invalid/one.png");
++        form.getAsJsonArray("elements").get(0).getAsJsonObject().add("image", image);
++        final var ui = new ServerFormUi(List.of(definitions(UI), definitions(images)));
++        final var scene = ui.resolve(form);
++        assertNotNull(scene);
++        final var node = scene.getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject()
++                .getAsJsonArray("children").get(0).getAsJsonObject().getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals("url", node.get("texture_file_system").getAsString());
++        assertEquals(image.get("data"), node.get("texture"));
++        image.addProperty("data", "file:///private/one.png");
++        assertNull(ui.resolve(form));
++    }
++
++    @Test
++    void typedFactoriesRetainProseRowsAndMapCollectionPositionsToButtonOrdinals() {
++        final String typed = """
++                {"namespace":"server_form",
++                 "main_screen_content":{"type":"stack_panel","collection_name":"form_buttons",
++                  "bindings":[{"binding_name":"#form_button_contents","binding_name_override":"#collection_length"}],
++                  "factory":{"name":"buttons","control_ids":{"button":"server_form.action","header":"server_form.prose", "divider":"server_form.rule"}}},
++                 "action":{"type":"button","$pressed_button_name":"button.form_button_click",
++                  "controls":[{"caption":{"type":"label","text":"#form_button_text"}}]},
++                 "prose":{"type":"label","text":"#form_button_text"},"rule":{"type":"panel","size":[100,1]}}
++                """;
++        final JsonObject form = form("Heading", "First", "", "Second");
++        final JsonArray elements = form.getAsJsonArray("elements");
++        elements.get(0).getAsJsonObject().addProperty("type", "header");
++        elements.get(2).getAsJsonObject().addProperty("type", "divider");
++        final JsonObject scene = new ServerFormUi(List.of(definitions(typed))).resolve(form);
++        assertNotNull(scene);
++        final JsonObject root = scene.getAsJsonObject("root");
++        assertEquals(4, root.get("collection_length").getAsInt());
++        final JsonArray children = root.getAsJsonArray("children");
++        assertEquals(4, children.size());
++        assertFalse(children.get(0).getAsJsonObject().has("action"));
++        assertEquals(0, children.get(1).getAsJsonObject().get("action").getAsInt());
++        assertFalse(children.get(2).getAsJsonObject().has("action"));
++        assertEquals(1, children.get(3).getAsJsonObject().get("action").getAsInt());
++        assertEquals(java.util.Set.of(0, 1), ServerFormUi.presentation(scene).buttons().keySet());
++        assertEquals(2, scene.getAsJsonObject("fallback").getAsJsonArray("buttons").size());
++    }
++
++    @Test
++    void hoverTextBindingsPreserveFormattingAndAuthoredWidth() {
++        final String hover = """
++                {"namespace":"server_form","base_button":{"type":"button",
++                 "controls":[{"tooltip":{"type":"custom","renderer":"hover_text_renderer",
++                  "hover_text_max_width":160,"localize":false,
++                  "bindings":[{"binding_name":"(#form_button_text - 'tile:')","binding_name_override":"#hover_text"}]}}]}}
++                """;
++        final var scene = new ServerFormUi(List.of(definitions(UI), definitions(hover))).resolve(form("tile:§eDetails"));
++        assertNotNull(scene);
++        final JsonObject tooltip = scene.getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject()
++                .getAsJsonArray("children").get(0).getAsJsonObject().getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals("§eDetails", tooltip.get("hover_text").getAsString());
++        assertNotNull(tooltip.get("hover_text_component"));
++        assertEquals(160, tooltip.get("hover_text_max_width").getAsInt());
++        assertFalse(tooltip.has("action"));
++        assertEquals(java.util.Set.of(0), ServerFormUi.presentation(scene).buttons().keySet());
++    }
++
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpressionTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpressionTest.java
 new file mode 100644
@@ -2110,4 +2270,3 @@ index 000000000..6d8c7baa2
 +}
 -- 
 2.55.0
-
