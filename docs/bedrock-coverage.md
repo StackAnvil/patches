@@ -6657,3 +6657,36 @@ Each route also reels one server inventory reward and removes its hook after cle
 
 Visible output, particle simulation, named-emitter range behavior, and full fishing parity remain incomplete.
 The complete goal, ordinary Java fallback requirements, and actual Windows/macOS joins remain required.
+
+## Native particle frame scheduling, October 7, 2026
+
+The shared particle renderer now follows the pinned PC client's two-frame dynamics and appearance scheduling.
+A monotonic render clock supplies elapsed time.
+The runtime caps each incoming delta before accumulation and preserves separate motion and appearance histories.
+Newborn histories initialize after motion and appearance preparation.
+Position, direction, and rotation use the dynamics factor. Size and float RGBA use the appearance factor.
+UVs retain the current prepared values.
+Native startup gates suppress long-lived particles until history is available.
+Short-lived particles retain their forced extra appearance preparation.
+
+Independent native execution supplies 240 scheduling frames and 72 float appearance cases.
+The existing 180 position cases now exercise the production interpolation helper.
+The full add-on build passes 601 tests, with zero failures or errors and 69 optional skips.
+All 30 add-on patches replay, and the reference patch applies alone upstream.
+The [owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md#native-particle-frame-scheduling-october-7-2026) retain target addresses and fixture boundaries.
+
+Fresh Linux strict BDS runs exercise actual rod input through direct and ViaProxy connections.
+The observer records 667 particle render frames directly and 942 through ViaProxy.
+Their update cadence, startup visibility, and independent interpolation factors match the native counter schedules.
+Another 733 halfway-position triplets match production world-space output within the documented float rounding allowance.
+Both casts remove their hooks. The ViaProxy cast also records one durability point.
+These observations cover renderer extraction, not final GPU pixels or native image parity.
+The direct run ends after its controls through the recorder's cancellation path.
+The ViaProxy run ends through the reviewed private completion marker.
+Both preserve spawn and gameplay evidence. The cancellation exit is not a connection failure.
+The final artifact passes a fresh direct BDS join after removal of the unused partial-tick argument.
+It verifies another 222 render frames and 100 halfway-position triplets.
+The fixture returns to its original checksum, and both user-owned servers retain their process identities.
+
+Complete component scheduling, native visible output, actor contexts, lifecycle boundaries, and the full particle behavior matrix remain required.
+All eight coverage groups, the complete gameplay matrix, strict BDS, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain in scope.

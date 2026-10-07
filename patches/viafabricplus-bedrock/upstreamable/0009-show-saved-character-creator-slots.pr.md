@@ -2749,3 +2749,63 @@ Validation uses the private Linux/NVIDIA lab; macOS/Apple GPU confirmation remai
 The matching replay without Iris installed also passes transport and rendering verification.
 It preserves all 216 recorded geometry skins, local and remote native submissions, and all 31 custom actor types.
 Its screenshot retains the ordinary first-person arm and drawable actor geometry.
+
+## Native particle frame scheduling, October 7, 2026
+
+The pinned PC client uses two frames between particle dynamics and appearance updates.
+The platform getter `0x140159bb0` returns two through virtual slot `0x6d8`.
+Caller `0x1447e9561` passes that value into `ParticleSystemEngine`.
+The engine stores it at offset `0x10f0`, and emitter creation copies it to offset `0xd0`.
+The target remains Bedrock `1.26.51.1`, protocol `2193`.
+
+The add-on now drives particles from a monotonic render clock.
+Each emitter keeps separate dynamics and appearance counters.
+Each incoming delta retains values below 101 ms and caps larger values at 100 ms.
+Skipped dynamics frames accumulate those capped deltas.
+A scheduled dynamics update consumes their sum without another cap.
+These changes apply to the shared renderer for server, actor, animation, and fishing effects.
+
+The runtime stores previous position, direction, and rotation before scheduled dynamics updates.
+Newborn particles initialize that history after their first motion update.
+Appearance preparation stores previous size and float RGBA channels.
+Newborn appearance history initializes after preparation.
+The dynamics counter controls position, direction, and rotation interpolation.
+The appearance counter controls size and color interpolation.
+UVs retain the current prepared values.
+Color channels retain float precision until the renderer packs the final interpolated color.
+
+Native render startup suppresses output while appearance or dynamics history is insufficient.
+A nonzero particle duration below `150_000_001` ns allows early output and forces a second appearance preparation.
+New manual particles receive appearance preparation even during skipped refresh frames.
+Their first appearance sample cannot interpolate from an empty size or tint.
+
+Independent native execution covers 240 scheduling frames across 40 schedules.
+It executes the elapsed cap, accumulation, counters, motion snapshots, and render startup gate.
+The probe supplies resource pointers, context validity, and prepared particle durations.
+Appearance preparation records its native force argument without executing component callbacks.
+The probe stops before full simulation and final render construction.
+
+Another 72 cases execute the native rotation, size, scale, and float RGBA interpolation instructions.
+They supply snapshots and independent interpolation factors.
+All results match the production float helper exactly.
+The existing 180 native position cases now use the same interpolation helper as production rendering.
+These fixtures exclude complete component dispatch, GPU output, and native visible comparisons.
+
+Portable runtime sequences cover separate motion and appearance histories, current UVs, float tint precision, and newborn initialization.
+They also cover short-particle startup, manual births, skipped updates, and elapsed accumulation above 100 ms.
+The full add-on build reports 601 tests, zero failures or errors, and 69 optional skips with the private native fixtures enabled.
+The owning patch retains these changes, and all 30 add-on patches replay.
+Binaries, licensed assets, native fixtures, and observers remain private.
+
+Fresh Linux strict BDS runs exercise actual rod input through direct and ViaProxy connections.
+The observer records 667 particle render frames directly and 942 through ViaProxy.
+Their update cadence, startup visibility, and independent interpolation factors match the native counter schedules.
+Another 733 halfway-position triplets match production world-space output within the documented float rounding allowance.
+Both casts remove their hooks. The ViaProxy cast also records one durability point.
+These observations cover renderer extraction, not final GPU pixels or native image parity.
+The direct run ends after its controls through the recorder's cancellation path.
+The ViaProxy run ends through the reviewed private completion marker.
+Both preserve spawn and gameplay evidence. The cancellation exit is not a connection failure.
+The final artifact passes a fresh direct BDS join after removal of the unused partial-tick argument.
+It verifies another 222 render frames and 100 halfway-position triplets.
+The fixture returns to its original checksum, and both user-owned servers retain their process identities.

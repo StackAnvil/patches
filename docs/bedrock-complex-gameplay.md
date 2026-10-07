@@ -1179,3 +1179,31 @@ The private fixture returns to its original checksum, and both user-owned server
 
 Visible native comparisons, named-emitter range behavior, Java fallback limits, and complete fishing parity remain required.
 All eight coverage groups, the full gameplay matrix, strict BDS, Boar diagnostics, real servers, and platform joins remain in scope.
+
+## Fishing particle frame scheduling, October 7, 2026
+
+The shared renderer now applies the pinned PC particle engine's two-frame scheduling to fishing effects.
+Dynamics updates consume accumulated time after each incoming frame applies its native elapsed cap.
+Render output interpolates motion and appearance through separate counters.
+It preserves newborn initialization, current UVs, float tint precision, and native startup visibility.
+Short-lived particles retain the extra forced appearance preparation.
+
+Native execution covers 240 scheduling frames, 72 appearance cases, and 180 position cases.
+The [owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md#native-particle-frame-scheduling-october-7-2026) record target addresses, supplied boundaries, and runtime sequences.
+The full add-on build passes 601 tests, with zero failures or errors and 69 optional skips.
+
+Fresh Linux strict BDS runs exercise actual rod input through direct and ViaProxy connections.
+The observer records 667 particle render frames directly and 942 through ViaProxy.
+Their update cadence, startup visibility, and independent interpolation factors match the native counter schedules.
+Another 733 halfway-position triplets match production world-space output within the documented float rounding allowance.
+Both casts remove their hooks. The ViaProxy cast also records one durability point.
+These observations cover renderer extraction, not final GPU pixels or native image parity.
+The direct run ends after its controls through the recorder's cancellation path.
+The ViaProxy run ends through the reviewed private completion marker.
+Both preserve spawn and gameplay evidence. The cancellation exit is not a connection failure.
+The final artifact passes a fresh direct BDS join after removal of the unused partial-tick argument.
+It verifies another 222 render frames and 100 halfway-position triplets.
+The fixture returns to its original checksum, and both user-owned servers retain their process identities.
+
+Complete fishing physics, particle behavior, audio timing, captions, displayed rewards, and native visual comparisons remain required.
+Ordinary Java fallback limits, mixed actions, account and platform checks, and every other goal requirement remain in scope.
