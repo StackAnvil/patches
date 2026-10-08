@@ -1,4 +1,4 @@
-From 4ac6aeff2d3f98a1eda4a0762df2faa541b6de5a Mon Sep 17 00:00:00 2001
+From cb7063182187b3dbb276fe254063b1efcbf3de05 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1725,10 +1725,19 @@ rules. Current connection identity, generation and actor lifetime reject
 stale updates. Local player proxies are rejected. Eighteen targeted core
 and addon tests pass. Native radius callbacks, boundary clipping differences
 and live joined NPC acceptance remain unverified; do not add guessed margins.
+
+Negotiate actor_state_v3 alongside the byte-compatible v2 channel so native
+UI consumers can resolve signed actor unique IDs to actual Java UUIDs.
+Unknown v2 identities stay unknown rather than using runtime IDs as aliases.
+The connection-owned registry preserves local player mapping and clears UID
+associations on replacement, downgrade and disconnect. Bedrock 1.26.51.1
+portrait consumer 148ddc410 resolves #entity_id through the Level UID lookup.
+A targeted add-on lifecycle test covers local aliases, stale removal,
+downgrade, upgrade and clear; the legacy decoder remains unchanged.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
- .../bedrock/ViaFabricPlusBedrock.java         |   33 +
+ .../bedrock/ViaFabricPlusBedrock.java         |   38 +
  .../appearance/BedrockActorAnimation.java     |  769 +++++++++
  .../bedrock/appearance/BedrockActorScale.java |   33 +
  .../appearance/BedrockActorVisibility.java    |   93 +
@@ -1834,7 +1843,7 @@ and live joined NPC acceptance remain unverified; do not add guessed margins.
  .../sound/MixinMinecraftServerSounds.java     |   22 +
  .../bedrock/render/BedrockActorPicking.java   |   58 +
  .../render/BedrockActorPickingState.java      |   99 ++
- .../bedrock/render/BedrockActorState.java     |   80 +
+ .../bedrock/render/BedrockActorState.java     |   84 +
  .../bedrock/render/BedrockAnimatedModel.java  |  174 ++
  .../bedrock/render/BedrockBoneTransform.java  |   27 +
  .../render/BedrockFirstPersonActor.java       |   35 +
@@ -1851,6 +1860,7 @@ and live joined NPC acceptance remain unverified; do not add guessed margins.
  .../bedrock/render/BedrockPlayerSkins.java    |  648 ++++++-
  .../bedrock/render/BedrockViewBobbing.java    |   51 +
  .../render/BedrockWalkingAnimation.java       |   35 +
+ .../render/NativeActorIdentityPayload.java    |   24 +
  .../bedrock/render/NativeActorPayload.java    |   24 +
  .../render/NativeActorPickingPayload.java     |   24 +
  .../screen/BedrockCharacterSlotsScreen.java   | 1401 +++++++++++++++
@@ -1941,7 +1951,7 @@ and live joined NPC acceptance remain unverified; do not add guessed margins.
  .../appearance/BedrockTintMaskTest.java       |   61 +
  .../appearance/NativeAssetFixture.java        |   86 +
  .../render/BedrockActorPickingStateTest.java  |   94 +
- .../bedrock/render/BedrockActorStateTest.java |  178 ++
+ .../bedrock/render/BedrockActorStateTest.java |  204 +++
  .../render/BedrockAnimatedModelTest.java      |   87 +
  .../render/BedrockBoneTransformTest.java      |   69 +
  .../render/BedrockFirstPersonActorTest.java   |  117 ++
@@ -1955,7 +1965,7 @@ and live joined NPC acceptance remain unverified; do not add guessed margins.
  .../render/BedrockPlayerModelTest.java        |  100 ++
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 229 files changed, 34961 insertions(+), 117 deletions(-)
+ 230 files changed, 35020 insertions(+), 117 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibility.java
@@ -2070,6 +2080,7 @@ and live joined NPC acceptance remain unverified; do not add guessed margins.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbing.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimation.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorIdentityPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPickingPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
@@ -2209,14 +2220,15 @@ index a7b7f6e..310545e 100644
 +    sourceSets.main { resources.srcDir(bundledBedrockAssets) }
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index bf2899a..dd53714 100644
+index bf2899a..eeba5f9 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -24,8 +24,18 @@ package com.viaversion.viafabricplus.bedrock;
+@@ -24,8 +24,19 @@ package com.viaversion.viafabricplus.bedrock;
  import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
  import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
  import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeActorPayload;
++import com.viaversion.viafabricplus.bedrock.render.NativeActorIdentityPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeActorPickingPayload;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorPicking;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
@@ -2231,7 +2243,7 @@ index bf2899a..dd53714 100644
  import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
  import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
  import com.viaversion.viafabricplus.ViaFabricPlus;
-@@ -39,6 +49,8 @@ import com.viaversion.viafabricplus.bedrock.settings.BedrockSettings;
+@@ -39,6 +50,8 @@ import com.viaversion.viafabricplus.bedrock.settings.BedrockSettings;
  import com.viaversion.viaversion.api.Via;
  import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
  import net.raphimc.viabedrock.protocol.provider.SkinProvider;
@@ -2240,7 +2252,7 @@ index bf2899a..dd53714 100644
  import org.apache.logging.log4j.LogManager;
  import org.apache.logging.log4j.Logger;
  
-@@ -68,6 +80,26 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -68,6 +81,30 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
              ClientPlayNetworking.registerReceiver(NativeCustomEntityPayload.TYPE,
                  (payload, context) -> CustomEntityRenderStore.accept(listener.getConnection(), payload.message())));
          ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> CustomEntityRenderStore.clear());
@@ -2252,6 +2264,10 @@ index bf2899a..dd53714 100644
 +        PayloadTypeRegistry.clientboundPlay().register(NativeActorPayload.TYPE, NativeActorPayload.CODEC);
 +        ClientPlayConnectionEvents.INIT.register((listener, client) ->
 +            ClientPlayNetworking.registerReceiver(NativeActorPayload.TYPE,
++                (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
++        PayloadTypeRegistry.clientboundPlay().register(NativeActorIdentityPayload.TYPE, NativeActorIdentityPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++            ClientPlayNetworking.registerReceiver(NativeActorIdentityPayload.TYPE,
 +                (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
 +        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockActorState.clear());
 +        PayloadTypeRegistry.clientboundPlay().register(NativeBlockIdentifiersPayload.TYPE, NativeBlockIdentifiersPayload.CODEC);
@@ -2267,7 +2283,7 @@ index bf2899a..dd53714 100644
          this.settings = new BedrockSettings();
          this.account = new BedrockAccount(ViaFabricPlus.api().path().resolve("bedrock.json"));
          this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
-@@ -78,6 +110,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -78,6 +115,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          new ViaFabricPlusViaBedrockPlatform();
          Via.getManager().getProviders().use(NettyPipelineProvider.class, new ViaFabricPlusNettyPipelineProvider());
          Via.getManager().getProviders().use(SkinProvider.class, new ViaFabricPlusSkinProvider());
@@ -18845,10 +18861,10 @@ index 0000000..d05c95f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
 new file mode 100644
-index 0000000..eb1946e
+index 0000000..06af7ee
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,84 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -18893,6 +18909,10 @@ index 0000000..eb1946e
 +
 +    public static NativeActorMessage.Snapshot stateByRuntimeId(final long runtimeId) {
 +        return ACTORS.getByRuntimeId(runtimeId);
++    }
++
++    public static UUID uuidByUniqueId(final long uniqueId) {
++        return ACTORS.uuidByUniqueId(uniqueId);
 +    }
 +
 +    public static UUID lifetime(final UUID uuid) {
@@ -20651,6 +20671,36 @@ index 0000000..0888be7
 +
 +    public interface Provider {
 +        BedrockWalkingAnimation bedrockWalkingAnimation();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorIdentityPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorIdentityPayload.java
+new file mode 100644
+index 0000000..4af2e7a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorIdentityPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
++
++public record NativeActorIdentityPayload(NativeActorMessage message) implements CustomPacketPayload {
++    public static final Type<NativeActorIdentityPayload> TYPE = new Type<>(Identifier.parse(NativeActorMessage.CURRENT_CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeActorIdentityPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> NativeActorMessage.CURRENT_TYPE.write(buffer, payload.message),
++            buffer -> new NativeActorIdentityPayload(NativeActorMessage.CURRENT_TYPE.read(buffer)));
++
++    @Override
++    public Type<NativeActorIdentityPayload> type() {
++        return TYPE;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPayload.java
@@ -37897,10 +37947,10 @@ index 0000000..0b60266
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorStateTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorStateTest.java
 new file mode 100644
-index 0000000..70d9bac
+index 0000000..83f8c09
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorStateTest.java
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,204 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -38065,6 +38115,32 @@ index 0000000..70d9bac
 +                assertEquals(expected.get(3).getAsFloat(), actual.a());
 +            }
 +            assertEquals(1504, fixture.getAsJsonArray("cases").size());
++        } finally {
++            BedrockActorState.clear();
++        }
++    }
++
++    @Test
++    void resolvesNativeUniqueIdsAcrossCodecAndLifetimeReplacement() {
++        final UUID local = UUID.randomUUID(), wire = UUID.randomUUID(), lifetime = UUID.randomUUID();
++        final var legacy = snapshot(wire, lifetime, false, null);
++        final var identified = new NativeActorMessage.Snapshot(wire, lifetime, true, legacy.runtimeId(),
++                legacy.identifier(), legacy.name(), legacy.scale(), legacy.flags(), legacy.variant(),
++                legacy.markVariant(), legacy.spellColor(), legacy.properties(), -17L);
++        try {
++            BedrockActorState.apply(identified, local);
++            assertEquals(local, BedrockActorState.uuidByUniqueId(-17));
++            assertNull(BedrockActorState.uuidByUniqueId(identified.runtimeId()));
++            BedrockActorState.apply(new NativeActorMessage.Remove(wire, UUID.randomUUID(), true), local);
++            assertEquals(local, BedrockActorState.uuidByUniqueId(-17));
++            BedrockActorState.apply(new NativeActorMessage.Snapshot(wire, lifetime, true, legacy.runtimeId(),
++                    legacy.identifier(), legacy.name(), legacy.scale(), legacy.flags(), legacy.variant(),
++                    legacy.markVariant(), legacy.spellColor(), legacy.properties()), local);
++            assertNull(BedrockActorState.uuidByUniqueId(-17));
++            BedrockActorState.apply(identified, local);
++            assertEquals(local, BedrockActorState.uuidByUniqueId(-17));
++            BedrockActorState.clear();
++            assertNull(BedrockActorState.uuidByUniqueId(-17));
 +        } finally {
 +            BedrockActorState.clear();
 +        }

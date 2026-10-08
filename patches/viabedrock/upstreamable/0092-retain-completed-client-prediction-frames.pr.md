@@ -1025,3 +1025,10 @@ The candidate JAR remains private.
 No installation, direct or ViaProxy gameplay run, strict-BDS trajectory comparison, or native GPU session occurs in this verification.
 Input-history resimulation and native height, breathing-material and camera input equivalence remain separate requirements.
 Other passenger types and vehicle control ownership need separate admission and native movement comparisons.
+
+## Actor v3 capability verification
+
+The actor publication integration fixture uses this patch's existing Mockito infrastructure.
+It drives actual raw register and unregister packets, preferred v3 selection, downgrade
+to v2, unregister-all and same-codec re-registration with unchanged state.
+The complete private core build passes 946 cases with 30 optional skips.

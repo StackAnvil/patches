@@ -2903,3 +2903,17 @@ Exact rectangular clipping tests retain multipart gaps and rays shortened by blo
 These tests do not establish native radius callbacks or exact boundary behavior.
 The addon retains Java clipping without guessed margins.
 Full stack builds and live joined NPC click acceptance remain pending for this candidate.
+
+## Native actor unique ID channel
+
+Advertise `actor_state_v3` alongside the unchanged v2 payload. Both receivers use
+the same connection and generation guard. The registry resolves signed native
+unique IDs to actual Java UUIDs, including the local player. V2 never fabricates
+a unique ID from its runtime ID.
+
+The target Bedrock 1.26.51.1 portrait consumer resolves `#entity_id` through the
+Level unique ID lookup. Its exact class admission and GPU output remain separate.
+Seven actor state tests run: four pass and three optional native-reference cases skip.
+The added behavior test covers the local alias, stale removal, codec downgrade,
+upgrade and disconnect clearing. The full 31-patch stack replays with normal hooks.
+The full combined add-on build remains pending with the UI portrait implementation.

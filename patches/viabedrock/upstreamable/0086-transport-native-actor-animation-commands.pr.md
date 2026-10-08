@@ -89,3 +89,9 @@ Direct and ViaProxy replays deliver all 13 commands with the complete unchanged 
 Both pass transport and rendering checks and reach the same final retained state and sampled arm pose.
 The coverage ledger records the private runtime observations and the remaining visible-comparison boundary.
 Passing codec tests does not establish animation parity.
+
+## Actor v3 capability verification
+
+Unique ID or runtime ID collision retirement also removes the previous actor animation state.
+A later stale removal cannot clear the replacement. Four animation registry tests pass.
+Actor v3 capability is accepted alongside legacy v2 for animation delivery.

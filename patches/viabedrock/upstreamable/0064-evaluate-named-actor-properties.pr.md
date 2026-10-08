@@ -460,3 +460,35 @@ Both downstream bundles retain all 1,246 core files byte-for-byte, excluding the
 
 Reviewed artifact replacements preserve 32 unrelated files per project and retain private rollback copies under `.stackanvil/research/fishing-feedback/crt/build-rollback/`.
 No service restarts or new live-server joins occur in this verification.
+
+## Native actor identity negotiation, October 8, 2026
+
+The optional `actor_state_v3` channel adds the actor's signed native unique ID.
+The existing v2 channel retains its exact bytes. A v2 snapshot has no unique ID association.
+The client resolves that association to the actual Java UUID, including the local player alias.
+Connection cleanup, lifetime replacement and runtime or unique ID collisions retire the previous association.
+Conditional index removal preserves a newer owner when an older actor is removed.
+
+Native portrait draw `148ddc410` resolves `#entity_id` through Level virtual `+0x1f0` using the unique ID.
+The target is Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Its signed decimal prefix parser and camera entry have 18 executed private controls.
+Four original InputMode value constructors verify Undefined 0, Mouse 1, Touch 2 and GamePad 3.
+These controls retain the documented host and controller boundaries. They do not establish visible portrait parity.
+
+Actor capability registration and unregistration replay retained snapshots through the selected codec.
+V3 takes priority when both channels are registered. Removing v3 replays through v2.
+Removing all actor channels, then registering the same codec, also publishes unchanged inputs again.
+The raw packet integration fixture belongs to the later 0092 test infrastructure.
+The codec and registry tests remain independently compilable with this owning feature.
+
+The complete 98-patch stack replays with normal hooks. The final private build passes
+976 tests: 946 pass and 30 optional cases skip. Main, test and tool Checkstyle pass.
+The owning feature retains 11 codec and registry cases. Final-stack actor, publication,
+animation and picking suites pass 24 cases. Publication integration retains the existing
+0092 Mockito infrastructure; animation cleanup belongs to 0086 and picking capability
+handling belongs to deferred 0002.
+
+The private core JAR has SHA-256 `177a0f8a1c88ac387845fee00d1453708ee3cbbc81e46c51b880f876b8c2d069`.
+Its approved manifest contains 1,304 entries. All 38 installed files, 58 frozen v10 files,
+eight immutable Maven inputs and the pinned UI baseline remain unchanged.
+Actual Social actor metadata delivery, unsupported actor classes and native GPU output remain unverified.

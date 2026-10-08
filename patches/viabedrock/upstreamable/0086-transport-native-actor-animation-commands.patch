@@ -1,4 +1,4 @@
-From f00805c786ffdf697a6858693d13863be505c9e0 Mon Sep 17 00:00:00 2001
+From a93c7a3aa653c07c94ab0dd9e8c0cc59f3f45784 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 18:50:27 +0200
 Subject: [PATCH] feat(animations): decode and transport native actor commands
@@ -11,16 +11,16 @@ Match the wire order against official Bedrock 1.26.51.1 build 51061372 captures 
 
 Retain per-lifetime command controllers in the shared actor registry. Keep named next states, ordered transitions, native target/expression deduplication, and selection revisions without an ever-growing packet journal. Resource availability remains specific to each rendering context. Follow the target executable state builder and controller-update probes, including repeated selections and outgoing blend curves.
 ---
- .../api/model/NativeActorStates.java          | 21 +++++
- .../api/model/NativeAnimationControllers.java | 86 ++++++++++++++++++
- .../api/model/NativeAnimationMessage.java     | 74 +++++++++++++++
- .../protocol/model/ActorAnimationCommand.java | 34 +++++++
- .../protocol/model/AnimateEntity.java         | 46 ++++++++++
- .../protocol/packet/EntityPackets.java        | 41 +++++++++
- .../model/NativeAnimationControllersTest.java | 91 +++++++++++++++++++
- .../api/model/NativeAnimationMessageTest.java | 52 +++++++++++
- .../protocol/model/AnimateEntityTest.java     | 69 ++++++++++++++
- 9 files changed, 514 insertions(+)
+ .../api/model/NativeActorStates.java          |  20 ++++
+ .../api/model/NativeAnimationControllers.java |  86 +++++++++++++
+ .../api/model/NativeAnimationMessage.java     |  74 ++++++++++++
+ .../protocol/model/ActorAnimationCommand.java |  34 ++++++
+ .../protocol/model/AnimateEntity.java         |  46 +++++++
+ .../protocol/packet/EntityPackets.java        |  41 +++++++
+ .../model/NativeAnimationControllersTest.java | 113 ++++++++++++++++++
+ .../api/model/NativeAnimationMessageTest.java |  52 ++++++++
+ .../protocol/model/AnimateEntityTest.java     |  69 +++++++++++
+ 9 files changed, 535 insertions(+)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeAnimationControllers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeAnimationMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ActorAnimationCommand.java
@@ -30,18 +30,18 @@ Retain per-lifetime command controllers in the shared actor registry. Keep named
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/AnimateEntityTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
-index f34ac1dfd..31dbf4fd1 100644
+index 23f2a275e..584147402 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
-@@ -18,6 +18,7 @@ public final class NativeActorStates {
-     private final Map<Long, UUID> runtimeIds = new HashMap<>();
+@@ -19,6 +19,7 @@ public final class NativeActorStates {
+     private final Map<Long, UUID> uniqueIds = new HashMap<>();
      private final Map<UUID, NativeShieldBlockingState> blocking = new HashMap<>();
      private long tick;
 +    private final Map<UUID, NativeAnimationControllers> animations = new HashMap<>();
  
      public void apply(final NativeActorMessage message, final UUID localPlayer) {
          final UUID uuid = message.localPlayer() ? java.util.Objects.requireNonNull(localPlayer) : message.uuid();
-@@ -28,6 +29,9 @@ public final class NativeActorStates {
+@@ -32,6 +33,9 @@ public final class NativeActorStates {
                  if (!previous.lifetime().equals(snapshot.lifetime()) || previous.localPlayer() != snapshot.localPlayer()) {
                      this.blocking.remove(uuid);
                  }
@@ -51,22 +51,15 @@ index f34ac1dfd..31dbf4fd1 100644
              }
              if ("minecraft:player".equals(snapshot.identifier())) {
                  this.blocking.putIfAbsent(uuid, NativeShieldBlockingState.EMPTY);
-@@ -38,12 +42,14 @@ public final class NativeActorStates {
-             if (previousUuid != null && !previousUuid.equals(uuid)) {
-                 this.actors.remove(previousUuid);
-                 this.blocking.remove(previousUuid);
-+                this.animations.remove(previousUuid);
-             }
-         } else if (message instanceof NativeActorMessage.Remove remove) {
-             final var current = this.actors.get(uuid);
-             if (current != null && current.lifetime().equals(remove.lifetime())) {
-                 this.actors.remove(uuid);
-                 this.blocking.remove(uuid);
-+                this.animations.remove(uuid);
-                 this.runtimeIds.remove(current.runtimeId(), uuid);
+@@ -65,6 +69,7 @@ public final class NativeActorStates {
              }
          }
-@@ -53,6 +59,20 @@ public final class NativeActorStates {
+         this.blocking.remove(uuid);
++        this.animations.remove(uuid);
+     }
+ 
+     /** Resolve the local Java UUID, which can differ from the transmitted player UUID. */
+@@ -76,6 +81,20 @@ public final class NativeActorStates {
          return this.actors.get(uuid);
      }
  
@@ -87,8 +80,8 @@ index f34ac1dfd..31dbf4fd1 100644
      public NativeActorMessage.Snapshot getByRuntimeId(final long runtimeId) {
          return this.actors.get(this.runtimeIds.get(runtimeId));
      }
-@@ -76,6 +96,7 @@ public final class NativeActorStates {
-         this.runtimeIds.clear();
+@@ -100,6 +119,7 @@ public final class NativeActorStates {
+         this.uniqueIds.clear();
          this.blocking.clear();
          this.tick = 0;
 +        this.animations.clear();
@@ -360,7 +353,7 @@ index 000000000..e47da430c
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-index 8cd512e79..b066520bd 100644
+index 8cd512e79..5314620f8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 @@ -18,6 +18,7 @@
@@ -413,7 +406,7 @@ index 8cd512e79..b066520bd 100644
 +            final AnimateEntity animation = wrapper.read(AnimateEntity.TYPE);
 +            final ChannelStorage channels = wrapper.user().get(ChannelStorage.class);
 +            final EntityTracker entities = wrapper.user().get(EntityTracker.class);
-+            if (!channels.hasChannel(NativeAnimationMessage.CHANNEL) || !channels.hasChannel(NativeActorMessage.CHANNEL)
++            if (!channels.hasChannel(NativeAnimationMessage.CHANNEL) || !(channels.hasChannel(NativeActorMessage.CHANNEL) || channels.hasChannel(NativeActorMessage.CURRENT_CHANNEL))
 +                    || !entities.nativeActorsJoined()) {
 +                return;
 +            }
@@ -441,10 +434,10 @@ index 8cd512e79..b066520bd 100644
              final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeAnimationControllersTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeAnimationControllersTest.java
 new file mode 100644
-index 000000000..dabff39ec
+index 000000000..3b02fbc77
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeAnimationControllersTest.java
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,113 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -462,6 +455,28 @@ index 000000000..dabff39ec
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class NativeAnimationControllersTest {
++
++    @Test
++    void uniqueIdentityCollisionRetiresAnimationsWithoutErasingReplacement() {
++        final var actors = new NativeActorStates();
++        final var first = new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), false, 17,
++                "minecraft:player", "", 1F, Set.of(), 0, 0, null, Map.of(), 101L);
++        final var next = new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), false, 18,
++                "minecraft:player", "", 1F, Set.of(), 0, 0, null, Map.of(), 101L);
++        final var command = new ActorAnimationCommand("raise", "default", "0", 1, "slot", 0);
++        actors.apply(first, null);
++        actors.apply(new NativeAnimationMessage(command,
++                List.of(new NativeAnimationMessage.Target(first.uuid(), first.lifetime(), false))), null);
++        assertNotNull(actors.animations(first.uuid()));
++        actors.apply(next, null);
++        assertNull(actors.animations(first.uuid()));
++        actors.apply(new NativeAnimationMessage(command,
++                List.of(new NativeAnimationMessage.Target(next.uuid(), next.lifetime(), false))), null);
++        final var state = actors.animations(next.uuid());
++        actors.apply(new NativeActorMessage.Remove(first.uuid(), first.lifetime(), false), null);
++        assertSame(state, actors.animations(next.uuid()));
++        assertEquals(next.uuid(), actors.uuidByUniqueId(101));
++    }
 +
 +    @Test
 +    void retainsStatesAndTransitionOrderWhileDeduplicatingAcrossExpressionVersions() {

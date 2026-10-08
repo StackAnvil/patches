@@ -46,3 +46,9 @@ Fifteen core tests and three add-on state tests pass. They cover decoding, bound
 ## Paired native picking build
 
 The complete 98-patch core stack replays cleanly. A fresh build passes 915 tests with 30 optional skips and no failures or errors. Main, test, and tool Checkstyle pass. The private candidate retains the exact reviewed picking sources. Installed artifacts remain unchanged; joined NPC click acceptance and native radius behavior remain unverified.
+
+## Actor v3 capability verification
+
+Native actor picking accepts either negotiated actor codec, while still requiring the
+separate picking channel and joined PLAY state. Eight picking tests pass.
+Registration and unregistration replay preserve the selected actor codec prerequisite.

@@ -8574,6 +8574,36 @@ Actor sizes, empty-name class captions, portrait rendering, live Social styling,
 native pixels and both-route behavior remain open. The private candidate and evidence stay
 under `.stackanvil/research/server-ui/actor-container-title/`.
 
+## Native actor unique IDs, October 8, 2026
+
+Core now negotiates `actor_state_v3` to transport the signed native unique ID.
+The legacy v2 codec retains its exact bytes and has no unique ID association.
+The registry maps unique IDs to Java UUIDs, including the local player alias.
+Replacement, collisions and connection cleanup remove the previous association.
+A stale removal cannot erase a newer actor or its animation state.
+
+Actual register and unregister packets select v3 when both codecs are available.
+Removing v3 replays snapshots through v2. Registering the same codec again
+also republishes unchanged actor inputs. Animation and picking retain their
+separate capability requirements with either actor codec.
+
+The pinned native portrait renderer resolves `#entity_id` through the unique ID.
+Eighteen private executable controls cover its parser, admission and camera entry.
+Four original enum constructors establish Undefined 0, Mouse 1, Touch 2 and GamePad 3.
+These controls do not establish device event behavior or visible rendering parity.
+
+All 98 core patches replay. The private build passes 946 tests with 30 optional skips.
+Twenty-four targeted cases cover codecs, identity replacement, raw publication,
+animation cleanup and picking admission. Main, test and tool Checkstyle pass.
+The add-on receiver retains the legacy payload and exposes the unique ID lookup.
+Its targeted registry suite passes four cases with three optional skips.
+
+The private core manifest contains 1,304 entries. All 38 installed files and
+58 frozen v10 files remain unchanged. Portrait rendering, actual Social actor
+metadata, unsupported actor classes, native pixels and both connection routes
+remain separate requirements. Evidence stays under
+`.stackanvil/research/server-ui/native-binding-semantics/actor-portrait/`.
+
 ## Completed-frame movement positions, October 8, 2026
 
 Core now pairs an admitted completed physics frame's position with its velocity.
