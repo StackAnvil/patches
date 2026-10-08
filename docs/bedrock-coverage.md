@@ -8801,3 +8801,50 @@ lore, title and cursor. Supplied diagnostic values do not reconstruct those data
 Current live client acceptance, native pixels, portraits and Iris remain unverified.
 Private evidence stays under
 `.stackanvil/research/server-ui/native-binding-semantics/actor-portrait/manual-grid/`.
+
+## Native item hover and autoplacement research, October 8, 2026
+
+Original target instructions pass 55 item-text controls. Custom-name selection
+depends on typed display data and key presence, including empty or wrong-type
+names. Lore retains line boundaries, blank entries and native formatting.
+The original hover callback executes through the formatter and text assembler.
+Empty, invalid and missing-item controls return no hover text.
+
+These controls supply localization, filtering and extra-description boundaries.
+They do not verify translated language output, profanity policy, advanced item
+components or live pixels. Actual Social names and lore remain unavailable in
+the retained captures. Supplied diagnostic text does not recover those data.
+
+The original one-item action reaches the planner with requested count one.
+Bulk placement reaches it with the native maximum-count request.
+Twenty-eight controls verify callback cleanup, source validity and count admission.
+Forty further controls execute the ordinary planner, source-count clamp,
+destination order and affected-address projection. The original collection map
+classifies `container_items` through this ordinary path.
+
+Provider permissions and capacities remain supplied boundaries. The mutation
+body, request submission and serialization remain unverified. Affected-address
+records do not retain moved counts. Production action admission stays unchanged
+until the full operation is bound; a Java pickup is not established as equivalent.
+Private evidence stays under
+`.stackanvil/research/server-ui/native-binding-semantics/actor-portrait/manual-grid/`.
+
+## Native vehicle correction timing, October 8, 2026
+
+Original target instructions pass 64 threshold controls and six stateful steps.
+Twelve controls verify deferred correction promotion into a newly created record.
+Thirty-two joined controls execute queueing, record promotion and correction
+application. Significant velocity-only corrections apply before the tested tick's
+input and simulation callbacks; equal and small-motion controls remain unchanged.
+
+Sixteen enclosing-caller controls verify clock, threshold, record and raw-input
+capture order. Removed actors, absent input and stale generations retain their
+separate admission behavior. The positive typed input-context producer remains
+unbound. Two incorrect fixture assumptions were corrected and their failures retained.
+
+World snapshots, physics, final vehicle lifetime and auth-report scheduling remain
+open. Core still discards decoded vehicle velocity and angular correction fields.
+The required implementation must preserve those fields and apply them at a proven
+replay boundary. Immediate receive-time velocity assignment is not verified.
+Private evidence stays under
+`.stackanvil/research/movement-flight/wire-position/passenger-owner/`.
