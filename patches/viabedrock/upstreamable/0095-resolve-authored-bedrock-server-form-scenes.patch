@@ -1,4 +1,4 @@
-From 35e28ad55e4ceed63ccddd3f2d387628ef380417 Mon Sep 17 00:00:00 2001
+From fbf6b6e3399ae7f491facb6cbc98827f382c5851 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:42:36 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -149,6 +149,13 @@ acceptance. Unknown item text retains ordinary fallback.
 Resolve metadata-selected acquired TTF families to isolated Java font resources with default glyph fallback. Normalize EM size and baseline against pinned native hhea metrics; unsupported formats keep existing font fallback. Carry family IDs through scene transport without requiring a local game installation.
 
 Accept server forms that replace an inventory, closing the container through its normal pending acknowledgement path before publishing the form. Native protocol-2193 CubeCraft Friends and Parties deliver the form before container close; treating any open inventory as UserBusy made both buttons inert. Keep busy-form rejection and prevent the late inventory acknowledgement from dismissing its replacement.
+
+Native 1.26.51.1 TrueType rendering applies a 1.5 display transform after
+hhea cache normalization. Preserve that transform in exported glyphs and
+baselines, and transport fractional family line advances to the client.
+Original native CPU drawing and metric getters establish the scale and
+truncation; acquired MinecraftTen glyph comparisons verify the conversion.
+Advance the conversion cache identity so prior font outputs are rebuilt.
 ---
  build.gradle                                  |  11 +
  .../api/model/NativeContainerAction.java      |  93 ++
@@ -159,15 +166,15 @@ Accept server forms that replace an inventory, closing the container through its
  .../http/ConvertedResourcePackCache.java      |   4 +-
  .../api/resourcepack/ui/ContainerUi.java      | 403 +++++++
  .../api/resourcepack/ui/FormBindings.java     | 285 +++++
- .../api/resourcepack/ui/JsonUiProgram.java    | 985 ++++++++++++++++++
+ .../api/resourcepack/ui/JsonUiProgram.java    | 995 ++++++++++++++++++
  .../api/resourcepack/ui/ServerFormUi.java     | 253 +++++
  .../api/resourcepack/ui/UiBindings.java       |  40 +
  .../api/resourcepack/ui/UiExpression.java     | 304 ++++++
- .../api/resourcepack/ui/UiFonts.java          | 191 ++++
+ .../api/resourcepack/ui/UiFonts.java          | 241 +++++
  .../api/resourcepack/ui/UiTextures.java       |  92 ++
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/data/BedrockMappingData.java     |  15 +-
- .../protocol/packet/InventoryPackets.java     | 581 ++++++++---
+ .../protocol/packet/InventoryPackets.java     | 581 +++++++---
  .../rewriter/ResourcePackRewriter.java        |   2 +
  .../resourcepack/JsonUiResourceRewriter.java  |  36 +
  .../protocol/storage/InventoryTracker.java    |  16 +-
@@ -182,14 +189,14 @@ Accept server forms that replace an inventory, closing the container through its
  .../resourcepack/ui/JsonUiProgramTest.java    | 230 ++++
  .../ui/ServerCustomFormUiTest.java            | 146 +++
  .../ui/ServerFormUiSliderStateTest.java       | 126 +++
- .../api/resourcepack/ui/ServerFormUiTest.java | 291 ++++++
+ .../api/resourcepack/ui/ServerFormUiTest.java | 291 +++++
  .../api/resourcepack/ui/UiExpressionTest.java |  56 +
- .../api/resourcepack/ui/UiFontsTest.java      | 158 +++
+ .../api/resourcepack/ui/UiFontsTest.java      | 187 ++++
  .../api/resourcepack/ui/UiTexturesTest.java   | 111 ++
  .../packet/ModalFormTransitionTest.java       | 123 +++
  .../NativeContainerOpeningPacketTest.java     | 393 +++++++
  .../storage/NativeContainerUiStateTest.java   |  57 +
- 39 files changed, 5997 insertions(+), 162 deletions(-)
+ 39 files changed, 6086 insertions(+), 162 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerStatus.java
@@ -1415,10 +1422,10 @@ index 000000000..8d89c2ec5
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 000000000..8bf783e7a
+index 000000000..a2069e7a2
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,985 @@
+@@ -0,0 +1,995 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1576,6 +1583,9 @@ index 000000000..8bf783e7a
 +        if (program.has("font_ids")) {
 +            ui.fonts.importIds(program.getAsJsonObject("font_ids"));
 +        }
++        if (program.has("font_line_heights")) {
++            ui.fonts.importLineHeights(program.getAsJsonObject("font_line_heights"));
++        }
 +        return ui;
 +    }
 +
@@ -1661,6 +1671,9 @@ index 000000000..8bf783e7a
 +        final JsonObject fonts = new JsonObject();
 +        this.fonts.ids().forEach(fonts::addProperty);
 +        result.add("font_ids", fonts);
++        final JsonObject lineHeights = new JsonObject();
++        this.fonts.lineHeights().forEach(lineHeights::addProperty);
++        result.add("font_line_heights", lineHeights);
 +        return result;
 +    }
 +
@@ -1880,8 +1893,8 @@ index 000000000..8bf783e7a
 +    }
 +
 +    public static String builtinIdentity() {
-+        // Include the UI image conversion revision so cached PNG-only conversions are not reused.
-+        return "2:" + Builtins.IDENTITY;
++        // Include image and font conversion revisions in the converted-pack cache identity.
++        return "3:" + Builtins.IDENTITY;
 +    }
 +
 +    public static String textureId(final String path) {
@@ -2152,6 +2165,10 @@ index 000000000..8bf783e7a
 +            final String font = JsonUiProgram.this.fonts.id(string(node, "font_type"));
 +            if (font != null) {
 +                node.addProperty("font", font);
++                final Double lineHeight = JsonUiProgram.this.fonts.lineHeight(string(node, "font_type"));
++                if (lineHeight != null) {
++                    node.addProperty("font_line_height", lineHeight);
++                }
 +            }
 +            this.bindings.decorate(node, control, values, selectedScope);
 +            final JsonArray children = new JsonArray();
@@ -3021,10 +3038,10 @@ index 000000000..3316b9345
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFonts.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFonts.java
 new file mode 100644
-index 000000000..729895e94
+index 000000000..95de71369
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFonts.java
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,241 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3049,11 +3066,15 @@ index 000000000..729895e94
 +/** Acquired native TTF families keep their case-sensitive metadata names and metric units. */
 +final class UiFonts {
 +
++    // The native TrueTypeFont display transform scales both glyph axes after cache normalization.
++    private static final double TTF_DISPLAY_SCALE = 1.5D;
 +    private static final int MAX_FONTS = 256;
 +    private static final int MAX_FONT_BYTES = 16 << 20;
 +    private final Map<String, byte[]> files = new LinkedHashMap<>();
 +    private final Map<String, String> families = new LinkedHashMap<>();
++    private final Map<String, Integer> renderHeights = new LinkedHashMap<>();
 +    private final Map<String, String> importedIds = new LinkedHashMap<>();
++    private final Map<String, Double> importedLineHeights = new LinkedHashMap<>();
 +
 +    void load(final Map<String, byte[]> layer) {
 +        layer.forEach((path, bytes) -> {
@@ -3085,13 +3106,18 @@ index 000000000..729895e94
 +                }
 +                // A newer declaration also overrides a previously supported family with an unsupported format.
 +                this.families.remove(name);
++                this.renderHeights.remove(name);
 +                if (!"ttf".equals(font.get("font_format").getAsString())) {
 +                    continue;
 +                }
 +                final String source = font.get("font_file").getAsString();
 +                final String path = source.endsWith(".ttf") ? source : source + ".ttf";
 +                if (path.startsWith("font/") && JsonUiProgram.safePath(path)) {
-+                    this.families.put(name, path);
++                    final int height = font.has("target_font_render_size") ? font.get("target_font_render_size").getAsInt() : 64;
++                    if (height > 0 && height < 256) {
++                        this.families.put(name, path);
++                        this.renderHeights.put(name, height);
++                    }
 +                }
 +            }
 +        } catch (final RuntimeException ignored) {
@@ -3101,14 +3127,14 @@ index 000000000..729895e94
 +
 +    String id(final String name) {
 +        final String path = this.families.get(name);
-+        return path != null && metrics(this.files.get(path)) != null ? identifier(name) : this.importedIds.get(name);
++        return path != null && metrics(this.files.get(path), this.renderHeights.getOrDefault(name, 64)) != null ? identifier(name) : this.importedIds.get(name);
 +    }
 +
 +    Map<String, String> ids() {
 +        final Map<String, String> result = new LinkedHashMap<>(this.importedIds);
 +        this.families.forEach((name, path) -> {
 +            final byte[] bytes = this.files.get(path);
-+            if (metrics(bytes) != null) {
++            if (metrics(bytes, this.renderHeights.getOrDefault(name, 64)) != null) {
 +                result.put(name, identifier(name));
 +            }
 +        });
@@ -3128,11 +3154,41 @@ index 000000000..729895e94
 +        });
 +    }
 +
++    Double lineHeight(final String name) {
++        final String path = this.families.get(name);
++        final Metrics metrics = path != null ? metrics(this.files.get(path), this.renderHeights.getOrDefault(name, 64)) : null;
++        return metrics != null ? metrics.lineHeight() : this.importedLineHeights.get(name);
++    }
++
++    Map<String, Double> lineHeights() {
++        final Map<String, Double> result = new LinkedHashMap<>(this.importedLineHeights);
++        this.families.forEach((name, path) -> {
++            final Metrics metrics = metrics(this.files.get(path), this.renderHeights.getOrDefault(name, 64));
++            if (metrics != null) {
++                result.put(name, metrics.lineHeight());
++            }
++        });
++        return Collections.unmodifiableMap(result);
++    }
++
++    void importLineHeights(final JsonObject heights) {
++        if (heights.size() > MAX_FONTS) {
++            throw new IllegalArgumentException("Too many UI font metrics");
++        }
++        heights.entrySet().forEach(entry -> {
++            final double height = entry.getValue().getAsDouble();
++            if (!this.importedIds.containsKey(entry.getKey()) || !Double.isFinite(height) || height <= 0 || height > 4096) {
++                throw new IllegalArgumentException("Invalid UI font line height");
++            }
++            this.importedLineHeights.put(entry.getKey(), height);
++        });
++    }
++
 +    Map<String, byte[]> resources() {
 +        final Map<String, byte[]> result = new LinkedHashMap<>();
 +        this.families.forEach((name, path) -> {
 +            final byte[] bytes = this.files.get(path);
-+            final Metrics metrics = metrics(bytes);
++            final Metrics metrics = metrics(bytes, this.renderHeights.getOrDefault(name, 64));
 +            if (metrics == null) {
 +                return;
 +            }
@@ -3162,9 +3218,13 @@ index 000000000..729895e94
 +        return Collections.unmodifiableMap(result);
 +    }
 +
-+    /** Bedrock's 64-pixel hhea height is normalized to eight UI units, independently of EM size. */
++    /** Normalize the native hhea cache, then apply its TTF display transform to outline and baseline. */
 +    static Metrics metrics(final byte[] bytes) {
-+        if (bytes == null || bytes.length < 12) {
++        return metrics(bytes, 64);
++    }
++
++    static Metrics metrics(final byte[] bytes, final int renderHeight) {
++        if (renderHeight <= 0 || renderHeight >= 256 || bytes == null || bytes.length < 12) {
 +            return null;
 +        }
 +        try {
@@ -3179,6 +3239,7 @@ index 000000000..729895e94
 +            int units = 0;
 +            int ascent = 0;
 +            int descent = 0;
++            int gap = 0;
 +            for (int index = 0; index < count; index++) {
 +                final int record = 12 + index * 16;
 +                final int tag = buffer.getInt(record);
@@ -3192,13 +3253,19 @@ index 000000000..729895e94
 +                } else if (tag == 0x68686561 && length >= 8) {
 +                    ascent = buffer.getShort((int) offset + 4);
 +                    descent = buffer.getShort((int) offset + 6);
++                    if (length >= 10) {
++                        gap = buffer.getShort((int) offset + 8);
++                    }
 +                }
 +            }
 +            if (units < 16 || ascent <= descent || ascent - descent > 65535) {
 +                return null;
 +            }
-+            final double scale = 64D / (ascent - descent);
-+            return new Metrics(8D * units / (ascent - descent), 8D + (int) (descent * scale) / 8D);
++            final float scale = (float) renderHeight / (ascent - descent);
++            final double size = 8D * units / (ascent - descent);
++            final double baseline = 8D + (int) (descent * scale) * 8D / renderHeight;
++            final double lineHeight = ((int) (ascent * scale) - (int) (descent * scale) + (int) (gap * scale)) * 8D / renderHeight * TTF_DISPLAY_SCALE;
++            return lineHeight > 0 && lineHeight <= 4096 ? new Metrics(size * TTF_DISPLAY_SCALE, baseline * TTF_DISPLAY_SCALE, lineHeight) : null;
 +        } catch (final IndexOutOfBoundsException ignored) {
 +            return null;
 +        }
@@ -3213,7 +3280,7 @@ index 000000000..729895e94
 +        }
 +    }
 +
-+    record Metrics(double size, double baseline) { }
++    record Metrics(double size, double baseline, double lineHeight) { }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
@@ -5935,10 +6002,10 @@ index 000000000..6d8c7baa2
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFontsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFontsTest.java
 new file mode 100644
-index 000000000..1ef60ac96
+index 000000000..b0db474f2
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFontsTest.java
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,187 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5962,10 +6029,23 @@ index 000000000..1ef60ac96
 +    void normalizesEmAndBaselineAgainstNativeHeightAndRejectsInvalidTables() {
 +        final byte[] face = face(1000, 990, -250);
 +        final var metrics = UiFonts.metrics(face);
-+        assertEquals(8D * 1000 / 1240, metrics.size(), 0.000001);
-+        assertEquals(6.5, metrics.baseline());
++        assertEquals(12D * 1000 / 1240, metrics.size(), 0.000001);
++        assertEquals(9.75, metrics.baseline());
++        assertEquals(11.8125, metrics.lineHeight());
++        assertEquals(11.625, UiFonts.metrics(face, 32).lineHeight());
++        assertEquals(11.90625, UiFonts.metrics(face, 128).lineHeight());
++        assertNull(UiFonts.metrics(face, 0));
++        assertNull(UiFonts.metrics(face, 256));
 +        assertEquals(metrics.size(), UiFonts.metrics(face(2000, 1980, -500)).size());
 +        assertEquals(metrics.baseline(), UiFonts.metrics(face(2000, 1980, -500)).baseline());
++        assertEquals(metrics.lineHeight(), UiFonts.metrics(face(2000, 1980, -500)).lineHeight());
++        final var nonIntegralDescent = UiFonts.metrics(face(2048, 1900, -500));
++        assertEquals(10.24, nonIntegralDescent.size(), 0.000001);
++        // Native truncates descent in cache pixels before the display transform.
++        assertEquals(9.5625, nonIntegralDescent.baseline());
++        final byte[] withGap = java.util.Arrays.copyOf(face, 74);
++        ByteBuffer.wrap(withGap).putInt(40, 10).putShort(72, (short) 100);
++        assertEquals(12.75, UiFonts.metrics(withGap).lineHeight());
 +        assertNull(UiFonts.metrics(face(0, 990, -250)));
 +        assertNull(UiFonts.metrics(face(1000, -250, 990)));
 +        ByteBuffer.wrap(face).putInt(20, Integer.MAX_VALUE);
@@ -5986,12 +6066,12 @@ index 000000000..1ef60ac96
 +        assertArrayEquals(original, resources.get(path + ".ttf"));
 +        final var providers = JsonParser.parseString(new String(resources.get(path + ".json"), StandardCharsets.UTF_8))
 +                .getAsJsonObject().getAsJsonArray("providers");
-+        assertEquals(8D * 1000 / 1240, providers.get(0).getAsJsonObject().get("size").getAsDouble(), 0.000001);
-+        assertEquals(-0.5, providers.get(0).getAsJsonObject().getAsJsonArray("shift").get(1).getAsDouble());
++        assertEquals(12D * 1000 / 1240, providers.get(0).getAsJsonObject().get("size").getAsDouble(), 0.000001);
++        assertEquals(2.75, providers.get(0).getAsJsonObject().getAsJsonArray("shift").get(1).getAsDouble());
 +        assertEquals("minecraft:default", providers.get(1).getAsJsonObject().get("id").getAsString());
 +        fonts.load(Map.of("font/title.ttf", face(1000, 800, -200)));
 +        assertEquals(id, fonts.id("Title"));
-+        assertEquals(8, JsonParser.parseString(new String(fonts.resources().get(path + ".json"), StandardCharsets.UTF_8))
++        assertEquals(12, JsonParser.parseString(new String(fonts.resources().get(path + ".json"), StandardCharsets.UTF_8))
 +                .getAsJsonObject().getAsJsonArray("providers").get(0).getAsJsonObject().get("size").getAsDouble());
 +        fonts.load(Map.of("font/font_metadata.json", metadata("Title", "msdf", "font/title")));
 +        assertNull(fonts.id("Title"));
@@ -6010,8 +6090,23 @@ index 000000000..1ef60ac96
 +        server.ids().forEach(ids::addProperty);
 +        final UiFonts client = new UiFonts();
 +        client.importIds(ids);
++        final JsonObject heights = new JsonObject();
++        server.lineHeights().forEach(heights::addProperty);
++        client.importLineHeights(heights);
 +        assertEquals(server.ids(), client.ids());
++        assertEquals(server.lineHeights(), client.lineHeights());
++        for (final double invalid : new double[] {0, -1, Double.NaN, Double.POSITIVE_INFINITY, 4097}) {
++            heights.addProperty("Title", invalid);
++            assertThrows(IllegalArgumentException.class, () -> client.importLineHeights(heights));
++        }
++        heights.remove("Title");
++        heights.addProperty("Unknown", 9);
++        assertThrows(IllegalArgumentException.class, () -> client.importLineHeights(heights));
 +        assertTrue(client.resources().isEmpty());
++        final JsonObject lowResolution = JsonParser.parseString(new String(metadata("Title", "ttf", "font/title"), StandardCharsets.UTF_8)).getAsJsonObject();
++        lowResolution.getAsJsonArray("fonts").get(0).getAsJsonObject().addProperty("target_font_render_size", 32);
++        server.load(Map.of("font/font_metadata.json", lowResolution.toString().getBytes(StandardCharsets.UTF_8)));
++        assertEquals(11.625, server.lineHeight("Title"));
 +        ids.addProperty("Unsafe", "other:font");
 +        assertThrows(IllegalArgumentException.class, () -> client.importIds(ids));
 +    }
@@ -6061,6 +6156,7 @@ index 000000000..1ef60ac96
 +        };
 +        final var before = server.resolve("example.title", bindings);
 +        assertTrue(before.root().has("font"));
++        assertEquals(11.8125, before.root().get("font_line_height").getAsDouble());
 +        final JsonUiProgram client = JsonUiProgram.fromProgram(server.export(before.requiredDefinitions(), new JsonObject()));
 +        assertEquals(before.root(), client.resolve("example.title", bindings).root());
 +        assertEquals(2, server.fontResources().size());

@@ -1,4 +1,4 @@
-From e21ad95bac633c3a046535c80d3f31d1f359ffa2 Mon Sep 17 00:00:00 2001
+From e339ef79eeb697fe92f4e7f33c6bd37a1164bdde Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:45:47 +0200
 Subject: [PATCH] feat(ui): render authored Bedrock forms and containers
@@ -142,9 +142,24 @@ controls and the controlled physical chest projection establish these
 scoped rules, but do not establish live Social delivery, controller
 navigation or native GPU parity.
 
-Exclude ignored branches from layout extents, stack spacing and fill allocation. Center actual player model height after portrait rotation instead of treating Java feet as the portrait origin. Keep native width-based scale and clipping; full native player fitting remains unverified.
+Exclude ignored branches from layout extents, stack spacing and fill allocation.
 
 Match pinned native stack placement: suppress child offsets and apply anchors only when use_child_anchors is enabled. This keeps oversized Loot cards below their header while retaining ordinary panel anchors; targeted layout controls cover both stack orientations and nested panels.
+
+Use the inherited authored scissor as the portrait intermediate viewport.
+The pinned native live actor renderer uses the control width and center
+in a full-screen projection; it does not crop to the custom control.
+Compensate the larger Java viewport center without changing the camera
+units, model origin or parent clipping. Projection tests cover GUI scales,
+pitches and model points. Exact visual-model framing remains a live gate.
+
+Match the native 1.26.51.1 player portrait height offset (1.62001)
+and converted model root before pitch rotation. Original native renderer
+execution and its standing player offset establish this origin; alternate
+player posture offsets remain unverified. Preserve the authored camera
+scale and inherited scissor instead of cropping at the custom control.
+Use transported fractional TTF line advances for measurement and drawing
+so native display scaling does not overlap wrapped labels.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   4 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -179,9 +194,9 @@ Match pinned native stack placement: suppress child offsets and apply anchors on
  .../screen/form/BedrockNativeForms.java       |  88 ++
  .../screen/form/NativeCustomFormPayload.java  |  25 +
  .../screen/form/NativeFormPayload.java        |  24 +
- .../screen/ui/NativeUiActorPortraits.java     | 136 +++
+ .../screen/ui/NativeUiActorPortraits.java     | 158 ++++
  .../bedrock/screen/ui/NativeUiAnimations.java |  88 ++
- .../bedrock/screen/ui/NativeUiFont.java       |  39 +
+ .../bedrock/screen/ui/NativeUiFont.java       |  47 +
  .../bedrock/screen/ui/NativeUiImageCache.java | 229 +++++
  .../screen/ui/NativeUiImageRegions.java       | 127 +++
  .../bedrock/screen/ui/NativeUiImages.java     | 163 ++++
@@ -207,15 +222,15 @@ Match pinned native stack placement: suppress child offsets and apply anchors on
  .../form/BedrockCustomFormEditingTest.java    | 104 +++
  .../BedrockCustomFormInteractionTest.java     | 216 +++++
  .../screen/form/BedrockFormSceneTest.java     |  66 ++
- .../screen/ui/NativeUiActorPortraitsTest.java | 103 +++
- .../bedrock/screen/ui/NativeUiFontTest.java   | 112 +++
+ .../screen/ui/NativeUiActorPortraitsTest.java | 164 ++++
+ .../bedrock/screen/ui/NativeUiFontTest.java   | 133 +++
  .../screen/ui/NativeUiImageCacheTest.java     | 142 +++
  .../screen/ui/NativeUiImageRegionsTest.java   | 202 ++++
  .../bedrock/screen/ui/NativeUiLayoutTest.java | 867 ++++++++++++++++++
  .../screen/ui/NativeUiPresentationTest.java   | 139 +++
  .../bedrock/screen/ui/NativeUiSliderTest.java | 120 +++
  .../bedrock/screen/ui/NativeUiTextTest.java   |  56 ++
- 69 files changed, 7926 insertions(+), 13 deletions(-)
+ 69 files changed, 8038 insertions(+), 13 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiEntityRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerPresentation.java
@@ -3590,10 +3605,10 @@ index 0000000..c59ab7c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiActorPortraits.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiActorPortraits.java
 new file mode 100644
-index 0000000..75208bd
+index 0000000..e62d41f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiActorPortraits.java
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,158 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3672,11 +3687,32 @@ index 0000000..75208bd
 +        return new Camera((float) Math.atan(dy) * 20F, (float) -Math.atan(dx) * 20F, rect.width());
 +    }
 +
-+    /** Converts Java's feet origin to the portrait's center before its pitch rotation. */
-+    public static Vector3f centeredTranslation(final Quaternionfc rotation, final float actorHeight) {
-+        if (!(actorHeight > 0) || !Float.isFinite(actorHeight))
-+            throw new IllegalArgumentException("Invalid native portrait actor height");
-+        return rotation.transform(new Vector3f(0, -actorHeight / 2F, 0)).add(0, 0, -5);
++    /** Matches the native player renderer's height offset and converted model origin. */
++    public static Vector3f playerTranslation(final Quaternionfc rotation, final float playerScale) {
++        if (playerScale < 0 || !Float.isFinite(playerScale))
++            throw new IllegalArgumentException("Invalid native portrait player scale");
++        // Target player OffsetsComponent height is 1.62001, independent of collision bounds.
++        // Native root is (24 pixels + 1/128 block), while Java translates by 1.501 blocks.
++        final float originCorrection = (24F / 16F + 1F / 128F - 1.501F) * .9375F * playerScale;
++        return rotation.transform(new Vector3f(0, originCorrection - 1.62001F, 0)).add(0, 0, -5);
++    }
++
++    /** The native renderer uses the inherited scissor, not the custom control as a viewport. */
++    public static NativeUiLayout.Rect viewport(final NativeUiLayout.Rect clip, final int width, final int height) {
++        final var visible = clip.intersect(new NativeUiLayout.Rect(0, 0, width, height));
++        final int left = Math.round(visible.x()), top = Math.round(visible.y());
++        return new NativeUiLayout.Rect(left, top, Math.round(visible.x() + visible.width()) - left,
++                Math.round(visible.y() + visible.height()) - top);
++    }
++
++    /** Keeps the native control center when Java's intermediate texture uses a larger viewport. */
++    public static Vector3f viewportTranslation(final NativeUiLayout.Rect control, final NativeUiLayout.Rect viewport,
++                                               final Quaternionfc rotation, final float playerScale) {
++        if (!(control.width() > 0) || !Float.isFinite(control.width()))
++            throw new IllegalArgumentException("Invalid native portrait control width");
++        return playerTranslation(rotation, playerScale).add(
++                (control.x() + control.width() / 2F - viewport.x() - viewport.width() / 2F) / control.width(),
++                (viewport.y() + viewport.height() / 2F - control.y() - control.height() / 2F) / control.width(), 0);
 +    }
 +
 +    public void draw(final GuiGraphicsExtractor graphics, final NativeUiLayout.Box box,
@@ -3717,10 +3753,11 @@ index 0000000..75208bd
 +        context.requireSupportedEffects();
 +        if (!(renderState instanceof AvatarRenderState state)) throw new IllegalArgumentException("Invalid native portrait player state");
 +        final var rotation = new Quaternionf().rotateX((float) Math.toRadians(camera.pitch()));
-+        graphics.entity(state, camera.scale(), centeredTranslation(rotation, state.boundingBoxHeight),
-+                rotation, null,
-+                Math.round(box.bounds().x()), Math.round(box.bounds().y()),
-+                Math.round(box.bounds().x() + box.bounds().width()), Math.round(box.bounds().y() + box.bounds().height()));
++        final var viewport = viewport(box.clip(), graphics.guiWidth(), graphics.guiHeight());
++        if (viewport.width() <= 0 || viewport.height() <= 0) return;
++        graphics.entity(state, camera.scale(), viewportTranslation(box.bounds(), viewport, rotation, state.scale),
++                rotation, null, (int) viewport.x(), (int) viewport.y(),
++                (int) (viewport.x() + viewport.width()), (int) (viewport.y() + viewport.height()));
 +    }
 +
 +    private void retire(final String key) {
@@ -3826,10 +3863,10 @@ index 0000000..106e2bc
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java
 new file mode 100644
-index 0000000..4b69704
+index 0000000..d0e61a6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,47 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3858,15 +3895,23 @@ index 0000000..4b69704
 +        return scale == 0 ? Integer.MAX_VALUE : Math.max(1, (int) (width / scale));
 +    }
 +
++    public static float lineHeight(final NativeUiScene.Node node, final int fallback) {
++        final float height = node.number("font_line_height", fallback);
++        if (!Float.isFinite(height) || height <= 0 || height > 4096) {
++            throw new IllegalArgumentException("Unsupported native UI font line height");
++        }
++        return height;
++    }
++
 +    public static NativeUiLayout.Size intrinsic(final NativeUiScene.Node node, final float width,
 +                                             final int lines, final int lineHeight) {
 +        final float scale = scale(node);
-+        return new NativeUiLayout.Size(width * scale, lines * lineHeight * scale);
++        return new NativeUiLayout.Size(width * scale, lines * lineHeight(node, lineHeight) * scale);
 +    }
 +
 +    public static NativeUiLayout.Size constrained(final NativeUiScene.Node node, final float width,
 +                                               final int lines, final int lineHeight) {
-+        return new NativeUiLayout.Size(width, lines * lineHeight * scale(node));
++        return new NativeUiLayout.Size(width, lines * lineHeight(node, lineHeight) * scale(node));
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageCache.java
@@ -5071,7 +5116,7 @@ index 0000000..538e8eb
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
 new file mode 100644
-index 0000000..a042967
+index 0000000..567a172
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
 @@ -0,0 +1,118 @@
@@ -5157,12 +5202,12 @@ index 0000000..a042967
 +        try {
 +            graphics.pose().translate(box.bounds().x(), box.bounds().y());
 +            graphics.pose().scale(scale, scale);
-+            int y = 0;
++            final float lineHeight = NativeUiFont.lineHeight(node, this.font.lineHeight);
 +            for (final var line : lines) {
 +                final int lineWidth = this.font.width(line);
 +                final int x = alignment.equals("center") ? (width - lineWidth) / 2 : alignment.equals("right") ? width - lineWidth : 0;
-+                graphics.text(this.font, line, x, y, color(node, alpha), node.flag("shadow", false));
-+                y += this.font.lineHeight;
++                graphics.text(this.font, line, x, 0, color(node, alpha), node.flag("shadow", false));
++                graphics.pose().translate(0, lineHeight);
 +            }
 +        } finally {
 +            graphics.pose().popMatrix();
@@ -6994,10 +7039,10 @@ index 0000000..11d2a81
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiActorPortraitsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiActorPortraitsTest.java
 new file mode 100644
-index 0000000..266e406
+index 0000000..1e6df6d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiActorPortraitsTest.java
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,164 @@
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.google.gson.JsonObject;
@@ -7043,55 +7088,116 @@ index 0000000..266e406
 +    }
 +
 +    @Test
-+    void centersTheActorAtEveryPitchAndGuiScaleWithoutChangingNativeCameraUnits() {
++    void matchesNativePlayerRootVerticesAtEveryPitchAndGuiScale() {
++        // Bedrock 1.26.51.1 zero-position renderer matrix: scale 1/16, script scale .9375.
++        // Original getter14253cee0 returned 1.6200100183; native live final rootY was -.2064357996.
 +        for (final int guiScale : new int[] {1, 2, 3}) {
-+            for (final float height : new float[] {.6F, 1.5F, 1.8F}) {
-+                for (final float pitch : new float[] {-30, 0, 30}) {
++            for (final float playerScale : new float[] {0, .5F, 1, 2}) {
++                for (final float pitch : new float[] {-30, 0, 22.608185F, 30}) {
 +                    final var rotation = new Quaternionf().rotateX((float) Math.toRadians(pitch));
-+                    final var translation = NativeUiActorPortraits.centeredTranslation(rotation, height);
++                    final var translation = NativeUiActorPortraits.playerTranslation(rotation, playerScale);
 +                    final var pose = new PoseStack();
 +                    pose.translate(30 * guiScale, 45 * guiScale, 0);
 +                    pose.scale(60 * guiScale, 60 * guiScale, -60 * guiScale);
 +                    BedrockGuiActorContext.correctPose(pose, 60, guiScale);
 +                    pose.translate(translation.x, translation.y, translation.z);
 +                    pose.rotate(rotation);
-+                    final var center = pose.last().pose().transformPosition(new Vector3f(0, height / 2F, 0));
-+                    assertEquals(30 * guiScale, center.x, .0001F);
-+                    assertEquals(45 * guiScale, center.y, .0001F);
-+                    assertEquals(-5, center.z, .0001F);
-+                    final var feet = pose.last().pose().transformPosition(new Vector3f());
-+                    final var head = pose.last().pose().transformPosition(new Vector3f(0, height, 0));
-+                    assertEquals(90 * guiScale, feet.y + head.y, .0001F);
-+                    assertEquals(60 * guiScale * height * Math.cos(Math.toRadians(pitch)),
-+                            feet.y - head.y, .0001F);
-+                    assertEquals(pitch == 0 ? 0 : -Math.sin(Math.toRadians(pitch)) * height,
-+                            feet.z - head.z, .0001F);
++                    // The Java Avatar/Living renderer applies these before drawing converted pixels.
++                    pose.scale(-playerScale, -playerScale, playerScale);
++                    pose.scale(.9375F, .9375F, .9375F);
++                    pose.translate(0, -1.501F, 0);
++                    for (final var point : List.of(new Vector3f(-4, -8, -4), new Vector3f(4, 0, 4),
++                            new Vector3f(-4, 12, -2), new Vector3f(4, 24, 2))) {
++                        final float nativeScale = .9375F * playerScale / 16F;
++                        final var expected = new Vector3f(-point.x * nativeScale,
++                                (1.5078125F - point.y / 16F) * .9375F * playerScale - 1.62001F,
++                                point.z * nativeScale);
++                        rotation.transform(expected);
++                        final var projected = pose.last().pose().transformPosition(new Vector3f(point).div(16F));
++                        assertEquals((30 + 60 * expected.x) * guiScale, projected.x, .001F);
++                        assertEquals((45 - 60 * expected.y) * guiScale, projected.y, .001F);
++                        assertEquals(expected.z - 5, projected.z, .0001F);
++                    }
 +                }
 +            }
 +        }
 +    }
 +
 +    @Test
-+    void preservesAuthoredClippingInsteadOfInventingAHeightFit() {
++    void keepsTheHeadVisibleAndCropsTheLegsAtNativePlayerScale() {
 +        final var rotation = new Quaternionf();
-+        final var translation = NativeUiActorPortraits.centeredTranslation(rotation, 1.8F);
++        final var translation = NativeUiActorPortraits.playerTranslation(rotation, 1);
 +        final var pose = new PoseStack();
 +        pose.translate(27.5F, 45, 0);
 +        pose.scale(54.72F, 54.72F, -54.72F);
 +        BedrockGuiActorContext.correctPose(pose, 54.72F, 1);
 +        pose.translate(translation.x, translation.y, translation.z);
-+        final var feet = pose.last().pose().transformPosition(new Vector3f());
-+        final var head = pose.last().pose().transformPosition(new Vector3f(0, 1.8F, 0));
-+        assertTrue(head.y < 0);
++        pose.scale(-1, -1, 1);
++        pose.scale(.9375F, .9375F, .9375F);
++        pose.translate(0, -1.501F, 0);
++        final var head = pose.last().pose().transformPosition(new Vector3f(0, -.5F, 0));
++        final var feet = pose.last().pose().transformPosition(new Vector3f(0, 1.5F, 0));
++        assertTrue(head.y > 0 && head.y < 90);
 +        assertTrue(feet.y > 90);
-+        assertEquals(54.72F * 1.8F, feet.y - head.y, .0001F);
++        assertEquals(54.72F * 2 * .9375F, feet.y - head.y, .0001F);
++        assertEquals(-.2064357996F, 1.501F * .9375F + translation.y, .000001F);
 +    }
 +
 +    @Test
-+    void rejectsInvalidActorHeight() {
-+        for (final float height : new float[] {0, -1, Float.NaN, Float.POSITIVE_INFINITY}) {
++    void changingTheIntermediateViewportPreservesProjectedPositionsAtEveryGuiScale() {
++        final var control = new NativeUiLayout.Rect(126.84F, 139, 54.72F, 90.24F);
++        for (final var clip : List.of(new NativeUiLayout.Rect(106.2F, 135, 96, 96),
++                new NativeUiLayout.Rect(0, 0, 400, 300), new NativeUiLayout.Rect(145, 180, 20, 30))) {
++            final var viewport = NativeUiActorPortraits.viewport(clip, 400, 300);
++            for (final int guiScale : new int[] {1, 2, 3}) {
++                for (final float pitch : new float[] {-30, 0, 22.608185F, 30}) {
++                    final var rotation = new Quaternionf().rotateX((float) Math.toRadians(pitch));
++                    final var pose = new PoseStack();
++                    pose.translate((viewport.x() + viewport.width() / 2F) * guiScale,
++                            (viewport.y() + viewport.height() / 2F) * guiScale, 0);
++                    pose.scale(control.width() * guiScale, control.width() * guiScale, -control.width() * guiScale);
++                    BedrockGuiActorContext.correctPose(pose, control.width(), guiScale);
++                    final var translation = NativeUiActorPortraits.viewportTranslation(control, viewport, rotation, 1);
++                    pose.translate(translation.x, translation.y, translation.z);
++                    pose.rotate(rotation);
++                    for (final var point : List.of(new Vector3f(), new Vector3f(.3F, .9F, -.4F),
++                            new Vector3f(-.58F, 2.21F, .51F))) {
++                        final var expected = rotation.transform(new Vector3f(point).add(0, (1.5078125F - 1.501F) * .9375F - 1.62001F, 0));
++                        final var projected = pose.last().pose().transformPosition(new Vector3f(point));
++                        assertEquals((control.x() + control.width() / 2F + control.width() * expected.x) * guiScale,
++                                projected.x, .001F);
++                        assertEquals((control.y() + control.height() / 2F - control.width() * expected.y) * guiScale,
++                                projected.y, .001F);
++                        assertEquals(expected.z - 5, projected.z, .001F);
++                    }
++                }
++            }
++        }
++    }
++
++    @Test
++    void allowsModelOverflowInsideTheInheritedScissorAndClampsTheTextureToTheScreen() {
++        final var control = new NativeUiLayout.Rect(20.64F, 4, 54.72F, 90.24F);
++        final var viewport = NativeUiActorPortraits.viewport(new NativeUiLayout.Rect(0, 0, 96, 96), 200, 200);
++        assertFalse(control.contains(48, 2));
++        assertTrue(viewport.contains(48, 2));
++        assertFalse(viewport.contains(48, -1));
++        final var scissor = new net.minecraft.client.gui.navigation.ScreenRectangle(0, 1, 96, 94);
++        final var pip = new net.minecraft.client.renderer.state.gui.pip.GuiEntityRenderState(
++                new net.minecraft.client.renderer.entity.state.AvatarRenderState(), new Vector3f(), new Quaternionf(), null,
++                (int) viewport.x(), (int) viewport.y(), (int) (viewport.x() + viewport.width()),
++                (int) (viewport.y() + viewport.height()), control.width(), scissor);
++        assertEquals(scissor, pip.bounds());
++        assertEquals(control.width(), pip.scale());
++        assertEquals(new NativeUiLayout.Rect(0, 0, 200, 100),
++                NativeUiActorPortraits.viewport(new NativeUiLayout.Rect(-10, -20, 250, 150), 200, 100));
++    }
++
++    @Test
++    void rejectsInvalidPlayerScale() {
++        for (final float scale : new float[] {-1, Float.NaN, Float.POSITIVE_INFINITY}) {
 +            assertThrows(IllegalArgumentException.class,
-+                    () -> NativeUiActorPortraits.centeredTranslation(new Quaternionf(), height));
++                    () -> NativeUiActorPortraits.playerTranslation(new Quaternionf(), scale));
 +        }
 +    }
 +
@@ -7103,10 +7209,10 @@ index 0000000..266e406
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java
 new file mode 100644
-index 0000000..2e4a20b
+index 0000000..e83a8ef
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,133 @@
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.google.gson.JsonArray;
@@ -7191,6 +7297,27 @@ index 0000000..2e4a20b
 +        assertEquals(new NativeUiLayout.Rect(0, 0, 60, 9), layout(label).bounds());
 +        label.addProperty("font_scale_factor", .0625F);
 +        assertEquals(new NativeUiLayout.Rect(0, 0, 3.75F, .5625F), layout(label).bounds());
++    }
++
++    @Test
++    void keepsFractionalFamilyLineAdvancesThroughWrappedStackLayout() {
++        final JsonObject root = node("stack_panel", 30, "100%c");
++        final JsonObject title = node("label", 30, "default");
++        title.addProperty("font_size", "large");
++        title.addProperty("font_line_height", 11.8125F);
++        final JsonObject fallback = node("label", 30, "default");
++        final JsonArray children = new JsonArray();
++        children.add(title);
++        children.add(fallback);
++        root.add("children", children);
++        final var box = layout(root);
++        assertEquals(94.5F, box.children().getFirst().bounds().height());
++        assertEquals(94.5F, box.children().get(1).bounds().y());
++        assertEquals(112.5F, box.bounds().height());
++        assertEquals(11.8125F, NativeUiFont.lineHeight(box.children().getFirst().node(), 9));
++        assertEquals(9, NativeUiFont.lineHeight(box.children().get(1).node(), 9));
++        title.addProperty("font_line_height", -1);
++        assertThrows(IllegalArgumentException.class, () -> layout(root));
 +    }
 +
 +    private static NativeUiLayout.Box layout(final JsonObject root) {
