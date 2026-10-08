@@ -6,6 +6,12 @@ Core applies mapped potion, instrument, and block-state overrides to Java compon
 It preserves writable and signed book pages, generation, author, and title.
 An empty enchantment list retains its glint.
 
+Typed `display.Lore` becomes standard Java lore through the shared item converter.
+Translation preserves entry order, blank entries and embedded LF.
+Formatting carries across lines within an entry, then resets to native purple and italic for the next entry.
+Wrong-typed members retain blank lines; a missing or wrong-typed list leaves existing mapped lore unchanged.
+Authoritative lore replaces mapping diagnostics without changing retained native item data.
+
 Crossbows translate the server's `chargedItem` stack into Java's loaded-projectile component.
 Nested ammunition uses the ordinary item converter, including subtype mappings and supported components.
 An absent, empty, invalid, or unmapped charge produces an empty component.
@@ -67,3 +73,11 @@ Multishot, Quick Charge, Piercing, detailed damage, firework entity motion, part
 The complete 95-patch core stack replays successfully.
 The core build and Checkstyle pass with 679 tests passing and 19 optional skips.
 The Java fireworks network round trip retains every translated field.
+
+An isolated placed chest on the same official BDS build retains native lore, while the previous Java lore component is empty.
+Bounded execution of the matching Windows item assembler establishes member defaults, LF boundaries and per-entry formatting.
+Three lore tests cover source immutability, blank and wrong-typed members, formatting and Java network encoding.
+The updated 99-patch stack replays successfully with 971 tests passing, 30 optional skips and all three Checkstyle tasks passing.
+The first upstream PR patch applies independently.
+This item patch does not apply alone to the pinned base, which is also true before the lore change; it needs its existing prerequisites before separate submission.
+Rawtext localization, complete native hover context, native menu geometry and live direct/ViaProxy comparisons remain unverified.

@@ -8949,3 +8949,22 @@ lifetime, physics and complete auth serialization remain open. These results do
 not yet justify applying vehicle corrections in production. Private evidence
 stays under
 `.stackanvil/research/movement-flight/wire-position/passenger-owner/`.
+
+## Standard item lore translation, October 8, 2026
+
+The observed missing Java lore is fixed in the owning item-component patch.
+Typed native entries retain order, blank lines, embedded LF and formatting.
+Styles carry across lines within an entry and reset for each new entry.
+Three tests cover these boundaries, source immutability and Java network encoding.
+
+The complete 99-patch stack replays in a separate generated checkout.
+All three Checkstyle tasks pass, with 971 tests passing and 30 optional skips.
+Four later patch exports change only hashes, offsets and context.
+The first upstream PR patch applies independently. The item-component patch
+still needs its existing prerequisites before a separate upstream submission;
+its individual apply check fails both before and after this change.
+
+The canonical source checkout and installed clients remain unchanged while
+the isolated runtime retains its source lease. The reviewed patch exports
+are saved for the next build. Native hover context, rawtext localization,
+native menu layout and live direct/ViaProxy verification remain open.
