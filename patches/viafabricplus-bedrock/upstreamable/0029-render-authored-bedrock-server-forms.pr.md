@@ -33,9 +33,9 @@ The Java layout solver still uses bounded iterative measurement. Its mixed-templ
 
 ## Asset pipeline boundary
 
-The addon provider can supply bundled `ui/*.json` definitions and textures to the core when its optional `builtin_ui.zip` is absent. The current five tracked addon asset ZIPs contain zero `ui/` entries, however. Expanding the producer whitelist does not add definitions to those existing bundles. A default CI build without the optional core UI ZIP therefore still lacks the native baseline templates. Server packs that depend on them may use ordinary form controls instead.
+The addon provider can supply bundled `ui/*.json` definitions and textures to the core when its optional `builtin_ui.zip` is absent. The five addon asset ZIPs contain zero `ui/` definitions. StackAnvil now tracks a separate versioned core UI bundle with native templates, textures, image metadata, font metadata, font faces, and bitmap font pages. Full stack builds require this bundle and verify its exact bytes in the core, ViaProxy, and the add-on's embedded core JAR. This corrects the default CI asset gap without requiring a local Bedrock installation at runtime.
 
-The provider currently reads only its packaged, version-checked asset library. It does not acquire missing UI definitions from a Microsoft Store session or a versioned runtime package cache. If the entire addon asset bundle is absent, its loader throws instead of returning an empty layer. These are separate pipeline and graceful-loading gaps. The verified private core candidate includes the official UI baseline; its successful build is not evidence that default CI has that baseline.
+The provider reads its packaged, version-checked asset library. It does not acquire missing UI definitions from a Microsoft Store session or a versioned runtime package cache. If the entire addon asset bundle is absent, its loader throws instead of returning an empty layer. That loading behavior remains separate from the corrected build inputs. Native MSDF and alias font rendering remain outside the verified font path.
 
 ## Verification
 

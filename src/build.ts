@@ -9,20 +9,20 @@ import { getTarget, getTargets, listArtifacts, root } from "./model.ts";
 import { command } from "./process.ts";
 import { sync } from "./stack.ts";
 import { prepareViaFabricPlus } from "./viafabricplus.ts";
-import { verifyBuiltinUi } from "./bedrock-ui.ts";
+import { verifyBuiltinUi, verifyEmbeddedBuiltinUi, builtinUiResource } from "./bedrock-ui.ts";
 
 interface Coordinates { group: string; artifact: string; version: string }
 
 const localRepo = join(root, ".stackanvil", "maven");
 
-async function builtinAssetArguments(id: string): Promise<string[]> {
+export async function builtinAssetArguments(id: string, repository = root): Promise<string[]> {
   if (id !== "viafabricplus-bedrock" && id !== "viabedrock") return [];
-  const { version } = JSON.parse(await readFile(join(root, "bedrock-assets.json"), "utf8")) as { version: string };
+  const { version } = JSON.parse(await readFile(join(repository, "bedrock-assets.json"), "utf8")) as { version: string };
   if (!/^\d+\.\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid bundled Bedrock asset version");
-  const directory = join(root, "assets", "bedrock", version);
+  const directory = join(repository, "assets", "bedrock", version);
   if (id === "viabedrock") {
     const bundle = join(directory, "assets", "viabedrock", "builtin_ui.zip");
-    if (!existsSync(bundle)) return [];
+    if (!existsSync(bundle)) throw new Error(`Bundled Bedrock UI is missing for ${version}`);
     const path = await verifyBuiltinUi(bundle, version);
     return [`-PbedrockBuiltinUi=${path}`];
   }
@@ -81,6 +81,10 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
   const artifacts = yield* Effect.promise(() => listArtifacts(dir));
   if (artifacts.length !== 1) return yield* Effect.fail(new Error(`Expected one distributable JAR for ${id}, found ${artifacts.length}`));
   const artifact = artifacts[0]!;
+  if (["viabedrock", "viafabricplus-bedrock", "viaproxy"].includes(id)) {
+    const { version } = JSON.parse(yield* Effect.promise(() => readFile(join(root, "bedrock-assets.json"), "utf8"))) as { version: string };
+    yield* Effect.promise(() => verifyEmbeddedBuiltinUi(artifact, id, join(root, "assets", "bedrock", version, builtinUiResource), version));
+  }
   const name = basename(artifact);
   if (!name.endsWith("-StackAnvil.jar")) {
     return yield* Effect.fail(new Error(`Branding patch did not suffix ${name} with -StackAnvil.jar`));

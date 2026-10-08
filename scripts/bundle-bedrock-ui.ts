@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, link, unlink, stat, writeFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { builtinUiManifest } from "../src/bedrock-ui.ts";
+import { builtinUiManifest, verifyBuiltinUiContents } from "../src/bedrock-ui.ts";
 import { assetZip, readBedrockArchive } from "./bundle-bedrock-assets.ts";
 
 /** Build-time inputs come from an acquired package. Runtime consumers use the resulting JAR resource. */
@@ -12,85 +12,63 @@ export async function planBedrockUi(game: string, version: string, output: strin
   if (manifest.header.version.join(".") !== protocol) throw new Error("Bedrock resource version mismatch");
   const files = new Map<string, Uint8Array>();
   const sources: { path: string; sha256: string; entries: number }[] = [];
-  for (const pack of ["vanilla_base", "vanilla"]) {
-    const path = join(game, "data", "resource_packs", pack, "__brarchive", "ui.brarchive");
-    const original = `${path}.bol-orig`;
-    const selected = await stat(original).then((info) => info.isFile() ? original : path).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== "ENOENT") throw error;
-      return path;
-    });
-    const bytes = await readFile(selected);
-    const entries = readBedrockArchive(bytes);
-    sources.push({ path: selected, sha256: createHash("sha256").update(bytes).digest("hex"), entries: entries.size });
-    for (const [name, contents] of entries) {
-      if (!name.endsWith(".json") || !contents.length) continue;
-      if (contents.length > 1024 * 1024) throw new Error("UI definition exceeds the file limit");
-      const document: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(contents));
-      if (typeof document !== "object" || document === null || Array.isArray(document)) throw new Error("Invalid UI definition");
-      files.set(`ui/${name}`, contents);
-    }
-  }
-  for (const pack of ["vanilla_base", "vanilla"]) {
-    const archive = join(game, "data", "resource_packs", pack, "__brarchive", "textures", "ui.brarchive");
-    const bytes = await readFile(archive);
-    const entries = readBedrockArchive(bytes);
-    sources.push({ path: archive, sha256: createHash("sha256").update(bytes).digest("hex"), entries: entries.size });
-    for (const [name, contents] of entries) {
-      if (contents.length && /\.(png|json)$/.test(name)) files.set(`textures/ui/${name}`, contents);
-    }
-    const loose = join(game, "data", "resource_packs", pack, "textures", "ui");
-    async function addLoose(directory: string, prefix: string): Promise<void> {
-      for (const entry of await readdir(directory, { withFileTypes: true })) {
-        if (entry.isSymbolicLink()) throw new Error("UI assets contain a symbolic link");
-        const selected = join(directory, entry.name);
-        const path = `${prefix}/${entry.name}`;
-        if (entry.isDirectory()) await addLoose(selected, path);
-        else if (entry.isFile() && /\.(png|json)$/.test(entry.name)) {
-          const bytes = await readFile(selected);
-          if (bytes.length > 16 * 1024 * 1024) throw new Error("UI image exceeds the file limit");
-          if (bytes.length) {
-            files.set(path, bytes);
-            sources.push({ path: selected, sha256: createHash("sha256").update(bytes).digest("hex"), entries: 1 });
-          }
-        }
-      }
-    }
-    await addLoose(loose, "textures/ui").catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== "ENOENT") throw error;
-    });
-  }
+  const categories = [
+    { path: "ui", formats: /\.json$/, limit: 1024 * 1024, required: true },
+    { path: "textures/ui", formats: /\.(png|jpg|tga|json)$/, limit: 16 * 1024 * 1024, required: true },
+    { path: "font", formats: /\.(ttf|png|json)$/, limit: 16 * 1024 * 1024, required: false },
+  ];
   for (const pack of ["vanilla_base", "vanilla"]) {
     const root = join(game, "data", "resource_packs", pack);
-    const archive = join(root, "__brarchive", "font.brarchive");
-    const bytes = await readFile(archive).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== "ENOENT") throw error;
-      return undefined;
-    });
-    if (bytes) {
-      const entries = readBedrockArchive(bytes);
-      sources.push({ path: archive, sha256: createHash("sha256").update(bytes).digest("hex"), entries: entries.size });
-      for (const [name, contents] of entries) {
-        if (contents.length && /\.(ttf|json)$/.test(name)) files.set(`font/${name}`, contents);
+    for (const category of categories) {
+      function add(path: string, contents: Uint8Array): void {
+        if (!contents.length || !category.formats.test(path)) return;
+        // Native MSDF atlases are not consumed by the current TTF UI renderer.
+        if (category.path === "font" && path.startsWith("font/smooth/") && path.endsWith(".png")) return;
+        if (contents.length > category.limit) throw new Error(`UI asset exceeds the file limit: ${path}`);
+        if (category.path === "ui") {
+          const document: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(contents));
+          if (typeof document !== "object" || document === null || Array.isArray(document)) throw new Error("Invalid UI definition");
+        }
+        files.set(path, contents);
       }
-    }
-    async function addFonts(directory: string, prefix: string): Promise<void> {
-      for (const entry of await readdir(directory, { withFileTypes: true })) {
-        if (entry.isSymbolicLink()) throw new Error("UI fonts contain a symbolic link");
-        const selected = join(directory, entry.name), path = `${prefix}/${entry.name}`;
-        if (entry.isDirectory()) await addFonts(selected, path);
-        else if (entry.isFile() && /\.(ttf|json)$/.test(entry.name)) {
-          const bytes = await readFile(selected);
-          if (bytes.length > 16 * 1024 * 1024) throw new Error("UI font exceeds the file limit");
-          if (bytes.length) {
-            files.set(path, bytes);
-            sources.push({ path: selected, sha256: createHash("sha256").update(bytes).digest("hex"), entries: 1 });
+      async function readArchive(path: string, prefix: string, required: boolean): Promise<void> {
+        const original = `${path}.bol-orig`;
+        const selected = await stat(original).then((info) => info.isFile() ? original : path).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+          return path;
+        });
+        const bytes = await readFile(selected).catch((error: NodeJS.ErrnoException) => {
+          if (required || error.code !== "ENOENT") throw error;
+          return undefined;
+        });
+        if (!bytes) return;
+        const entries = readBedrockArchive(bytes);
+        sources.push({ path: selected, sha256: createHash("sha256").update(bytes).digest("hex"), entries: entries.size });
+        for (const [name, contents] of entries) add(`${prefix}/${name}`, contents);
+      }
+      async function walk(directory: string, prefix: string, archives: boolean): Promise<void> {
+        const entries = await readdir(directory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+          return [];
+        });
+        for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name, "en"))) {
+          if (entry.isSymbolicLink()) throw new Error("UI assets contain a symbolic link");
+          const selected = join(directory, entry.name), path = `${prefix}/${entry.name}`;
+          if (entry.isDirectory()) await walk(selected, path, archives);
+          else if (entry.isFile() && archives && entry.name.endsWith(".brarchive")) {
+            await readArchive(selected, path.slice(0, -".brarchive".length), true);
+          } else if (entry.isFile() && !archives && category.formats.test(entry.name)) {
+            const bytes = await readFile(selected);
+            add(path, bytes);
+            if (bytes.length) sources.push({ path: selected, sha256: createHash("sha256").update(bytes).digest("hex"), entries: 1 });
           }
         }
       }
+      // Subdirectories have their own native archives, including settings templates and font atlases.
+      await readArchive(join(root, "__brarchive", `${category.path}.brarchive`), category.path, category.required);
+      await walk(join(root, "__brarchive", category.path), category.path, true);
+      await walk(join(root, category.path), category.path, false);
     }
-    await addFonts(join(root, "font"), "font").catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== "ENOENT") throw error;
-    });
   }
   if (files.size > 4096 || [...files.values()].reduce((total, bytes) => total + bytes.length, 0) > 64 * 1024 * 1024) {
     throw new Error("Built-in UI bundle exceeds limits");
@@ -98,6 +76,7 @@ export async function planBedrockUi(game: string, version: string, output: strin
   if (!files.has("ui/server_form.json") || !files.has("ui/ui_common.json")) throw new Error("Incomplete built-in UI");
   files.set("NOTICE.txt", Buffer.from(`Minecraft: Bedrock Edition ${version} built-in UI definitions.\nCopyright Mojang AB and Microsoft.\nNative file contents are unchanged.\n`));
   const bytes = assetZip(files);
+  verifyBuiltinUiContents(bytes);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   return { bytes, preview: { version, output, manifest: `${output}.manifest.json`, sha256, size: bytes.length, files: files.size, sources } };
 }

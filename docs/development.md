@@ -29,10 +29,17 @@ The build adds [`assets/bedrock/1.26.51.1/`](../assets/bedrock/1.26.51.1/) to th
 The JAR contains five archives, their checksum manifest, and the native copyright notice.
 Runtime loading uses these resources without Store sign-in or a downloaded asset cache.
 
+The core also embeds `assets/viabedrock/builtin_ui.zip` from the same versioned resource directory.
+This tracked bundle contains native UI templates, textures, image metadata, font metadata, font faces, and bitmap font pages.
+ViaProxy includes it through its core dependency. The Fabric add-on includes it in its embedded core JAR.
+The stack build verifies its version, checksum, required templates, textures, and referenced font faces.
+Missing or incomplete assets stop the build. Each finished JAR must contain the exact verified bundle before publication.
+
 To regenerate the bundle from a matching installed game, run:
 
 ```bash
 bun scripts/bundle-bedrock-assets.ts /path/to/bedrock-game 1.26.51.1
+bun scripts/bundle-bedrock-ui.ts /path/to/bedrock-game 1.26.51.1 .stackanvil/builtin_ui.zip
 ```
 
 The game directory must contain `data/resource_packs/`.
@@ -40,8 +47,13 @@ The extractor checks the target vanilla manifest, expands native BR archives, an
 It selects persona resources and stable vanilla models, animations, controllers, images, sounds, particles, and text.
 It uses original `.bol-orig` files when an installation keeps patched copies beside them.
 
+The UI extractor requires a fresh output path and writes a checksum manifest beside the ZIP.
+After reviewing the output, replace both tracked files under `assets/bedrock/1.26.51.1/assets/viabedrock/`.
+Keep the native copyright notice in the ZIP. Commit both files with changes to the version pin.
+
 The normal stack build passes the resource directory to Gradle.
 For a direct add-on Gradle build, pass `-PbedrockBuiltinAssets=/absolute/path/to/assets/bedrock/1.26.51.1`.
+For a direct core Gradle build, pass `-PbedrockBuiltinUi=/absolute/path/to/assets/bedrock/1.26.51.1/assets/viabedrock/builtin_ui.zip`.
 When changing the target Bedrock version, regenerate the bundle and update the pin together.
 The runtime rejects bundles that do not match ViaBedrock's target version.
 
