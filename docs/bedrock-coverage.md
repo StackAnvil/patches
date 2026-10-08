@@ -9019,3 +9019,49 @@ The JAR retains the complete previous file inventory and identical UI bundle byt
 Its functional change is the item rewriter.
 Three other changed classes contain only the generated source identity replacement.
 Live direct and ViaProxy lore verification remains pending in separately prepared private clients.
+
+## Native request dispatch and packet boundary, October 8, 2026
+
+Three joined factory sequences now execute the original permission, capacity,
+copy and descriptor paths across 15 phases. Take moves four items to the cursor.
+One-item autoplacement transfers from the second clicked slot and leaves that cursor unchanged.
+Twelve typed flag controls and four producer controls cover the native StartGame
+item-stack-manager flag, its manager state and legacy dispatch gate.
+
+Twelve release controls execute the registered action callback and original
+dispatcher, including missing-owner, wrong-action and payload rejection paths.
+Two registration controls preserve the action names and hashes in native callback maps.
+Concrete client-instance targets and physical device dispatch remain unbound.
+
+Two finalization controls retain Take and Place identities in packet 147 requests.
+The original packet writer stops at unresolved locale initialization.
+These controls do not establish wire bytes, server acceptance or production action admission.
+The previous inventory and native hover requirements remain open.
+
+## Horse snapshot and ordinary rewind admission, October 8, 2026
+
+Four Horse sequences execute native movement-marker admission, pre-travel logic,
+snapshot capture, owned clone restoration and separate cleanup.
+Ten rejection controls cover owner, movement-request and Horse membership gates.
+Dynamic snapshots retain the passenger vector, flags, air speed and ground state.
+Static Horse and Mob classification follows a separate cache path.
+Controlling-seat input, collision physics and complete replay scheduling remain unverified.
+
+Nineteen complete ordinary rewind controls cover admission, recovery, unmarked
+returns and five marked-record rejection gates.
+One joined positive reaches owned snapshot restoration through the original ordinary caller.
+The historical state restores into the clone, while newer live state remains unchanged.
+That positive stops before physics and completes clone cleanup separately.
+Marked replay completion, world acceptance and final write-back/auth scheduling remain open.
+
+## Private lore startup packaging failure, October 8, 2026
+
+The first isolated lore client stopped before gameplay, observers or input.
+Its addon overlay replaced a Fabric-processed nested core with a standalone JAR.
+That replacement removed the generated `fabric.mod.json` loader metadata.
+The reported missing class exists in both artifacts, but Fabric did not discover the replacement core.
+
+The client, server, private display and audio processes stopped normally.
+Complete protection checks passed for installed artifacts, source checkouts and existing clients.
+The next candidate must retain the exact nested Fabric metadata and all approved core entries.
+This startup result adds no live lore or UI parity claim.
