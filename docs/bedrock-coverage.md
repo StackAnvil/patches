@@ -8501,3 +8501,23 @@ Menu opening. Private production-loader checks accept both recorded and
 code-derived container titles, but do not establish live delivery, filled-slot
 rendering or the menu replacement lifecycle. NPC link clicks work in the
 user's latest report. Full native UI, route and shader comparisons remain open.
+
+A controlled replay now exercises the actual Java drawing path for all five
+captured forms at GUI scales one, two and three. All fifteen screens retain
+the authored scene instead of opening generic dialogs. Screenshots show
+Settings toggle and slider tracks, Loot images, and Wardrobe cards and navigation.
+The scale-two Wardrobe tooltip renders three separate styled lines without
+boxed newline glyphs. A Java tutorial toast partly covers the scale-three
+tooltip, so that image does not verify all three lines unobstructed.
+
+The fixture combines an earlier playable bootstrap with later accepted packs
+and form records. It verifies rendering on Java 26.3 with software OpenGL;
+it does not establish a fresh CubeCraft join or a native Bedrock pixel match.
+The scale-two and scale-three sessions exit normally. The scale-one wrapper
+cancels during teardown after recording all five screens; normal process
+cleanup still passes. Lower Settings sections and Submit remain unverified
+because the proposed scroll check reaches an already closed form and sends
+no input. Social Menu, response submission, ViaProxy and Iris comparisons
+remain open. Installed artifacts, shared profiles and protected user clients
+remain unchanged. Screenshots and the hash manifest stay private under
+`.stackanvil/research/server-ui/controlled-form-render-v10/`.
