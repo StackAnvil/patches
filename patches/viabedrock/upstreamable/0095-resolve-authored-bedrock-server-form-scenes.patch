@@ -1,4 +1,4 @@
-From 9d2dedf6dba5a6f00ca1c76e46bfc5596a65d7af Mon Sep 17 00:00:00 2001
+From aad9a60585a7fdb2eedd6d0388692ecda58b754e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:42:36 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -156,6 +156,17 @@ baselines, and transport fractional family line advances to the client.
 Original native CPU drawing and metric getters establish the scale and
 truncation; acquired MinecraftTen glyph comparisons verify the conversion.
 Advance the conversion cache identity so prior font outputs are rebuilt.
+
+Load UI image bindings from the accepted pack texture namespace, not only
+textures/ui. A protocol2193 CubeCraft capture binds the profile background
+and border to textures/cubecraft/profile paths; the pinned native client
+renders both images. Preserve bounded decoding, format and layer priority,
+and invalidate converted caches that omitted those resources.
+
+Keep the image index bounded at 16,384 entries. The pinned built-in layer
+and CubeCraft pack contain 10,127 converted UI images, so the former
+8,192-entry ceiling discarded ordinary UI frames when other texture
+namespaces were admitted. Keep upper-layer replacements valid at the cap.
 ---
  build.gradle                                  |  11 +
  .../api/model/NativeContainerAction.java      |  93 ++
@@ -171,7 +182,7 @@ Advance the conversion cache identity so prior font outputs are rebuilt.
  .../api/resourcepack/ui/UiBindings.java       |  40 +
  .../api/resourcepack/ui/UiExpression.java     | 304 ++++++
  .../api/resourcepack/ui/UiFonts.java          | 241 +++++
- .../api/resourcepack/ui/UiTextures.java       |  92 ++
+ .../api/resourcepack/ui/UiTextures.java       |  94 ++
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/data/BedrockMappingData.java     |  15 +-
  .../protocol/packet/InventoryPackets.java     | 580 +++++++---
@@ -193,11 +204,11 @@ Advance the conversion cache identity so prior font outputs are rebuilt.
  .../api/resourcepack/ui/ServerFormUiTest.java | 291 +++++
  .../api/resourcepack/ui/UiExpressionTest.java |  56 +
  .../api/resourcepack/ui/UiFontsTest.java      | 187 ++++
- .../api/resourcepack/ui/UiTexturesTest.java   | 111 ++
+ .../api/resourcepack/ui/UiTexturesTest.java   | 146 +++
  .../packet/ModalFormTransitionTest.java       | 123 +++
  .../NativeContainerOpeningPacketTest.java     | 393 +++++++
  .../storage/NativeContainerUiStateTest.java   |  57 +
- 40 files changed, 6135 insertions(+), 162 deletions(-)
+ 40 files changed, 6172 insertions(+), 162 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerStatus.java
@@ -1428,7 +1439,7 @@ index 000000000..8d89c2ec5
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 000000000..51616dfba
+index 000000000..1e7518ea2
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 @@ -0,0 +1,999 @@
@@ -1500,10 +1511,10 @@ index 000000000..51616dfba
 +            }
 +            this.loadFiles(files, storage.isServerPack(pack));
 +            final Map<String, byte[]> textures = new LinkedHashMap<>();
-+            for (final String path : pack.content().getFilesDeep("textures/ui/", "")) {
++            for (final String path : pack.content().getFilesDeep("textures/", "")) {
 +                if (safePath(path)) {
 +                    final byte[] bytes = pack.content().get(path);
-+                    if (bytes.length <= 16 * MAX_FILE_BYTES && textures.size() < 8192) {
++                    if (bytes.length <= 16 * MAX_FILE_BYTES && textures.size() < UiTextures.MAX_FILES) {
 +                        textures.put(path, bytes);
 +                    }
 +                }
@@ -1904,7 +1915,7 @@ index 000000000..51616dfba
 +
 +    public static String builtinIdentity() {
 +        // Include image and font conversion revisions in the converted-pack cache identity.
-+        return "3:" + Builtins.IDENTITY;
++        return "4:" + Builtins.IDENTITY;
 +    }
 +
 +    public static String textureId(final String path) {
@@ -3295,10 +3306,10 @@ index 000000000..95de71369
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
 new file mode 100644
-index 000000000..b41ee231c
+index 000000000..99b5b080a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,94 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3318,6 +3329,8 @@ index 000000000..b41ee231c
 +/** Normalizes a pack layer using the same image format priority as Bedrock content lookups. */
 +final class UiTextures {
 +
++    static final int MAX_FILES = 16384;
++
 +    private UiTextures() {
 +    }
 +
@@ -3325,12 +3338,12 @@ index 000000000..b41ee231c
 +        final Set<String> images = new LinkedHashSet<>();
 +        for (final var entry : files.entrySet()) {
 +            final String path = entry.getKey();
-+            if (!path.startsWith("textures/ui/") || !path.matches("[A-Za-z0-9_./-]{1,256}")
++            if (!path.startsWith("textures/") || !path.matches("[A-Za-z0-9_./-]{1,256}")
 +                    || path.contains("..") || entry.getValue().length > 16 * 1024 * 1024) {
 +                continue;
 +            }
 +            if (path.endsWith(".json")) {
-+                if (result.size() < 8192 || result.containsKey(path)) {
++                if (result.size() < MAX_FILES || result.containsKey(path)) {
 +                    result.put(path, entry.getValue());
 +                }
 +            } else if (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")) {
@@ -3338,7 +3351,7 @@ index 000000000..b41ee231c
 +            }
 +        }
 +        for (final String path : images) {
-+            if (result.size() >= 8192 && !result.containsKey(path + ".png")) {
++            if (result.size() >= MAX_FILES && !result.containsKey(path + ".png")) {
 +                continue;
 +            }
 +            for (final String format : List.of("png", "jpg", "tga")) {
@@ -6256,10 +6269,10 @@ index 000000000..b0db474f2
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
 new file mode 100644
-index 000000000..d986eac3f
+index 000000000..f0a443039
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,146 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -6280,6 +6293,41 @@ index 000000000..d986eac3f
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class UiTexturesTest {
++
++    @Test
++    void boundTexturesOutsideTheUiDirectoryRetainLayerPixelsAndMetadata() throws Exception {
++        final String path = "textures/profile/backgrounds/default";
++        final var lowerImage = new BufferedImage(2, 1, BufferedImage.TYPE_INT_ARGB);
++        lowerImage.setRGB(0, 0, 0xFF1256AB);
++        final byte[] lower = encode(lowerImage, "png");
++        final var upperImage = new BufferedImage(2, 1, BufferedImage.TYPE_INT_RGB);
++        upperImage.setRGB(1, 0, 0xE59732);
++        final byte[] upper = encode(upperImage, "jpg");
++        final var ui = new JsonUiProgram(List.of(
++                Map.of(path + ".png", lower),
++                Map.of(path + ".jpg", upper,
++                        path + ".json", "{\"nineslice_size\":1}".getBytes(StandardCharsets.UTF_8),
++                        "ui/server_form.json", """
++                                {"namespace":"server_form","main_screen_content":{
++                                  "type":"button","collection_index":0,
++                                  "$pressed_button_name":"button.form_button_click",
++                                  "texture":"#title_text",
++                                  "bindings":[{"binding_name":"#title_text"}]}}
++                                """.getBytes(StandardCharsets.UTF_8))));
++        final var form = JsonParser.parseString("{\"type\":\"form\",\"title\":\"" + path
++                + "\",\"elements\":[{\"type\":\"button\",\"text\":\"\"}]}").getAsJsonObject();
++        final var root = new ServerFormUi(ui).resolve(form).getAsJsonObject("root");
++        assertEquals(JsonUiProgram.textureId(path), root.get("texture").getAsString());
++        assertEquals(1, root.get("nineslice_size").getAsInt());
++        final var expected = ImageIO.read(new ByteArrayInputStream(upper));
++        final var actual = ImageIO.read(new ByteArrayInputStream(ui.textures().get(path + ".png")));
++        assertArrayEquals(expected.getRGB(0, 0, 2, 1, null, 0, 2),
++                actual.getRGB(0, 0, 2, 1, null, 0, 2));
++        final var rejected = new HashMap<String, byte[]>();
++        UiTextures.load(Map.of("textures/profile/../outside.png", lower,
++                "foreign/default.png", lower), rejected);
++        assertTrue(rejected.isEmpty());
++    }
 +
 +    @Test
 +    void jpegConversionPreservesDecodedPixelsAndLayerPriority() throws Exception {
@@ -6352,14 +6400,14 @@ index 000000000..d986eac3f
 +    void aFullLayerAllowsUpperReplacementsWithoutAddingNewEntries() throws Exception {
 +        final byte[] png = encode(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB), "png");
 +        final var result = new HashMap<String, byte[]>();
-+        for (int index = 0; index < 8192; index++) {
++        for (int index = 0; index < UiTextures.MAX_FILES; index++) {
 +            result.put("textures/ui/" + index + ".png", png);
 +        }
 +        final var image = new BufferedImage(2, 1, BufferedImage.TYPE_INT_RGB);
 +        image.setRGB(0, 0, 0xB26722);
 +        final byte[] replacement = encode(image, "png");
 +        UiTextures.load(Map.of("textures/ui/0.png", replacement, "textures/ui/new.png", png), result);
-+        assertEquals(8192, result.size());
++        assertEquals(UiTextures.MAX_FILES, result.size());
 +        assertArrayEquals(replacement, result.get("textures/ui/0.png"));
 +        assertFalse(result.containsKey("textures/ui/new.png"));
 +    }
