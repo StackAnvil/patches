@@ -2,36 +2,37 @@
 
 The RakNet encapsulation codec writes an unsigned two-byte length before the status message.
 The status protocol previously interpreted that length as UTF-8 text.
-If either byte equals `0x3B`, it becomes a semicolon and shifts the MOTD and all subsequent fields.
+If either byte equals `0x3B`, it becomes a semicolon and shifts the MOTD and subsequent fields.
 
-The parser now reads the advertised length before decoding the message.
-It retains empty trailing fields and rejects incomplete messages.
+The existing packet handler now reads exactly the advertised message length.
+It retains empty trailing fields and rejects truncated messages through the fixed-length byte reader.
 
-## Verification
+## Verification, October 8, 2026
 
-Regression tests decode complete pong packets with lengths `0x013B` and `0x3B01`.
-They check the MOTD, player counts, and complete consumption of the payload.
-A separate test rejects a truncated message.
+`./gradlew --no-daemon --console=plain clean check build` passes on the independent upstream branch.
+Four local packet checks pass against the production handler.
+They cover lengths `0x013B` and `0x3B01`, the MOTD, player counts, version fields, an empty subtitle, the payload boundary, and truncation.
+The checks use a private Gradle init script outside the PR source tree.
+
+`bun run stack sync viafabricplus-bedrock` replays the full stack without conflicts.
+`bun run build viafabricplus-bedrock` passes with the pinned ViaFabricPlus artifacts and the StackAnvil dependencies.
+The rendering patch owns the existing JUnit configuration for the full stack.
+The status patch contains only the fix in the existing handler.
+
 The reported server and mod build are unknown, so the original server remains unverified.
 
-The complete add-on build passes with 462 passing tests and 113 optional skips.
-This build verifies the pinned ViaFabricPlus artifacts and builds CubeConverter and ViaBedrock in dependency order.
-Both pong decoder regressions pass.
-
-## Independent PR validation, October 8, 2026
-
-`./gradlew --no-daemon --console=plain clean check build` passes.
-Both packet regression tests pass, with no failures or skips.
-The tests cover delimiter bytes in the length prefix, complete payload consumption, and truncated packets.
-
-Each PR starts from upstream [14f31f4](https://github.com/ViaVersionAddons/viafabricplus-bedrock/commit/14f31f44c0b018f3bf57c030c117abf1bfe9ff6e) and contains one independent change.
-The build uses upstream ViaBedrock `0.0.31-SNAPSHOT`, resolved as `20261003.172326-5`.
-No StackAnvil setup patch or local Maven repository enters the build.
-
-The three networking patches touch separate files.
-All six application orders pass and produce the same source tree.
+## Independent PR
 
 Upstream draft: [viafabricplus-bedrock #13](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/13).
 The fork branch is `codex/bedrock-raknet-status`.
-The standalone branch includes the JUnit harness against the upstream build file.
-The saved full-stack patch adds the same configuration to the existing test task.
+It starts from upstream [14f31f4](https://github.com/ViaVersionAddons/viafabricplus-bedrock/commit/14f31f44c0b018f3bf57c030c117abf1bfe9ff6e).
+The build uses public ViaBedrock `0.0.31-SNAPSHOT` without StackAnvil setup patches or a local Maven repository.
+
+The three networking PRs touch separate files.
+All six application orders pass and produce the same source tree.
+
+## Review changes
+
+The upstream review requested fewer classes and the established Gradle conventions.
+The revision removes the helper class, the test class, and all Gradle changes from the upstream PR.
+The local packet checks retain validation without additional upstream test infrastructure.
