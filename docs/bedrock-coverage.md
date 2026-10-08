@@ -8848,3 +8848,39 @@ The required implementation must preserve those fields and apply them at a prove
 replay boundary. Immediate receive-time velocity assignment is not verified.
 Private evidence stays under
 `.stackanvil/research/movement-flight/wire-position/passenger-owner/`.
+
+## Native autoplacement request construction, October 8, 2026
+
+Sixty-two additional controls execute the target chest candidate map, click
+dispatch, transition admission, mutation and request construction.
+The original chest map sends `container_items` toward the combined player inventory.
+The tested populated slot transfers one item through a Place action.
+The native request queue constructs packet 147, `ItemStackRequestPacket`.
+Empty-source and invalid-event controls reject the operation.
+
+These fixtures supply provider permissions, storage, network addresses and request
+ownership. The complete cursor selection lifecycle, serialization, delivery and
+server acknowledgement remain open. The mutation and request construction
+boundaries now execute, but production action admission remains unchanged.
+Private evidence stays under
+`.stackanvil/research/server-ui/native-binding-semantics/actor-portrait/manual-grid/auto-place-native/`.
+
+## Named inventory fixture observation, October 8, 2026
+
+An isolated client joined the official BDS fixture with the paired manual-grid
+builds. Independent server and client observations retain the named chest's exact
+custom text, native display name and item identifier.
+
+The actual floor hit differed from the planned placement target.
+The driver withheld both clicks, and the original placement deadline expired.
+This establishes item-text transport before placement, without menu acceptance
+or native hover formatting. The next fixture calculates orientation from the
+actual server head position and still requires the observed client hit.
+
+Both observers stopped with their hooks absent and no pending callbacks.
+Client shutdown exceeded the original 60-second limit, which remains a recorded
+failure. Later normal exit permitted display and audio cleanup.
+Full source, installed-artifact and protected-process checks passed afterward.
+The desktop client remained unchanged.
+Private evidence stays under
+`.stackanvil/research/inventory-bundle/native-container-consumer/controlled-v10/run/evidence/direct-profile-subset-v1/`.

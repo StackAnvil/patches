@@ -16,4 +16,6 @@ complete stack. Verbose logs confirm that each of the three workers uses
 `-Xmx1g`. The patch also applies alone to the pinned upstream base without setup,
 where main and tool Checkstyle tasks pass with the same worker limit.
 
-GitHub runner verification remains pending until the updated build completes.
+The [GitHub build](https://github.com/StackAnvil/patches/actions/runs/37720868127)
+passes the full build, replay self-test and bundle gates. Tooling and private-file
+permission checks pass on Ubuntu, Windows and macOS.
