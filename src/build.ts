@@ -74,7 +74,7 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
   if (id === "viafabricplus-bedrock" && !viaFabricPlusVersion) {
     return yield* Effect.fail(new Error("The Bedrock add-on needs a pinned ViaFabricPlus artifact"));
   }
-  yield* command("bash", ["./gradlew", "--no-daemon", `-PstackanvilMavenRepo=${localRepo}`,
+  yield* command("bash", ["./gradlew", "--no-daemon", "--stacktrace", `-PstackanvilMavenRepo=${localRepo}`,
     ...(viaFabricPlusVersion ? [`-PstackanvilViaFabricPlusVersion=${viaFabricPlusVersion}`] : []), ...builtinAssets, "clean", target.buildTask,
     `generatePomFileFor${target.publication}Publication`], dir,
     { ...process.env, JAVA_HOME: jdk, PATH: `${join(jdk, "bin")}:${process.env.PATH ?? ""}` });
@@ -138,7 +138,7 @@ export const buildPr = Effect.fn("buildPr")(function* (id: string, patchFile?: s
   const target = yield* Effect.promise(() => getTarget(id));
   const dir = yield* sync(id, "pr", patchFile);
   const builtinAssets = yield* Effect.promise(() => builtinAssetArguments(id));
-  yield* command("bash", ["./gradlew", "--no-daemon", ...builtinAssets, "clean", target.buildTask], dir);
+  yield* command("bash", ["./gradlew", "--no-daemon", "--stacktrace", ...builtinAssets, "clean", target.buildTask], dir);
   const artifacts = yield* Effect.promise(() => listArtifacts(dir));
   if (!artifacts.length) return yield* Effect.fail(new Error(`No PR JAR artifacts found for ${id}`));
   const output = patchFile
