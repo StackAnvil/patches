@@ -8683,8 +8683,46 @@ six sender transitions, 192 controlling-seat writer cases and 24 prediction
 callbacks. Thirty cleanup controls establish erase dispatch under supplied state.
 They do not establish complete storage erasure or execution order.
 
-The add-on sender is still pending, so this optional path is not active in a
-real client. Native corrections, full prediction replay, strict BDS trajectories,
-ViaProxy and the remaining movement matrix still need verification. Installed
-artifacts remain unchanged. Private evidence stays under
+The add-on now samples the controlling boat or horse after completed local
+physics. It pairs that sample with the player frame and negotiated mount context.
+Sixteen targeted tests pass. The full add-on build passes 604 tests with
+118 optional skips after all 31 patches replay.
+
+Actual mounted trajectories, native corrections, full prediction replay, strict
+BDS, ViaProxy and the remaining movement matrix still need verification.
+Installed artifacts remain unchanged. Private evidence stays under
 `.stackanvil/research/movement-flight/wire-position/passenger-owner/`.
+
+## Actor portraits and container mapping, October 8, 2026
+
+The add-on now draws admitted player portraits from negotiated native unique IDs.
+It retains separate GUI animation, equipment and emote playback for each perspective.
+Actor replacement, removal, level changes and screen closure release that state.
+Missing actors produce no portrait. Unsupported classes, active GUI effects and
+unverified opacity retain ordinary-screen fallback. Legacy actor transport remains supported.
+
+Fixed grid capacity now has a separate count parser. Content measurement visits
+actual children, so large declared capacities do not allocate unused cells.
+The add-on build passes 588 tests with 118 optional skips, including 39 focused
+passing cases and three skips. All 31 patches replay; access-widener checks pass.
+The private candidate embeds all 1,304 approved actor-ID core entries unchanged.
+
+Core also publishes resolved container button mappings and ignored flags.
+The actual accepted Social profile now passes close-action validation.
+An ordinary accepted chest still passes all 63 slot and 65 image-region checks.
+Social remains incomplete: manual cells lack indexed collection bindings,
+large declared capacities collapse cell widths, and its authored profile omits
+player slots that the current completeness check requires.
+
+The full core build passes 965 tests with 30 optional skips after 98-patch replay.
+All Checkstyle tasks pass. An older sparse-metadata hook now belongs to its flight
+snapshot consumer, so the upstream stack through that owner also compiles.
+Actual Social metadata, portrait pixels, native projection, GUI effects, Iris
+and both-route behavior remain unverified. Installed artifacts remain unchanged.
+Private evidence stays under
+`.stackanvil/research/server-ui/native-binding-semantics/actor-portrait/`.
+
+The later private movement build omitted the core built-in UI archive.
+The source and codec results remain valid, but that build is incomplete for
+runtime testing. The earlier portrait build retains its approved UI archive.
+The incomplete builds remain private evidence while a complete pair is rebuilt.

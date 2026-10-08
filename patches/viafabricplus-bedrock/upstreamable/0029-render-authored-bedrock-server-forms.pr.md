@@ -109,3 +109,37 @@ These checks do not establish GPU drawing, live transfer behavior, resource relo
 Those final client gates remain required before release.
 
 The final container, form, tooltip and preserved actor changes pass the complete normal 31-patch replay and clean Gradle check, build and POM gates: 696 tests, 578 passed, 118 optional skips, no failures or errors. Access-widener validation passes. All 1,302 embedded core entries match the paired immutable core. The 38 installed artifacts remain unchanged. Live inventory transfers, resource reloads and Iris compatibility remain required before release.
+
+## Actor-backed UI portraits
+
+The shared renderer accepts the pinned `live_horse_renderer` for verified real player actors.
+The negotiated actor-state v3 channel maps the authored signed native UID to the actual Java UUID.
+The legacy v2 channel remains byte-compatible and has no inferred UID.
+Missing or removed actors produce no portrait. Unverified actor classes retain ordinary controls.
+
+Original target CPU controls establish string UID parsing, missing ID `-1`, player-family admission, mouse input mode and camera rotation.
+The camera uses the authored box center and width through the normal Java entity GUI pipeline.
+A scoped transform separates depth from Java's uniform GUI scale.
+Portrait controllers, equipment and emotes retain separate playback, variables and caches.
+Scene changes, actor replacement and screen closure retire those retained resources.
+World animation clocks and effect dispatch remain unchanged.
+Active GUI particle or sound cues retain ordinary controls until their submission is implemented.
+Unsupported portrait opacity also retains ordinary controls.
+
+Grid capacities use integer count bounds independently of pixel geometry bounds.
+The accepted Social definitions contain a million-cell capacity with only a bounded number of actual children.
+Sparse measurement visits those children without allocating or iterating the declared capacity.
+Malformed, fractional and overflowing capacities remain rejected.
+The existing fixed-grid position formula remains a native comparison boundary.
+
+The focused suite passes 42 cases: 39 passed and three optional fixtures skipped.
+It covers independent playback, failure-safe scope restoration, transform preservation, resource retirement, signed UID parsing and bounded grid measurement.
+The actual accepted ordinary chest scene passes 63 slot addresses and 65 image regions.
+The supplied profile-title scene now passes parsing and layout, then correctly rejects an unresolved close-button mapping.
+Its authored portrait UID is 150150. These supplied title and empty-menu inputs do not establish actual Social metadata delivery or actor presence.
+Native projection, pixels, transformed startup, resource reloads and Iris compatibility remain required client gates.
+The clean combined build passes 706 cases: 588 passed and 118 optional fixtures skipped.
+The normal 31-patch replay, Gradle check, build, POM and access-widener gates pass.
+All 1,304 embedded core entries match the private actor-UID candidate.
+The 38 installed artifacts and all 58 frozen v10 files remain unchanged.
+The private portrait candidate is not installed; actual client and Iris gates remain pending.

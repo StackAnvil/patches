@@ -1093,3 +1093,12 @@ Thirty cleanup controls establish generation-valid erase dispatch for supplied m
 Actual storage erasure and cleanup execution order remain unresolved.
 Native corrected vehicle velocity application, complete prediction replay, collision and strict-BDS/native trajectories also remain unresolved.
 Add-on0025 must provide the negotiated completed local mount sample before this optional core path can activate in a real client.
+
+### Keep the sparse metadata hook with its consumer
+
+The existing local-player flight snapshot override uses `finishEntityDataUpdate`.
+Its base hook previously appeared only in deferred metadata translation, so the earlier upstream stack could not compile.
+The base hook and call now belong to this prediction patch; deferred metadata no longer duplicates them.
+The hook still runs once after the complete sparse update and before actor snapshot publication.
+The upstream stack through this owner passes Java compilation and main Checkstyle.
+The complete replay and build retain the existing behavior and pass 965 tests with 30 optional skips.

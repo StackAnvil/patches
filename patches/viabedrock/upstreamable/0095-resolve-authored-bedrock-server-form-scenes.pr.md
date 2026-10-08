@@ -190,3 +190,24 @@ A regression through the actual `CONTAINER_OPEN` handler fails against the previ
 The final clean core build passes 957 cases: 927 passed, 30 optional skips, and no failures or errors. Main, test and tool Checkstyle pass. All 98 patches replay cleanly. The 23 packet, UI round-trip and existing container lifecycle cases pass. The private title candidate contains 1,304 core entries. The installed 38 artifacts and 58 files in the frozen previous candidates remain unchanged.
 
 A private probe uses the accepted server declarations with a supplied `cc_custom*profile` title and unrelated Java caption. The core selects `cubecraft_profile.main_panel`. The unchanged addon rejects its visible `live_horse_renderer` portrait control and retains ordinary-screen fallback. The ordinary accepted chest passes parser, 63-slot geometry and 65 image-region checks. This probe does not establish actual actor metadata delivery, coupled input or pixels.
+
+### Resolve authored container button mappings
+
+Container decoration now publishes resolved source, target and mapping type fields.
+It also publishes the resolved boolean for an ignored mapping.
+The translated inventory action and the consumer's validation see the same target.
+Unknown actions remain visible to strict validation; ignored mappings remain explicit.
+A scoped close button no longer sends `$pressed_button_name` to the add-on.
+
+The regression covers both chest families, scoped action variables, ignored unknown actions and exported program replay.
+Repeated resolution leaves the source program unchanged.
+All 98 patches replay, and the full core build passes 965 tests with 30 optional skips.
+Main, test and tool Checkstyle and POM generation pass.
+
+An immutable candidate and the accepted d28 profile declarations pass close-action validation.
+The profile still fails slot completeness: its manual grid cells lack indexed collection scope.
+Its authored large grid capacity also produces near-zero cell widths under the current layout rule.
+The profile omits player inventory and hotbar controls, while admission currently requires all 63 Java slots.
+The ordinary chest retains all 63 slots and 65 image regions.
+No fake profile contents or actor were supplied, and no live interaction or portrait pixels are claimed.
+These remaining producer, layout and subset-admission gaps require target evidence before further changes.

@@ -1335,3 +1335,39 @@ Both downstream artifacts preserve all 1,260 core content files, excluding the J
 The final core JAR also matches all 26,660 original callback comparisons.
 Private artifact snapshots retain these exact build identities before the separate inventory repair.
 No installation or runtime joins occur in this verification.
+
+## Optional completed vehicle physics
+
+Send a separate version 1 mount frame with the unchanged player version 7 frame ID.
+The server must negotiate the mount channel and publish its current context.
+The context binds the native signed unique ID, runtime ID, lifetime, Java identity, and server epoch.
+The PLAY receiver owns one client listener and rejects stale callbacks after reconnect.
+Re-registration preserves the frame watermark. A newer clear or correction epoch prevents old context reuse.
+
+Sample only the actual tracked, living, loaded controlling root boat or horse with local simulation authority.
+Horses also require native tamed and saddled flags.
+Reject secondary riders, nested mounts, spectator players, missing chunks, old actor snapshots, and identity replacements.
+Reject nonfinite or overflowing float coordinates and consumed frame IDs.
+The sampler reads the mount's current position and `getDeltaMovement()` separately.
+It does not substitute the player's motion, positional displacement, or an authoritative server delta.
+
+The pinned Java 26.3 bytecode ticks entities before `LocalPlayer.sendChanges()`.
+That method sends ordinary `MOVE_VEHICLE` before the existing RETURN hook.
+The compiled hook advances the player clock once and uses that same value for both payloads.
+No optional frame means core retains its ordinary vehicle displacement fallback.
+Ordinary Java and unsupported mounts retain their current behavior.
+
+Private original Bedrock 1.26.51.1 protocol 2193 sender instructions copy vehicle current position and velocity independently.
+The supplied native helper, sender, and stateful controls pass 560, 22, and 6 cases respectively.
+The native seat writer passes 192 controls. Boat and horse callbacks pass 24 controls.
+These controls retain supplied component, registry, and iteration boundaries.
+The complete cleanup callback passes 30 membership and generation controls; its erase virtual is observed, not simulated.
+Full native intent cleanup ordering and corrected vehicle velocity application remain unverified.
+
+Sixteen targeted add-on tests cover actual Fabric PLAY registration, reconnect, stale callbacks, and context re-registration.
+Actual payload codecs preserve signed IDs, separate current position and motion, and reject trailing fields.
+Target vehicle API mocks cover idle, reversal, lifecycle, mount identity, admission, and float bounds.
+The full 31-patch replay succeeds. The private clean build passes 722 cases: 604 pass and 118 existing fixture cases skip.
+It uses the frozen vehicle core and pinned licensed asset input.
+Native collision, GPU capture, and strict BDS trajectories on direct and ViaProxy routes remain separate verification gates.
+No installed artifacts or runtime processes change during these checks.

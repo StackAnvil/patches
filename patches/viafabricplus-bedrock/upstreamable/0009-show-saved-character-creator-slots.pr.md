@@ -2916,4 +2916,8 @@ Level unique ID lookup. Its exact class admission and GPU output remain separate
 Seven actor state tests run: four pass and three optional native-reference cases skip.
 The added behavior test covers the local alias, stale removal, codec downgrade,
 upgrade and disconnect clearing. The full 31-patch stack replays with normal hooks.
-The full combined add-on build remains pending with the UI portrait implementation.
+The combined portrait candidate passes 706 tests: 588 passed and 118 optional fixtures skipped.
+The full 31-patch replay, Gradle check, build, POM and access-widener gates pass.
+All 1,304 embedded core entries match the private actor-UID candidate.
+Legacy-channel downgrade clears UID capability without inferring a runtime-ID alias.
+The candidate is private; actual client drawing and Iris compatibility remain pending.
