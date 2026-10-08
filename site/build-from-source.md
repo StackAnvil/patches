@@ -50,7 +50,7 @@ bun run build all
 bun run bundle
 ```
 
-The bundle command creates a Prism Launcher instance ZIP with the pinned upstream ViaFabricPlus JAR and the patched Bedrock add-on. The add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. See [downloads]({{ '/releases/' | relative_url }}) if you want prebuilt artifacts.
+The build creates the four StackAnvil JARs and downloads the pinned upstream ViaFabricPlus JAR. The add-on embeds the StackAnvil ViaBedrock and CubeConverter libraries. The bundle command creates `dist/modpack/StackAnvil-26.3.mrpack` with both client mods and the Minecraft and Fabric version pins. See [downloads]({{ '/releases/' | relative_url }}) for prebuilt artifacts.
 
 To use a published JAR as a dependency, follow the [Maven and Javadocs guide]({{ '/libraries/' | relative_url }}). It gives the repository URL, Gradle coordinates, and API reference links.
 

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
 import { root } from "../src/model.ts";
-import { artifact } from "../src/prism.ts";
+import { artifact } from "../src/client-artifacts.ts";
 
 const execute = promisify(execFile);
 const built = existsSync(join(root, "dist/viaproxy/manifest.json"));

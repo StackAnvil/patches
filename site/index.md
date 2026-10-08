@@ -21,7 +21,7 @@ description: Play on Bedrock servers from Java Edition with ViaProxy or ViaFabri
 - **ViaProxy:** Run one JAR, enter a Bedrock server address in its window, then join the address ViaProxy shows from your regular Java client. You do not need client mods.
 - **ViaFabricPlus + Bedrock add-on:** Put two matching JARs in a Fabric client's mods folder. Join Bedrock servers from the game's Multiplayer screen, or use the add-on's Friends and Realms menus.
 
-The [player guide]({{ '/getting-started/' | relative_url }}) walks through both setups. The [downloads page]({{ '/releases/' | relative_url }}) lists the add-on, ViaProxy, and the matching ViaFabricPlus JAR. If you want a prepared Fabric client, there is also an optional Prism Launcher ZIP.
+The [player guide]({{ '/getting-started/' | relative_url }}) walks through both setups. The [downloads page]({{ '/releases/' | relative_url }}) lists the JARs and a `.mrpack` with the tested Fabric client mods.
 
 You play from **Java Edition** with either setup. StackAnvil does not turn a Java server into a Bedrock server or change your singleplayer worlds.
 

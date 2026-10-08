@@ -10,7 +10,7 @@ We welcome bug reports, test results, and patches. You do not need to work on al
 
 **Bedrock add-on downloads:** [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus).
 
-Use the [player guide](https://stackanvil.pistonmaster.net/getting-started/) to run the StackAnvil ViaProxy JAR beside a regular Java client, or install the matching ViaFabricPlus and Bedrock add-on JARs in a Fabric client. The [latest release](https://github.com/StackAnvil/patches/releases/latest) has all three JARs. An optional Prism Launcher ZIP provides a prepared Fabric client.
+Use the [player guide](https://stackanvil.pistonmaster.net/getting-started/) to run ViaProxy beside a regular Java client or use ViaFabricPlus with the Bedrock add-on. The [latest release](https://github.com/StackAnvil/patches/releases/latest) has the JARs and a `.mrpack` with the tested Fabric client mods. Import the pack into a launcher that supports Modrinth modpacks.
 
 ## Use the libraries in a project
 
@@ -72,7 +72,9 @@ The ViaFabricPlus pin is in [`viafabricplus.json`](viafabricplus.json). It selec
 
 To update the pin, choose a successful Jenkins build for the target Minecraft version. Record its commit, version, Maven publication version, and artifact checksums in `viafabricplus.json`. Check that the Maven API JAR matches the API JAR embedded in the Jenkins JAR. Then run `bun run build viafabricplus-bedrock` and `bun run bundle`. The add-on gets its ViaFabricPlus version from the pin.
 
-Run `bun run bundle` after `bun run build all` to make the optional Prism Launcher instance ZIP with the two Fabric mods. The add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. Our [capture lab guide](docs/capture-lab.md) explains the local server, ViaProxy, Bedrock client, Java client, screenshots, and private HTTPS capture workflow. The lab keeps both game windows off your active desktop and sets their master volume to zero. Use the [server replay lab](docs/server-replay.md) to capture a bounded public server session and run later rendering regressions locally.
+`bun run bundle` creates `dist/modpack/StackAnvil-26.3.mrpack`. It checks both client JARs against their build manifests and pins Minecraft and Fabric Loader. The pack includes those JARs as client overrides in the [Modrinth modpack format](https://support.modrinth.com/en/articles/8802351-modrinth-modpack-format-mrpack).
+
+The add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. Our [capture lab guide](docs/capture-lab.md) explains the local server, ViaProxy, Bedrock client, Java client, screenshots, and private HTTPS capture workflow. The lab keeps both game windows off your active desktop and sets their master volume to zero. Use the [server replay lab](docs/server-replay.md) to capture a bounded public server session and run later rendering regressions locally.
 
 Use `bun run stack status <project>` to see its pinned upstream commit and patch order. Run `bun run build viaproxy` to build the patched proxy and its dependencies. Use `bun run dev:setup` to prepare mitmproxy and check your Bedrock server and client paths. The [development guide](docs/development.md) explains traffic capture and manual tests.
 
@@ -95,7 +97,7 @@ The sync command adds the project's default PR assignees when your GitHub accoun
 
 ## Builds and licenses
 
-[GitHub releases](https://github.com/StackAnvil/patches/releases) provide four StackAnvil JARs, the pinned upstream ViaFabricPlus JAR, and a PrismLauncher instance ZIP. The [Maven repository](https://stackanvil-maven.pistonmaster.net/) serves the StackAnvil release artifacts. A full build can contain features that are still under upstream review. Test it before using it in a production server.
+[GitHub releases](https://github.com/StackAnvil/patches/releases) provide four StackAnvil JARs, the pinned upstream ViaFabricPlus JAR, and a `.mrpack` for the Fabric client. The [Maven repository](https://stackanvil-maven.pistonmaster.net/) serves the StackAnvil release artifacts. A full build can contain features that are still under upstream review. Test it before using it in a production server.
 
 Maintainers can use the [VFP Bedrock add-on publishing guide](docs/publishing-vfp-vb-addon.md) to manage the StackAnvil listings on mod platforms.
 

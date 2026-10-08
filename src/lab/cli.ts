@@ -6,7 +6,8 @@ import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
 import { root } from "../model.ts";
-import { artifact, installPrism } from "../prism.ts";
+import { artifact } from "../client-artifacts.ts";
+import { installPrism } from "../prism.ts";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "./display.ts";
 import { vmMain } from "./vm.ts";
 

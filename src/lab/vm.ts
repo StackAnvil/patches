@@ -6,7 +6,8 @@ import { cpus, freemem, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { root } from "../model.ts";
-import { artifact, bundlePrism } from "../prism.ts";
+import { artifact } from "../client-artifacts.ts";
+import { bundlePrism } from "../prism.ts";
 import { displayEnv } from "./display.ts";
 import { clickPointer, keyEvents, validateHoldMs, withNamedQmp, type QmpCommand } from "./qmp.ts";
 

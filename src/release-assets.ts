@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { Effect } from "effect";
+import { bundleModpack } from "./modpack.ts";
 import { root, targetIds } from "./model.ts";
 import { verifyPinnedManifest, type ViaFabricPlusPin } from "./viafabricplus.ts";
 
@@ -43,13 +45,8 @@ export async function prepareReleaseAssets(artifactsDir: string, outputDir: stri
     }
   }
 
-  const prismDir = join(artifactsDir, "prism");
-  const zips = (await readdir(prismDir)).filter((file) => /^StackAnvil-.+-Prism-Launcher_Config\.zip$/.test(file));
-  if (zips.length !== 1) throw new Error(`Expected one Prism Launcher config ZIP, found ${zips.length}`);
-  const zip = zips[0]!;
-  if (names.has(zip)) throw new Error(`Duplicate release asset: ${zip}`);
-  names.add(zip);
-  await copyFile(join(prismDir, zip), join(outputDir, zip));
+  // Rebuild from this release's verified JARs, never copy a stale local pack.
+  names.add(basename(await Effect.runPromise(bundleModpack(artifactsDir, outputDir, viaFabricPlusPin))));
   return [...names];
 }
 

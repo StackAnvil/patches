@@ -39,7 +39,7 @@ The [CubeConverter patch series](https://github.com/StackAnvil/patches/tree/main
 
 ## ViaFabricPlus
 
-StackAnvil downloads [upstream Jenkins build 2261](https://ci.viaversion.com/job/ViaFabricPlus/2261/) for the Bedrock add-on and PrismLauncher bundle. The [pin](https://github.com/StackAnvil/patches/blob/main/viafabricplus.json) records its commit and checksums. Run `bun run build viafabricplus` to download and verify it. This command does not build ViaFabricPlus source.
+StackAnvil downloads [upstream Jenkins build 2261](https://ci.viaversion.com/job/ViaFabricPlus/2261/) for the Bedrock add-on. The [pin](https://github.com/StackAnvil/patches/blob/main/viafabricplus.json) records its commit and checksums. Run `bun run build viafabricplus` to download and verify it. This command does not build ViaFabricPlus source.
 
 ## ViaProxy
 

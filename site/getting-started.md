@@ -45,9 +45,9 @@ For the tested pair, use the add-on and pinned ViaFabricPlus JAR from the same G
 
 To join a friend, Realm, or LAN world, open the **ViaFabricPlus** menu from **Multiplayer** and choose **Bedrock Friends**, **Bedrock Realms**, or **LAN Worlds**. Friends and Realms need Bedrock sign-in.
 
-## Want a prepared client?
+### Import the client modpack
 
-The release also has a `Prism-Launcher_Config.zip` for [Prism Launcher](https://prismlauncher.org/download/). It packages the same tested ViaFabricPlus and Bedrock add-on pair. In Prism, select **Add Instance**, then **Import**, and choose the ZIP. Launch the imported instance, then follow the [ViaFabricPlus connection steps](#use-viafabricplus-and-the-bedrock-add-on) above from step 4. Prism's [ZIP import guide](https://prismlauncher.org/wiki/help-pages/zip-import/) shows the import screen.
+For a prepared Fabric client, download `StackAnvil-26.3.mrpack` from the same GitHub release. Import it into a launcher that supports Modrinth modpacks, such as Modrinth App, Prism Launcher, or ATLauncher. The pack contains the tested ViaFabricPlus and add-on JARs and selects Minecraft and Fabric Loader for you. Sign in with your Java Edition account. Then follow the [connection steps above](#use-viafabricplus-and-the-bedrock-add-on) from step 4.
 
 ## If something does not work
 

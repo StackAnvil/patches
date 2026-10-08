@@ -1,51 +1,19 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import { root } from "./model.ts";
-import { verifyPinnedManifest } from "./viafabricplus.ts";
+import { clientArtifacts } from "./client-artifacts.ts";
 
 const execute = promisify(execFile);
 const bundleRoot = join(root, ".stackanvil", "prism-bundle");
 const prismHome = join(homedir(), ".var", "app", "org.prismlauncher.PrismLauncher", "data", "PrismLauncher", "instances");
 const prismInstance = process.env.STACKANVIL_JAVA_INSTANCE ?? "StackAnvil 26.3";
 
-interface ArtifactManifest { baseSha?: string; jenkinsBuild?: number; apiSha256?: string; artifacts: { file: string; sha256: string }[] }
-interface FabricMod { id: string; version: string; depends: { minecraft: string }; jars?: { file: string }[] }
-
-export async function artifact(project: string): Promise<string> {
-  const dir = join(root, "dist", project);
-  const manifest = JSON.parse(await readFile(join(dir, "manifest.json"), "utf8")) as ArtifactManifest;
-  if (manifest.artifacts.length !== 1) throw new Error(`Expected one ${project} release JAR`);
-  if (project === "viafabricplus") await verifyPinnedManifest(manifest);
-  const entry = manifest.artifacts[0]!;
-  const file = join(dir, entry.file);
-  const digest = createHash("sha256").update(Buffer.from(await Bun.file(file).arrayBuffer())).digest("hex");
-  if (digest !== entry.sha256) throw new Error(`Build checksum failed for ${project}`);
-  return file;
-}
-
-async function mod(file: string): Promise<FabricMod> {
-  const { stdout } = await execute("unzip", ["-p", file, "fabric.mod.json"], { maxBuffer: 1024 * 1024 });
-  return JSON.parse(stdout) as FabricMod;
-}
-
 async function prepareFiles(): Promise<{ directory: string; version: string }> {
-  const baseJar = await artifact("viafabricplus");
-  const addonJar = await artifact("viafabricplus-bedrock");
-  const [base, addon] = await Promise.all([mod(baseJar), mod(addonJar)]);
-  if (base.id !== "viafabricplus" || addon.id !== "viafabricplus-bedrock") throw new Error("The two Fabric mod IDs do not match the expected stack");
-  if (base.depends.minecraft !== addon.depends.minecraft) throw new Error("ViaFabricPlus and its Bedrock add-on target different Minecraft versions");
-  for (const name of ["ViaBedrock", "cubeconverter"]) {
-    if (!addon.jars?.some(({ file }) => file.toLowerCase().includes(name.toLowerCase()) && file.endsWith("-StackAnvil.jar"))) {
-      throw new Error(`The add-on does not embed the StackAnvil ${name} JAR`);
-    }
-  }
-  const version = base.depends.minecraft;
-  const loader = "0.19.5";
+  const { baseJar, addonJar, version, loader } = await clientArtifacts();
   const lwjgl = "3.4.3";
   await rm(bundleRoot, { recursive: true, force: true });
   const modsDir = join(bundleRoot, "minecraft", "mods");

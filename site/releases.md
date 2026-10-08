@@ -2,7 +2,7 @@
 layout: default
 title: Downloads
 nav_order: 3
-description: Find Bedrock add-on downloads and get ViaProxy, matching ViaFabricPlus JARs, or a prepared Prism Launcher client.
+description: Download ViaProxy, the tested Fabric client modpack, or matching ViaFabricPlus and Bedrock add-on JARs.
 ---
 
 # Download StackAnvil
@@ -11,7 +11,7 @@ Choose one of the two ways to play below. The [player guide]({{ '/getting-starte
 
 **Bedrock add-on downloads:** [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus).
 
-The [latest StackAnvil release on GitHub](https://github.com/StackAnvil/patches/releases/latest) has all JARs and the Prism Launcher bundle under **Assets**.
+The [latest StackAnvil release on GitHub](https://github.com/StackAnvil/patches/releases/latest) has the JARs and client modpack under **Assets**.
 
 ## ViaProxy: use your regular Java client
 
@@ -23,9 +23,9 @@ Get the add-on using the download links above. For the tested pair, download **b
 
 The add-on includes its patched ViaBedrock and CubeConverter libraries. Do not install those library JARs as separate Fabric mods. New files on mod platforms can remain under review after the GitHub release appears.
 
-## Optional: prepared Prism Launcher client
+## Client modpack
 
-If you want a prepackaged Fabric client, download the ZIP ending in `Prism-Launcher_Config.zip` and import it into [Prism Launcher](https://prismlauncher.org/download/). It contains the tested ViaFabricPlus and Bedrock add-on pair. You still need your own Minecraft Java Edition account.
+Download `StackAnvil-26.3.mrpack` and import it into a launcher that supports Modrinth modpacks. Modrinth App, Prism Launcher, and ATLauncher support this format. The pack includes the exact ViaFabricPlus and Bedrock add-on JARs from the release. It also pins Minecraft 26.3 and Fabric Loader 0.19.5. Use your own Java Edition account.
 
 ## Libraries and builds
 

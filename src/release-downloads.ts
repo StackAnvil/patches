@@ -5,8 +5,8 @@ interface ReleaseDownload {
 }
 
 const downloads = [
-  { title: "Prism Launcher instance", pattern: /^StackAnvil-.+-Prism-Launcher_Config\.zip$/,
-    description: "Import into Prism Launcher for a prepared Fabric client with both mods." },
+  { title: "Bedrock client modpack", pattern: /^StackAnvil-.+\.mrpack$/,
+    description: "Import into a launcher that supports Modrinth modpacks." },
   { title: "Bedrock add-on", pattern: /^viafabricplus-bedrock-.+-StackAnvil\.jar$/,
     description: "Install in your Fabric client's mods folder alongside ViaFabricPlus." },
   { title: "ViaFabricPlus", pattern: /^ViaFabricPlus-.+\.jar$/,
@@ -32,7 +32,7 @@ export function releaseDownloads(repository: string, tag: string, files: readonl
 export function releaseDownloadSection(repository: string, tag: string, files: readonly string[]): string[] {
   return [
     "> [!IMPORTANT]",
-    "> For a Fabric client, install both ViaFabricPlus and the Bedrock add-on. The Prism Launcher instance includes both mods.",
+    "> Import the .mrpack for a prepared Fabric client, or install both ViaFabricPlus and the Bedrock add-on manually.",
     "> ViaProxy runs as a separate program. ViaBedrock and CubeConverter are developer libraries, not standalone Fabric mods.", "",
     "## Download links", "",
     "| Download | Use |",

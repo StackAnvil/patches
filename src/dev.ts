@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { command } from "./process.ts";
 import { root } from "./model.ts";
-import { artifact } from "./prism.ts";
+import { artifact } from "./client-artifacts.ts";
 
 const toolsDir = join(root, ".stackanvil", "tools");
 

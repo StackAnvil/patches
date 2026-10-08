@@ -8,7 +8,7 @@ import { createSocket } from "node:dgram";
 import { promisify } from "node:util";
 import { Effect } from "effect";
 import { root } from "../model.ts";
-import { artifact } from "../prism.ts";
+import { artifact } from "../client-artifacts.ts";
 import { installModpack } from "../integration/modpack.ts";
 import { configureShaders, graphicsFailures, installGraphicsProfile, readGraphicsLock, type GraphicsProfile } from "../integration/graphics.ts";
 import { activeDisplay, displayEnv, stopDisplay } from "../lab/display.ts";
