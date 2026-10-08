@@ -9155,3 +9155,19 @@ Core returns to the latest standard input when the raw-input capability disappea
 Prediction withdrawal discards pending frames while retaining history and its admission watermark.
 The add-on resamples held physical input after permission updates or an observed capability gap.
 Callback and serialized packet controls pass; native movement and both live server routes remain separate gates.
+
+### Desktop rollout
+
+The reviewed rollout installed the matching core, add-on and ViaProxy candidates.
+It replaced ten exact files in `dist`, the private Maven repository and the desktop profile.
+The full 38-file inventory matched the plan; 28 unrelated files and all three POMs remained unchanged.
+Verified rollback copies remain outside the active directories.
+
+The old desktop JVM exited after three seconds through the normal shutdown path.
+The replacement client opened on the user's display with the same quiet sink and Vulkan/NVIDIA backend.
+Its process birth, namespace, Prism parent, profile and window were verified before updating runtime metadata.
+No desktop input or focus action ran during this rollout.
+
+Startup and artifact verification do not establish a playable join or working Social Menu.
+The user has been asked to reopen it for the live authored-layout and action checks.
+Initial metadata timing, portrait rendering, count-one acceptance, resource reloads and Iris behavior remain open.
