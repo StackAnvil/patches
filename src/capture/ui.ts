@@ -112,10 +112,10 @@ export function createCaptureUi(options: {
     if (!isolated && !allowFocus) throw new Error("Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.");
     if (!isolated) await run(nativeBinary, ["focus", window.id], root, env);
     if (!isolated && env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
-      if (button !== "left" || durationMs !== undefined || doubleClick) {
-        throw new Error("Right clicks, double clicks, and mouse holds require the private display on GNOME Wayland.");
+      if (durationMs !== undefined || doubleClick) {
+        throw new Error("Double clicks and mouse holds require the private display on GNOME Wayland.");
       }
-      await run("python3", [gnomeRemote, nativeBinary, "click", String(window.x + localX), String(window.y + localY)]);
+      await run("python3", [gnomeRemote, nativeBinary, "click", String(window.x + localX), String(window.y + localY), button]);
     } else {
       await run(nativeBinary, durationMs === undefined
         ? [doubleClick ? "double-click" : "click", window.id, String(localX), String(localY), button]

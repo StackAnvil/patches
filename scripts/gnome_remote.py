@@ -33,9 +33,15 @@ def pointer() -> tuple[int, int]:
 
 def main() -> None:
     if len(sys.argv) < 4:
-        raise SystemExit("Usage: gnome_remote.py <capture-x11> key NAME | click X Y")
-    if sys.argv[2] == "click" and len(sys.argv) != 5:
-        raise SystemExit("Usage: gnome_remote.py <capture-x11> click X Y")
+        raise SystemExit("Usage: gnome_remote.py <capture-x11> key NAME | click X Y [left|right]")
+    button = 272
+    if sys.argv[2] == "click":
+        if len(sys.argv) not in (5, 6):
+            raise SystemExit("Usage: gnome_remote.py <capture-x11> click X Y [left|right]")
+        name = sys.argv[5] if len(sys.argv) == 6 else "left"
+        if name not in ("left", "right"):
+            raise SystemExit("Use left or right mouse button")
+        button = {"left": 272, "right": 273}[name]
     bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
     path = bus.call_sync(
         DESTINATION, ROOT, DESTINATION, "CreateSession", None,
@@ -80,9 +86,11 @@ def main() -> None:
                 time.sleep(0.12)
             else:
                 raise RuntimeError(f"Pointer could not reach {target_x}, {target_y}")
-            call("NotifyPointerButton", GLib.Variant("(ib)", (272, True)))
-            time.sleep(0.12)
-            call("NotifyPointerButton", GLib.Variant("(ib)", (272, False)))
+            call("NotifyPointerButton", GLib.Variant("(ib)", (button, True)))
+            try:
+                time.sleep(0.12)
+            finally:
+                call("NotifyPointerButton", GLib.Variant("(ib)", (button, False)))
         else:
             raise ValueError("Use key or click")
         time.sleep(0.1)

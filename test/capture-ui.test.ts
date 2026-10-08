@@ -43,6 +43,17 @@ test("capture input cannot fall back to desktop or focus it without explicit per
     .toEqual(["focus", "key"]);
 });
 
+test("GNOME clicks retain the selected button and require desktop authorization", async () => {
+  const f = fixture(undefined, { DISPLAY: ":0", STACKANVIL_USE_DESKTOP: "1", XDG_CURRENT_DESKTOP: "GNOME" });
+  await expect(f.ui.click(0.5, 0.5, window.id, "java", false, "right")).rejects.toBeInstanceOf(Error);
+  expect(f.calls.filter(call => call.args[0] === "focus" || call.args.includes("click"))).toHaveLength(0);
+  for (const button of ["left", "right"] as const) {
+    await f.ui.click(0.5, 0.5, window.id, "java", true, button);
+    const args = f.calls.at(-1)!.args;
+    expect(args.slice(2)).toEqual(["click", "426", "239", button]);
+  }
+});
+
 test("invalid input bounds and ambiguous windows never emit input", async () => {
   const f = fixture(isolated);
   for (const duration of ["0", "-1", "1.5", "10001", "NaN", "Infinity"]) {
