@@ -1,4 +1,4 @@
-From dda3be1b9af1c1647de4b4d5dfb07ee163038efa Mon Sep 17 00:00:00 2001
+From b8a23e88933c605d2a8a4f0a8bec55ffef390e55 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:45:47 +0200
 Subject: [PATCH] feat(ui): render authored Bedrock forms and containers
@@ -160,6 +160,15 @@ player posture offsets remain unverified. Preserve the authored camera
 scale and inherited scissor instead of cropping at the custom control.
 Use transported fractional TTF line advances for measurement and drawing
 so native display scaling does not overlap wrapped labels.
+
+Give repeated collection controls separate retained widget identities.
+Authored template names are not unique after collection expansion. Scope
+each name by its sibling occurrence and response/input identity so mouse
+hit testing reaches the control that is actually drawn. Preserve widget
+instances across dependent scene refreshes. A focused regression covers
+repeated ancestor and button names, distinct hit targets and retained
+instances. A loopback 2193 capture verifies mouse responses for a region
+header and a lobby tile instead of hover-only changes.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   4 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -189,7 +198,7 @@ so native display scaling does not overlap wrapped labels.
  .../screen/form/BedrockCustomFormState.java   | 151 +++
  .../form/BedrockFallbackFormScreen.java       | 120 +++
  .../bedrock/screen/form/BedrockFormScene.java |  60 ++
- .../screen/form/BedrockNativeFormScreen.java  | 683 ++++++++++++++
+ .../screen/form/BedrockNativeFormScreen.java  | 691 ++++++++++++++
  .../screen/form/BedrockNativeForms.java       |  88 ++
  .../screen/form/NativeCustomFormPayload.java  |  25 +
  .../screen/form/NativeFormPayload.java        |  24 +
@@ -221,6 +230,7 @@ so native display scaling does not overlap wrapped labels.
  .../form/BedrockCustomFormEditingTest.java    | 104 +++
  .../BedrockCustomFormInteractionTest.java     | 216 +++++
  .../screen/form/BedrockFormSceneTest.java     |  66 ++
+ .../BedrockNativeFormWidgetIdentityTest.java  |  84 ++
  .../screen/ui/NativeUiActorPortraitsTest.java | 164 ++++
  .../bedrock/screen/ui/NativeUiFontTest.java   | 133 +++
  .../screen/ui/NativeUiImageCacheTest.java     | 142 +++
@@ -229,7 +239,7 @@ so native display scaling does not overlap wrapped labels.
  .../screen/ui/NativeUiPresentationTest.java   | 139 +++
  .../bedrock/screen/ui/NativeUiSliderTest.java | 120 +++
  .../bedrock/screen/ui/NativeUiTextTest.java   |  56 ++
- 68 files changed, 8034 insertions(+), 9 deletions(-)
+ 69 files changed, 8126 insertions(+), 9 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiEntityRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerPresentation.java
@@ -280,6 +290,7 @@ so native display scaling does not overlap wrapped labels.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockCustomFormEditingTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockCustomFormInteractionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormSceneTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormWidgetIdentityTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiActorPortraitsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageCacheTest.java
@@ -2731,10 +2742,10 @@ index 0000000..36db2a0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormScreen.java
 new file mode 100644
-index 0000000..f759fe7
+index 0000000..9708e62
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormScreen.java
-@@ -0,0 +1,683 @@
+@@ -0,0 +1,691 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2828,7 +2839,7 @@ index 0000000..f759fe7
 +        this.actions.clear();
 +        this.inputs.clear();
 +        final List<ControlBox> boxes = new ArrayList<>();
-+        controls(this.root, "", boxes);
++        controls(this.root, "", 0, boxes);
 +        boxes.sort(Comparator.comparingDouble((ControlBox control) -> control.box.layer()).reversed());
 +        final Set<String> retainedActions = new HashSet<>(), retainedInputs = new HashSet<>();
 +        for (final var control : boxes) {
@@ -2864,10 +2875,18 @@ index 0000000..f759fe7
 +            throw new IllegalArgumentException("Native form has no usable response controls");
 +    }
 +
-+    private static void controls(final NativeUiLayout.Box box, final String parent, final List<ControlBox> result) {
-+        final String path = parent + "/" + box.node().name();
-+        result.add(new ControlBox(box, path + ":" + box.node().type() + ":" + box.node().properties().get("input")));
-+        for (final var child : box.children()) controls(child, path, result);
++    private static void controls(final NativeUiLayout.Box box, final String parent, final int occurrence,
++                                 final List<ControlBox> result) {
++        // Collection templates repeat authored names. Retain each instance separately across scene refreshes.
++        final String name = box.node().name();
++        final String path = parent + "/" + name.length() + ":" + name + ":" + occurrence;
++        result.add(new ControlBox(box, path + ":" + box.node().type() + ":" + box.node().action()
++            + ":" + box.node().properties().get("input")));
++        final Map<String, Integer> occurrences = new HashMap<>();
++        for (final var child : box.children()) {
++            final int childOccurrence = occurrences.merge(child.node().name(), 1, Integer::sum) - 1;
++            controls(child, path, childOccurrence, result);
++        }
 +    }
 +
 +    private record ControlBox(NativeUiLayout.Box box, String key) {}
@@ -7005,6 +7024,96 @@ index 0000000..11d2a81
 +            else array.add(value.toString());
 +        }
 +        return array;
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormWidgetIdentityTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormWidgetIdentityTest.java
+new file mode 100644
+index 0000000..7d3fa37
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormWidgetIdentityTest.java
+@@ -0,0 +1,84 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiScene;
++import java.util.List;
++import java.util.Set;
++import net.minecraft.SharedConstants;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.StringSplitter;
++import net.minecraft.client.gui.Font;
++import net.minecraft.server.Bootstrap;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class BedrockNativeFormWidgetIdentityTest {
++    @Test
++    void keepsRepeatedTemplateControlsDistinctAndRetainsThemOnRefresh() throws Exception {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++        final JsonObject root = panel(0, 200, 100);
++        final JsonArray copies = new JsonArray();
++        for (int index = 0; index < 3; index++) {
++            final JsonObject copy = panel(index * 30, 100, 20);
++            final JsonObject button = panel(0, 100, 20);
++            button.addProperty("type", "button");
++            button.addProperty("action", index);
++            final JsonArray children = new JsonArray();
++            children.add(button);
++            copy.add("children", children);
++            copies.add(copy);
++        }
++        root.add("children", copies);
++        final JsonObject json = new JsonObject();
++        json.addProperty("format", 2);
++        json.add("root", root);
++        final var scene = new BedrockFormScene(NativeUiScene.parse(json.toString(), Set.of()).root(),
++            new BedrockFormScene.Fallback("", "", List.of("", "", "")));
++        final Font font = mock(Font.class);
++        when(font.getSplitter()).thenReturn(new StringSplitter((c, style) -> 6));
++        final Minecraft game = mock(Minecraft.class);
++        final var fontField = Minecraft.class.getField("font");
++        fontField.setAccessible(true);
++        fontField.set(game, font);
++        try (final var singleton = mockStatic(Minecraft.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(game);
++            final var screen = new BedrockNativeFormScreen(null, 0, scene);
++            screen.width = 200;
++            screen.height = 100;
++            screen.init();
++            assertEquals(3, screen.children().size());
++            final var controls = List.of(screen.getChildAt(10, 10).orElseThrow(),
++                screen.getChildAt(10, 40).orElseThrow(), screen.getChildAt(10, 70).orElseThrow());
++            assertEquals(3, Set.copyOf(controls).size());
++            screen.init();
++            for (int index = 0; index < controls.size(); index++)
++                assertSame(controls.get(index), screen.getChildAt(10, 10 + index * 30).orElseThrow());
++        }
++    }
++
++    private static JsonObject panel(final int y, final int width, final int height) {
++        final JsonObject node = new JsonObject();
++        node.addProperty("name", "template");
++        node.addProperty("type", "panel");
++        node.addProperty("anchor_from", "top_left");
++        node.addProperty("anchor_to", "top_left");
++        final JsonArray size = new JsonArray();
++        size.add(width);
++        size.add(height);
++        node.add("size", size);
++        final JsonArray offset = new JsonArray();
++        offset.add(0);
++        offset.add(y);
++        node.add("offset", offset);
++        return node;
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiActorPortraitsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiActorPortraitsTest.java
