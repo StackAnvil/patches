@@ -8968,3 +8968,54 @@ The canonical source checkout and installed clients remain unchanged while
 the isolated runtime retains its source lease. The reviewed patch exports
 are saved for the next build. Native hover context, rawtext localization,
 native menu layout and live direct/ViaProxy verification remain open.
+
+## Native cursor and factory continuation, October 8, 2026
+
+The frozen request handoff contains 139 qualified continuation controls.
+Four Take controls cover populated and empty slots, occupied cursors and rejected actions.
+Two sequences cover ten steps from Take through rejected releases, an accepted release and one-item autoplacement.
+The cursor retains four items while the second slot transfers one item to the player inventory.
+These sequences still supply permission, capacity, storage, descriptor and copy results.
+Separate native factory controls do not establish a complete joined operation.
+
+A later attempt removes five permission, capacity, descriptor and copy replacements.
+The original provider factories and Player cursor initialization execute.
+The operation stops at unresolved cursor and model notification context before complete request construction.
+The attempt adds no qualified completion controls.
+Production action admission, serialization and server acknowledgement remain open.
+Private evidence stays under
+`.stackanvil/research/server-ui/native-binding-semantics/actor-portrait/manual-grid/auto-place-native/`.
+
+## Native registry replay and snapshot lifetime, October 8, 2026
+
+The original clone prefix saves an EntityRegistry root for the replay engine.
+Its wrapper passes the address of that registry into each body.
+An earlier fixture supplied an Actor-shaped value at this boundary.
+Those engine controls are rejected, and their failures remain recorded.
+The earlier queue, input, write-back and bounded auth intervals retain their narrower scope.
+They do not establish the engine ABI or actor-generation admission.
+
+The corrected engine executes 234 registered systems for each of five history records.
+The resulting 1,170 dispatches establish system order against observation boundaries.
+They do not execute eligible vehicle physics.
+Twelve entity cleanup sequences cover 48 steps of removal and generation reuse.
+Four native snapshot sequences cover 52 operations of capture, history eviction, cloning and cleanup.
+Most typed pools remain supplied as absent, and world callbacks remain incomplete.
+
+Core still discards vehicle velocity and angular corrections after decoding.
+Native replay timing, eligible Boat and Horse bodies, world state and Java integration remain required before a production correction change.
+Private evidence stays under
+`.stackanvil/research/movement-flight/wire-position/passenger-owner/`.
+
+## Lore build and CI verification, October 8, 2026
+
+The committed lore fix passes the GitHub tooling and complete build jobs.
+Capture-permission jobs pass on Ubuntu, Windows and macOS.
+These jobs do not establish game joins on Windows or macOS.
+
+A separate generated checkout builds the core with the matching licensed UI bundle.
+The build passes all three Checkstyle tasks and 971 tests, with 30 optional skips.
+The JAR retains the complete previous file inventory and identical UI bundle bytes.
+Its functional change is the item rewriter.
+Three other changed classes contain only the generated source identity replacement.
+Live direct and ViaProxy lore verification remains pending in separately prepared private clients.
