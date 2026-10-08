@@ -8884,3 +8884,68 @@ Full source, installed-artifact and protected-process checks passed afterward.
 The desktop client remained unchanged.
 Private evidence stays under
 `.stackanvil/research/inventory-bundle/native-container-consumer/controlled-v10/run/evidence/direct-profile-subset-v1/`.
+
+## Controlled profile menu diagnosis, October 8, 2026
+
+A fresh isolated BDS fixture calculates orientation from the actual server head
+position. Two bounded clicks place and open a named chest. Independent server and
+client observations match its title, item identities, counts and custom names.
+Native UI negotiation succeeds, and the addon reaches native menu preparation.
+
+Preparation rejects the layout with inaccessible slots and retains the stock
+chest screen. A reconstruction using the frozen program and observed slot values
+registers zero of 63 real slots. Twelve authored slots are hidden, seven visible
+cells lack supported inventory actions, and 44 slots have no authored controls.
+The occupied sentinel at slot 26 remains inaccessible. This result does not
+justify weakening the completeness check or treating Java pickup as native
+one-item autoplacement.
+
+Native item data retains lore, but the observed Java lore component is empty.
+A separate private translation draft passes three checks for ordered lines,
+blank entries, formatting across LF and Java network encoding. The draft is not
+applied to the source stack. Native hover text, actual Social actor context,
+complete action admission and native pixel comparison remain open.
+
+Observers stop cleanly and BDS exits normally. The isolated client exceeds the
+original 60-second shutdown limit. One read-only JVM diagnostic attempt cannot
+obtain thread frames. The failure remains recorded, and final client, display
+and audio cleanup is pending. Full installed-artifact and protected-process
+checks pass; the desktop instance remains unchanged.
+Private evidence stays under
+`.stackanvil/research/inventory-bundle/native-container-consumer/controlled-v10/`.
+
+## Native request provider and selection continuation, October 8, 2026
+
+Ninety-five continuation controls execute request construction, actual chest
+model dispatch, provider descriptors, selected-address handling and bounded
+capacity lookup. Four cases repeat the original click-to-request chain with the
+concrete chest model. Earlier generic model controls remain separately scoped.
+A populated cursor overrides a selected address in the tested getter path.
+
+Capacity lookup executes original descriptor and registry instructions against
+supplied initialized registry storage. Registry publication, complete provider
+permissions, gesture state, cursor mutation, request serialization and server
+acknowledgement remain unverified. Context-owner layout alone does not establish
+Player or LocalPlayer identity. Production action admission remains unchanged.
+Private evidence stays under
+`.stackanvil/research/server-ui/native-binding-semantics/actor-portrait/manual-grid/auto-place-native/`.
+
+## Native correction clone and cache continuation, October 8, 2026
+
+Thirty-two replay controls now use the actual cache-view factory and initialized
+semantic registry keys. Sixty-four joined controls carry one live StateVector
+from correction queueing through replay, world admission, write-back and bounded
+auth fields. Input providers, world callbacks and physics remain supplied.
+The fixture directs call order; complete category scheduling is not verified.
+
+Thirty-six clone restoration controls and 36 enclosing replay-prefix controls
+execute native entity allocation and marked snapshot restoration. Six cleanup
+and reuse sequences cover 18 steps of component removal and storage reuse.
+Current position, previous position and motion remain distinct. Snapshot data,
+pool handles and other typed getters remain supplied boundaries.
+
+Full entity erasure, native snapshot capture, eligible Boat and Horse controller
+lifetime, physics and complete auth serialization remain open. These results do
+not yet justify applying vehicle corrections in production. Private evidence
+stays under
+`.stackanvil/research/movement-flight/wire-position/passenger-owner/`.
