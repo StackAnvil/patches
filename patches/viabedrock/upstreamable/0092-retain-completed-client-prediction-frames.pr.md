@@ -1032,3 +1032,64 @@ The actor publication integration fixture uses this patch's existing Mockito inf
 It drives actual raw register and unregister packets, preferred v3 selection, downgrade
 to v2, unregister-all and same-codec re-registration with unchanged state.
 The complete private core build passes 946 cases with 30 optional skips.
+
+### Optional completed vehicle physics
+
+The target 1.26.51.1 sender copies an eligible vehicle's current StateVector into `mPos` and its velocity into `mPosDelta`.
+Core previously used the difference between emitted vehicle positions for this velocity.
+The unchanged-source raw packet control emits `(1,1,1)` where the supplied native state reports `(-0.125,0.25,0.375)`.
+This establishes a field-binding mismatch under supplied state, not a live trajectory comparison.
+
+Core now accepts a separate revision-one vehicle frame, paired with the same completed player-v7 frame ID.
+The existing player channel and codec remain unchanged.
+The vehicle frame cannot create an independent emitted input clock.
+Missing or rejected frames preserve ordinary Java vehicle translation and its displacement fallback.
+Direct and ViaProxy use the same core handler; actual client joins remain unverified for this new capability.
+
+The context carries Java ID and UUID, native unique and runtime IDs, the existing actor lifetime UUID, and a connection-owned mount epoch.
+Storage also retains the actual tracked mount object.
+Reused numeric IDs cannot admit an earlier actor's frame.
+Independent frame watermarks survive consumption, rejection and correction.
+A foreign identity or old epoch cannot replace fresh pending physics.
+
+Publishing requires the actual native actor join, both PLAY states, player-input permission capability, actor-v3 capability and the new context capability.
+Capability re-registration republishes the same context without advancing its epoch.
+Capability loss clears pending mount physics.
+A new connection receives new storage and actor lifetimes.
+
+New-frame admission covers primary direct root boats and horses with a live, spawned local player.
+Spectator mode, death, dimension change, existing position-sync waits and unloaded player or mount chunks reject optional physics.
+Horse controls require flags 8 and 28, matching the target callback and the protocol saddle/tame entries.
+Java class and primary-passenger selection remain a narrow compatibility gate.
+They do not establish complete native controlling-seat or ShouldBeSimulated equivalence.
+
+Completed vehicle coordinates must match standard vehicle movement within the existing bounded float tolerance.
+The admitted coordinates and velocity remain paired.
+The real boat model preserves the existing `0.375F` Java-feet-to-native-origin offset.
+Native unique ID remains distinct from runtime ID in the actual serialized auth packet.
+No player standing-height or ordinary vehicle rotation rule changes.
+
+Authority position changes invalidate pending vehicle physics and advance its context epoch, including tiny corrections.
+Local vehicle movement retains ordinary coordinate conversion without advancing an authority epoch.
+Mount, capability, health, metadata, mode and dimension changes refresh the context.
+Death followed by revival before the next emission cannot reuse earlier pending physics.
+Player frame history and clock mappings remain intact.
+
+Verification adds 13 actual packet and lifecycle cases, plus five codec cases.
+The cases cover current position with independent velocity, idle and reversal, missing or mismatched player frames, foreign identity, consumed replay and clock exhaustion.
+They also cover tiny corrections, mount transitions, secondary riders, nested mounts, horse flags, chunk loss, actor replacement, capability loss and re-registration.
+Complete codecs and the actual custom-payload path reject trailing data without replacing a valid pending frame.
+The actual boat and horse classes run in the final packet controls.
+
+All 98 core patches replay without conflicts.
+The private clean build, all Checkstyle tasks and Maven POM generation pass.
+The complete suite passes 964 cases, skips 30 existing cases and fails none.
+A final test-only refinement verifies real vehicle conversion and native unique-ID serialization, then reruns the full suite and test Checkstyle.
+The final generated and private source trees match byte for byte.
+The runtime candidate remains private; no installation or gameplay launch occurs.
+
+Original instructions pass 560 vehicle-view checks, 22 sender cases, six sender transitions, 192 controlling-seat writer cases and 24 prediction callbacks.
+Thirty cleanup controls establish generation-valid erase dispatch for supplied movement-tick markers.
+Actual storage erasure and cleanup execution order remain unresolved.
+Native corrected vehicle velocity application, complete prediction replay, collision and strict-BDS/native trajectories also remain unresolved.
+Add-on0025 must provide the negotiated completed local mount sample before this optional core path can activate in a real client.

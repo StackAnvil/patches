@@ -8660,3 +8660,31 @@ It does not verify actor-backed Social menus, native client pixels, ViaProxy,
 bundle operations, dragging or the full inventory matrix. The newer title and
 movement candidates were not installed for this run. Private evidence stays under
 `.stackanvil/research/inventory-bundle/native-container-consumer/controlled-v10/`.
+
+## Completed vehicle physics, October 8, 2026
+
+Core now accepts an optional vehicle frame paired with the same completed
+player frame. It retains the vehicle's position and velocity together. The
+previous displacement fallback remains available for ordinary Java clients
+and clients without the new capability.
+
+Admission checks the tracked mount object, actor lifetime, native IDs and mount
+epoch. Corrections, replacement, capability loss, death and mode changes discard
+pending physics. Consumed frame watermarks remain. Publication requires both
+PLAY states, the native actor join and the negotiated capabilities.
+
+Thirteen packet and lifecycle cases and five codec cases pass. They cover actual
+boat and horse models, stale identities, corrections, capability changes and
+invalid payloads. All 98 core patches replay. The private clean build passes
+964 tests with 30 optional skips. Main, test and tool Checkstyle pass.
+
+Original native instructions pass 560 vehicle-view checks, 22 sender cases,
+six sender transitions, 192 controlling-seat writer cases and 24 prediction
+callbacks. Thirty cleanup controls establish erase dispatch under supplied state.
+They do not establish complete storage erasure or execution order.
+
+The add-on sender is still pending, so this optional path is not active in a
+real client. Native corrections, full prediction replay, strict BDS trajectories,
+ViaProxy and the remaining movement matrix still need verification. Installed
+artifacts remain unchanged. Private evidence stays under
+`.stackanvil/research/movement-flight/wire-position/passenger-owner/`.
