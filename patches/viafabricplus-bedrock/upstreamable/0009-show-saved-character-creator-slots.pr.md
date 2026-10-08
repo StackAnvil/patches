@@ -2921,3 +2921,18 @@ The full 31-patch replay, Gradle check, build, POM and access-widener gates pass
 All 1,304 embedded core entries match the private actor-UID candidate.
 Legacy-channel downgrade clears UID capability without inferring a runtime-ID alias.
 The candidate is private; actual client drawing and Iris compatibility remain pending.
+
+## Mixed particle motion
+
+The CubeCraft lightning trail combines dynamic and parametric motion.
+The parser now accepts both components and applies parametric overrides after dynamic motion.
+Position, velocity direction and rotation are independent optional fields.
+Omitted fields keep their previous state.
+Parametric position replaces the position without adding the emitter shape origin.
+
+Bedrock 1.26.51.1 registers and executes both callbacks in this order.
+Its original parametric update at `1461ca960` supplies the versioned evidence.
+The executable identity and native float thresholds are recorded in the patch body.
+The targeted emitter regression passes.
+All 48 executed native constant cases match the Java implementation.
+Native code and probe results remain private.

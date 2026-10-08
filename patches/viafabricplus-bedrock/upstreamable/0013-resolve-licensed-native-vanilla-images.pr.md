@@ -8,7 +8,7 @@ Register the typed `BuiltinResourcePackProvider` and load the matching bundled l
 The provider works without a selected account and performs no Store authentication or package download.
 A missing or damaged bundle reports an installation error instead of silently dropping built-in images.
 
-Return image-only layers in native order, below bundled definitions and server packs.
+Return native resource layers in version order, below core definitions and server packs.
 Preserve exact path case and PNG, JPG, and TGA variants.
 A higher native overlay can replace a lower PNG with a TGA.
 Copy pixels so mutable resource-pack content cannot alter the shared native library.
@@ -24,3 +24,19 @@ The new bundled path uses the matching installed package bytes.
 
 The four provider tests pass with the actual bundle.
 The complete add-on build and test suite also pass; optional private-fixture tests remain skipped.
+
+## Include native actor dependencies
+
+The provider now supplies equipment definitions, geometry, animations, controllers and materials beside native images.
+These layers retain native version order and remain below server packs.
+Core-owned entity definitions and atlas maps remain excluded.
+The real bundle test constructs the resource stack and resolves both ordinary and emissive alpha-test families.
+
+The extractor reads native material comments and trailing commas, then emits equivalent JSON for the runtime parser.
+Empty archive placeholders and unsupported HDR and source-image files are excluded.
+Build checks verify required dependencies, archive totals, checksums and exact bytes in the finished add-on JAR.
+UI templates and supported UI assets remain in their separately required core bundle.
+
+Smooth MSDF fonts and HDR panoramas still need renderer support.
+Including their source files alone does not make those features work.
+The current UI renderer retains its supported TrueType and Java fallback paths.

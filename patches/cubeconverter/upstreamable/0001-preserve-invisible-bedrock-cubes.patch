@@ -1,4 +1,4 @@
-From 81cc9e2b19669f4b13267dce9f4c5c3ab9ad2ec2 Mon Sep 17 00:00:00 2001
+From 994a0e40cc182fadcb289661c44f615585e62610 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 15:54:14 +0200
 Subject: [PATCH] fix(models): preserve cubes without visible faces
@@ -26,13 +26,27 @@ Synthetic tests cover finite metadata serialization for empty geometry,
 locator-only bone hierarchy and source preservation, every rotation mode,
 and unchanged fitting for populated oversized geometry. All six focused
 CubeConverter tests pass on Java 17.
+
+The licensed Bedrock 1.26.51.1 models for leash knots, experience orbs,
+fishing hooks, arrows, fireworks, tripods and fireballs omit cube UV data.
+Treat an absent face map as empty instead of rejecting the whole model.
+Keep cube bounds and valid neighboring cubes without inventing texture
+faces. The mixed-cube parser and export regression covers this case.
+
+Native 1.26.51.1 projectile planes also omit uv_size. Default its extent
+to the declared cube face dimensions, preserving explicit signed sizes.
+The versioned package supplies the cases; the official geometry schema
+documents this optional default:
+https://learn.microsoft.com/en-us/minecraft/creator/reference/content/schemasreference/schemas/minecraftschema_geometry_1.21.0?view=minecraft-bedrock-experimental
+Numeric tests cover all six asymmetric faces and an explicit negative size.
 ---
  build.gradle                                  |   7 ++
  .../converter/converter/FormatConverter.java  |   6 +-
  .../model/impl/java/JavaItemModel.java        |  23 ++--
- .../converter/FormatConverterTest.java        | 103 ++++++++++++++++++
- .../model/impl/java/JavaItemModelTest.java    |  80 ++++++++++++++
- 5 files changed, 202 insertions(+), 17 deletions(-)
+ .../cube/converter/util/element/UVMap.java    |  33 ++++--
+ .../converter/FormatConverterTest.java        | 103 ++++++++++++++++
+ .../model/impl/java/JavaItemModelTest.java    | 112 ++++++++++++++++++
+ 6 files changed, 255 insertions(+), 29 deletions(-)
  create mode 100644 src/test/java/org/cube/converter/converter/FormatConverterTest.java
  create mode 100644 src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java
 
@@ -159,6 +173,64 @@ index 2c45ce3..8dfb658 100644
 -}
 \ No newline at end of file
 +}
+diff --git a/src/main/java/org/cube/converter/util/element/UVMap.java b/src/main/java/org/cube/converter/util/element/UVMap.java
+index bf3054a..9c1e76a 100644
+--- a/src/main/java/org/cube/converter/util/element/UVMap.java
++++ b/src/main/java/org/cube/converter/util/element/UVMap.java
+@@ -63,32 +63,41 @@ public final class UVMap {
+     public static UVMap fromPerfaceUV(final JsonObject object) {
+         final JsonObject uv = object.getAsJsonObject("uv");
+         final UVMap map = new UVMap(UVType.PERFACE);
+-        
+-        putIfExist(Direction.NORTH, uv, map.getUvMap());
+-        putIfExist(Direction.EAST, uv, map.getUvMap());
+-        putIfExist(Direction.SOUTH, uv, map.getUvMap());
+-        putIfExist(Direction.WEST, uv, map.getUvMap());
+-        putIfExist(Direction.UP, uv, map.getUvMap());
+-        putIfExist(Direction.DOWN, uv, map.getUvMap());
++        if (uv == null) {
++            return map;
++        }
++
++        final Position3V size = new Position3V(object.getAsJsonArray("size"));
++        putIfExist(Direction.NORTH, uv, size, map.getUvMap());
++        putIfExist(Direction.EAST, uv, size, map.getUvMap());
++        putIfExist(Direction.SOUTH, uv, size, map.getUvMap());
++        putIfExist(Direction.WEST, uv, size, map.getUvMap());
++        putIfExist(Direction.UP, uv, size, map.getUvMap());
++        putIfExist(Direction.DOWN, uv, size, map.getUvMap());
+         return map;
+     }
+ 
+-    private static void putIfExist(final Direction direction, final JsonObject object, final Map<Direction, Float[]> map) {
++    private static void putIfExist(final Direction direction, final JsonObject object, final Position3V size, final Map<Direction, Float[]> map) {
+         String name = direction.name().toLowerCase();
+         if (object.has(name)) {
+-            map.put(direction, getUVDirection(object.getAsJsonObject(name)));
++            map.put(direction, getUVDirection(object.getAsJsonObject(name), direction, size));
+         }
+     }
+ 
+-    private static Float[] getUVDirection(JsonObject object) {
++    private static Float[] getUVDirection(final JsonObject object, final Direction direction, final Position3V size) {
+         if (object == null) {
+-            return new Float[] { 0F, 0F, 0F };
++            return new Float[] { 0F, 0F, 0F, 0F };
+         }
+ 
+         final JsonArray arrayUv = object.getAsJsonArray("uv");
+         final JsonArray arrayUvSize = object.getAsJsonArray("uv_size");
+ 
+-        return new Float[] {arrayUv.get(0).getAsFloat(), arrayUv.get(1).getAsFloat(), arrayUv.get(0).getAsFloat() + arrayUvSize.get(0).getAsFloat(), arrayUv.get(1).getAsFloat() + arrayUvSize.get(1).getAsFloat()};
++        final float width = arrayUvSize != null ? arrayUvSize.get(0).getAsFloat()
++                : direction == Direction.EAST || direction == Direction.WEST ? size.getZ() : size.getX();
++        final float height = arrayUvSize != null ? arrayUvSize.get(1).getAsFloat()
++                : direction == Direction.UP || direction == Direction.DOWN ? size.getZ() : size.getY();
++        final float u = arrayUv.get(0).getAsFloat(), v = arrayUv.get(1).getAsFloat();
++        return new Float[] {u, v, u + width, v + height};
+     }
+ 
+     @Override
 diff --git a/src/test/java/org/cube/converter/converter/FormatConverterTest.java b/src/test/java/org/cube/converter/converter/FormatConverterTest.java
 new file mode 100644
 index 0000000..3257dca
@@ -270,10 +342,10 @@ index 0000000..3257dca
 +}
 diff --git a/src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java b/src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java
 new file mode 100644
-index 0000000..7085b52
+index 0000000..3d41051
 --- /dev/null
 +++ b/src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,112 @@
 +package org.cube.converter.model.impl.java;
 +
 +import com.viaversion.viaversion.libs.gson.JsonObject;
@@ -316,6 +388,38 @@ index 0000000..7085b52
 +    }
 +
 +    @Test
++    void retainsModelsThatOmitCubeUvData() {
++        final var geometry = geometry("""
++            {"origin":[-3,2,-3],"size":[6,8,6]},
++            {"origin":[0,0,0],"size":[2,2,2],"uv":[0,0]}
++            """);
++        assertEquals(2, geometry.getParents().get(0).getCubes().size());
++        assertTrue(geometry.getParents().get(0).getCubes().get(0).getUvMap().getUvMap().isEmpty());
++        assertEquals(1, geometry.toJavaItemModel("example:item/actor", RotationType.POST_1_21_11)
++                .compile().getAsJsonArray("elements").size());
++    }
++
++    @Test
++    void usesFaceDimensionsForOmittedUvSizesAndPreservesAuthoredSizes() {
++        final var geometry = geometry("""
++            {"origin":[0,0,0],"size":[2,3,5],"uv":{
++                "north":{"uv":[7,11]},"south":{"uv":[7,11]},
++                "east":{"uv":[7,11]},"west":{"uv":[7,11]},
++                "up":{"uv":[7,11]},"down":{"uv":[7,11]}}},
++            {"origin":[0,0,0],"size":[2,3,5],"uv":{"north":{"uv":[7,11],"uv_size":[-4,6]}}}
++            """);
++        final var cubes = geometry.getParents().get(0).getCubes();
++        final var faces = cubes.get(0).getUvMap().getUvMap();
++        for (final var face : org.cube.converter.util.element.Direction.values()) {
++            final float width = face == org.cube.converter.util.element.Direction.EAST || face == org.cube.converter.util.element.Direction.WEST ? 5 : 2;
++            final float height = face == org.cube.converter.util.element.Direction.UP || face == org.cube.converter.util.element.Direction.DOWN ? 5 : 3;
++            assertArrayEquals(new Float[] {7F, 11F, 7 + width, 11 + height}, faces.get(face));
++        }
++        assertArrayEquals(new Float[] {7F, 11F, 3F, 17F}, cubes.get(1).getUvMap().getUvMap()
++                .get(org.cube.converter.util.element.Direction.NORTH));
++    }
++
++    @Test
 +    void exportsWhollyInvisibleGeometryWithNoJavaElements() {
 +        final var geometry = geometry("""
 +            {"origin":[0,0,0],"size":[2,2,2],"uv":{}}
@@ -355,4 +459,4 @@ index 0000000..7085b52
 +
 +}
 -- 
-2.55.0
+2.56.0

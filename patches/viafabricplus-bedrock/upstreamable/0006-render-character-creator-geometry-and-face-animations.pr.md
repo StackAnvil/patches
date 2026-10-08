@@ -71,3 +71,10 @@ The left-hand check sets the private actor's main arm directly; preferred-hand s
 An opaque blue base texture does not obscure the overlapping animated surface in six additional captures.
 The probe restores the arm preference, and the test client stops afterward.
 These checks establish the tested surface draw path, not native first-person motion or complete skin parity.
+
+## Preserve mesh polygons with Sodium
+
+Character Creator meshes use the shared native polygon compiler.
+Sodium's cached constructor cuboid does not contain the later mesh positions or UVs.
+The owning renderer regression verifies actual vertex submission through reflected transforms.
+This preserves authored mesh data without reversing its winding or changing skin bytes.

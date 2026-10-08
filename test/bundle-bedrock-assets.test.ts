@@ -1,6 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { zipEntries } from "../src/zip.ts";
 import { inflateRawSync } from "node:zlib";
-import { assetZip, readBedrockArchive } from "../scripts/bundle-bedrock-assets.ts";
+import { assetZip, bundleBedrockAssets, readBedrockArchive } from "../scripts/bundle-bedrock-assets.ts";
 
 function archive() {
   const bytes = Buffer.alloc(16 + 2 * 256 + 3);
@@ -47,4 +51,30 @@ describe("native asset extraction", () => {
     expect([...inflateRawSync(compressed)]).toEqual([1, 2]);
     expect(bytes.readUInt16LE(bytes.length - 14)).toBe(2);
   });
+});
+
+const extracted: string[] = [];
+afterEach(async () => {
+  await Promise.all(extracted.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
+
+test("extracts actor dependencies with valid material syntax and excludes empty source assets", async () => {
+  const game = await mkdtemp(join(tmpdir(), "stackanvil-native-assets-"));
+  extracted.push(game);
+  const root = join(game, "data", "resource_packs", "vanilla_1.26.51");
+  for (const directory of ["materials", "attachables", "textures", "ui", "font"]) await mkdir(join(root, directory), { recursive: true });
+  await writeFile(join(root, "manifest.json"), JSON.stringify({ header: { version: [1, 26, 51] } }));
+  await writeFile(join(root, "materials", "entity.material"), '{ // native syntax\n "materials":{"child:entity":{"+defines":["ALPHA_TEST",],},},}');
+  await writeFile(join(root, "attachables", "shield.json"), "{}");
+  await writeFile(join(root, "textures", "empty.png"), Buffer.alloc(0));
+  await writeFile(join(root, "textures", "panorama.hdr"), Buffer.from([1]));
+  await writeFile(join(root, "ui", "server_form.json"), "{}");
+  await writeFile(join(root, "font", "native.ttf"), Buffer.from([2]));
+  const output = join(game, "bundle");
+  await bundleBedrockAssets(game, "1.26.51.1", output);
+  const files = zipEntries(await readFile(join(output, "builtin-01.zip")));
+  expect(files.size).toBe(3);
+  expect(JSON.parse(files.get("library/vanilla_1.26.51/materials/entity.material")!().toString()))
+    .toEqual({ materials: { "child:entity": { "+defines": ["ALPHA_TEST"] } } });
+  expect(files.get("library/vanilla_1.26.51/attachables/shield.json")!().length).toBeGreaterThan(0);
 });

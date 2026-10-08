@@ -10,6 +10,7 @@ import { command } from "./process.ts";
 import { sync } from "./stack.ts";
 import { prepareViaFabricPlus } from "./viafabricplus.ts";
 import { verifyBuiltinUi, verifyEmbeddedBuiltinUi, builtinUiResource } from "./bedrock-ui.ts";
+import { verifyBuiltinAssets, verifyEmbeddedBuiltinAssets, builtinAssetsResource } from "./bedrock-assets.ts";
 
 interface Coordinates { group: string; artifact: string; version: string }
 
@@ -26,9 +27,7 @@ export async function builtinAssetArguments(id: string, repository = root): Prom
     const path = await verifyBuiltinUi(bundle, version);
     return [`-PbedrockBuiltinUi=${path}`];
   }
-  if (!existsSync(join(directory, "assets", "viafabricplus-bedrock", "builtin", "manifest.json"))) {
-    throw new Error(`Bundled Bedrock assets are missing for ${version}`);
-  }
+  await verifyBuiltinAssets(join(directory, builtinAssetsResource), version);
   return [`-PbedrockBuiltinAssets=${directory}`];
 }
 
@@ -84,6 +83,9 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
   if (["viabedrock", "viafabricplus-bedrock", "viaproxy"].includes(id)) {
     const { version } = JSON.parse(yield* Effect.promise(() => readFile(join(root, "bedrock-assets.json"), "utf8"))) as { version: string };
     yield* Effect.promise(() => verifyEmbeddedBuiltinUi(artifact, id, join(root, "assets", "bedrock", version, builtinUiResource), version));
+    if (id === "viafabricplus-bedrock") {
+      yield* Effect.promise(() => verifyEmbeddedBuiltinAssets(artifact, join(root, "assets", "bedrock", version, builtinAssetsResource), version));
+    }
   }
   const name = basename(artifact);
   if (!name.endsWith("-StackAnvil.jar")) {

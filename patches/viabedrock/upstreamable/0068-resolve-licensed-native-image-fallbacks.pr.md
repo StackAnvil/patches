@@ -2,6 +2,14 @@ Server packs can refer to vanilla item images without sending those images. Hive
 
 Add a platform provider for licensed native images. Run acquisition on the existing resource pack executor, then wait for images and server downloads before conversion. Keep each native image layer below bundled metadata and server packs, with its original path casing and overlay order. The converted cache includes the image bytes. The provider does not change server pack advertisements or counts.
 
-The default provider returns no additional packs. Platforms must supply licensed image layers containing only a manifest and texture images. Server metadata keeps its existing priority.
+The default provider returns no additional packs. Platforms can supply licensed image layers and the supported actor dependencies. Server metadata keeps its existing priority.
 
 Validation: all 270 ViaBedrock tests pass. Focused tests check vanilla atlas aliases, server overrides, and higher TGA layers that replace lower PNG images. Other tests check metadata rejection and cache invalidation after image bytes change. The Hive evidence comes from a saved official-client capture at network protocol 2193; no further public join was needed.
+
+## Native actor dependencies
+
+The provider whitelist also accepts native equipment definitions, models, animations, controllers and material documents.
+These dependencies retain their lower priority and built-in provenance.
+Server packs can replace them.
+Unrelated entity, block and atlas definitions remain excluded.
+The shield regression covers dependencies, precedence and provenance.

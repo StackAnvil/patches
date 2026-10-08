@@ -1,4 +1,4 @@
-From f21633c28b10397a00a00cf32d65931caa8f7641 Mon Sep 17 00:00:00 2001
+From db29beb664e31a1b499dbe7ba10653405ac05da1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 23:58:59 +0200
 Subject: [PATCH] feat(resource-packs): resolve licensed native image fallbacks
@@ -6,16 +6,24 @@ Subject: [PATCH] feat(resource-packs): resolve licensed native image fallbacks
 Bedrock 1.26.51.1 protocol 2193 accepts Hive item atlas aliases to vanilla images which the server does not resend. The bundled metadata archives intentionally contain no images, leaving these aliases unresolved during Java conversion.
 
 Expose a platform provider for licensed image-only resource layers. Acquire them on the existing pack executor and wait alongside the server download without blocking its Netty event loop. Preserve native overlay precedence below bundled metadata and server packs, include their exact pixels in conversion cache fingerprints, and keep them outside server advertisements and pack identity tracking.
+
+Native equipment can refer to built-in geometry, animations, controllers
+and material parents. Permit these actor dependency documents from the
+licensed provider while keeping them below server packs. Do not publish
+unrelated block, entity or item atlas definitions. The synthetic shield
+regression covers dependencies, server precedence and provenance.
 ---
  .../viabedrock/protocol/BedrockProtocol.java  |  2 +
  .../protocol/packet/ResourcePackPackets.java  |  2 +-
  .../provider/BuiltinResourcePackProvider.java | 26 +++++++
  .../storage/ResourcePackLoadStateTracker.java | 19 ++++-
- .../protocol/storage/ResourcePackStorage.java | 24 +++++-
+ .../protocol/storage/ResourcePackStorage.java | 27 ++++++-
+ .../BuiltinActorResourcesTest.java            | 51 +++++++++++++
  .../http/ConvertedResourcePackCacheTest.java  | 22 ++++++
  .../resourcepack/ModelResourceAssetsTest.java | 75 +++++++++++++++++++
- 7 files changed, 163 insertions(+), 7 deletions(-)
+ 8 files changed, 217 insertions(+), 7 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/BuiltinActorResourcesTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index e7792a28a..4d2f6dacb 100644
@@ -52,7 +60,7 @@ index 5a54fc635..57976037b 100644
          if (shouldTranslate(user)) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
 new file mode 100644
-index 000000000..542d9d32a
+index 000000000..3e2a05127
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
 @@ -0,0 +1,26 @@
@@ -69,13 +77,13 @@ index 000000000..542d9d32a
 +
 +import java.util.List;
 +
-+/** Supplies licensed native images missing from the bundled metadata packs. */
++/** Supplies licensed native images and actor resources missing from the bundled metadata packs. */
 +public class BuiltinResourcePackProvider implements Provider {
 +
 +    /**
 +     * Called on the resource pack executor, where acquisition may block.
-+     * Return image-only packs (plus manifests) in bottom-to-top order, or an empty list.
-+     * The packs supply lower-priority images and is never advertised to the server.
++     * Return image and actor resource packs (plus manifests) in bottom-to-top order, or an empty list.
++     * The packs supply lower-priority resources and are never advertised to the server.
 +     */
 +    public List<ResourcePack> load(final UserConnection user) throws Exception {
 +        return List.of();
@@ -143,10 +151,10 @@ index 47cf78aef..329d12723 100644
  
      public void markStackReceived() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
-index 8082865c1..f7cb6f8c5 100644
+index 8082865c1..8227c2ad3 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
-@@ -58,10 +58,24 @@ public class ResourcePackStorage implements StorableObject {
+@@ -58,10 +58,27 @@ public class ResourcePackStorage implements StorableObject {
      private final RenderControllerDefinitions renderControllers;
  
      public ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom) {
@@ -164,8 +172,11 @@ index 8082865c1..f7cb6f8c5 100644
 +        for (ResourcePack builtinImages : builtinImagesBottomToTop) {
 +            for (String path : builtinImages.content().getFilesDeep("", "")) {
 +                if (!path.equals("manifest.json") && !(path.startsWith("textures/")
-+                        && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")))) {
-+                    throw new IllegalArgumentException("Built-in image pack contains a non-image resource: " + path);
++                        && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")))
++                        && !(path.startsWith("materials/") && path.endsWith(".material"))
++                        && !(path.endsWith(".json") && List.of("attachables/", "models/", "animations/",
++                                "animation_controllers/", "render_controllers/").stream().anyMatch(path::startsWith))) {
++                    throw new IllegalArgumentException("Built-in resource pack contains an unsupported resource: " + path);
 +                }
 +            }
 +            this.packStackBottomToTop.add(builtinImages);
@@ -173,7 +184,7 @@ index 8082865c1..f7cb6f8c5 100644
          final List<ResourcePack> orderedPacks = sourceServers == null ? ResourcePackStack.orderTopToBottom(resourcePacksTopToBottom) : resourcePacksTopToBottom;
          this.serverPacks.addAll(sourceServers == null ? orderedPacks : sourceServers);
          if (sourceServers == null && BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) { // null if ran from ResourcePackConverterTest
-@@ -77,6 +91,10 @@ public class ResourcePackStorage implements StorableObject {
+@@ -77,6 +94,10 @@ public class ResourcePackStorage implements StorableObject {
              }
          }
  
@@ -184,7 +195,7 @@ index 8082865c1..f7cb6f8c5 100644
          this.texts = new TextDefinitions(this);
          this.blocks = new BlockDefinitions(this);
          this.blockCulling = new BlockCullingDefinitions(this);
-@@ -107,7 +125,7 @@ public class ResourcePackStorage implements StorableObject {
+@@ -107,7 +128,7 @@ public class ResourcePackStorage implements StorableObject {
                      servers.add(pack);
                  }
              }
@@ -193,6 +204,63 @@ index 8082865c1..f7cb6f8c5 100644
              storage.setLoadedOnJavaClient();
              return storage;
          } catch (final RuntimeException invalid) {
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/BuiltinActorResourcesTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/BuiltinActorResourcesTest.java
+new file mode 100644
+index 000000000..b508d8527
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/BuiltinActorResourcesTest.java
+@@ -0,0 +1,51 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BuiltinActorResourcesTest {
++
++    @Test
++    void resolvesBundledEquipmentBelowServerOverrides() {
++        final ResourcePack builtin = pack(1, "geometry.builtin");
++        builtin.content().putString("materials/native.material", "{\"materials\":{}}");
++        final ResourcePack server = pack(2, "geometry.server");
++        final ResourcePackStorage baseline = new ResourcePackStorage(List.of(), List.of(builtin));
++        assertEquals("geometry.builtin", baseline.getAttachables().attachables().get("minecraft:shield")
++                .attachableData().getGeometries().get("default"));
++        final ResourcePackStorage overridden = new ResourcePackStorage(List.of(server), List.of(builtin));
++        assertEquals("geometry.server", overridden.getAttachables().attachables().get("minecraft:shield")
++                .attachableData().getGeometries().get("default"));
++        assertFalse(overridden.isServerPack(builtin));
++        assertTrue(overridden.isServerPack(server));
++    }
++
++    @Test
++    void rejectsUnrelatedDefinitionsFromBuiltinProviders() {
++        final ResourcePack builtin = pack(1, "geometry.builtin");
++        builtin.content().putString("blocks.json", "{}");
++        assertThrows(IllegalArgumentException.class, () -> new ResourcePackStorage(List.of(), List.of(builtin)));
++    }
++
++    private static ResourcePack pack(final int identity, final String geometry) {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"test\","
++                + "\"uuid\":\"00000000-0000-0000-0000-" + String.format("%012d", identity) + "\",\"version\":[1,0,0]}}");
++        content.putString("attachables/shield.json", "{\"format_version\":\"1.10.0\",\"minecraft:attachable\":{\"description\":{"
++                + "\"identifier\":\"minecraft:shield\",\"materials\":{\"default\":\"entity_alphatest\"},"
++                + "\"textures\":{\"default\":\"textures/shield\"},\"geometry\":{\"default\":\"" + geometry + "\"},"
++                + "\"render_controllers\":[\"controller.render.shield\"]}}}");
++        return new ResourcePack(content);
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 index 3daadbd87..a764ca59c 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
@@ -320,4 +388,4 @@ index 5d513b681..2e4c50dff 100644
          final Content result = new InMemoryContent();
          rewriter.submitTasks(storage, task -> result.putAll(task.get()));
 -- 
-2.55.0
+2.56.0

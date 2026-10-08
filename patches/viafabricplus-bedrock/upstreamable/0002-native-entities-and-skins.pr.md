@@ -247,3 +247,20 @@ Native uses a different position-facing or quaternion basis before its `(-,-,+)`
 Complete handedness equivalence, font raster origin and metrics, backgrounds, stripped formatting-only rows, and native GPU comparisons remain unverified.
 
 Final artifacts pass nine real name-submission controls and twenty captured submissions on each direct and ViaProxy route, with plain graphics and Iris. Full native camera, font raster, and GPU comparisons remain required.\nThe [combined runtime record](../../../docs/bedrock-coverage.md#final-combined-runtime-verification) retains the complete scene gates and remaining requirements.\n
+
+## Authored polygons with Sodium
+
+Native cubes now compile their current polygons through a dedicated subclass.
+Sodium 0.9.2 caches constructor geometry and box UVs before native code replaces the polygons.
+That cache loses per-face UVs and reduces Character Creator mesh placeholders to zero-sized cuboids.
+The regression checks emitted positions, UVs, normals, light, overlay and color under reflected transforms.
+
+Ordinary unlit actors use the Iris entity cutout family with full-bright packed light.
+They no longer select Complementary's glowing-eyes program.
+Culling and the original native pipelines stay intact.
+Native inverse-alpha emissive masks still lack full shader-pack parity.
+The reported Apple GPU needs a fresh visual comparison.
+
+Licensed material documents now provide the native inheritance graph.
+The renderer removes built-in GPU layout, sampler and skinning metadata that Java replaces with its own buffers and CPU poses.
+Server material validation remains strict.

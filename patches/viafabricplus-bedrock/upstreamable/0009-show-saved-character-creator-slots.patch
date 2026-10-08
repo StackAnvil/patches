@@ -1,4 +1,4 @@
-From b09adabf1d9455adf57d741a942e0d3435934b0c Mon Sep 17 00:00:00 2001
+From 5da30a144d9fa2e671b0076cc1d448b60c3aa6b3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1734,6 +1734,20 @@ associations on replacement, downgrade and disconnect. Bedrock 1.26.51.1
 portrait consumer 148ddc410 resolves #entity_id through the Level UID lookup.
 A targeted add-on lifecycle test covers local aliases, stale removal,
 downgrade, upgrade and clear; the legacy decoder remains unchanged.
+
+Bedrock 1.26.51.1 registers dynamic motion before parametric motion and
+executes both callbacks. Its parametric update at 1461ca960 independently
+overrides supplied position, velocity direction and rotation fields.
+Omitted fields retain dynamic state. Direction retains speed except below
+FLT_EPSILON; normalization rejects lengths below 0.0001. The licensed
+executable SHA-256 is 537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7.
+
+Remove the exclusive-motion rejection reported for the CubeCraft
+lightning trail. Do not add shape origin to an authored parametric
+position or interpret its motion direction as billboard facing.
+A mixed-motion emitter regression and 48 executed native constant cases
+cover composition, independent overrides and the velocity thresholds.
+Private native code and results remain outside the repository.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -1771,7 +1785,7 @@ downgrade, upgrade and clear; the legacy decoder remains unchanged.
  .../appearance/BedrockParticleCounts.java     |   58 +
  .../appearance/BedrockParticleCurves.java     |  173 ++
  .../appearance/BedrockParticleDefinition.java |  261 +++
- .../appearance/BedrockParticleEffect.java     |  854 +++++++++
+ .../appearance/BedrockParticleEffect.java     |  870 ++++++++++
  .../appearance/BedrockParticleEvents.java     |  170 ++
  .../appearance/BedrockParticleFacing.java     |  151 ++
  .../appearance/BedrockParticleFrames.java     |   49 +
@@ -1916,7 +1930,7 @@ downgrade, upgrade and clear; the legacy decoder remains unchanged.
  .../appearance/BedrockParticleCurvesTest.java |  120 ++
  .../BedrockParticleDefinitionTest.java        |  190 ++
  .../BedrockParticleDispatchTest.java          |  101 ++
- .../appearance/BedrockParticleEffectTest.java |  615 +++++++
+ .../appearance/BedrockParticleEffectTest.java |  676 ++++++++
  .../appearance/BedrockParticleEventsTest.java |  301 ++++
  .../appearance/BedrockParticleFacingTest.java |  153 ++
  .../appearance/BedrockParticleFramesTest.java |  112 ++
@@ -1965,7 +1979,7 @@ downgrade, upgrade and clear; the legacy decoder remains unchanged.
  .../render/BedrockPlayerModelTest.java        |  100 ++
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 230 files changed, 35028 insertions(+), 117 deletions(-)
+ 230 files changed, 35105 insertions(+), 117 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibility.java
@@ -9972,10 +9986,10 @@ index 0000000..bebb9e5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
 new file mode 100644
-index 0000000..62bad36
+index 0000000..a569642
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
-@@ -0,0 +1,854 @@
+@@ -0,0 +1,870 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -10025,8 +10039,7 @@ index 0000000..62bad36
 +    private final Motion motion;
 +    private final BedrockParticleCollision collision;
 +    private final BedrockParticleBlocks blocks;
-+    private final List<BedrockMolang.Program> parametric, parametricDirection;
-+    private final BedrockMolang.Program parametricRotation;
++    private final ParametricMotion parametric;
 +    private final Billboard billboard;
 +    private final Tint tint;
 +    private final BedrockParticleSpace space;
@@ -10079,16 +10092,12 @@ index 0000000..62bad36
 +        final JsonObject spin = object(components, "particle_initial_spin");
 +        this.rotation = program(spin, "rotation", 0);
 +        this.rotationRate = program(spin, "rotation_rate", 0);
-+        if (components.has("minecraft:particle_motion_dynamic") && components.has("minecraft:particle_motion_parametric"))
-+            throw new IOException("Ambiguous particle motion");
 +        this.motion = components.has("minecraft:particle_motion_dynamic")
 +                ? Motion.read(object(components, "particle_motion_dynamic")) : null;
 +        this.collision = components.has("minecraft:particle_motion_collision")
 +                ? BedrockParticleCollision.read(object(components, "particle_motion_collision")) : null;
 +        final JsonObject parameter = components.getAsJsonObject("minecraft:particle_motion_parametric");
-+        this.parametric = parameter == null ? null : vector(parameter.get("relative_position"), 3, 0);
-+        this.parametricDirection = parameter == null ? null : vector(parameter.get("direction"), 3, 0);
-+        this.parametricRotation = parameter == null ? null : program(parameter, "rotation", 0);
++        this.parametric = parameter == null ? null : ParametricMotion.read(parameter);
 +        this.billboard = Billboard.read(object(components, "particle_appearance_billboard"));
 +        if (this.renderable() && !this.texture.startsWith("textures/")) throw new IOException("Invalid particle texture");
 +        if (!Set.of("particles_alpha", "particles_blend", "particles_opaque", "particles_add").contains(this.material))
@@ -10340,7 +10349,7 @@ index 0000000..62bad36
 +
 +    private final class Particle {
 +        private final BedrockMolang environment;
-+        private final Vector3f origin, position, velocity, facing;
++        private final Vector3f position, velocity, facing;
 +        private final long duration;
 +        private long age;
 +        private float delta, rotation, rotationRate, previousRotation;
@@ -10355,8 +10364,7 @@ index 0000000..62bad36
 +            randomVariables(environment, random, "particle");
 +            environment.variable("particle_age", 0);
 +            final var sample = shape.sample(environment, random, attachment == null ? null : attachment.bounds());
-+            this.origin = sample.position().add(offset);
-+            this.position = new Vector3f(this.origin);
++            this.position = sample.position().add(offset);
 +            this.velocity = speed.sample(environment, sample.direction()).add(initialVelocity);
 +            this.facing = new Vector3f(this.velocity);
 +            if (this.facing.lengthSquared() > 0) this.facing.normalize();
@@ -10391,16 +10399,13 @@ index 0000000..62bad36
 +            this.environment.variable("emitter_lifetime", emitterLifetime);
 +            this.environment.evaluate(particleUpdate, 0);
 +            final Vector3f previous = collision == null ? null : new Vector3f(this.position);
-+            if (parametric != null) {
-+                this.position.set(this.origin).add(evaluated(parametric, this.environment));
-+                this.facing.set(evaluated(parametricDirection, this.environment));
-+                this.rotation = this.environment.evaluate(parametricRotation, 0);
-+            } else if (motion != null) {
++            if (motion != null) {
 +                motion.advance(this.position, this.velocity, nanos, this.environment);
 +                final var spin = motion.spin(this.rotation, this.rotationRate, nanos, this.environment);
 +                this.rotation = spin.angle;
 +                this.rotationRate = spin.speed;
 +            }
++            if (parametric != null) this.rotation = parametric.advance(this.position, this.velocity, this.rotation, this.environment);
 +            if (!this.position.isFinite() || !this.velocity.isFinite()) return false;
 +            if (collision != null) {
 +                for (int axis = 0; axis < 3; axis++)
@@ -10473,6 +10478,31 @@ index 0000000..62bad36
 +
 +    record Visual(Vector3f position, float width, float height, float rotation,
 +                  float u0, float v0, float u1, float v1, int color, BedrockParticleFacing.Mode mode, Vector3f direction, BedrockParticleAttachment.Matrix matrix) {}
++
++    /** Native optional overrides run after dynamic motion and preserve fields absent from the component. */
++    record ParametricMotion(List<BedrockMolang.Program> position, List<BedrockMolang.Program> direction, BedrockMolang.Program rotation) {
++        static ParametricMotion read(final JsonObject value) throws IOException {
++            return new ParametricMotion(value.has("relative_position") ? vector(value.get("relative_position"), 3, 0) : null,
++                    value.has("direction") ? vector(value.get("direction"), 3, 0) : null,
++                    value.has("rotation") ? program(value, "rotation", 0) : null);
++        }
++
++        float advance(final Vector3f position, final Vector3f velocity, final float angle, final BedrockMolang environment) {
++            if (this.position != null) position.set(evaluated(this.position, environment));
++            if (this.direction != null) {
++                final Vector3f direction = evaluated(this.direction, environment);
++                final float speed = velocity.length();
++                if (speed >= Math.ulp(1F)) {
++                    final float length = direction.length();
++                    if (length < 0.0001F) direction.zero();
++                    else direction.div(length);
++                    direction.mul(speed);
++                }
++                velocity.set(direction);
++            }
++            return this.rotation == null ? angle : environment.evaluate(this.rotation, 0);
++        }
++    }
 +
 +    record InitialSpeed(List<BedrockMolang.Program> values, boolean vector) {
 +        static InitialSpeed read(final JsonElement value) throws IOException {
@@ -19355,7 +19385,7 @@ index 0000000..9234b83
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-index 088f2ac..90f81f1 100644
+index 437a11a..8998b94 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 @@ -74,16 +74,25 @@ public final class BedrockGeometry {
@@ -31459,10 +31489,10 @@ index 0000000..2701ccd
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
 new file mode 100644
-index 0000000..d4c1c0f
+index 0000000..03382cb
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
-@@ -0,0 +1,615 @@
+@@ -0,0 +1,676 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -31482,6 +31512,67 @@ index 0000000..d4c1c0f
 +import java.util.Random;
 +
 +final class BedrockParticleEffectTest {
++    @Test
++    void composesDynamicMotionWithOptionalParametricOverrides() throws Exception {
++        final var document = burst();
++        components(document).add("minecraft:particle_motion_dynamic", json("""
++                {"linear_acceleration":[2,0,0],"rotation_acceleration":20}
++                """));
++        components(document).add("minecraft:particle_motion_parametric", json("""
++                {"rotation":45}
++                """));
++        final var emitter = BedrockParticleEffect.read(document).emitter(new BedrockMolang(), new Random(1), Vec3.ZERO);
++        emitter.advance(50_000_000, 10, null, (x, y, z) -> List.of());
++        final var first = sample(emitter).getFirst();
++        emitter.advance(50_000_000, 10, null, (x, y, z) -> List.of());
++        final var second = sample(emitter).getFirst();
++        assertTrue(second.position().x > first.position().x);
++        assertEquals(45, second.rotation());
++    }
++
++    @Test
++    void preservesOmittedParametricFieldsAndNativeSpeedThresholds() throws Exception {
++        final var position = new Vector3f(7, 8, 9);
++        final var velocity = new Vector3f(1, 2, 2);
++        final var environment = new BedrockMolang();
++        final var empty = BedrockParticleEffect.ParametricMotion.read(new JsonObject());
++        assertEquals(13, empty.advance(position, velocity, 13, environment));
++        assertEquals(new Vector3f(7, 8, 9), position);
++        assertEquals(new Vector3f(1, 2, 2), velocity);
++        final var redirected = BedrockParticleEffect.ParametricMotion.read(json("""
++                {"relative_position":[4,5,6],"direction":[3,4,0]}
++                """));
++        redirected.advance(position, velocity, 13, environment);
++        assertEquals(new Vector3f(4, 5, 6), position);
++        assertEquals(1.8F, velocity.x, .00001F);
++        assertEquals(2.4F, velocity.y, .00001F);
++        velocity.zero();
++        redirected.advance(position, velocity, 13, environment);
++        assertEquals(new Vector3f(3, 4, 0), velocity);
++        final var tiny = BedrockParticleEffect.ParametricMotion.read(json("{\"direction\":[0.000001,0,0]}"));
++        tiny.advance(position, velocity, 13, environment);
++        assertEquals(new Vector3f(), velocity);
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_PARAMETRIC_REFERENCE", matches = ".+")
++    void matchesExecutedNativeParametricOverrides() throws Exception {
++        final var reference = json(Files.readString(Path.of(System.getenv("STACKANVIL_PARAMETRIC_REFERENCE"))));
++        for (final var element : reference.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            final JsonObject definition = new JsonObject();
++            for (final String field : List.of("position", "direction", "rotation"))
++                if (!row.get(field).isJsonNull()) definition.add(field.equals("position") ? "relative_position" : field, row.get(field));
++            final var position = new Vector3f(7, 8, 9);
++            final var velocity = vector(row, "velocity");
++            final float rotation = BedrockParticleEffect.ParametricMotion.read(definition).advance(position, velocity, 13, new BedrockMolang());
++            final var expected = row.getAsJsonObject("result");
++            compare(vector(expected, "position"), position);
++            for (int axis = 0; axis < 3; axis++) assertEquals(vector(expected, "velocity").get(axis), velocity.get(axis), .000001F);
++            assertEquals(expected.get("rotation").getAsFloat(), rotation);
++        }
++    }
++
 +    @Test
 +    void evaluatesFlipbookFramesBeforeBaseVThenBaseU() throws Exception {
 +        final var declaration = json("""
