@@ -23,6 +23,7 @@ export const devSetup = Effect.fn("devSetup")(function* () {
   const server = process.env.BEDROCK_SERVER_HOME ?? join(homedir(), "bedrock-server");
   const launcher = process.env.BEDROCK_LAUNCHER ?? join(homedir(), "AppImages", "bedrockonlinux.appimage");
   const missing: string[] = [];
+  if (!Bun.which("cargo")) missing.push("Cargo: install Rust to build the X11 capture helper");
   if (!existsSync(join(server, "bedrock_server"))) missing.push("BEDROCK_SERVER_HOME: download the official Bedrock Dedicated Server and point this variable at its extracted directory (https://www.minecraft.net/en-us/download/server/bedrock)");
   if (!process.env.BEDROCK_DEVICE_HOST && !process.env.BEDROCK_CLIENT_COMMAND && !existsSync(launcher)) {
     missing.push("BEDROCK_LAUNCHER or BEDROCK_CLIENT_COMMAND: point to an installed Bedrock client, or set BEDROCK_DEVICE_HOST for a remote device");

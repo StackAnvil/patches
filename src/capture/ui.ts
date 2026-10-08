@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { root } from "../model.ts";
 import { displayEnv } from "../lab/display.ts";
 import { captureUiEnvironment } from "./ui-environment.ts";
+import { createCaptureX11Builder } from "./native.ts";
 
 export interface WindowInfo {
   id: string;
@@ -30,14 +30,17 @@ export function createCaptureUi(options: {
   environment?: () => Promise<NodeJS.ProcessEnv | undefined>;
   desktopEnvironment?: NodeJS.ProcessEnv;
   execute?: UiExecutor;
+  prepareNative?: (env: NodeJS.ProcessEnv) => Promise<string>;
 } = {}) {
   const desktopEnvironment = options.desktopEnvironment ?? process.env;
   const uiEnvironment = captureUiEnvironment(options.environment ?? (() => displayEnv()), desktopEnvironment);
   const run = async (program: string, args: string[], cwd = root, env?: NodeJS.ProcessEnv) =>
     (options.execute ?? executeUi)(program, args, cwd, env ?? await uiEnvironment());
   const captureDirectory = options.captureDirectory ?? (async () => { throw new Error("Supply --output-dir for a screenshot outside a capture session."); });
-  const nativeSource = join(root, "native", "capture-x11.c");
-  const nativeBinary = join(root, ".stackanvil", "tools", "capture-x11");
+  const prepareNative = options.prepareNative ?? createCaptureX11Builder(async (args, cwd, env) => {
+    await run("cargo", args, cwd, env);
+  });
+  let nativeBinary: string;
   const gnomeRemote = join(root, "scripts", "gnome_remote.py");
   const checkId = (id: string) => {
     if (!/^[a-z0-9][a-z0-9-]{0,90}$/.test(id)) throw new Error("Use lowercase letters, digits, and hyphens for a screenshot name.");
@@ -45,10 +48,7 @@ export function createCaptureUi(options: {
 
   async function compileUi(): Promise<void> {
     if (!(await uiEnvironment()).DISPLAY) throw new Error("Set DISPLAY to the game's X display.");
-    await mkdir(join(root, ".stackanvil", "tools"), { recursive: true });
-    if (!existsSync(nativeBinary) || statSync(nativeBinary).mtimeMs < statSync(nativeSource).mtimeMs) {
-      await run("cc", ["-O2", "-Wall", "-Wextra", "-o", nativeBinary, nativeSource, "-lX11", "-lXtst"]);
-    }
+    nativeBinary = await prepareNative(await uiEnvironment());
   }
 
   async function windows(): Promise<WindowInfo[]> {

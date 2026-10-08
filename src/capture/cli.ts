@@ -16,7 +16,6 @@ const uiEnvironment = captureUiEnvironment(() => displayEnv(), process.env);
 const captureRoot = join(root, ".stackanvil", "captures");
 const currentPath = join(captureRoot, "current.json");
 const caDirectory = join(captureRoot, "ca");
-const nativeBinary = join(root, ".stackanvil", "tools", "capture-x11");
 const mitmdump = Bun.which("mitmdump") ?? join(root, ".stackanvil", "tools", "mitmproxy", "bin", "mitmdump");
 const launcher = process.env.BEDROCK_LAUNCHER ?? Bun.which("bedrock-on-linux") ?? join(homedir(), "AppImages", "bedrockonlinux.appimage");
 const ui = createCaptureUi({ captureDirectory: async () => capturePath((await load()).id), environment: uiEnvironment });
@@ -412,7 +411,7 @@ async function doctor(): Promise<void> {
     launcher: existsSync(launcher) ? launcher : "missing",
     mitmdump: existsSync(mitmdump) ? mitmdump : "missing",
     display: process.env.DISPLAY ?? "missing",
-    compiler: Bun.which("cc") ?? "missing",
+    compiler: Bun.which("cargo") ?? "missing",
     ffmpeg: Bun.which("ffmpeg") ?? "missing",
     proxyCa: existsSync(join(caDirectory, "mitmproxy-ca-cert.pem")) ? "generated" : "not generated yet",
   };

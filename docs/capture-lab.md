@@ -11,6 +11,11 @@ The command orchestrator still requires the host's private virtual display; gues
 
 ## Prepare the clients
 
+Install Rust 1.85 or newer with Cargo for the X11 capture helper.
+The first `capture ui` command builds `native/capture-x11` with its locked dependencies.
+The helper uses Rust X11 bindings and requires no Xlib or XTest development headers.
+Build outputs stay under `.stackanvil/tools/`; source changes trigger a rebuild.
+
 Build the stack and install its PrismLauncher instance:
 
 ```bash

@@ -12,7 +12,7 @@ function fixture(environment: NodeJS.ProcessEnv | undefined, desktop: NodeJS.Pro
     calls.push({ args, env });
     return args[0] === "list" ? JSON.stringify(windows) : "";
   };
-  const ui = createCaptureUi({ execute, desktopEnvironment: desktop,
+  const ui = createCaptureUi({ execute, prepareNative: async () => "/test/capture-x11", desktopEnvironment: desktop,
     environment: async () => { lookups++; return environment; } });
   return { ui, calls, replaceWindows(value: typeof windows) { windows = value; }, lookups: () => lookups };
 }
