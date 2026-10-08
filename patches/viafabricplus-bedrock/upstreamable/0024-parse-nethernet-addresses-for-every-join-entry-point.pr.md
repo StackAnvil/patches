@@ -30,3 +30,19 @@ Eight forward-input segments receive no prediction corrections during movement.
 Two stationary corrections follow fixture teleports.
 The optional asset attempt does not publish its current-format cache; fallback allows the join to continue.
 This run verifies the connection entry point and basic movement, without establishing licensed asset or full movement parity.
+
+## Independent PR validation, October 8, 2026
+
+`./gradlew --no-daemon --console=plain clean check build` passes.
+This standalone patch has no test sources.
+A fresh Quick Play comparison with this upstream-only JAR remains pending.
+
+Each PR starts from upstream [14f31f4](https://github.com/ViaVersionAddons/viafabricplus-bedrock/commit/14f31f44c0b018f3bf57c030c117abf1bfe9ff6e) and contains one independent change.
+The build uses upstream ViaBedrock `0.0.31-SNAPSHOT`, resolved as `20261003.172326-5`.
+No StackAnvil setup patch or local Maven repository enters the build.
+
+The three networking patches touch separate files.
+All six application orders pass and produce the same source tree.
+
+Upstream draft: [viafabricplus-bedrock #15](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/15).
+The fork branch is `codex/bedrock-nethernet-parsing`.

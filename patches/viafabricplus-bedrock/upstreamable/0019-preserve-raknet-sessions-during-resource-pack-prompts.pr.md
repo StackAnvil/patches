@@ -76,3 +76,20 @@ The log contains no friends-list error that establishes the cause of the reporte
 Some CDN archives lack a manifest, but protocol downloads recover and finish before the timeout.
 Their original archive contents remain unavailable for diagnosis.
 Actual macOS Modrinth joining, Store acquisition, and friends-list behavior still need runtime verification.
+
+## Independent PR validation, October 8, 2026
+
+`./gradlew --no-daemon --console=plain clean check build` passes.
+This standalone patch has no test sources.
+The existing patch notes record resource-prompt and transport-liveness comparisons. Those earlier comparisons remain separate from this standalone build.
+A fresh in-game comparison with this upstream-only JAR remains pending.
+
+Each PR starts from upstream [14f31f4](https://github.com/ViaVersionAddons/viafabricplus-bedrock/commit/14f31f44c0b018f3bf57c030c117abf1bfe9ff6e) and contains one independent change.
+The build uses upstream ViaBedrock `0.0.31-SNAPSHOT`, resolved as `20261003.172326-5`.
+No StackAnvil setup patch or local Maven repository enters the build.
+
+The three networking patches touch separate files.
+All six application orders pass and produce the same source tree.
+
+Upstream draft: [viafabricplus-bedrock #14](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/14).
+The fork branch is `codex/bedrock-resource-timeout`.
