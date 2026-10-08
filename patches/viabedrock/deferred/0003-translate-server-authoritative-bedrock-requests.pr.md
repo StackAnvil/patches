@@ -284,3 +284,24 @@ This component supplies metadata for a future general inventory UI bridge. It do
 Targeted verification passes all 29 cases, with no skips, failures, or errors. Main and test Checkstyle tasks pass.
 
 The complete 98-patch replay preserves all seven tested source files byte-for-byte. Full combined build and live native inventory presentation remain pending.
+
+## Authored count-one container requests
+
+The negotiated authored subset uses the existing server-authoritative inventory request engine.
+The client supplies only the current menu, opening sequence, revision and clicked source ordinal.
+Core derives source identity, destination permissions, stack network IDs and stack capacity from its current inventory model.
+
+Admission requires the exact ordinary ChestContainer provider and server-authoritative request mode.
+The native count-one planner prefers compatible occupied inventory cells before empty cells in provider order.
+It creates one Place action and preserves the carried stack.
+Locked or unsupported providers retain ordinary fallback.
+Prediction, acknowledgments and rollback use the existing inventory tracker and request storage.
+
+The original Bedrock 1.26.51.1 callback, model, provider and planner controls establish the scoped count-one behavior.
+They do not establish full native physical input routing or Windows serializer parity.
+Java uses the existing tested packet 147 writer; no native wire serialization success is claimed.
+
+The combined private core gate passes 1,015 cases with 30 optional skips.
+Stateful tests cover source count one, stale or reused menus, forbidden destinations, unchanged cursor, send failure and response recovery.
+Legacy backend rejection leaves ordinary Java clicks available.
+Controller navigation and full native keyboard interaction parity remain outside this change.

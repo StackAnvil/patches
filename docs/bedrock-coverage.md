@@ -9101,3 +9101,57 @@ Separate Social opening traces retain unique IDs but omit actor names, titles an
 Those records cannot prove that the current actor-title path selects the authored profile.
 The user's current screenshots still show the generic chest screen for Social Menu.
 Authored container actions, active slot coverage and actual title delivery remain required work.
+
+## Live Social title and deployed core, October 8, 2026
+
+A passive capture inspected the open Social Menu in the desktop client.
+Both protocol states were PLAY, with Java 26.3 and Bedrock protocol 2193.
+The opening context resolved its exact actor unique ID to an armor stand.
+Its typed NAME matched the accepted pack's profile selector. FILTERED_NAME was absent.
+The container and client still retained the generic chest title and layout.
+All fifteen populated external slots retained their custom names and counts.
+
+The deployed core predates the actor-title implementation in the current patch stack.
+Its opening bytecode has no actor-title resolver and publishes a String title instead of the current raw-title model.
+The current source resolves typed actor names at container opening and preserves the raw title for authored conditions.
+No new opening occurred during this capture, so metadata arrival order remains unverified.
+
+The observer removed its two handlers after 120 seconds and retained the original pipeline.
+Its writer and watcher stopped, with no pending callbacks or errors.
+All 38 installed artifacts, generated sources and protected process identities remained unchanged.
+The private capture receipt is `social-actor-passive-v1/live-evidence-v1/capture-result-v1.json` under the inventory research directory.
+
+The combined candidate still requires patch replay, build checks, deployment and visible Social Menu verification.
+Its authored action support uses server-owned slot identities and count-one requests.
+Ordinary inventories and older clients retain their existing routes.
+These implementation checks do not establish native graphical or complete interaction parity.
+
+### Actual item descriptions and combined candidate
+
+A second passive snapshot retained the same menu object, revision, actor and slot identities.
+Each of its fifteen populated external slots had only typed `display.Name` data.
+Lore, filtered names, item locks and unknown keys were absent.
+All twenty-seven external slots passed the candidate's native hover formatter.
+The observer installed no traffic hooks and stopped with no pending callbacks.
+The installed files, generated sources and protected processes remained unchanged.
+
+The offline selector comparison used these actual counts and verified hover values.
+The retained chest title selected the generic inventory branch.
+The separately evaluated actor name selected the authored profile branch with actions for slots 9 through 14.
+That branch referenced slots 0 through 18 and needed no visible player-inventory or cursor providers.
+Its one portrait renderer and six item renderers still need live preparation and pixel checks.
+This comparison does not establish initial actor metadata timing or successful server actions.
+
+The exact exported stack replays 99 core patches and 31 add-on patches.
+Its sources match the combined builds byte for byte.
+Core passes 985 tests, with 30 optional skips, and all three Checkstyle checks.
+The add-on passes 612 tests, with 118 optional skips, plus access-widener validation.
+ViaProxy passes four tests. Both downstream artifacts match all 1,323 approved core entries.
+The private candidates retain normal Fabric dependency metadata.
+Installation, authored slot coverage, actual rendering and count-one acceptance remain unverified at this stage.
+
+The same candidate repairs input withdrawal and recovery.
+Core returns to the latest standard input when the raw-input capability disappears.
+Prediction withdrawal discards pending frames while retaining history and its admission watermark.
+The add-on resamples held physical input after permission updates or an observed capability gap.
+Callback and serialized packet controls pass; native movement and both live server routes remain separate gates.

@@ -79,3 +79,12 @@ Currents, shallow water, lava, effects, vehicles, and broader native trajectorie
 
 The full build contains 16 converter, 624 core, and 603 add-on tests with no failures or errors.
 Core and add-on suites skip 19 and 116 optional cases respectively.
+
+## Raw-input resampling
+
+Permission snapshots and observed transport loss clear the existing raw-input dedup sample.
+The next eligible capture sends the current physical input once, then resumes normal dedup.
+Private actual callback and joined packet fixtures cover unchanged held input, withdrawal, reconnect and unrelated HUD snapshots.
+The original callback fails the resampling control; the candidate passes seven callback controls, sixteen joined packet observations and three history sequences.
+Existing permission tests remain unchanged.
+Those complex transport fixtures stay private because Mockito belongs to a later test owner.

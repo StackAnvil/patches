@@ -46,7 +46,7 @@ The provider currently reads only its packaged, version-checked asset library. I
 - Before the container extension, the complete 31-patch replay and combined Gradle test, check and build gates passed: 674 tests, 556 passed, 118 skipped, no failures or errors. Access-widener validation passes. This project declares no Checkstyle task.
 - Four interaction tests exercise the actual SDL left-button value, dependent toggle visibility, dropdown expansion and selection, typed responses with null slots, inverted scalar and stepped sliders, single-option sliders, and validation of newly visible unsupported controls. The click regression fails before the mouse-button fix.
 - Native slider execution fixtures cover 184 placement, pointer, state and progress cases. Image-clipping fixtures compare 80 controls and 1,888 coordinates, plus aspect-dispatch and zero-source cases. These are CPU consumer checks with supplied components; native scheduler integration and GPU drawing remain unverified.
-- The current immutable core candidate has SHA-256 `d66890ee017d9f4aa629c6b4b46d5f18491826ff05aaf27f4aa341998a36d99a`. The paired addon candidate has SHA-256 `ee6fbbf0703e873e478e8cf884b8fabd7f54f03ba412d713f97ebd509bccbdac`; all 1,302 embedded core file entries match, excluding the manifest and the Loom-added module descriptor. Detailed evidence remains private. No credentials, captures, screenshots, bundled official assets or private paths are added to this patch.
+- The current immutable core candidate has SHA-256 `2e348845a6cc04732804dec3b555ecbdb57e9175e7324951544a4eb6799ca6ce`. The paired addon candidate has SHA-256 `99e7a8f8f63e85c83ff9527dae6ebf2f2cb275a2c88a3bf9e8caa2322aab0d04`; all 1,323 approved core namespace, asset and license entries match, excluding the manifest and the Loom-added module descriptor. Detailed evidence remains private. No credentials, captures, screenshots, bundled official assets or private paths are added to this patch.
 
 Actual client menu rendering, resource reloads and Iris routes must be checked with the final candidate before release.
 
@@ -168,3 +168,35 @@ Normal replay retains all 31 patches; Gradle check, build, POM and access-widene
 All 1,311 approved core entries match the private manual-grid core candidate.
 The 38 installed artifacts, 58 frozen v10 files and 45 prior actor-candidate files remain unchanged.
 These private candidates do not establish current client or Iris acceptance.
+
+
+## Authored manual container interaction
+
+A negotiated native action capability permits an intentionally authored subset of real menu slots.
+Full template chests still require complete slot coverage.
+Every active authored action must map to its real menu slot and clipped pointer rectangle.
+Hidden or omitted slots do not receive generic pickup, shift, number-key, drop, double-click or drag actions.
+
+The client waits for real contents on the same menu object before preparing the presentation.
+It waits for server activation acknowledgment before sending a count-one request.
+Closing, disconnecting, replacing the menu or receiving stale sequence data retires ownership.
+A send or presentation failure disposes the candidate or restores ordinary controls for that exact menu.
+Scroll-triggered scene refresh shares the same deterministic fallback path as slot and tick updates.
+
+Real typed custom-name and lore presentation supplies the native-proven hover subset.
+Unsupported default-name, filter or translation inputs retain fallback instead of fabricated descriptions.
+The controlled named physical chest projection registers authored slots 9, 17 and 18 from actual item data.
+This CPU projection is distinct from actual actor-backed Social delivery or GPU verification.
+
+Four private screen integration tests pass, including installed presentation failure and transport cleanup.
+Additional controller tests cover empty opening followed by real contents and reused-menu rejection.
+The final paired clean build passes 730 cases: 612 passed and 118 optional fixtures skipped.
+Access-widener validation, check, build and POM generation pass.
+The separate compact export replay applies all 99 core and 31 addon patches and reproduces the tested source bytes.
+All 1,323 approved core entries also match the freshly shaded ViaProxy artifact, which passes its four tests.
+The 38 installed files and previous candidates remain unchanged.
+
+A separate offline evaluation uses the captured actor name and real typed item names.
+It selects the authored manual branch, references slots 0 through 18, and exposes actions for slots 9 through 14.
+This does not establish initial actor metadata timing, authored coverage during live preparation, server action acceptance or rendered pixels.
+Native controller focus/navigation and complete native pixel parity remain unverified.

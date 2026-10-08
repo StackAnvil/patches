@@ -1102,3 +1102,11 @@ The base hook and call now belong to this prediction patch; deferred metadata no
 The hook still runs once after the complete sparse update and before actor snapshot publication.
 The upstream stack through this owner passes Java compilation and main Checkstyle.
 The complete replay and build retain the existing behavior and pass 965 tests with 30 optional skips.
+
+## Completed-frame capability withdrawal
+
+The raw unregister handler discards only the pending completed frame.
+It preserves frame watermarks and correction history.
+Actual unregister, re-register and subsequent tick tests reject stale motion while retaining those histories.
+The separate raw-input withdrawal behavior remains in its original patch 0080.
+The combined private core gate passes 1,015 cases, with 30 optional skips.

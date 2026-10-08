@@ -43,3 +43,11 @@ Java has no standard protocol operation for these local input restrictions.
 The client integration applies movement prediction and camera controls.
 Manual mounting behavior and native visual comparisons remain incomplete.
 Ordinary Java clients receive filtered auth input but retain their local prediction behavior.
+
+## Raw-input capability withdrawal
+
+Unregistering the permission channel restores the latest standard input and discards old raw button edges.
+Re-registering alone does not reactivate a stale sample.
+A fresh raw sample can select the separate route again.
+The combined private core gate passes 1,015 cases, with 30 optional skips.
+The final-stack actual handler tests remain with the existing completed-frame fixture in patch 0092.

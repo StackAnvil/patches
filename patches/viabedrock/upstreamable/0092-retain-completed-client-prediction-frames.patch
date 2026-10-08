@@ -1,4 +1,4 @@
-From 94b532cfe2b0ac3fb46ff83c672e25476ec63c62 Mon Sep 17 00:00:00 2001
+From 9e06218f95902f324c465418ab6e5f67bd8c4597 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -415,6 +415,11 @@ capability, metadata and mode transitions cannot retain pre-transition pending
 physics. Target horse callback14b17f0f0 requires raw flags8/28, matching the
 protocol ActorFlags saddle/tame entries. Keep this narrow capability gate
 separate from complete native ShouldBeSimulated/controlling-seat eligibility.
+
+Withdraw the pending completed frame when its permission capability is
+unregistered. Preserve frame watermark and correction history so an old
+frame cannot replay after re-registration. Raw handler regressions cover
+unregister, re-register and the next ordinary tick.
 ---
  build.gradle                                  |  30 +
  .../api/model/CollisionContact.java           |  80 ++
@@ -435,7 +440,7 @@ separate from complete native ShouldBeSimulated/controlling-seat eligibility.
  .../api/model/VehiclePrediction.java          |  75 ++
  .../api/model/VehiclePredictionContext.java   |  90 ++
  .../viabedrock/api/model/WaterMovement.java   |  69 ++
- .../api/model/entity/ClientPlayerEntity.java  | 112 ++-
+ .../api/model/entity/ClientPlayerEntity.java  | 112 +-
  .../viabedrock/api/model/entity/Entity.java   |  65 +-
  .../api/model/entity/LivingEntity.java        |  32 +-
  .../definition/ItemDefinitions.java           |  13 +
@@ -446,7 +451,7 @@ separate from complete native ShouldBeSimulated/controlling-seat eligibility.
  .../protocol/packet/ClientPlayerPackets.java  |  79 +-
  .../protocol/packet/JoinPackets.java          |   1 +
  .../packet/MovementEffectPackets.java         |  54 +
- .../protocol/packet/MultiStatePackets.java    |  41 +
+ .../protocol/packet/MultiStatePackets.java    |  44 +
  .../protocol/packet/WorldPackets.java         |   1 +
  .../protocol/rewriter/ItemDataRewriter.java   |   7 +-
  .../protocol/rewriter/ItemRewriter.java       |  19 +
@@ -455,8 +460,8 @@ separate from complete native ShouldBeSimulated/controlling-seat eligibility.
  .../storage/PlayerPredictionStorage.java      | 106 ++
  .../storage/VehiclePredictionStorage.java     | 145 +++
  .../api/model/CollisionContactTest.java       |  60 ++
- .../api/model/FlightMovementTest.java         | 112 +++
- .../api/model/FluidCurrentTest.java           |  56 ++
+ .../api/model/FlightMovementTest.java         | 112 ++
+ .../api/model/FluidCurrentTest.java           |  56 +
  .../model/GeyserMovementReferenceTest.java    |  50 +
  .../api/model/GeyserMovementTest.java         | 131 +++
  .../api/model/GlideMovementTest.java          | 115 +++
@@ -469,7 +474,7 @@ separate from complete native ShouldBeSimulated/controlling-seat eligibility.
  .../api/model/SneakingInputStateTest.java     |  32 +
  .../api/model/SwiftSneakStateTest.java        |  32 +
  .../UnderwaterMovementAttributeTest.java      |  35 +
- .../api/model/VehiclePredictionTest.java      | 114 +++
+ .../api/model/VehiclePredictionTest.java      | 114 ++
  .../api/model/WaterMovementTest.java          |  88 ++
  .../ClientPlayerMovementAttributeTest.java    |  17 +-
  .../entity/FlightMovementSnapshotTest.java    | 189 ++++
@@ -477,13 +482,13 @@ separate from complete native ShouldBeSimulated/controlling-seat eligibility.
  .../UnderwaterMovementTransportTest.java      | 129 +++
  .../api/util/MathUtilMovementTest.java        |  44 +
  .../model/BedrockItemEnchantmentTest.java     |  73 ++
- .../protocol/model/ItemUseModifiersTest.java  |  55 ++
+ .../protocol/model/ItemUseModifiersTest.java  |  55 +
  .../packet/ClientPlayerPacketsTest.java       |  32 +-
- .../packet/CompletedFramePositionTest.java    | 922 ++++++++++++++++++
+ .../packet/CompletedFramePositionTest.java    | 972 ++++++++++++++++++
  .../packet/MovementEffectPacketsTest.java     | 116 +++
  .../packet/PlayerCorrectionPacketTest.java    | 184 ++++
  .../packet/PlayerPredictionPacketTest.java    |  87 ++
- 67 files changed, 5525 insertions(+), 53 deletions(-)
+ 67 files changed, 5578 insertions(+), 53 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java
@@ -2792,7 +2797,7 @@ index 000000000..42f03cc06
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index 66352dd85..5ed0fbf2e 100644
+index ee7b1d2dc..92fd58c52 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 @@ -33,7 +33,12 @@ import net.raphimc.viabedrock.api.model.NativeCustomEntityMessage;
@@ -2817,10 +2822,13 @@ index 66352dd85..5ed0fbf2e 100644
  import net.raphimc.viabedrock.protocol.storage.HudVisibilityStorage;
  import net.raphimc.viabedrock.protocol.storage.CameraEffectsStorage;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
-@@ -144,12 +151,37 @@ public final class MultiStatePackets {
-         if (channel.equals("minecraft:unregister")) {
-             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
-             wrapper.user().get(ChannelStorage.class).removeChannels(channels);
+@@ -147,12 +154,40 @@ public final class MultiStatePackets {
+             if (channels.contains(PlayerInputPermissions.CHANNEL) && wrapper.user().has(PlayerInputStorage.class)) {
+                 wrapper.user().get(PlayerInputStorage.class).withdrawRawInput();
+             }
++            if (channels.contains(PlayerInputPermissions.CHANNEL) && wrapper.user().has(PlayerPredictionStorage.class)) {
++                wrapper.user().get(PlayerPredictionStorage.class).discardPending();
++            }
 +            if (wrapper.user().has(VehiclePredictionStorage.class)) {
 +                wrapper.user().get(VehiclePredictionStorage.class).refresh();
 +            }
@@ -2855,7 +2863,7 @@ index 66352dd85..5ed0fbf2e 100644
          if (channel.equals(PlayerInput.CHANNEL)) {
              if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY
                      && wrapper.user().get(ChannelStorage.class).hasChannel(PlayerInputPermissions.CHANNEL)) {
-@@ -176,6 +208,15 @@ public final class MultiStatePackets {
+@@ -179,6 +214,15 @@ public final class MultiStatePackets {
                      && wrapper.user().has(ChunkTracker.class)) {
                  wrapper.user().get(ChunkTracker.class).sendNativeBlockSnapshot();
              }
@@ -3007,7 +3015,7 @@ index 8db734269..35d8444cf 100644
          for (Entity entity : this.entities.values()) {
              if (entity instanceof CustomEntity customEntity) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
-index 47c6a05d1..97c0442e5 100644
+index 95391851d..f8bf20f85 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 @@ -11,6 +11,9 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
@@ -3020,7 +3028,7 @@ index 47c6a05d1..97c0442e5 100644
  import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
-@@ -96,12 +99,18 @@ public final class PlayerInputStorage extends StoredObject {
+@@ -107,12 +110,18 @@ public final class PlayerInputStorage extends StoredObject {
          }
          final PacketWrapper register = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
          register.write(Types.STRING, "minecraft:register");
@@ -5798,10 +5806,10 @@ index ad55fc55c..93bdd824d 100644
          final ClientPlayerEntity player = player();
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
 new file mode 100644
-index 000000000..8ac4c470a
+index 000000000..011658e58
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
-@@ -0,0 +1,922 @@
+@@ -0,0 +1,972 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6432,6 +6440,51 @@ index 000000000..8ac4c470a
 +        }
 +    }
 +
++    @Test
++    void withdrawingPredictionCapabilityDiscardsPendingWithoutRebindingItsFrame() throws Exception {
++        for (boolean tickWhileWithdrawn : new boolean[] {false, true}) {
++            try (Fixture fixture = new Fixture()) {
++                fixture.player.abilities().getOrCreateCacheLayer().setAbility(AbilitiesIndex.Flying, true);
++                fixture.accept(prediction(10, fixture.player.javaPosition()));
++                final Input accepted = fixture.tick();
++                assertEquals(10, fixture.predictions.clientFrame(accepted.tick()));
++                fixture.accept(prediction(11, fixture.player.javaPosition()));
++                fixture.capability("minecraft:unregister", PlayerInputPermissions.CHANNEL);
++                if (tickWhileWithdrawn) {
++                    final Input withdrawn = fixture.tick();
++                    assertEquals(Position3f.ZERO, withdrawn.velocity());
++                    assertEquals(-1, fixture.predictions.clientFrame(withdrawn.tick()));
++                }
++                fixture.capability("minecraft:register", PlayerInputPermissions.CHANNEL);
++                final Input restored = fixture.tick();
++                assertEquals(Position3f.ZERO, restored.velocity());
++                assertEquals(-1, fixture.predictions.clientFrame(restored.tick()));
++                fixture.accept(prediction(11, fixture.player.javaPosition()));
++                final Input replayed = fixture.tick();
++                assertEquals(Position3f.ZERO, replayed.velocity());
++                assertEquals(-1, fixture.predictions.clientFrame(replayed.tick()));
++                fixture.accept(prediction(12, fixture.player.javaPosition()));
++                final Input next = fixture.tick();
++                assertEquals(prediction(12, fixture.player.javaPosition()).motion(), next.velocity());
++                assertEquals(12, fixture.predictions.clientFrame(next.tick()));
++                assertEquals(10, fixture.predictions.clientFrame(accepted.tick()));
++            }
++        }
++    }
++
++    @Test
++    void unrelatedCapabilityChangesPreservePendingCompletedPhysics() throws Exception {
++        try (Fixture fixture = new Fixture()) {
++            final PlayerPrediction completed = prediction(1, fixture.player.javaPosition());
++            fixture.accept(completed);
++            fixture.capability("minecraft:unregister", VehiclePredictionContext.CHANNEL);
++            fixture.capability("minecraft:register", PlayerInputPermissions.CHANNEL);
++            final Input accepted = fixture.tick();
++            assertEquals(completed.motion(), accepted.velocity());
++            assertEquals(1, fixture.predictions.clientFrame(accepted.tick()));
++        }
++    }
++
 +    private static Stream<Position3f> floatPositions() {
 +        return Stream.of(new Position3f(-0.0001F, -64F, 0.0001F), new Position3f(7F, 0F, -7F),
 +                new Position3f(16384F, 255.99997F, -16384F), new Position3f(16777216F, 320F, -16777216F));
@@ -6508,6 +6561,7 @@ index 000000000..8ac4c470a
 +            when(this.info.getServerState()).thenReturn(State.PLAY);
 +            when(this.user.get(EntityTracker.class)).thenReturn(this.tracker);
 +            when(this.user.get(PlayerPredictionStorage.class)).thenReturn(this.predictions);
++            when(this.user.has(PlayerPredictionStorage.class)).thenReturn(true);
 +            when(this.user.get(VehiclePredictionStorage.class)).thenReturn(this.vehicles);
 +            when(this.user.has(VehiclePredictionStorage.class)).thenReturn(true);
 +            when(this.user.get(PlayerInputStorage.class)).thenReturn(this.inputs);
@@ -6578,10 +6632,14 @@ index 000000000..8ac4c470a
 +        }
 +
 +        private void unregisterVehicle() throws Exception {
++            this.capability("minecraft:unregister", VehiclePredictionContext.CHANNEL);
++        }
++
++        private void capability(final String operation, final String channel) throws Exception {
 +            final var bytes = Unpooled.buffer();
 +            try {
-+                Types.STRING.write(bytes, "minecraft:unregister");
-+                bytes.writeBytes(VehiclePredictionContext.CHANNEL.getBytes(java.nio.charset.StandardCharsets.UTF_8));
++                Types.STRING.write(bytes, operation);
++                bytes.writeBytes(channel.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 +                final PacketWrapper wrapper = new PacketWrapperImpl(ServerboundPackets26_3.CUSTOM_PAYLOAD, bytes, this.user);
 +                MultiStatePackets.CUSTOM_PAYLOAD_HANDLER.handle(wrapper);
 +                assertTrue(wrapper.isCancelled());

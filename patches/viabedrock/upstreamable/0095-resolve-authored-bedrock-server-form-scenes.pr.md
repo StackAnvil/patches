@@ -233,3 +233,26 @@ Production nonempty Java stacks still lack the native `#hover_text` producer.
 A separately supplied hover binding exposes unsupported `button.container_auto_place_one` mappings.
 That diagnostic does not establish actual Social contents, names, actor delivery or native request semantics.
 The frontend still requires full slot completeness; intentional authored subset admission remains a separate review.
+
+## Negotiated authored container actions
+
+Portable UI resolution now identifies the authored manual slot subset and its referenced slot identities.
+Full template chests retain complete slot coverage.
+The legacy presentation channel retains its exact format 1 bytes.
+A separate versioned channel carries action capability, opening sequence and activation status.
+
+The shared presentation state accepts one genuine current-menu backend interface.
+Request planning, prediction, packet hooks and recovery remain in deferred inventory patch 0003, which follows ViaBedrock PR #276.
+An empty opening waits for real container contents before the client prepares its authored presentation.
+Closing or replacing that exact menu retires the pending presentation and action ownership.
+
+Native item text execution supports a conservative typed custom-name and lore subset.
+It preserves actual line breaks, blank lore entries and native formatting prefixes.
+Default names, translation-bearing rawtext, filtering and other unsupported item fields retain ordinary fallback.
+No numeric caption or server-title heuristic supplies missing hover text.
+
+The private combined core gate passes 1,015 cases: 985 passed and 30 optional skips.
+All three Checkstyle tasks, the build and Maven POM generation pass.
+Tests cover codec bounds, stale and reused menus, empty opening followed by contents, backend rejection and scoped visibility.
+The actual controlled named physical chest supplies separate projection evidence.
+Actual actor-backed Social title timing, live Place request acceptance and native pixel parity remain unverified.
