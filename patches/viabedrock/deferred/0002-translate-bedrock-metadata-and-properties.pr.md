@@ -52,3 +52,16 @@ The complete 98-patch core stack replays cleanly. A fresh build passes 915 tests
 Native actor picking accepts either negotiated actor codec, while still requiring the
 separate picking channel and joined PLAY state. Eight picking tests pass.
 Registration and unregistration replay preserve the selected actor codec prerequisite.
+
+## Java 26.3 snow golem metadata
+
+The reported CubeCraft disconnect occurs while translating snow golem flags during actor creation.
+The Java 26.3 mapping names the pumpkin field `PUMPKIN`, rather than `FLAGS`.
+Its client bytecode retains a byte serializer and the `0x10` pumpkin mask.
+Use that field while preserving the existing protocol 2193 `SHEARED` conversion.
+
+The regression test covers an intact pumpkin, shearing, restoration, and sparse updates to the second native flag word.
+It checks the emitted field, serializer, and value.
+The complete 99-patch core build passes 1,027 tests: 997 passed and 30 optional skips, with no failures or errors.
+Main, test, and tool Checkstyle pass.
+The reported server disconnect still requires a live retest.
