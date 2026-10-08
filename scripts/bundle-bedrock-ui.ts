@@ -59,6 +59,39 @@ export async function planBedrockUi(game: string, version: string, output: strin
       if (error.code !== "ENOENT") throw error;
     });
   }
+  for (const pack of ["vanilla_base", "vanilla"]) {
+    const root = join(game, "data", "resource_packs", pack);
+    const archive = join(root, "__brarchive", "font.brarchive");
+    const bytes = await readFile(archive).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+      return undefined;
+    });
+    if (bytes) {
+      const entries = readBedrockArchive(bytes);
+      sources.push({ path: archive, sha256: createHash("sha256").update(bytes).digest("hex"), entries: entries.size });
+      for (const [name, contents] of entries) {
+        if (contents.length && /\.(ttf|json)$/.test(name)) files.set(`font/${name}`, contents);
+      }
+    }
+    async function addFonts(directory: string, prefix: string): Promise<void> {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (entry.isSymbolicLink()) throw new Error("UI fonts contain a symbolic link");
+        const selected = join(directory, entry.name), path = `${prefix}/${entry.name}`;
+        if (entry.isDirectory()) await addFonts(selected, path);
+        else if (entry.isFile() && /\.(ttf|json)$/.test(entry.name)) {
+          const bytes = await readFile(selected);
+          if (bytes.length > 16 * 1024 * 1024) throw new Error("UI font exceeds the file limit");
+          if (bytes.length) {
+            files.set(path, bytes);
+            sources.push({ path: selected, sha256: createHash("sha256").update(bytes).digest("hex"), entries: 1 });
+          }
+        }
+      }
+    }
+    await addFonts(join(root, "font"), "font").catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
   if (files.size > 4096 || [...files.values()].reduce((total, bytes) => total + bytes.length, 0) > 64 * 1024 * 1024) {
     throw new Error("Built-in UI bundle exceeds limits");
   }

@@ -9,7 +9,7 @@ const fileLimit = 32 * 1024 * 1024;
 const totalLimit = 256 * 1024 * 1024;
 const libraryDirectories = new Set([
   "models", "animations", "animation_controllers", "render_controllers",
-  "entity", "sounds", "particles", "texts", "textures", "ui",
+  "entity", "sounds", "particles", "texts", "textures", "ui", "font",
 ]);
 
 function validPath(name: string) {
@@ -120,7 +120,7 @@ export async function bundleBedrockAssets(game: string, version: string, destina
       const logical = archived ? path.slice("__brarchive/".length, -".brarchive".length) : path;
       if (path.endsWith(".bol-orig")) continue;
       if (pack !== "persona" && !(path === "manifest.json" || path === "sounds.json"
-        || libraryDirectories.has(logical.split("/")[0]!) && (archived || /\.(json|lang|fsb|ogg|wav|png|jpg|tga)$/.test(path)))) continue;
+        || libraryDirectories.has(logical.split("/")[0]!) && (archived || /\.(json|lang|fsb|ogg|wav|png|jpg|tga|ttf)$/.test(path)))) continue;
       const saved = `${original}.bol-orig`;
       const stat = await lstat(saved).catch(() => null);
       if (stat?.isSymbolicLink()) throw new Error("Original Bedrock asset is a symbolic link");

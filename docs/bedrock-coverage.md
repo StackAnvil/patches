@@ -9186,8 +9186,10 @@ Its cleanup confirms the worker stopped and both callback queues cleared; the fi
 The failed attempts remain private, including the second output recovered after the desktop JVM exited.
 
 The user's newer screenshot confirms that the authored profile branch renders.
-Its buttons still need actual activation, request and server-response verification.
-A nearby rejected inventory request in the log does not identify which button or menu caused it.
+Live clicks reach CubeCraft through the active container action channel, but do not open Friends or Parties.
+The complete Friends response acknowledges only an empty cursor; it does not confirm the predicted transfer.
+The portrait disappears after the click. Inventory action semantics and working navigation remain incomplete.
+The bounded observer retained the original network pipeline and removed its temporary handlers.
 The native Loot and Lobby Switcher screenshots also expose differences in scale, font and header placement.
 
 ### Native controlling-seat metadata lineage

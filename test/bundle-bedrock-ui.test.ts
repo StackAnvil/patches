@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { planBedrockUi, applyBedrockUi } from "../scripts/bundle-bedrock-ui.ts";
+import { inflateRawSync } from "node:zlib";
 import { verifyBuiltinUi } from "../src/bedrock-ui.ts";
 
 const temporary: string[] = [];
@@ -67,4 +68,32 @@ test("refuses existing outputs without modifying them, and rejects traversal or 
   await writeFile(join(packs, "vanilla", "__brarchive", "ui.brarchive"), archive({ "../server_form.json": '{}' }));
   await expect(planBedrockUi(directory, "1.26.51.1", output)).rejects.toThrow();
   await expect(planBedrockUi(directory, "1.26.52.1", output)).rejects.toThrow();
+});
+
+
+test("acquires font archive metadata and loose faces with native layer precedence", async () => {
+  const { directory, packs, output } = await fixture();
+  const face = new Uint8Array([0, 1, 0, 0, 5, 6, 7]);
+  await writeFile(join(packs, "vanilla", "__brarchive", "font.brarchive"), archive({
+    "font_metadata.json": JSON.stringify({ version: 1, fonts: [{ font_name: "Title", font_format: "ttf", font_file: "font/title" }] }),
+    "title.ttf": "",
+  }));
+  await mkdir(join(packs, "vanilla", "font"));
+  await writeFile(join(packs, "vanilla", "font", "title.ttf"), face);
+  const plan = await planBedrockUi(directory, "1.26.51.1", output);
+  const entries = new Map<string, Buffer>();
+  let offset = 0;
+  while (plan.bytes.readUInt32LE(offset) === 0x04034b50) {
+    const compressed = plan.bytes.readUInt32LE(offset + 18);
+    const nameLength = plan.bytes.readUInt16LE(offset + 26);
+    const extraLength = plan.bytes.readUInt16LE(offset + 28);
+    const start = offset + 30 + nameLength + extraLength;
+    entries.set(plan.bytes.toString("utf8", offset + 30, offset + 30 + nameLength),
+      inflateRawSync(plan.bytes.subarray(start, start + compressed)));
+    offset = start + compressed;
+  }
+  expect(entries.get("font/title.ttf")).toEqual(Buffer.from(face));
+  expect(JSON.parse(entries.get("font/font_metadata.json")!.toString()).fonts[0].font_name).toBe("Title");
+  const second = await planBedrockUi(directory, "1.26.51.1", output);
+  expect(second.bytes).toEqual(plan.bytes);
 });
