@@ -1,4 +1,4 @@
-From 38b2be67935a9d343f4415dbdc5dc1fd9cc1bc1b Mon Sep 17 00:00:00 2001
+From ba3f0440eb289ae9bd70d0a3ec070066275dcab3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:39:38 +0200
 Subject: [PATCH] feat(players): render server player controllers and costumes
@@ -110,24 +110,44 @@ retain their existing behavior.
 
 Unlit first-person surfaces submit full-bright packed light so the ordinary
 Iris cutout program can bypass world light without invoking glowing eyes.
+
+Provide the player head_x_rotation query to both server skin selection and
+costume animation graphs. The native 1.26.51.1 client (build 51061372,
+protocol 2193) truncates the numeric head index and returns player pitch
+for head zero. Other indices and invalid arguments do not select a head.
+Use the extracted player pitch, preserving world interpolation and the
+native GUI render state.
+
+CubeCraft's ui_render animation counter-rotates the waist with this query.
+A missing query silently returned zero, leaving the portrait body tilted
+and its head displaced when the preview camera pitched. Native GUI bone
+captures confirm opposite waist and camera rotations of 23.588333 degrees.
+The live native and add-on comparison now places the head at the same
+vertical origin. Targeted tests cover argument handling and the authored
+waist transform across positive, zero, and negative camera pitch. Other
+head queries and costume posture comparisons remain separate coverage.
 ---
  .../appearance/BedrockActorAnimation.java     |   4 +
  .../appearance/BedrockResourceLibrary.java    |   1 -
  .../bedrock/render/BedrockPersonaLayer.java   |   1 +
  .../render/BedrockPlayerCostumeLayer.java     |  32 ++
+ .../bedrock/render/BedrockPlayerQueries.java  |  22 ++
  .../bedrock/render/BedrockPlayerRenderer.java |   2 +
- .../bedrock/render/BedrockPlayerSkins.java    | 289 +++++++++++++++++-
+ .../bedrock/render/BedrockPlayerSkins.java    | 291 +++++++++++++++++-
  .../BedrockPlayerControllersTest.java         |  86 ++++++
  .../BedrockResourceLibraryTest.java           |  84 +++++
  .../BedrockServerActorVisibilityTest.java     |  45 +++
- .../BedrockPlayerCommandResourcesTest.java    |  68 +++++
+ .../BedrockPlayerCommandResourcesTest.java    |  68 ++++
  .../render/BedrockPlayerGeometryTest.java     |  32 ++
- 11 files changed, 634 insertions(+), 10 deletions(-)
+ .../render/BedrockPlayerQueriesTest.java      |  37 +++
+ 13 files changed, 695 insertions(+), 10 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerCostumeLayer.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerQueries.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerActorVisibilityTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerCommandResourcesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerGeometryTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerQueriesTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 index 0797fbb..39ba6e6 100644
@@ -206,6 +226,34 @@ index 0000000..a1679fd
 +        }
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerQueries.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerQueries.java
+new file mode 100644
+index 0000000..93a9f3e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerQueries.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
++
++/** Player queries whose arguments differ from the generic target rotation queries. */
++final class BedrockPlayerQueries {
++    private BedrockPlayerQueries() {}
++
++    static BedrockActorAnimation.Query headPitch(final float pitch) {
++        return arguments -> {
++            if (arguments.size() != 1 || !(arguments.getFirst() instanceof Number index)) return 0F;
++            final float value = index.floatValue();
++            // Native truncates the index. Players have only head zero; extra heads belong to the wither.
++            return Float.isFinite(value) && (int) value == 0 ? pitch : 0F;
++        };
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
 index 5ddf747..2b4a386 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
@@ -224,7 +272,7 @@ index 5ddf747..2b4a386 100644
              return this.nativeMaterial(this.getTextureLocation(state));
          }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 2334358..a0d90dd 100644
+index 2334358..ba919f8 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -33,7 +33,7 @@ import com.viaversion.viafabricplus.bedrock.appearance.BedrockClassicAssets;
@@ -283,7 +331,7 @@ index 2334358..a0d90dd 100644
          if (appearance == null || geometry == null || rendererContext == null) {
              return null;
          }
-@@ -269,6 +293,153 @@ public final class BedrockPlayerSkins {
+@@ -269,6 +293,154 @@ public final class BedrockPlayerSkins {
          return appearance.renderer;
      }
  
@@ -356,6 +404,7 @@ index 2334358..a0d90dd 100644
 +            queries.put("is_riding", state.isPassenger);
 +            queries.put("is_alive", true);
 +            queries.put("target_x_rotation", state.xRot);
++            queries.put("head_x_rotation", BedrockPlayerQueries.headPitch(state.xRot));
 +            queries.put("target_y_rotation", state.yRot);
 +            queries.put("modified_move_speed", state.walkAnimationSpeed);
 +            queries.put("modified_distance_moved", state.walkAnimationPos);
@@ -437,7 +486,7 @@ index 2334358..a0d90dd 100644
      private static Geometry geometry(final Appearance appearance, final boolean animated) {
          if (appearance == null) return null;
          if (appearance.geometry != null) return appearance.geometry;
-@@ -294,6 +465,7 @@ public final class BedrockPlayerSkins {
+@@ -294,6 +466,7 @@ public final class BedrockPlayerSkins {
      }
  
      private static BedrockActorAnimation.Playback actor(final Appearance appearance) {
@@ -445,7 +494,7 @@ index 2334358..a0d90dd 100644
          if (appearance == null
                  || appearance.actor == null
                  || !appearance.actor.isDone()
-@@ -415,7 +587,8 @@ public final class BedrockPlayerSkins {
+@@ -415,7 +588,8 @@ public final class BedrockPlayerSkins {
                  : BedrockFirstPersonCamera.Rotation.ZERO;
          final var scale = appearance.firstPersonActor.scale();
          final var nativeState = BedrockActorState.state(player.getUUID());
@@ -455,7 +504,7 @@ index 2334358..a0d90dd 100644
          if (geometry != null && appearance.firstPersonModels == null) {
              final List<FirstPersonSurface> surfaces = new ArrayList<>();
              surfaces.add(new FirstPersonSurface(BedrockGeometry.animatedModel(geometry.model(), geometry.meshes()), appearance.bodyId));
-@@ -423,19 +596,81 @@ public final class BedrockPlayerSkins {
+@@ -423,19 +597,81 @@ public final class BedrockPlayerSkins {
                  surfaces.add(new FirstPersonSurface(BedrockGeometry.animatedModel(surface.geometry().model(), surface.geometry().meshes()), surface.texture()));
              appearance.firstPersonModels = List.copyOf(surfaces);
          }
@@ -540,7 +589,7 @@ index 2334358..a0d90dd 100644
      /** Submits the actor once before Java's per-hand item transforms. */
      public static void submitFirstPersonActor(final PoseStack poses, final net.minecraft.client.renderer.SubmitNodeCollector collector,
                                                final int packedLight) {
-@@ -447,7 +682,8 @@ public final class BedrockPlayerSkins {
+@@ -447,7 +683,8 @@ public final class BedrockPlayerSkins {
              for (int index = 0; index < frame.surfaces.size(); index++) {
                  final var surface = frame.surfaces.get(index);
                  collector.order(index == 0 ? 0 : 1).submitModelPart(surface.model.model().root(), poses, surface.material(),
@@ -550,7 +599,7 @@ index 2334358..a0d90dd 100644
              }
          } finally {
              poses.popPose();
-@@ -550,6 +786,12 @@ public final class BedrockPlayerSkins {
+@@ -550,6 +787,12 @@ public final class BedrockPlayerSkins {
          queries.put("is_alive", entity.isAlive());
          final var owner = BedrockActorState.lifetime(entity.getUUID());
          queries.put("spellcolor", (BedrockActorAnimation.Query) _ -> BedrockActorState.spellColor(entity.getUUID(), owner));
@@ -563,7 +612,15 @@ index 2334358..a0d90dd 100644
          queries.put("is_on_ground", entity.onGround());
          queries.put("is_in_water", (BedrockActorAnimation.Query) _ -> entity.isInWater());
          queries.put("ground_speed", (BedrockActorAnimation.Query) _ -> BedrockParticleQueries.groundSpeed(entity.getDeltaMovement()));
-@@ -803,6 +1045,8 @@ public final class BedrockPlayerSkins {
+@@ -564,6 +807,7 @@ public final class BedrockPlayerSkins {
+         queries.put("blocking", BedrockActorState.isBlocking(entity.getUUID(), entity.isBlocking()));
+         queries.put("shield_blocking_bob", BedrockActorState.shieldBlockingBob(entity.getUUID(), partialTick));
+         queries.put("target_x_rotation", state.xRot);
++        queries.put("head_x_rotation", BedrockPlayerQueries.headPitch(state.xRot));
+         queries.put("target_y_rotation", state.yRot);
+         queries.put("body_y_rotation", state.bodyRot);
+         queries.put("walk_distance", entity instanceof BedrockWalkingAnimation.Provider walking
+@@ -803,6 +1047,8 @@ public final class BedrockPlayerSkins {
          PLAYER_BY_TEXTURE.clear();
          SKIN_ASSEMBLER.clear();
          skinConnection = null;
@@ -572,7 +629,7 @@ index 2334358..a0d90dd 100644
      }
  
      private static void release(final Appearance appearance) {
-@@ -814,6 +1058,7 @@ public final class BedrockPlayerSkins {
+@@ -814,6 +1060,7 @@ public final class BedrockPlayerSkins {
          for (final AnimatedSurface surface : appearance.surfaces) {
              textureManager.release(surface.texture());
          }
@@ -580,7 +637,7 @@ index 2334358..a0d90dd 100644
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
-@@ -865,11 +1110,15 @@ public final class BedrockPlayerSkins {
+@@ -865,11 +1112,15 @@ public final class BedrockPlayerSkins {
                  3, geometryName(skin.skinResourcePatch(), "animated_128x128")),
                  skin.geometryData(), skin.skinData(), skin.animations());
          }
@@ -598,7 +655,7 @@ index 2334358..a0d90dd 100644
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
              final BedrockGeometryModel model = models.stream().filter(value -> value.getIdentifier().equals(name)).findFirst()
                  .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
-@@ -1082,6 +1331,28 @@ public final class BedrockPlayerSkins {
+@@ -1082,6 +1333,28 @@ public final class BedrockPlayerSkins {
          private Map<String, BedrockBoneAnimation.Transform> previewPose = Map.of();
          private List<PreviewSurface> previewSurfaces;
          private long rendererEpoch;
@@ -975,6 +1032,49 @@ index 0000000..3e33373
 +    @Test
 +    void usesTheOrdinaryPlayerFallbackWhenNoGeometryWasSupplied() {
 +        assertNull(BedrockPlayerSkins.classicGeometry("geometry.humanoid.customSlim", ""));
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerQueriesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerQueriesTest.java
+new file mode 100644
+index 0000000..b609494
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerQueriesTest.java
+@@ -0,0 +1,37 @@
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.util.List;
++import org.junit.jupiter.api.Test;
++import org.joml.Matrix4f;
++import org.joml.Vector3f;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++final class BedrockPlayerQueriesTest {
++    @Test
++    void truncatesPlayerHeadIndexAndRejectsOtherHeadsOrInvalidArguments() {
++        final var query = BedrockPlayerQueries.headPitch(23.588333F);
++        for (final float index : new float[] {0, .75F, -.75F})
++            assertEquals(23.588333F, query.evaluate(List.of(index)));
++        for (final float index : new float[] {1, 2, -1, Float.NaN, Float.POSITIVE_INFINITY})
++            assertEquals(0F, query.evaluate(List.of(index)));
++        assertEquals(0F, query.evaluate(List.of()));
++        assertEquals(0F, query.evaluate(List.of(0, 0)));
++        assertEquals(0F, query.evaluate(List.of("head")));
++    }
++
++    @Test
++    void letsAuthoredWaistRotationCancelCameraPitchWithoutMovingTheHeadToTheWorldOrigin() {
++        for (final float pitch : new float[] {-30, 0, 23.588333F, 30}) {
++            final float headPitch = ((Number) BedrockPlayerQueries.headPitch(pitch).evaluate(List.of(0))).floatValue();
++            final var camera = new Matrix4f().rotateX((float) Math.toRadians(pitch));
++            final var waist = new Matrix4f().translate(0, 12, 0).rotateX((float) Math.toRadians(-headPitch));
++            final var body = new Matrix4f(waist).translate(0, -12, 0);
++            final Vector3f up = camera.mul(body, new Matrix4f()).transformDirection(new Vector3f(0, 1, 0));
++            assertEquals(0, up.z, .00001F);
++            assertEquals(1, up.y, .00001F);
++            assertEquals(12 - 12 * Math.cos(Math.toRadians(pitch)), body.m31(), .00001F);
++            assertEquals(12 * Math.sin(Math.toRadians(pitch)), body.m32(), .00001F);
++        }
 +    }
 +}
 -- 
