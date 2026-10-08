@@ -9065,3 +9065,39 @@ The client, server, private display and audio processes stopped normally.
 Complete protection checks passed for installed artifacts, source checkouts and existing clients.
 The next candidate must retain the exact nested Fabric metadata and all approved core entries.
 This startup result adds no live lore or UI parity claim.
+
+## Native rewind return and event ownership, October 8, 2026
+
+Two marked replay controls complete the original unwind with accepted and rejected world writes.
+Historical previous position remains distinct from corrected current position and motion.
+Both outcomes consume the correction and release the owned clone before notification.
+Three subsequent unmarked calls repeat no replay or notification with the same supplied clock.
+These calls do not establish a new game tick.
+
+Later controls execute both event-owner configuration branches and the ClientLevel configuration producer.
+Accepted and rejected sequences reach a natively constructed and registered listener.
+Duplicate registration is rejected.
+The listener's original callback returns one without publishing auth input.
+Its registration does not establish correction-to-auth scheduling.
+
+The frozen handoff contains 555 independently checked files and preserves earlier evidence.
+Full factory lifetime, positive raw input, controlling-seat physics and actual subscriber population remain open.
+No production correction behavior changes.
+
+## Private lore retry and Social metadata audit, October 8, 2026
+
+The repaired nested core retains Fabric metadata and all approved core entries.
+The next private client reaches its actual game window.
+Its QuickPlay fixture still points to the previous stopped server port, so it never joins the new server.
+An observed navigation plan expires before dispatch and sends no input.
+The original runtime limit remains unchanged.
+Normal cleanup removes all seven owned processes, private display and audio state.
+Independent artifact, source and protected-client checks pass.
+This run establishes packaging recovery, but adds no live lore or Social parity claim.
+
+Three retained CubeCraft journals contain 6,071 decoded actor records without decoder errors.
+They contain 2,988 name fields, no filtered names and no matching profile selectors.
+Separate Social opening traces retain unique IDs but omit actor names, titles and runtime-ID associations.
+Those records cannot prove that the current actor-title path selects the authored profile.
+The user's current screenshots still show the generic chest screen for Social Menu.
+Authored container actions, active slot coverage and actual title delivery remain required work.
