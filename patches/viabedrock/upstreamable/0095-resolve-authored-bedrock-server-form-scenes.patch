@@ -1,4 +1,4 @@
-From c9d0c8cb08468c27399b02bd2a4f1d63e5269207 Mon Sep 17 00:00:00 2001
+From 35e28ad55e4ceed63ccddd3f2d387628ef380417 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:42:36 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -147,6 +147,8 @@ from actual actor-backed Social delivery, native pixels and server action
 acceptance. Unknown item text retains ordinary fallback.
 
 Resolve metadata-selected acquired TTF families to isolated Java font resources with default glyph fallback. Normalize EM size and baseline against pinned native hhea metrics; unsupported formats keep existing font fallback. Carry family IDs through scene transport without requiring a local game installation.
+
+Accept server forms that replace an inventory, closing the container through its normal pending acknowledgement path before publishing the form. Native protocol-2193 CubeCraft Friends and Parties deliver the form before container close; treating any open inventory as UserBusy made both buttons inert. Keep busy-form rejection and prevent the late inventory acknowledgement from dismissing its replacement.
 ---
  build.gradle                                  |  11 +
  .../api/model/NativeContainerAction.java      |  93 ++
@@ -165,9 +167,10 @@ Resolve metadata-selected acquired TTF families to isolated Java font resources 
  .../api/resourcepack/ui/UiTextures.java       |  92 ++
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/data/BedrockMappingData.java     |  15 +-
- .../protocol/packet/InventoryPackets.java     | 531 +++++++---
+ .../protocol/packet/InventoryPackets.java     | 581 ++++++++---
  .../rewriter/ResourcePackRewriter.java        |   2 +
  .../resourcepack/JsonUiResourceRewriter.java  |  36 +
+ .../protocol/storage/InventoryTracker.java    |  16 +-
  .../storage/NativeContainerUiState.java       | 112 ++
  .../protocol/storage/ResourcePackStorage.java |  28 +-
  .../api/model/NativeContainerActionTest.java  |  88 ++
@@ -183,9 +186,10 @@ Resolve metadata-selected acquired TTF families to isolated Java font resources 
  .../api/resourcepack/ui/UiExpressionTest.java |  56 +
  .../api/resourcepack/ui/UiFontsTest.java      | 158 +++
  .../api/resourcepack/ui/UiTexturesTest.java   | 111 ++
+ .../packet/ModalFormTransitionTest.java       | 123 +++
  .../NativeContainerOpeningPacketTest.java     | 393 +++++++
  .../storage/NativeContainerUiStateTest.java   |  57 +
- 37 files changed, 5832 insertions(+), 138 deletions(-)
+ 39 files changed, 5997 insertions(+), 162 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerStatus.java
@@ -214,6 +218,7 @@ Resolve metadata-selected acquired TTF families to isolated Java font resources 
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpressionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFontsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ModalFormTransitionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NativeContainerOpeningPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeContainerUiStateTest.java
 
@@ -3370,7 +3375,7 @@ index cfc3880fd..0dc4795d7 100644
          return this.javaTags;
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index fb8b236b5..8dc34770e 100644
+index fb8b236b5..64aa71741 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -17,6 +17,12 @@
@@ -3402,7 +3407,103 @@ index fb8b236b5..8dc34770e 100644
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  
  import java.util.ArrayList;
-@@ -108,7 +116,8 @@ public final class InventoryPackets {
+@@ -89,6 +97,95 @@ public final class InventoryPackets {
+     private static final int DIALOG_FAKE_BUTTON_WIDTH = 300;
+     private static final String DIALOG_FAKE_BUTTON_TEXT = "This is not actually a button, but has to be one because dialogs don't support adding text only elements. Clicking it has the same effect as closing the dialog.";
+ 
++    static void handleContainerClose(final PacketWrapper wrapper) {
++        final ContainerType containerType = ContainerType.getByValue(wrapper.read(Types.BYTE)); // type
++        final boolean serverInitiated = wrapper.read(Types.BOOLEAN); // server initiated
++
++        final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
++        final Container container = serverInitiated ? inventoryTracker.getCurrentContainer() : inventoryTracker.getPendingCloseContainer();
++        if (container == null) {
++            wrapper.cancel();
++            return;
++        }
++
++        if (serverInitiated && containerType != container.type()) {
++            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Server tried to close container, but container type was not correct");
++            wrapper.cancel();
++            return;
++        }
++        inventoryTracker.setCurrentContainerClosed(serverInitiated);
++        if (!serverInitiated && inventoryTracker.getCurrentForm() != null) {
++            wrapper.cancel();
++        }
++    }
++
++    static void handleModalFormRequest(final PacketWrapper wrapper) {
++        final InventoryTracker inventoryTracker =
++                wrapper.user().get(InventoryTracker.class);
++        final int id = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // id
++        final String data = wrapper.read(BedrockTypes.STRING); // data
++
++        if (inventoryTracker.isNonInventoryScreenOpen()) {
++            final PacketWrapper modalFormResponse =
++                    PacketWrapper.create(
++                            ServerboundBedrockPackets.MODAL_FORM_RESPONSE,
++                            wrapper.user());
++            modalFormResponse.write(BedrockTypes.UNSIGNED_VAR_INT, id); // id
++            modalFormResponse.write(Types.BOOLEAN, false); // has response
++            modalFormResponse.write(Types.BOOLEAN, true); // has cancel reason
++            modalFormResponse.write(
++                    Types.BYTE,
++                    (byte) ModalFormCancelReason.UserBusy.getValue()); // cancel reason
++            modalFormResponse.sendToServer(BedrockProtocol.class);
++            wrapper.cancel();
++            return;
++        }
++
++        final Form form;
++        try {
++            form = FormSerializer.deserialize(data);
++        } catch (final Throwable e) { // Bedrock client shows error modal form
++            ViaBedrock.getPlatform()
++                    .getLogger()
++                    .log(
++                            Level.WARNING,
++                            "Error while deserializing form data: " + data,
++                            e);
++            wrapper.cancel();
++            return;
++        }
++        final ResourcePackStorage resourcePackStorage =
++                wrapper.user().get(ResourcePackStorage.class);
++        form.setTranslator(resourcePackStorage.getTexts()::translate);
++        inventoryTracker.closeContainerForForm();
++        inventoryTracker.setCurrentForm(IntObjectPair.of(id, form));
++        final boolean nativeCustom = form instanceof CustomForm && wrapper.user().get(ChannelStorage.class).hasChannel(NativeFormMessage.CUSTOM_CHANNEL);
++        final var scene = (form instanceof ActionForm || nativeCustom) && resourcePackStorage.isLoadedOnJavaClient()
++                ? resourcePackStorage.getServerFormUi().resolve(
++                        JsonParser.parseString(FormSerializer.serialize(form)).getAsJsonObject()) : null;
++        if (scene != null && (nativeCustom || wrapper.user().get(ChannelStorage.class).hasChannel(NativeFormMessage.CHANNEL))) {
++            wrapper.setPacketType(ClientboundPackets26_3.CUSTOM_PAYLOAD);
++            wrapper.write(Types.STRING, nativeCustom ? NativeFormMessage.CUSTOM_CHANNEL : NativeFormMessage.CHANNEL);
++            wrapper.write(NativeFormMessage.TYPE,
++                    new NativeFormMessage(id, scene.toString()));
++            return;
++        }
++        final var presentation = scene == null || nativeCustom ? null
++                : ServerFormUi.presentation(scene);
++
++        final Dialog dialog = createFormDialog(wrapper.user(), id, form, presentation);
++
++        wrapper.write(
++                Types.TRUSTED_COMPOUND_TAG_HOLDER,
++                Holder.of(
++                        (CompoundTag)
++                                DialogSerializer.V1_21_6
++                                        .getDirectCodec()
++                                        .serialize(
++                                                NbtConverter_v1_21_5.INSTANCE, dialog)
++                                        .get())); // dialog data
++    }
++
+     public static void register(final BedrockProtocol protocol) {
+         protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_START_ITEM_COOLDOWN,
+                 ClientboundPackets26_3.COOLDOWN, wrapper -> {
+@@ -108,7 +205,8 @@ public final class InventoryPackets {
                  return;
              }
              final BlockPosition position = wrapper.read(BedrockTypes.BLOCK_POSITION); // position
@@ -3412,7 +3513,7 @@ index fb8b236b5..8dc34770e 100644
  
              if (inventoryTracker.isAnyScreenOpen()) {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Server tried to open container while another container is open");
-@@ -116,11 +125,10 @@ public final class InventoryPackets {
+@@ -116,11 +214,10 @@ public final class InventoryPackets {
                  wrapper.cancel();
                  return;
              }
@@ -3428,7 +3529,7 @@ index fb8b236b5..8dc34770e 100644
  
              final Container container;
              switch (type) {
-@@ -145,8 +153,10 @@ public final class InventoryPackets {
+@@ -145,31 +242,16 @@ public final class InventoryPackets {
              inventoryTracker.setCurrentContainer(container);
  
              wrapper.write(Types.VAR_INT, (int) containerId); // container id
@@ -3440,7 +3541,31 @@ index fb8b236b5..8dc34770e 100644
          });
          protocol.registerClientbound(ClientboundBedrockPackets.CONTAINER_CLOSE, ClientboundPackets26_3.CONTAINER_CLOSE, new PacketHandlers() {
              @Override
-@@ -210,134 +220,74 @@ public final class InventoryPackets {
+             protected void register() {
+                 map(Types.BYTE, Types.VAR_INT); // container id
+-                handler(wrapper -> {
+-                    final ContainerType containerType = ContainerType.getByValue(wrapper.read(Types.BYTE)); // type
+-                    final boolean serverInitiated = wrapper.read(Types.BOOLEAN); // server initiated
+-
+-                    final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+-                    final Container container = serverInitiated ? inventoryTracker.getCurrentContainer() : inventoryTracker.getPendingCloseContainer();
+-                    if (container == null) {
+-                        wrapper.cancel();
+-                        return;
+-                    }
+-
+-                    if (serverInitiated && containerType != container.type()) {
+-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Server tried to close container, but container type was not correct");
+-                        wrapper.cancel();
+-                        return;
+-                    }
+-                    inventoryTracker.setCurrentContainerClosed(serverInitiated);
+-                });
++                handler(InventoryPackets::handleContainerClose);
+             }
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_CONTENT, ClientboundPackets26_3.CONTAINER_SET_CONTENT, wrapper -> {
+@@ -210,134 +292,10 @@ public final class InventoryPackets {
                  wrapper.cancel();
              }
          });
@@ -3476,31 +3601,7 @@ index fb8b236b5..8dc34770e 100644
 -            final CompoundTag exitButtonAdditions = new CompoundTag();
 -            exitButtonAdditions.putBoolean("exit", true);
 -            final ActionButton exitButton = new ActionButton(new StringComponent(resourcePackStorage.getTexts().get("gui.close")), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, exitButtonAdditions));
-+        protocol.registerClientbound(
-+                ClientboundBedrockPackets.MODAL_FORM_REQUEST,
-+                ClientboundPackets26_3.SHOW_DIALOG,
-+                wrapper -> {
-+                    final InventoryTracker inventoryTracker =
-+                            wrapper.user().get(InventoryTracker.class);
-+                    final int id = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // id
-+                    final String data = wrapper.read(BedrockTypes.STRING); // data
-+
-+                    if (inventoryTracker.isAnyScreenOpen()) {
-+                        final PacketWrapper modalFormResponse =
-+                                PacketWrapper.create(
-+                                        ServerboundBedrockPackets.MODAL_FORM_RESPONSE,
-+                                        wrapper.user());
-+                        modalFormResponse.write(BedrockTypes.UNSIGNED_VAR_INT, id); // id
-+                        modalFormResponse.write(Types.BOOLEAN, false); // has response
-+                        modalFormResponse.write(Types.BOOLEAN, true); // has cancel reason
-+                        modalFormResponse.write(
-+                                Types.BYTE,
-+                                (byte) ModalFormCancelReason.UserBusy.getValue()); // cancel reason
-+                        modalFormResponse.sendToServer(BedrockProtocol.class);
-+                        wrapper.cancel();
-+                        return;
-+                    }
- 
+-
 -            final Dialog dialog;
 -            if (form instanceof ModalForm modalForm) {
 -                final MultiActionDialog actionDialog = new MultiActionDialog(TextUtil.stringToTextComponent(form.getTitle()), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), exitButton, 1);
@@ -3537,19 +3638,7 @@ index fb8b236b5..8dc34770e 100644
 -                        } else {
 -                            throw new IllegalArgumentException("Unhandled form element type: " + element.getClass().getSimpleName());
 -                        }
-+                    final Form form;
-+                    try {
-+                        form = FormSerializer.deserialize(data);
-+                    } catch (final Throwable e) { // Bedrock client shows error modal form
-+                        ViaBedrock.getPlatform()
-+                                .getLogger()
-+                                .log(
-+                                        Level.WARNING,
-+                                        "Error while deserializing form data: " + data,
-+                                        e);
-+                        wrapper.cancel();
-+                        return;
-                     }
+-                    }
 -                    dialog = actionDialog;
 -                }
 -            } else if (form instanceof CustomForm customForm) {
@@ -3598,21 +3687,7 @@ index fb8b236b5..8dc34770e 100644
 -                        }
 -                    } else {
 -                        throw new IllegalArgumentException("Unhandled form element type: " + element.getClass().getSimpleName());
-+                    final ResourcePackStorage resourcePackStorage =
-+                            wrapper.user().get(ResourcePackStorage.class);
-+                    form.setTranslator(resourcePackStorage.getTexts()::translate);
-+                    inventoryTracker.setCurrentForm(IntObjectPair.of(id, form));
-+                    final boolean nativeCustom = form instanceof CustomForm && wrapper.user().get(ChannelStorage.class).hasChannel(NativeFormMessage.CUSTOM_CHANNEL);
-+                    final var scene = (form instanceof ActionForm || nativeCustom) && resourcePackStorage.isLoadedOnJavaClient()
-+                            ? resourcePackStorage.getServerFormUi().resolve(
-+                                    JsonParser.parseString(FormSerializer.serialize(form)).getAsJsonObject()) : null;
-+                    if (scene != null && (nativeCustom || wrapper.user().get(ChannelStorage.class).hasChannel(NativeFormMessage.CHANNEL))) {
-+                        wrapper.setPacketType(ClientboundPackets26_3.CUSTOM_PAYLOAD);
-+                        wrapper.write(Types.STRING, nativeCustom ? NativeFormMessage.CUSTOM_CHANNEL : NativeFormMessage.CHANNEL);
-+                        wrapper.write(NativeFormMessage.TYPE,
-+                                new NativeFormMessage(id, scene.toString()));
-+                        return;
-                     }
+-                    }
 -                }
 -                actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(resourcePackStorage.getTexts().get("gui.submit")), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, null)));
 -                dialog = actionDialog;
@@ -3622,25 +3697,14 @@ index fb8b236b5..8dc34770e 100644
 -
 -            wrapper.write(Types.TRUSTED_COMPOUND_TAG_HOLDER, Holder.of((CompoundTag) DialogSerializer.V1_21_6.getDirectCodec().serialize(NbtConverter_v1_21_5.INSTANCE, dialog).get())); // dialog data
 -        });
-+                    final var presentation = scene == null || nativeCustom ? null
-+                            : ServerFormUi.presentation(scene);
-+
-+                    final Dialog dialog = createFormDialog(wrapper.user(), id, form, presentation);
-+
-+                    wrapper.write(
-+                            Types.TRUSTED_COMPOUND_TAG_HOLDER,
-+                            Holder.of(
-+                                    (CompoundTag)
-+                                            DialogSerializer.V1_21_6
-+                                                    .getDirectCodec()
-+                                                    .serialize(
-+                                                            NbtConverter_v1_21_5.INSTANCE, dialog)
-+                                                    .get())); // dialog data
-+                });
++        protocol.registerClientbound(
++                ClientboundBedrockPackets.MODAL_FORM_REQUEST,
++                ClientboundPackets26_3.SHOW_DIALOG,
++                InventoryPackets::handleModalFormRequest);
          protocol.registerClientbound(ClientboundBedrockPackets.CLOSE_FORM, ClientboundPackets26_3.CLEAR_DIALOG, wrapper -> {
              final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
              if (inventoryTracker.getCurrentForm() != null) {
-@@ -473,6 +423,15 @@ public final class InventoryPackets {
+@@ -473,6 +431,15 @@ public final class InventoryPackets {
                  return;
              }
  
@@ -3656,7 +3720,7 @@ index fb8b236b5..8dc34770e 100644
              inventoryTracker.setCurrentForm(null);
              if (payload.contains("exit") && payload.getBoolean("exit")) {
                  wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, formId); // id
-@@ -611,6 +570,305 @@ public final class InventoryPackets {
+@@ -611,6 +578,305 @@ public final class InventoryPackets {
          });
      }
  
@@ -3962,7 +4026,7 @@ index fb8b236b5..8dc34770e 100644
      private static void sendBookEdits(final UserConnection user, final int slot,
              final List<String> previousPages, final List<String> pages, final String title) {
          for (int index = 0; index < pages.size(); index++) {
-@@ -665,4 +923,13 @@ public final class InventoryPackets {
+@@ -665,4 +931,13 @@ public final class InventoryPackets {
      private InventoryPackets() {
      }
  
@@ -4038,6 +4102,41 @@ index 000000000..f984c4782
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
+index 8fa38f207..3e0723358 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
+@@ -125,6 +125,13 @@ public class InventoryTracker extends StoredObject {
+         this.pendingCloseContainer = null;
+     }
+ 
++    /** A server form replaces the inventory screen before its close acknowledgement arrives. */
++    public void closeContainerForForm() {
++        if (this.currentContainer != null) {
++            this.forceCloseCurrentContainer();
++        }
++    }
++
+     public void closeCurrentForm() {
+         if (this.currentForm == null) {
+             throw new IllegalStateException("There is no form currently open");
+@@ -168,10 +175,13 @@ public class InventoryTracker extends StoredObject {
+         return this.currentContainer != null || this.pendingCloseContainer != null;
+     }
+ 
+-    public boolean isAnyScreenOpen() {
++    public boolean isNonInventoryScreenOpen() {
+         final NpcDialogueStorage npcDialogue = this.user().get(NpcDialogueStorage.class);
+-        return this.isContainerOpen() || this.currentForm != null
+-                || npcDialogue != null && npcDialogue.current() != null;
++        return this.currentForm != null || npcDialogue != null && npcDialogue.current() != null;
++    }
++
++    public boolean isAnyScreenOpen() {
++        return this.isContainerOpen() || this.isNonInventoryScreenOpen();
+     }
+ 
+     public InventoryContainer getInventoryContainer() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeContainerUiState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeContainerUiState.java
 new file mode 100644
 index 000000000..02d90a895
@@ -6112,6 +6211,135 @@ index 000000000..d986eac3f
 +        final var output = new ByteArrayOutputStream();
 +        assertTrue(ImageIO.write(image, format, output));
 +        return output.toByteArray();
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ModalFormTransitionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ModalFormTransitionTest.java
+new file mode 100644
+index 000000000..51cdb2bf1
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ModalFormTransitionTest.java
+@@ -0,0 +1,123 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.fastutil.ints.IntObjectPair;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.Unpooled;
++import net.lenni0451.mcstructs_bedrock.forms.serializer.FormSerializer;
++import net.raphimc.viabedrock.api.model.NativeFormMessage;
++import net.raphimc.viabedrock.api.model.container.ChestContainer;
++import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ModalFormCancelReason;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.storage.NpcDialogueStorage;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import java.util.HashMap;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class ModalFormTransitionTest {
++
++    @Test
++    void serverFormReplacesContainerAndRetainsFormThroughCloseAcknowledgement() throws Exception {
++        final var user = mock(UserConnection.class);
++        final var storage = new HashMap<Class<?>, Object>();
++        when(user.get(any())).thenAnswer(call -> storage.get(call.getArgument(0)));
++        final var inventory = new InventoryTracker(user);
++        storage.put(InventoryTracker.class, inventory);
++        final var chest = new ChestContainer(user, (byte) 6, null, null, 27);
++        inventory.setCurrentContainer(chest);
++        final var channels = new ChannelStorage();
++        channels.addChannels(List.of(NativeFormMessage.CHANNEL));
++        storage.put(ChannelStorage.class, channels);
++        final var packs = spy(new ResourcePackStorage(List.of()));
++        final var forms = mock(ServerFormUi.class);
++        doReturn(true).when(packs).isLoadedOnJavaClient();
++        doReturn(forms).when(packs).getServerFormUi();
++        when(forms.resolve(any())).thenReturn(new JsonObject());
++        storage.put(ResourcePackStorage.class, packs);
++
++        try (var packets = mockStatic(PacketFactory.class)) {
++            final var input = Unpooled.buffer();
++            try {
++                BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(input, 17);
++                BedrockTypes.STRING.write(input, "{\"type\":\"form\",\"title\":\"\",\"content\":\"\",\"buttons\":[]}");
++                final var request = new PacketWrapperImpl(100, input, user);
++                InventoryPackets.handleModalFormRequest(request);
++                assertFalse(request.isCancelled());
++                assertNull(inventory.getCurrentContainer());
++                assertSame(chest, inventory.getPendingCloseContainer());
++                assertEquals(17, inventory.getCurrentForm().leftInt());
++                assertEquals(17, request.get(NativeFormMessage.TYPE, 0).formId());
++                packets.verify(() -> PacketFactory.sendJavaContainerClose(user, 6));
++                packets.verify(() -> PacketFactory.sendBedrockContainerClose(user, (byte) 6, ContainerType.NONE));
++                final var form = inventory.getCurrentForm();
++                final var acknowledgement = new PacketWrapperImpl(47, Unpooled.buffer(), user);
++                acknowledgement.write(Types.BYTE, (byte) ContainerType.NONE.getValue());
++                acknowledgement.write(Types.BOOLEAN, false);
++                acknowledgement.resetReader();
++                InventoryPackets.handleContainerClose(acknowledgement);
++                assertTrue(acknowledgement.isCancelled());
++                assertFalse(inventory.isContainerOpen());
++                assertSame(form, inventory.getCurrentForm());
++            } finally {
++                input.release();
++            }
++        }
++    }
++
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void activeFormOrNpcDialogueReturnsUserBusyWithoutClosingInventory(final boolean npcDialogue) throws Exception {
++        final var user = mock(UserConnection.class);
++        final var inventory = new InventoryTracker(user);
++        when(user.get(InventoryTracker.class)).thenReturn(inventory);
++        if (npcDialogue) {
++            final var npc = new NpcDialogueStorage();
++            npc.open(1, 2, "", "[]");
++            when(user.get(NpcDialogueStorage.class)).thenReturn(npc);
++        } else {
++            inventory.setCurrentForm(IntObjectPair.of(4,
++                    FormSerializer.deserialize("{\"type\":\"form\",\"title\":\"\",\"content\":\"\",\"buttons\":[]}")));
++        }
++        final var response = mock(PacketWrapper.class);
++        try (var wrappers = mockStatic(PacketWrapper.class);
++             var packets = mockStatic(PacketFactory.class)) {
++            wrappers.when(() -> PacketWrapper.create(ServerboundBedrockPackets.MODAL_FORM_RESPONSE, user)).thenReturn(response);
++            final var input = Unpooled.buffer();
++            try {
++                BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(input, 17);
++                BedrockTypes.STRING.write(input, "{}");
++                final var request = new PacketWrapperImpl(100, input, user);
++                InventoryPackets.handleModalFormRequest(request);
++                assertTrue(request.isCancelled());
++                verify(response).write(Types.BYTE, (byte) ModalFormCancelReason.UserBusy.getValue());
++                verify(response).sendToServer(BedrockProtocol.class);
++                packets.verifyNoInteractions();
++            } finally {
++                input.release();
++            }
++        }
 +    }
 +
 +}
