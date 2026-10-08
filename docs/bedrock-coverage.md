@@ -8765,3 +8765,39 @@ They omit 208 nonempty UI declarations from the approved native archive.
 The core build currently treats its separate baseline input as optional.
 Independent acquisition and complete production packaging remain open requirements.
 No private native asset was added to the repository, and installed artifacts remain unchanged.
+
+## Authored manual grids, October 8, 2026
+
+Core now selects each manual grid child's collection address before evaluating
+its bindings. The target GridItem writer uses columns times row plus column.
+Its address takes precedence over an explicit CollectionItem index while
+unrelated nested collection scopes remain intact.
+
+The add-on measures manual children against the full parent and places them
+using their authored cell stride. Missing positions use the native zero pair.
+Template grids retain their separate placement and measurement path.
+Large capacities visit only actual children and allocate no unused cells.
+
+Original native instructions pass 16 address controls, six fresh layout controls
+and nine property-reader and writer controls. These supply initialized component
+state and trees; they do not execute the full native factory or GPU.
+Zero-capacity manual grids retain fallback while their secondary inactivity
+lifecycle remains unbound. Checked overflow is a Java work limit, not a native
+exception rule.
+
+The core passes 968 tests with 30 optional skips after all 98 patches replay.
+Main, test and tool Checkstyle, clean build and POM generation pass.
+The paired add-on passes 608 tests with 118 optional skips after 31-patch replay.
+Its build, check, POM and access-widener gates pass, and all 1,311 approved core
+entries match. The complete target UI archive is present in both private builds.
+Installed artifacts and frozen v10 inputs remain unchanged.
+
+The accepted profile diagnostic now selects 19 distinct addresses with full-parent
+geometry. Production item presentation still lacks native hover text, and the
+profile requires an unsupported one-item autoplacement action. The frontend's
+full-slot completeness guard remains unchanged. These are separate required gaps.
+Retained real Social captures establish counts and addresses, but omit item names,
+lore, title and cursor. Supplied diagnostic values do not reconstruct those data.
+Current live client acceptance, native pixels, portraits and Iris remain unverified.
+Private evidence stays under
+`.stackanvil/research/server-ui/native-binding-semantics/actor-portrait/manual-grid/`.

@@ -130,12 +130,12 @@ Grid capacities use integer count bounds independently of pixel geometry bounds.
 The accepted Social definitions contain a million-cell capacity with only a bounded number of actual children.
 Sparse measurement visits those children without allocating or iterating the declared capacity.
 Malformed, fractional and overflowing capacities remain rejected.
-The existing fixed-grid position formula remains a native comparison boundary.
+The prior fixed-grid position formula remained a native comparison boundary.
 
 The focused suite passes 42 cases: 39 passed and three optional fixtures skipped.
 It covers independent playback, failure-safe scope restoration, transform preservation, resource retirement, signed UID parsing and bounded grid measurement.
 The actual accepted ordinary chest scene passes 63 slot addresses and 65 image regions.
-The supplied profile-title scene now passes parsing and layout, then correctly rejects an unresolved close-button mapping.
+That prior supplied profile-title scene passes parsing and layout, then correctly rejects an unresolved close-button mapping.
 Its authored portrait UID is 150150. These supplied title and empty-menu inputs do not establish actual Social metadata delivery or actor presence.
 Native projection, pixels, transformed startup, resource reloads and Iris compatibility remain required client gates.
 The clean combined build passes 706 cases: 588 passed and 118 optional fixtures skipped.
@@ -143,3 +143,28 @@ The normal 31-patch replay, Gradle check, build, POM and access-widener gates pa
 All 1,304 embedded core entries match the private actor-UID candidate.
 The 38 installed artifacts and all 58 frozen v10 files remain unchanged.
 The private portrait candidate is not installed; actual client and Iris gates remain pending.
+
+### Manual grid sizing and positions
+
+Grids without an item template use each child's authored `grid_position`, with `[0,0]` when absent.
+Their children measure percentages, anchors and offsets against the full parent extent.
+The cell stride changes placement without dividing the child's measurement context.
+Template grids retain their existing collection placement and sizing.
+Only actual bounded children are measured; million-cell capacities allocate no additional nodes.
+
+Original native property readers, GridItem writer and fresh dependency scheduler bind these rules.
+The target layout suite passes 32 cases, including positions, constraints, hidden controls, templates and absent positions.
+Zero or missing manual capacities retain ordinary fallback because their native secondary inactivity lifecycle remains unbound.
+Malformed and overflowing positions also retain fallback; native machine overflow is not presented as a Java exception rule.
+
+The accepted profile diagnostic selects 19 distinct addresses with full-parent geometry.
+Its supplied hover strings remain separate from production values and captured Social data.
+Production hover text, the native one-item autoplacement action and intentional subset admission remain open.
+The strict action and full-slot completeness guards are unchanged.
+Native portrait pixels, current client acceptance, resource reloads and Iris compatibility remain required client gates.
+
+The final paired clean build passes 726 cases: 608 passed and 118 optional fixtures skipped.
+Normal replay retains all 31 patches; Gradle check, build, POM and access-widener validation pass.
+All 1,311 approved core entries match the private manual-grid core candidate.
+The 38 installed artifacts, 58 frozen v10 files and 45 prior actor-candidate files remain unchanged.
+These private candidates do not establish current client or Iris acceptance.

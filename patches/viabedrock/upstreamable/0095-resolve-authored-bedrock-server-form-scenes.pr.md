@@ -205,9 +205,31 @@ All 98 patches replay, and the full core build passes 965 tests with 30 optional
 Main, test and tool Checkstyle and POM generation pass.
 
 An immutable candidate and the accepted d28 profile declarations pass close-action validation.
-The profile still fails slot completeness: its manual grid cells lack indexed collection scope.
-Its authored large grid capacity also produces near-zero cell widths under the current layout rule.
+That prior profile candidate fails slot completeness: its manual grid cells lack indexed collection scope.
+That candidate also produces near-zero cell widths from the authored large grid capacity.
 The profile omits player inventory and hotbar controls, while admission currently requires all 63 Java slots.
 The ordinary chest retains all 63 slots and 65 image regions.
 No fake profile contents or actor were supplied, and no live interaction or portrait pixels are claimed.
 These remaining producer, layout and subset-admission gaps require target evidence before further changes.
+
+### Manual GridItem collection addresses
+
+Manual grid children now receive their authored collection address before bindings run.
+The original GridItem writer computes `columns * row + column`.
+Its lookup takes precedence over an explicit CollectionItem index and preserves unrelated nested collection scopes.
+Missing positions use the native `[0,0]` default.
+Malformed, overflowing and unavailable addresses retain ordinary fallback without allocating the declared capacity.
+Checked overflow is a Java work limit, not a native exception claim.
+
+Pinned Bedrock 1.26.51.1/protocol2193 fixtures pass 16 index controls and six fresh layout controls.
+Nine additional original property-reader and writer controls bind missing positions and zero dimensions.
+They supply initialized component masks, references and trees; they do not execute the complete UI factory or GPU.
+The core suite passes 998 cases: 968 passed and 30 optional fixtures skipped.
+All 98 patches replay, and main, test and tool Checkstyle, clean build and POM generation pass.
+The private core candidate contains the verified built-in UI input and 1,311 approved entries.
+
+The accepted profile diagnostic now selects addresses 0 through 18 correctly.
+Production nonempty Java stacks still lack the native `#hover_text` producer.
+A separately supplied hover binding exposes unsupported `button.container_auto_place_one` mappings.
+That diagnostic does not establish actual Social contents, names, actor delivery or native request semantics.
+The frontend still requires full slot completeness; intentional authored subset admission remains a separate review.
