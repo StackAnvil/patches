@@ -172,3 +172,17 @@ accepted server definitions now resolves all five, including Settings and
 Wardrobe. The unchanged add-on accepts their visible controls and layouts.
 This verifies resolution and consumer geometry, not live payload delivery or
 GPU rendering. The same-name shallow definition overlay is retained.
+
+## Actor-owned container titles
+
+Select the opened actor's retained string metadata at container open. A nonempty `FILTERED_NAME` (132) takes precedence over `NAME` (4). Wrong metadata types and empty names retain the existing Java default. The title does not come from the held item or placeholder block position.
+
+One title result supplies the Java caption and native program. The Java actor caption uses the resource language translator and existing formatting parser. The native program retains the raw title and `$localize_title` independently. Both `$container_title` and its `$thistext` alias use that raw title for authored conditions. Program import preserves these variables instead of replacing them with the translated Java menu caption. The wire format and capability remain unchanged.
+
+Pinned Bedrock 1.26.51.1, build 51061372, protocol 2193 provides the title chain. The actor getter resolves the opened UID, rejects a removed actor, reads typed name metadata, and prefers the nonempty filtered name. Twelve original native controls establish selection, type rejection, formatting preservation, removal rejection and empty-name fallback dispatch. Level lookup, allocation and the actor's empty-name virtual return remain explicit fixture boundaries.
+
+The original chest controller publishes the raw title with actor localization enabled. The pinned chest label reads that localization variable. Its native label loader and text consumer keep translation separate from the raw string used by conditions. The publication is linked to initial scene construction. No title-update observer is added after opening.
+
+Physical Java custom-name translation and default captions retain their current behavior. Native custom-name captions retain the raw source with localization disabled. The original physical publisher uses a separate block predicate; its complete semantic name remains unverified. Actor size, empty-name class captions, full native admission and actual Social metadata delivery remain separate checks.
+
+A regression through the actual `CONTAINER_OPEN` handler fails against the previous core, which emits a default caption instead of the selected actor name. Packet tests cover filtered-name precedence, empty and malformed metadata, language keys, formatting, placeholder block isolation, initial snapshot behavior and open-before-program order. UI round-trip tests keep raw title conditions while translating only the caption. Oversized native title presentation retains the ordinary Java screen.

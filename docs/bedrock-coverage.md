@@ -8546,3 +8546,30 @@ still need verification. Production remains unchanged. Full native trajectories,
 strict BDS, Boar, direct connections and ViaProxy remain required.
 The private evidence inventory is under
 `.stackanvil/research/movement-flight/breathing-producer/`.
+
+## Actor container titles, October 8, 2026
+
+Core now selects actor container titles from retained, typed name metadata.
+A nonempty `FILTERED_NAME` takes precedence over `NAME`. Empty or malformed
+metadata keeps the existing default. Placeholder block positions and held
+items do not supply the actor title.
+
+The opening packet and native program share one title result. Java captions
+retain language translation and formatting. Authored conditions retain the
+raw title through both `$container_title` and `$thistext`. Native label
+localization uses its separate flag. Program import preserves this distinction
+without a wire-format change. Physical Java captions retain their behavior.
+
+All 98 patches replay. The full core build passes 927 tests with 30 optional
+skips, including 23 targeted packet, UI and lifecycle cases. Checkstyle passes
+for main, test and tool sources. The previous core fails the actor-opening
+regression. Installed artifacts and the frozen v10 candidates remain unchanged.
+
+This implements the title path from pinned native evidence. The recorded
+Social openings lack the actor metadata needed to verify actual delivery.
+The actual accepted pack selects its profile panel from `cc_custom*profile`.
+The unchanged add-on rejects the panel's `live_horse_renderer` portrait.
+An ordinary chest control passes its parser and geometry checks with 63 slots.
+Actor sizes, empty-name class captions, portrait rendering, live Social styling,
+native pixels and both-route behavior remain open. The private candidate and evidence stay
+under `.stackanvil/research/server-ui/actor-container-title/`.
