@@ -256,3 +256,22 @@ All three Checkstyle tasks, the build and Maven POM generation pass.
 Tests cover codec bounds, stale and reused menus, empty opening followed by contents, backend rejection and scoped visibility.
 The actual controlled named physical chest supplies separate projection evidence.
 Actual actor-backed Social title timing, live Place request acceptance and native pixel parity remain unverified.
+
+## Shared templates in CubeCraft inventory menus
+
+Shared button templates can retain form collection bindings inside an inventory screen.
+The inventory controller supplies empty `form_buttons` and `custom_form` collections because neither form controller exists in that session.
+Unknown collection names still fail instead of silently losing controls.
+
+Program export includes template references inside control-name variables, such as `instance@namespace.template`, and relative references in their declaration namespace.
+This preserves conditional templates when the client imports the bounded program.
+
+A private probe uses the accepted CubeCraft pack from the saved replay with the bundled Bedrock 1.26.51.1 UI.
+The Skyblock homepage resolves before and after export without missing templates.
+Its manual action scope retains slots 1 through 20; the six-row chest retains ordinary slot coverage.
+Synthetic tests cover both controller boundaries and conditional template selection after export.
+The full stack build and all Checkstyle tasks pass: 996 tests passed, 30 optional tests skipped, and no failures.
+This probe verifies resolution and action identities, but does not establish live server acceptance or pixel parity.
+
+The final 99-patch core replay and build pass 1,027 tests: 997 passed and 30 optional skips.
+Main, test, and tool Checkstyle pass with no failures or errors.

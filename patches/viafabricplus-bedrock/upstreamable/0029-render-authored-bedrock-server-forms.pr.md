@@ -200,3 +200,21 @@ A separate offline evaluation uses the captured actor name and real typed item n
 It selects the authored manual branch, references slots 0 through 18, and exposes actions for slots 9 through 14.
 This does not establish initial actor metadata timing, authored coverage during live preparation, server action acceptance or rendered pixels.
 Native controller focus/navigation and complete native pixel parity remain unverified.
+
+## Loose maximum constraints in shared menu templates
+
+CubeCraft's accepted UI pack uses `max_size: [100000, 100000]` on shared button labels.
+These values remove a practical upper constraint; they do not request a control of that size.
+Cap finite maximum constraints at the existing layout limit.
+Continue to reject oversized actual sizes, oversized offsets, and non-finite dimensions.
+
+A targeted test covers numeric, pixel, and percentage maximum constraints without changing the resulting geometry.
+A private client projection of the exported Skyblock homepage passes at 640 by 360 and 427 by 240 logical pixels.
+Both projections retain 171 visible draws and authored coverage for the expected slot actions.
+A separate CubeCraft long-form click probe sends the correct original button index.
+These CPU checks do not establish live Pillars of Fortune acceptance, GPU pixels, or shader compatibility.
+
+The repeated-control test also clicks the retained middle widget and checks its original response index.
+A later click on the same closing screen produces no second response.
+The full add-on build passes 751 tests: 632 passed and 119 optional skips, with no failures or errors.
+The final JAR's UI and actor bundles pass checksum and entry verification against the approved local assets.
