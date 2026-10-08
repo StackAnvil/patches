@@ -9171,3 +9171,57 @@ No desktop input or focus action ran during this rollout.
 Startup and artifact verification do not establish a playable join or working Social Menu.
 The user has been asked to reopen it for the live authored-layout and action checks.
 Initial metadata timing, portrait rendering, count-one acceptance, resource reloads and Iris behavior remain open.
+
+### Follow-up verification, October 8, 2026
+
+The latest [CI run](https://github.com/StackAnvil/patches/actions/runs/37745091966) passes build, tooling and permission replay jobs on Ubuntu, Windows and macOS.
+These jobs do not verify game joins or visible menu behavior.
+
+Two reviewed passive observation attempts checked the replacement desktop process and matching installed artifacts.
+The second candidate passes 88 fixture checks for screen state, bounded traversal, image properties and private identity handling.
+The first attempt stopped before worker construction because the client was outside a world.
+The second reached the joined client, but its native callback found no current 27-slot external menu.
+It wrote no matched snapshot and installed no traffic hooks.
+Its cleanup confirms the worker stopped and both callback queues cleared; the final pipeline identity check was not reached.
+The failed attempts remain private, including the second output recovered after the desktop JVM exited.
+
+The user's newer screenshot confirms that the authored profile branch renders.
+Its buttons still need actual activation, request and server-response verification.
+A nearby rejected inventory request in the log does not identify which button or menu caused it.
+The native Loot and Lobby Switcher screenshots also expose differences in scale, font and header placement.
+
+### Native controlling-seat metadata lineage
+
+The pinned native executable creates a byte-valued metadata item with property ID 74 for the controlling-seat component.
+The original converter preserves that ID and stores the seat byte in variant zero of the reflected metadata model.
+The actor-data payload registration binds this converter, and the packet registration identifies packet `0x27`.
+The root agent verified all 302 original/copy hashes in the 151-file static handoff and inspected its cited instructions.
+The existing 597-file movement and 650-file seat execution baselines remain separate, unchanged evidence.
+
+This establishes a static model lineage, not emitted network bytes.
+An additional bounded native execution passes 15 controls through the seat getter, field clone and registered converter.
+It preserves property 74, BYTE values, variant zero, ownership and generation rejection.
+The root agent verified 3,004 original/copy hashes in its frozen 1,502-file handoff with no mismatches.
+The concrete network schema writer and payload reader ownership remain unbound.
+Core still labels property 74 reserved and admits fresh vehicle frames through its first-passenger check.
+No enum, seat admission or production movement change follows from this finding yet.
+
+### Profile portrait bounds
+
+The portrait crop is reproduced in 21 private Java projection and baked-model controls.
+The current feet-origin placement extends the head above the portrait rectangle.
+Centering alone still overflows because the projected model is taller than the authored rectangle.
+The native renderer's downstream origin and scale remain unbound, so no guessed fit has been installed.
+The gray level bars match the authored empty tracks; their colored fills resolve to fully clipped regions.
+
+### Iris material program review
+
+The pinned Iris program selection retains the original pipeline's depth, culling and color-target states.
+The demonstrated material mismatch concerns alpha handling in the Java eyes program.
+That program discards colored alpha-zero texels required by the native emissive material.
+It also accepts low-alpha texels that the native ordinary unlit material rejects.
+
+A private proposal scopes separate native material programs to the owning entity-rendering patch.
+It retains ordinary Java eyes and requires actual transformed shader, color, depth, culling and reload checks.
+The active desktop profile has no Iris installation, and no new shader or runtime change has been applied.
+The reported tooltip screenshot also needs its actual active route observed; the frozen Wardrobe strings contain real line feeds.
