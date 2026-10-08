@@ -1,4 +1,4 @@
-From ee19c4050ae086c91409363e4b99a237442efb0d Mon Sep 17 00:00:00 2001
+From 52e72954a1d11643d5479d313a6a7341daf0f108 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 22:10:18 +0200
 Subject: [PATCH] feat(dialogue): translate Bedrock NPC conversations into Java
@@ -17,16 +17,23 @@ A Bedrock Dedicated Server 1.26.51.1 probe confirms fixed-width actor IDs,
 JSON modes and indices, entry requests, branching button requests, and exit
 requests with the original scene name. Focused tests cover packet layouts,
 scene replacement, request ordering and shared screen state.
+
+Native Bedrock 1.26.51.1 (build 51061372, protocol 2193) also sends
+ExecuteOpeningCommands for scenes without on-open actions. A branching BDS
+conversation records indexed selection, closing the original scene, then
+opening the replacement even when its action list contains only a button.
+Acknowledge every accepted scene instead of deriving entry requests from
+the presence of command entries.
 ---
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../protocol/packet/InventoryPackets.java     |   5 +-
- .../protocol/packet/NpcDialoguePackets.java   | 166 ++++++++++++++++++
+ .../protocol/packet/NpcDialoguePackets.java   | 164 ++++++++++++++++
  .../protocol/storage/EntityTracker.java       |   4 +
  .../protocol/storage/InventoryTracker.java    |   4 +-
- .../protocol/storage/NpcDialogueStorage.java  |  95 ++++++++++
- .../packet/NpcDialoguePacketTest.java         | 132 ++++++++++++++
- .../storage/NpcDialogueStorageTest.java       |  70 ++++++++
- 8 files changed, 476 insertions(+), 2 deletions(-)
+ .../protocol/storage/NpcDialogueStorage.java  |  92 +++++++++
+ .../packet/NpcDialoguePacketTest.java         | 176 ++++++++++++++++++
+ .../storage/NpcDialogueStorageTest.java       |  69 +++++++
+ 8 files changed, 514 insertions(+), 2 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePacketTest.java
@@ -77,10 +84,10 @@ index e238ed6a4..fb8b236b5 100644
                  wrapper.cancel();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java
 new file mode 100644
-index 000000000..410684411
+index 000000000..6be3ce90d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,164 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -90,7 +97,6 @@ index 000000000..410684411
 +
 +import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.nbt.tag.NumberTag;
-+import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.minecraft.Holder;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 +import com.viaversion.viaversion.api.type.Types;
@@ -188,10 +194,9 @@ index 000000000..410684411
 +            }
 +            wrapper.write(Types.TRUSTED_COMPOUND_TAG_HOLDER, Holder.of((CompoundTag) DialogSerializer.V1_21_6
 +                    .getDirectCodec().serialize(NbtConverter_v1_21_5.INSTANCE, dialog).get()));
-+            if (session.openingCommands()) {
-+                sendRequest(wrapper.user(), new NpcDialogueStorage.Request(entity.runtimeId(),
-+                        NpcRequestPacketPayload_RequestType.ExecuteOpeningCommands, 0, scene));
-+            }
++            // Native clients acknowledge every scene, even without on-open commands.
++            sendRequest(wrapper, new NpcDialogueStorage.Request(entity.runtimeId(),
++                    NpcRequestPacketPayload_RequestType.ExecuteOpeningCommands, 0, scene));
 +        });
 +    }
 +
@@ -223,7 +228,7 @@ index 000000000..410684411
 +        if (!requests.isEmpty()) {
 +            PacketWrapper.create(ClientboundPackets26_3.CLEAR_DIALOG, wrapper.user()).send(BedrockProtocol.class);
 +            for (var request : requests) {
-+                sendRequest(wrapper.user(), request);
++                sendRequest(wrapper, request);
 +            }
 +        }
 +        return true;
@@ -237,8 +242,8 @@ index 000000000..410684411
 +        wrapper.write(BedrockTypes.STRING, request.scene());
 +    }
 +
-+    private static void sendRequest(final UserConnection user, final NpcDialogueStorage.Request request) {
-+        final PacketWrapper wrapper = PacketWrapper.create(ServerboundBedrockPackets.NPC_REQUEST, user);
++    private static void sendRequest(final PacketWrapper source, final NpcDialogueStorage.Request request) {
++        final PacketWrapper wrapper = source.create(ServerboundBedrockPackets.NPC_REQUEST);
 +        writeRequest(wrapper, request);
 +        wrapper.sendToServer(BedrockProtocol.class);
 +    }
@@ -279,10 +284,10 @@ index 5f13d7616..8fa38f207 100644
      public InventoryContainer getInventoryContainer() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java
 new file mode 100644
-index 000000000..ce9db3673
+index 000000000..421a296ba
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,92 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -311,7 +316,6 @@ index 000000000..ce9db3673
 +            throw new IllegalArgumentException("NPC dialogue has more than 256 actions");
 +        }
 +        final List<Button> buttons = new ArrayList<>();
-+        boolean opening = false;
 +        for (int index = 0; index < actions.size(); index++) {
 +            final JsonObject action = actions.get(index).getAsJsonObject();
 +            final int mode = action.get("mode").getAsInt();
@@ -326,12 +330,10 @@ index 000000000..ce9db3673
 +                    }
 +                }
 +                buttons.add(new Button(index, action.get("button_name").getAsString(), url));
-+            } else if (type == 1 && mode == 2) {
-+                opening = true;
 +            }
 +        }
 +        return this.current = new Session(uniqueId, runtimeId, scene, "viabedrock:npc/" + ++this.sequence,
-+                List.copyOf(buttons), opening);
++                List.copyOf(buttons));
 +    }
 +
 +    public Session current() {
@@ -371,7 +373,7 @@ index 000000000..ce9db3673
 +    }
 +
 +    public record Session(long uniqueId, long runtimeId, String scene, String responseIdentifier,
-+                          List<Button> buttons, boolean openingCommands) {
++                          List<Button> buttons) {
 +    }
 +
 +    public record Request(long runtimeId, NpcRequestPacketPayload_RequestType type, int actionIndex, String scene) {
@@ -380,10 +382,10 @@ index 000000000..ce9db3673
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePacketTest.java
 new file mode 100644
-index 000000000..1e8cd29e6
+index 000000000..e82d1c016
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePacketTest.java
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,176 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -391,15 +393,19 @@ index 000000000..1e8cd29e6
 + */
 +package net.raphimc.viabedrock.protocol.packet;
 +
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.ProtocolPipeline;
++import com.viaversion.viaversion.api.protocol.packet.Direction;
 +import com.viaversion.viaversion.api.protocol.packet.State;
 +import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
 +import io.netty.buffer.ByteBuf;
 +import io.netty.buffer.Unpooled;
++import io.netty.channel.embedded.EmbeddedChannel;
 +import net.raphimc.viabedrock.api.model.entity.Entity;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
@@ -413,6 +419,7 @@ index 000000000..1e8cd29e6
 +import org.junit.jupiter.api.Test;
 +
 +import java.lang.reflect.Proxy;
++import java.util.ArrayList;
 +import java.util.HashMap;
 +import java.util.List;
 +import java.util.Map;
@@ -423,11 +430,47 @@ index 000000000..1e8cd29e6
 +class NpcDialoguePacketTest {
 +
 +    @Test
-+    void readsFixedWidthActorIdAndTranslatesOpenAndMatchingServerClose() throws Exception {
++    void acknowledgesScenesWithoutOpeningCommandsAndTranslatesMatchingServerClose() throws Exception {
 +        final Map<Class<?>, Object> storages = new HashMap<>();
++        final List<NpcDialogueStorage.Request> sent = new ArrayList<>();
++        final EmbeddedChannel channel = new EmbeddedChannel();
++        final ProtocolPipeline pipeline = (ProtocolPipeline) Proxy.newProxyInstance(ProtocolPipeline.class.getClassLoader(),
++                new Class<?>[]{ProtocolPipeline.class}, (proxy, method, args) -> {
++                    assertEquals("pipes", method.getName());
++                    assertSame(BedrockProtocol.class, args[0]);
++                    assertEquals(true, args[1]);
++                    assertSame(Direction.SERVERBOUND, args[2]);
++                    return List.of();
++                });
++        final ProtocolInfo info = (ProtocolInfo) Proxy.newProxyInstance(ProtocolInfo.class.getClassLoader(),
++                new Class<?>[]{ProtocolInfo.class}, (proxy, method, args) -> {
++                    assertEquals("getPipeline", method.getName());
++                    return pipeline;
++                });
 +        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
-+                new Class<?>[]{UserConnection.class}, (proxy, method, args) ->
-+                        method.getName().equals("get") ? storages.get(args[0]) : null);
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> {
++                    return switch (method.getName()) {
++                        case "get" -> storages.get(args[0]);
++                        case "getChannel" -> channel;
++                        case "getProtocolInfo" -> info;
++                        case "sendRawPacketToServer" -> {
++                            final ByteBuf wire = (ByteBuf) args[0];
++                            try {
++                                assertEquals(ServerboundBedrockPackets.NPC_REQUEST.getId(), Types.VAR_INT.read(wire));
++                                final long runtimeId = BedrockTypes.UNSIGNED_VAR_LONG.read(wire);
++                                final var type = NpcRequestPacketPayload_RequestType.getByValue(Types.UNSIGNED_BYTE.read(wire));
++                                assertEquals("", BedrockTypes.STRING.read(wire));
++                                final int index = Types.UNSIGNED_BYTE.read(wire);
++                                sent.add(new NpcDialogueStorage.Request(runtimeId, type, index, BedrockTypes.STRING.read(wire)));
++                                assertFalse(wire.isReadable());
++                            } finally {
++                                wire.release();
++                            }
++                            yield null;
++                        }
++                        default -> throw new UnsupportedOperationException(method.getName());
++                    };
++                });
 +        final EntityTracker entities = new EntityTracker(user);
 +        final NpcDialogueStorage storage = new NpcDialogueStorage();
 +        storages.put(EntityTracker.class, entities);
@@ -445,6 +488,8 @@ index 000000000..1e8cd29e6
 +            assertNotNull(packet.get(Types.TRUSTED_COMPOUND_TAG_HOLDER, 0));
 +            assertEquals(npc.uniqueId(), storage.current().uniqueId());
 +            assertEquals(npc.runtimeId(), storage.current().runtimeId());
++            assertEquals(List.of(new NpcDialogueStorage.Request(npc.runtimeId(),
++                    NpcRequestPacketPayload_RequestType.ExecuteOpeningCommands, 0, storage.current().scene())), sent);
 +            assertEquals(0, input.readableBytes());
 +            assertTrue(user.get(InventoryTracker.class).isAnyScreenOpen());
 +        } finally {
@@ -466,6 +511,7 @@ index 000000000..1e8cd29e6
 +        } finally {
 +            unrelated.release();
 +            closing.release();
++            channel.finishAndReleaseAll();
 +        }
 +    }
 +
@@ -518,10 +564,10 @@ index 000000000..1e8cd29e6
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorageTest.java
 new file mode 100644
-index 000000000..5ff924ac2
+index 000000000..40addf1c0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorageTest.java
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,69 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -547,7 +593,6 @@ index 000000000..5ff924ac2
 +                 {"button_name":"","type":1,"mode":1},
 +                 {"button_name":"Next","type":1,"mode":0}]
 +                """);
-+        assertTrue(session.openingCommands());
 +        assertEquals(List.of(1, 3), session.buttons().stream().map(NpcDialogueStorage.Button::index).toList());
 +        assertTrue(storage.respond(session.responseIdentifier(), 2).isEmpty());
 +        assertSame(session, storage.current());
@@ -593,4 +638,4 @@ index 000000000..5ff924ac2
 +
 +}
 -- 
-2.55.0
+2.56.0
