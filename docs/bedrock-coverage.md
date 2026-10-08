@@ -8573,3 +8573,29 @@ An ordinary chest control passes its parser and geometry checks with 63 slots.
 Actor sizes, empty-name class captions, portrait rendering, live Social styling,
 native pixels and both-route behavior remain open. The private candidate and evidence stay
 under `.stackanvil/research/server-ui/actor-container-title/`.
+
+## Completed-frame movement positions, October 8, 2026
+
+Core now pairs an admitted completed physics frame's position with its velocity.
+Previously, a small movement could omit Java's normal position packet while
+the add-on sent fresh physics. Bedrock auth input then combined stale position
+with fresh velocity. The pinned native sender uses current position for that frame.
+
+The completed position passes the existing Java movement admission checks.
+Ordinary Java, unloaded chunks, teleport confirmation, supported predicted
+vehicles and dimension changes retain their existing paths. Other passenger
+types still need admission checks. An authoritative position change discards
+only pending physics. Consumed tick history and the frame watermark remain,
+so stale frames cannot overwrite even a small server correction.
+
+All 98 patches replay. The clean core build and Checkstyle pass, with 941
+passing tests and 30 optional skips. Fourteen packet cases cover small moves,
+corrections, lifecycle changes, clock history and float conversion. Two tests
+against unchanged source reproduce the position and pending-frame defects.
+Fourteen original native cases establish the sender's field binding, with
+supplied input origins. The wire identity, add-on and standing offset stay unchanged.
+
+Installed artifacts remain unchanged. Strict BDS, native trajectories, ViaProxy,
+Boar and the complete movement matrix still need runtime verification.
+Private evidence and the candidate stay under
+`.stackanvil/research/movement-flight/wire-position/`.

@@ -982,3 +982,46 @@ Both downstream artifacts preserve all 1,260 core content files, excluding the J
 The final core JAR also matches all 26,660 original callback comparisons.
 Private artifact snapshots retain these exact build identities before the separate inventory repair.
 No installation or runtime joins occur in this verification.
+
+### Completed position and correction lifecycle
+
+Java 26.3 `LocalPlayer.sendPosition` omits position packets when displacement is at most 0.0002 blocks and the reminder count is less than 20.
+The add-on still sends the completed frame's float feet position and motion after `sendChanges`.
+Core previously paired that fresh motion with the last standard Java position.
+A raw packet regression reproduces stale X/Z for a completed displacement of `(0.0001, 0, -0.0001)`.
+
+Core now applies the matching completed position before it advances tick history.
+Matching retains the existing per-axis tolerance: the greater of `0.001F` and twice the tracked coordinate's float ULP.
+Frame IDs remain strictly increasing for the connection lifetime, including rejected and consumed frames.
+Each tick consumes at most one pending frame.
+
+Position application requires a live, spawned player outside a dimension change, without a supported predicted vehicle.
+The shared `preMove` checks preserve position-sync waits, current and destination chunk admission, and the existing single-update exception after authoritative teleport acknowledgement.
+An unchanged completed position can supply motion, but it still passes these admission checks.
+The existing `1.62F` feet-to-origin conversion remains unchanged.
+
+Authoritative `setPosition` discards only unconsumed physics.
+This prevents a frame recorded before a tiny correction from surviving the coordinate tolerance and replacing corrected position or motion.
+The frame watermark and emitted input-tick history remain intact.
+A discarded frame cannot rebind through a replayed payload, while a fresh post-correction frame remains usable.
+Supported predicted-vehicle and dimension-change frames retain their clock mappings without applying player position or motion from the completed frame.
+
+The existing revision-seven payload contains the required position fields, so the channel and codec identity remain unchanged.
+The same core packet handler serves direct and ViaProxy connections.
+Ordinary Java clients retain standard movement and the existing velocity approximation.
+
+Verification covers 14 actual packet cases, including idle, reversal, replay, mismatched coordinates, missing frames, chunk loss, signed correction acknowledgement, mounting and dimension changes.
+The cases also cover authoritative corrections, mode changes, dead and unspawned players, and float conversion boundaries.
+Two unchanged-source negative controls reproduce stale coordinates and stale physics after a tiny correction.
+
+Fourteen original native instruction cases confirm that the target sender copies current StateVector XYZ into `mPos` and velocity XYZ into `mPosDelta`.
+These cases use valid sparse/dense generations zero and one, with supplied current, previous and velocity fields.
+The fixture supplies the typed pool lookup and stops before the remaining sender fields and full serializer.
+It does not establish live native height, pose, collision, rewind orchestration or trajectory equivalence.
+
+All 98 core patches replay without conflicts.
+The combined clean build and all Checkstyle tasks pass: 941 tests pass, 30 existing cases skip, and no cases fail.
+The candidate JAR remains private.
+No installation, direct or ViaProxy gameplay run, strict-BDS trajectory comparison, or native GPU session occurs in this verification.
+Input-history resimulation and native height, breathing-material and camera input equivalence remain separate requirements.
+Other passenger types and vehicle control ownership need separate admission and native movement comparisons.
