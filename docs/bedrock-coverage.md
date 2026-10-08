@@ -8599,3 +8599,34 @@ Installed artifacts remain unchanged. Strict BDS, native trajectories, ViaProxy,
 Boar and the complete movement matrix still need runtime verification.
 Private evidence and the candidate stay under
 `.stackanvil/research/movement-flight/wire-position/`.
+
+## Direct native chest transactions, October 8, 2026
+
+The frozen v10 client completed a physical chest sequence against strict BDS
+on the isolated display. A real right-click opened `BedrockNativeContainerScreen`
+with `ChestMenu`. The driver used observed native slot bounds, clipping and layers.
+It took one diamond, placed it in an empty slot, closed the menu and reopened it.
+
+The selected connection sent Take request `-3` and Place request `-5`.
+Both received matching `ITEM_STACK_RESPONSE` entries with accepted status `0`.
+Independent BDS contents and immediate Java slot and cursor state matched each
+accepted action. Reopening created a different menu object and retained the items.
+The test retained actual screenshots of the filled and reopened chest.
+
+Five guard controls passed before input. The final inventory check retained
+all 38 installed artifacts, source membership and bytes, and eight protected
+process identities. One previously protected process disappeared independently;
+its cause remains unknown. The reviewed test required that process to remain absent.
+The original missing-process check remains recorded. No desktop input occurred.
+
+Normal cleanup again exceeded its 60-second wait. Samples identify the owned
+Java process and parent as the remaining processes. Both disappeared after the
+runner stopped. BDS stopped normally, and observer hooks and writers closed.
+All owned process paths and display state were absent after normal display cleanup.
+The delayed exit remains an unresolved test-runner problem.
+
+This verifies one direct physical chest sequence with the installed v10 artifacts.
+It does not verify actor-backed Social menus, native client pixels, ViaProxy,
+bundle operations, dragging or the full inventory matrix. The newer title and
+movement candidates were not installed for this run. Private evidence stays under
+`.stackanvil/research/inventory-bundle/native-container-consumer/controlled-v10/`.
