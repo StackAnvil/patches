@@ -13,7 +13,34 @@ function journal(entries: { direction: number; nanos: bigint; payload: number[] 
   })]);
 }
 
+function packetHeader(id: number, subclients: number): number[] {
+  let value = id | (subclients << 10);
+  const bytes: number[] = [];
+  do {
+    const part = value & 127;
+    value >>>= 7;
+    bytes.push(part | (value ? 128 : 0));
+  } while (value);
+  return bytes;
+}
+
 describe("private Bedrock packet journals", () => {
+  test("decodes every subclient pair without allowing authentication packets or reserved bits", () => {
+    for (let subclients = 0; subclients < 16; subclients++) {
+      const summary = summarizeJournal(journal([
+        { direction: 1, nanos: 0n, payload: [...packetHeader(11, subclients), 0] },
+        { direction: 0, nanos: 1n, payload: packetHeader(1023, subclients) },
+      ]));
+      expect(summary.reachedStartGame).toBe(true);
+      expect(summary.serverboundIds).toEqual({ 1023: 1 });
+      for (const [direction, id] of [[0, 1], [0, 4], [0, 94], [0, 193], [1, 3], [1, 143]]) {
+        expect(() => summarizeJournal(journal([{ direction: direction!, nanos: 0n, payload: packetHeader(id!, subclients) }]))).toThrow();
+      }
+    }
+    for (const payload of [[128, 128, 1], [139, 128, 128, 128, 16], [255, 255, 255, 255, 127]]) {
+      expect(() => summarizeJournal(journal([{ direction: 1, nanos: 0n, payload }]))).toThrow();
+    }
+  });
   test("distinguishes login, world initialization, and playable spawn without payload output", () => {
     const bytes = journal([
       { direction: 1, nanos: 0n, payload: [2, 0, 0, 0, 0] },

@@ -20,14 +20,15 @@ export function summarizeJournal(bytes: Buffer): PacketSummary {
     const length = bytes.readInt32BE(offset + 9);
     offset += 13;
     if (direction > 1 || nanos < previous || length < 1 || length > 32 * 1024 * 1024 || offset + length > bytes.length || ++count > 250_000) throw new Error("Invalid packet journal entry.");
-    let id = 0;
+    let header = 0;
     let width = 0;
     for (; width < Math.min(5, length); width++) {
       const part = bytes[offset + width]!;
-      id |= (part & 127) << (width * 7);
+      header += (part & 127) * 2 ** (width * 7);
       if (!(part & 128)) break;
     }
-    if (width >= Math.min(5, length) || id < 0 || id >= 1024) throw new Error("Invalid Bedrock packet ID.");
+    if (width >= Math.min(5, length) || header > 0x3fff) throw new Error("Invalid Bedrock packet ID.");
+    const id = header & 0x3ff;
     if (direction === 1 ? [3, 143].includes(id) : [1, 4, 94, 193].includes(id)) throw new Error("Authentication packet in journal.");
     if (direction === 1) {
       result.clientbound++;

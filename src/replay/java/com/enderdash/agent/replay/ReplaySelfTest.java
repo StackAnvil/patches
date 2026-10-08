@@ -17,6 +17,7 @@ public final class ReplaySelfTest {
     public static void main(String[] args) throws Exception {
         Path directory = Files.createTempDirectory("stackanvil-replay-test");
         try {
+            packetHeaders(directory);
             Path journal = directory.resolve("packets.sbr");
             try (var writer = new PacketJournal(journal, 2193)) {
                 writer.append(false, new byte[]{1, 99, 98});
@@ -70,6 +71,39 @@ public final class ReplaySelfTest {
                 for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
             }
         }
+    }
+
+    private static void packetHeaders(Path directory) throws Exception {
+        Path file = directory.resolve("subclients.sbr");
+        try (var writer = new PacketJournal(file, 2193)) {
+            for (int subclients = 0; subclients < 16; subclients++) {
+                writer.append(true, packetHeader(11, subclients));
+                writer.append(false, packetHeader(1023, subclients));
+                for (int id : new int[]{1, 4, 94, 193}) writer.append(false, packetHeader(id, subclients));
+                for (int id : new int[]{3, 143}) writer.append(true, packetHeader(id, subclients));
+            }
+        }
+        var entries = PacketJournal.read(file, 2193);
+        require(entries.size() == 32);
+        for (int i = 0; i < entries.size(); i += 2) {
+            require(entries.get(i).id() == 11 && entries.get(i + 1).id() == 1023);
+        }
+        for (byte[] invalid : new byte[][]{
+                {}, {(byte) 128}, {(byte) 128, (byte) 128, 1},
+                {(byte) 139, (byte) 128, (byte) 128, (byte) 128, 16},
+                {(byte) 255, (byte) 255, (byte) 255, (byte) 255, 127},
+                {(byte) 128, (byte) 128, (byte) 128, (byte) 128, (byte) 128}}) {
+            try { PacketJournal.packetId(invalid); throw new AssertionError("Accepted invalid packet header"); }
+            catch (IllegalArgumentException expected) { }
+        }
+    }
+
+    private static byte[] packetHeader(int id, int subclients) {
+        ByteBuf buffer = Unpooled.buffer();
+        try {
+            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, id | subclients << 10);
+            return ReplayPackets.bytes(buffer);
+        } finally { buffer.release(); }
     }
 
     private static void packNegotiationPacing() {

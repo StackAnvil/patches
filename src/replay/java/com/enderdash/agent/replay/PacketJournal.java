@@ -66,12 +66,15 @@ public final class PacketJournal implements AutoCloseable {
     }
 
     public static int packetId(byte[] payload) {
-        int value = 0;
+        long header = 0;
         for (int i = 0; i < Math.min(5, payload.length); i++) {
             int part = Byte.toUnsignedInt(payload[i]);
-            value |= (part & 127) << (i * 7);
-            if ((part & 128) == 0 && value >= 0 && value < 1024) return value;
-            if ((part & 128) == 0) break;
+            header |= (long) (part & 127) << (i * 7);
+            if ((part & 128) == 0) {
+                // The next four bits identify sender and recipient subclients.
+                if (header <= 0x3FFF) return (int) header & 0x3FF;
+                break;
+            }
         }
         throw new IllegalArgumentException("Invalid Bedrock packet ID");
     }
