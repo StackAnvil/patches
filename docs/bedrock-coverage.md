@@ -8521,3 +8521,28 @@ no input. Social Menu, response submission, ViaProxy and Iris comparisons
 remain open. Installed artifacts, shared profiles and protected user clients
 remain unchanged. Screenshots and the hash manifest stay private under
 `.stackanvil/research/server-ui/controlled-form-render-v10/`.
+
+## Native correction snapshots and chunk admission, October 8, 2026
+
+Private tests execute the pinned 1.26.51.1 snapshot-copy path and all fifteen
+actor replay callbacks together. Thirty-two cases cover sixteen combinations
+of mutable components across two generations, with 96 stateful steps.
+Separate live and replay entities retain distinct fields in the same typed pools.
+The selected snapshot restores current position, previous position and velocity.
+It also restores AABB, Offsets and all three VanillaOffset vectors.
+
+The original world admission routines pass 82 cases, including negative
+coordinates, exact chunk edges, cached chunks and expired references.
+Admission requires available chunks across the inclusive AABB bounds.
+These routines do not establish geometric collision behavior.
+Correction tests now include the original provider and world getters, with
+27 cases and 108 stateful steps. Six constructor cases establish the concrete
+BlockSource vtable and fields used by that path.
+
+These results use bounded actors and component pools. Allocator admission,
+snapshot production, chunk loading and chunk flags remain supplied boundaries.
+Live offset application, camera scheduling and Java wire/history alignment
+still need verification. Production remains unchanged. Full native trajectories,
+strict BDS, Boar, direct connections and ViaProxy remain required.
+The private evidence inventory is under
+`.stackanvil/research/movement-flight/breathing-producer/`.

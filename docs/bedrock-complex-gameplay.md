@@ -1616,5 +1616,19 @@ Retained-frame capture reads the same level clock through the canonical native g
 All 90 new execution cases pass, including unsigned wrap, stale or missing registry state, packet guards, and retained input.
 The native `Client Tick` metadata accessors verify the packet field in 56 cases.
 Scheduler ordering, startup timing, Java frame alignment, and complete physics rewind remain unverified.
+
+## Native correction snapshots and chunk admission, October 8, 2026
+
+Combined native snapshot and replay-callback tests pass 32 cases and 96 steps.
+The original correction preserves separate current and previous positions,
+velocity, AABB and offset history. Native world admission checks chunk
+availability across inclusive AABB bounds, with 82 passing cases.
+It does not prove collision geometry or complete movement behavior.
+Production remains unchanged while Java wire/history alignment and live
+offset application remain open. Both routes and the full gameplay matrix
+remain required.
+
+The [coverage ledger](bedrock-coverage.md#native-correction-snapshots-and-chunk-admission-october-8-2026)
+records the case domains and supplied boundaries.
 The 28 production replay mismatches remain unresolved. Every scenario and route in this matrix remains required.
 The [coverage ledger](bedrock-coverage.md#native-player-input-and-retained-history-clock-october-7-2026) records the functions, fixture boundaries, and next implementation steps.
