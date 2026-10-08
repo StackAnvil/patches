@@ -8726,3 +8726,42 @@ The later private movement build omitted the core built-in UI archive.
 The source and codec results remain valid, but that build is incomplete for
 runtime testing. The earlier portrait build retains its approved UI archive.
 The incomplete builds remain private evidence while a complete pair is rebuilt.
+
+## ViaProxy physical chest verification, October 8, 2026
+
+The installed v10 artifacts pass the physical filled-chest sequence through
+ViaProxy and strict BDS. The actual native container opens, accepts a diamond
+pickup and placement, then closes and reopens with the changed contents intact.
+The request and response pairs use the same observed PLAY channel.
+Independent server snapshots and client menu state agree with both accepted actions.
+The before and after screenshots show the diamond move from slot zero to slot three.
+
+Observers release their hooks and close their writers. Full artifact, source and
+protected-process checks pass after cleanup. The owned process stop again exceeds
+60 seconds before natural exit. This runner problem remains recorded without escalation.
+The isolated display and audio processes are absent.
+
+The sequence completes within the original 300-second capture limit.
+An updated private driver checks that deadline after its artifact and window checks,
+before every input dispatch. Twenty controls cover expiry during those checks.
+The earlier attempt crossed the deadline and remains a failed verification case.
+
+This verifies a physical native chest on the ViaProxy route. It does not verify
+actor-backed Social menus, native client pixels, bundle operations or dragging.
+The original result's `claims` field contains exclusions copied from its preview.
+A separate proof records that interpretation without rewriting the original result.
+Private evidence stays under
+`.stackanvil/research/inventory-bundle/native-container-consumer/controlled-v10/`.
+
+## Complete UI build input, October 8, 2026
+
+The corrected private core build includes the verified target UI archive.
+It passes 965 tests with 30 optional skips and all Checkstyle tasks.
+Its complete entry inventory includes the archive; source and dependency checks pass.
+The incomplete earlier candidates remain private evidence and are not runtime inputs.
+
+The repository's existing add-on archives cannot supply the complete core UI baseline.
+They omit 208 nonempty UI declarations from the approved native archive.
+The core build currently treats its separate baseline input as optional.
+Independent acquisition and complete production packaging remain open requirements.
+No private native asset was added to the repository, and installed artifacts remain unchanged.
