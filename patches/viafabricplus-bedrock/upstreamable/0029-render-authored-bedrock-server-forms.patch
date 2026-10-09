@@ -1,4 +1,4 @@
-From 2ab5b06ea688c6b74c3f88e914981bccb8c37696 Mon Sep 17 00:00:00 2001
+From 4b857611dbe41c4ab74ec908a1abaad57b8c482b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:45:47 +0200
 Subject: [PATCH] feat(ui): render authored Bedrock forms and containers
@@ -229,6 +229,12 @@ scroll controls when content fits unless scrollbar_always_visible is set,
 without changing authored visibility or unrelated controls with the same
 name. Native short-dialogue execution establishes the absent scrollbar;
 boundary tests retain overflowing and explicitly persistent controls.
+
+Retire NPC response ownership before parsing a replacement. If it is
+rejected, cancel its new identity and close only the former owned screen;
+never leave stale command controls active. Disconnect and initialization
+failures also preserve unrelated screens. Queued lifecycle regressions
+cover rejection, recovery, late callbacks and exactly one cancellation.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |  11 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -276,8 +282,8 @@ boundary tests retain overflowing and explicitly persistent controls.
  .../screen/form/BedrockNativeForms.java       |  89 ++
  .../screen/form/NativeCustomFormPayload.java  |  25 +
  .../screen/form/NativeFormPayload.java        |  24 +
- .../bedrock/screen/npc/BedrockNativeNpcs.java |  72 ++
- .../screen/npc/BedrockNpcController.java      |  76 ++
+ .../bedrock/screen/npc/BedrockNativeNpcs.java |  85 ++
+ .../screen/npc/BedrockNpcController.java      |  84 ++
  .../screen/npc/BedrockNpcConversation.java    |  53 +
  .../bedrock/screen/npc/BedrockNpcScene.java   |  43 +
  .../screen/npc/NativeNpcDialoguePayload.java  |  22 +
@@ -320,7 +326,7 @@ boundary tests retain overflowing and explicitly persistent controls.
  .../BedrockCustomFormInteractionTest.java     | 219 +++++
  .../screen/form/BedrockFormSceneTest.java     |  66 ++
  .../BedrockNativeFormWidgetIdentityTest.java  | 105 ++
- .../screen/npc/BedrockNativeNpcsTest.java     | 124 +++
+ .../screen/npc/BedrockNativeNpcsTest.java     | 202 ++++
  .../npc/BedrockNpcConversationTest.java       | 106 ++
  .../screen/ui/NativeUiActorCameraTest.java    |  79 ++
  .../screen/ui/NativeUiActorPortraitsTest.java | 164 ++++
@@ -333,7 +339,7 @@ boundary tests retain overflowing and explicitly persistent controls.
  .../bedrock/screen/ui/NativeUiSliderTest.java | 120 +++
  .../bedrock/screen/ui/NativeUiTextTest.java   |  56 ++
  .../screen/ui/NativeUiViewportTest.java       |  55 ++
- 103 files changed, 10053 insertions(+), 22 deletions(-)
+ 103 files changed, 10152 insertions(+), 22 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -3903,10 +3909,10 @@ index 0000000..c59ab7c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNativeNpcs.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNativeNpcs.java
 new file mode 100644
-index 0000000..20ae43f
+index 0000000..8b33f3e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNativeNpcs.java
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,85 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3934,12 +3940,7 @@ index 0000000..20ae43f
 +        ClientPlayConnectionEvents.INIT.register((listener, client) ->
 +            ClientPlayNetworking.registerReceiver(NativeNpcDialoguePayload.TYPE,
 +                (payload, context) -> accept(listener.getConnection(), payload.message())));
-+        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> {
-+            if (active != null && active.ownedBy(listener.getConnection())) {
-+                active.retire();
-+                active = null;
-+            }
-+        });
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> disconnected(listener.getConnection()));
 +    }
 +
 +    static boolean current(final BedrockNpcController controller) { return active == controller; }
@@ -3949,27 +3950,45 @@ index 0000000..20ae43f
 +        return listener != null && listener.getConnection() == owner && owner.isConnected();
 +    }
 +
++    static void disconnected(final Connection owner) {
++        if (active != null && active.ownedBy(owner)) close(active);
++    }
++
++    static void close(final BedrockNpcController controller) {
++        if (active != controller) return;
++        controller.retire();
++        active = null;
++        closeOwnedScreen(controller);
++    }
++
++    private static void closeOwnedScreen(final BedrockNpcController controller) {
++        final var client = Minecraft.getInstance();
++        if (controller != null && client.gui.screen() instanceof NativeUiSceneScreen screen && screen.controlledBy(controller))
++            client.setScreenAndShow(null);
++    }
++
 +    static void accept(final Connection owner, final NativeNpcDialogueMessage message) {
 +        final var client = Minecraft.getInstance();
 +        client.execute(() -> {
 +            if (!connected(owner)) return;
 +            if (message.scene() == null) {
 +                if (active == null || !active.ownedBy(owner) || !active.identifier().equals(message.responseIdentifier())) return;
-+                final var previous = active;
-+                previous.retire();
-+                active = null;
-+                if (client.gui.screen() instanceof NativeUiSceneScreen screen && screen.controlledBy(previous))
-+                    client.setScreenAndShow(null);
++                close(active);
 +                return;
 +            }
++            // A replacement invalidates the old response identity even when the new scene is rejected.
++            final var previous = active;
++            if (previous != null) previous.retire();
++            active = null;
 +            final BedrockNpcController next;
 +            try {
 +                next = new BedrockNpcController(owner, BedrockNpcScene.parse(message));
 +            } catch (final RuntimeException error) {
++                closeOwnedScreen(previous);
++                BedrockNpcController.reject(owner, message.responseIdentifier());
 +                ViaFabricPlusBedrock.impl().logger().error("Invalid native NPC scene", error);
 +                return;
 +            }
-+            if (active != null) active.retire();
 +            active = next;
 +            try {
 +                client.setScreenAndShow(new NativeUiSceneScreen(next));
@@ -3981,10 +4000,10 @@ index 0000000..20ae43f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNpcController.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNpcController.java
 new file mode 100644
-index 0000000..90ee6fe
+index 0000000..d8d3692
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNpcController.java
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,84 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3998,7 +4017,6 @@ index 0000000..90ee6fe
 +import com.mojang.blaze3d.Blaze3D;
 +import java.util.List;
 +import java.util.Optional;
-+import net.minecraft.client.Minecraft;
 +import net.minecraft.network.Connection;
 +import net.minecraft.nbt.CompoundTag;
 +import net.minecraft.network.protocol.common.ServerboundCustomClickActionPacket;
@@ -4047,10 +4065,19 @@ index 0000000..90ee6fe
 +
 +    private void respond(final int action) {
 +        if (!BedrockNativeNpcs.current(this) || !BedrockNativeNpcs.connected(this.owner)) return;
++        respond(this.owner, Identifier.parse(this.identifier()), action);
++    }
++
++    static void reject(final Connection owner, final String identifier) {
++        final var id = Identifier.tryParse(identifier);
++        if (id != null && BedrockNativeNpcs.connected(owner)) respond(owner, id, -1);
++    }
++
++    private static void respond(final Connection owner, final Identifier identifier, final int action) {
 +        final CompoundTag response = new CompoundTag();
 +        if (action < 0) response.putBoolean("exit", true);
 +        else response.putInt("button_id", action);
-+        this.owner.send(new ServerboundCustomClickActionPacket(Identifier.parse(this.identifier()), Optional.of(response)));
++        owner.send(new ServerboundCustomClickActionPacket(identifier, Optional.of(response)));
 +    }
 +
 +    @Override
@@ -4058,7 +4085,7 @@ index 0000000..90ee6fe
 +        if (!this.current()) return;
 +        ViaFabricPlusBedrock.impl().logger().error("Native NPC scene could not be rendered", error);
 +        this.cancel();
-+        Minecraft.getInstance().setScreenAndShow(null);
++        BedrockNativeNpcs.close(this);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNpcConversation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNpcConversation.java
@@ -8902,10 +8929,10 @@ index 0000000..0ff802f
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNativeNpcsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNativeNpcsTest.java
 new file mode 100644
-index 0000000..09a035c
+index 0000000..d0b9307
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNativeNpcsTest.java
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,202 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -8914,6 +8941,7 @@ index 0000000..09a035c
 +package com.viaversion.viafabricplus.bedrock.screen.npc;
 +
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiSceneScreen;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import java.util.ArrayDeque;
 +import java.util.concurrent.atomic.AtomicReference;
 +import net.minecraft.SharedConstants;
@@ -8996,6 +9024,78 @@ index 0000000..09a035c
 +        }
 +    }
 +
++    @Test
++    void rejectedReplacementRetiresOldCallbacksAndAllowsTheNextValidScene() throws Exception {
++        try (final var harness = new Harness()) {
++            BedrockNativeNpcs.accept(harness.owner, BedrockNpcConversationTest.message(1, 177));
++            harness.run();
++            final var first = (NativeUiSceneScreen) harness.screen.get();
++            final var invalid = BedrockNpcConversationTest.message(2, 256);
++            BedrockNativeNpcs.accept(harness.owner, invalid);
++            harness.run();
++            assertNull(harness.screen.get());
++            first.onClose();
++            final var response = org.mockito.ArgumentCaptor.forClass(ServerboundCustomClickActionPacket.class);
++            verify(harness.owner).send(response.capture());
++            assertEquals(invalid.responseIdentifier(), response.getValue().id().toString());
++            assertTrue(((net.minecraft.nbt.CompoundTag) response.getValue().payload().orElseThrow()).getBooleanOr("exit", false));
++            BedrockNativeNpcs.accept(harness.owner, BedrockNpcConversationTest.message(3, 255));
++            harness.run();
++            final var next = harness.screen.get();
++            first.onClose();
++            BedrockNativeNpcs.accept(harness.owner, new NativeNpcDialogueMessage(invalid.responseIdentifier(), null));
++            harness.run();
++            assertSame(next, harness.screen.get());
++            verify(harness.owner).send(any());
++        }
++    }
++
++    @Test
++    void rejectionAndDisconnectOnlyCloseTheScreenTheyOwn() throws Exception {
++        try (final var harness = new Harness()) {
++            BedrockNativeNpcs.accept(harness.owner, BedrockNpcConversationTest.message(1, 177));
++            harness.run();
++            final var first = (NativeUiSceneScreen) harness.screen.get();
++            final var unrelated = mock(Screen.class);
++            harness.screen.set(unrelated);
++            BedrockNativeNpcs.accept(harness.owner, BedrockNpcConversationTest.message(2, -2));
++            harness.run();
++            assertSame(unrelated, harness.screen.get());
++            first.onClose();
++            final var response = org.mockito.ArgumentCaptor.forClass(ServerboundCustomClickActionPacket.class);
++            verify(harness.owner).send(response.capture());
++            assertEquals(BedrockNpcConversationTest.message(2).responseIdentifier(), response.getValue().id().toString());
++
++            BedrockNativeNpcs.accept(harness.owner, BedrockNpcConversationTest.message(3, 255));
++            harness.run();
++            final var next = (NativeUiSceneScreen) harness.screen.get();
++            BedrockNativeNpcs.disconnected(mock(Connection.class));
++            assertSame(next, harness.screen.get());
++            BedrockNativeNpcs.disconnected(harness.owner);
++            assertNull(harness.screen.get());
++            next.onClose();
++            verify(harness.owner).send(any());
++        }
++    }
++
++    @Test
++    void screenInitializationFailureDoesNotCloseAnUnrelatedScreen() throws Exception {
++        try (final var harness = new Harness()) {
++            final var unrelated = mock(Screen.class);
++            harness.screen.set(unrelated);
++            doThrow(new IllegalStateException()).when(harness.game).setScreenAndShow(any(NativeUiSceneScreen.class));
++            BedrockNativeNpcs.accept(harness.owner, BedrockNpcConversationTest.message(1, 177));
++            harness.run();
++            assertSame(unrelated, harness.screen.get());
++            final var response = org.mockito.ArgumentCaptor.forClass(ServerboundCustomClickActionPacket.class);
++            verify(harness.owner).send(response.capture());
++            assertTrue(((net.minecraft.nbt.CompoundTag) response.getValue().payload().orElseThrow()).getBooleanOr("exit", false));
++            BedrockNativeNpcs.disconnected(harness.owner);
++            assertSame(unrelated, harness.screen.get());
++            verify(harness.owner).send(any());
++        }
++    }
++
 +    private static final class Harness implements AutoCloseable {
 +        private final Minecraft game = mock(Minecraft.class);
 +        private final Connection owner = mock(Connection.class);
@@ -9003,6 +9103,7 @@ index 0000000..09a035c
 +        private final AtomicReference<Screen> screen = new AtomicReference<>();
 +        private final ArrayDeque<Runnable> queue = new ArrayDeque<>();
 +        private final MockedStatic<Minecraft> singleton;
++        private final MockedStatic<ViaFabricPlusBedrock> addon;
 +
 +        private Harness() throws Exception {
 +            when(game.getConnection()).thenReturn(listener);
@@ -9017,15 +9118,19 @@ index 0000000..09a035c
 +            doAnswer(call -> { screen.set(call.getArgument(0)); return null; }).when(game).setScreenAndShow(any());
 +            singleton = mockStatic(Minecraft.class);
 +            singleton.when(Minecraft::getInstance).thenReturn(game);
++            addon = mockStatic(ViaFabricPlusBedrock.class);
++            final var implementation = mock(ViaFabricPlusBedrock.class);
++            when(implementation.logger()).thenReturn(mock(org.apache.logging.log4j.Logger.class));
++            addon.when(ViaFabricPlusBedrock::impl).thenReturn(implementation);
 +        }
 +
 +        private void run() { queue.removeFirst().run(); }
 +
 +        @Override
 +        public void close() {
-+            BedrockNativeNpcs.accept(owner, new NativeNpcDialogueMessage("viabedrock:npc/1", null));
-+            BedrockNativeNpcs.accept(owner, new NativeNpcDialogueMessage("viabedrock:npc/2", null));
++            BedrockNativeNpcs.disconnected(owner);
 +            while (!queue.isEmpty()) run();
++            addon.close();
 +            singleton.close();
 +        }
 +    }
