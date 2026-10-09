@@ -1,4 +1,4 @@
-From 6823bfc649e87114be7950b2408b22bbdbcff223 Mon Sep 17 00:00:00 2001
+From f258b7172723bb2a77c46d649b7732d91af4377c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -407,6 +407,10 @@ creating the escape request. Three saved CubeCraft actor snapshots omit
 that flag, while Java otherwise injects sideways velocity when blocks
 overlap the player. Preserve Java behavior when native state is unknown.
 This gate does not establish full Pillars of Fortune movement parity.
+
+Matching official Bedrock 1.26.51.1/protocol 2193 survival captures show twisting/weeping vines apply 0.2 jump velocity before movement, cap descent at -0.2, hold downward motion while sneaking, and apply ladder wall velocity 0.2 after gravity. A stone ceiling stops jumping at final velocity -0.0784 rather than replacing collision-resolved velocity with a later impulse. Adjacent feet cells fall normally and leaving the vine top restores gravity.
+
+Java's pre-stage -0.15 cap and late jump impulse produce mismatched displacement. Port the captured stages while retaining collision results and excluding flight, gliding, liquids, swimming and ordinary Java connections. Targeted climbing, posture and native collision tests pass. Flat-floor native crouching held eye Y unchanged, and the rare ground clipping report remains unreproduced.
 ---
  build.gradle.kts                              |   1 +
  .../bedrock/ViaFabricPlusBedrock.java         |   8 +
@@ -417,8 +421,8 @@ This gate does not establish full Pillars of Fortune movement parity.
  .../movement/MixinEntityFluidInteraction.java |  16 ++
  ...tyFluidInteraction_CurrentAccumulator.java |  49 ++--
  .../movement/MixinFireworkRocketEntity.java   |  28 ++
- .../features/movement/MixinLivingEntity.java  | 115 ++++++++
- .../features/movement/MixinLocalPlayer.java   | 226 ++++++++++++++-
+ .../features/movement/MixinLivingEntity.java  | 140 +++++++++
+ .../features/movement/MixinLocalPlayer.java   | 230 ++++++++++++++-
  .../mixin/features/movement/MixinPlayer.java  | 119 ++++++--
  .../MixinPlayerCorrectionPacketListener.java  |  23 ++
  .../MixinPotentSulfurBlockEntity.java         |  44 +++
@@ -434,6 +438,7 @@ This gate does not establish full Pillars of Fortune movement parity.
  .../VehiclePredictionContextPayload.java      |  24 ++
  .../input/VehiclePredictionPayload.java       |  24 ++
  .../input/VehiclePredictionSession.java       |  84 ++++++
+ .../movement/BedrockClimbingPhysics.java      |  43 +++
  .../movement/BedrockCollisionContacts.java    |  50 ++++
  .../movement/BedrockFlightPhysics.java        |  61 ++++
  .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++
@@ -443,12 +448,13 @@ This gate does not establish full Pillars of Fortune movement parity.
  .../input/BedrockVehiclePredictionsTest.java  | 155 ++++++++++
  .../input/VehiclePredictionPayloadTest.java   |  75 +++++
  .../input/VehiclePredictionSessionTest.java   | 266 ++++++++++++++++++
+ .../movement/BedrockClimbingPhysicsTest.java  |  53 ++++
  .../BedrockCollisionContactsTest.java         |  39 +++
  .../movement/BedrockFlightPhysicsTest.java    | 130 +++++++++
  .../movement/BedrockFluidPhysicsTest.java     | 121 ++++++++
  .../movement/BedrockGeyserPhysicsTest.java    | 101 +++++++
  .../movement/BedrockPlayerPostureTest.java    |  45 +++
- 40 files changed, 2372 insertions(+), 67 deletions(-)
+ 42 files changed, 2497 insertions(+), 67 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
@@ -467,6 +473,7 @@ This gate does not establish full Pillars of Fortune movement parity.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionContextPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionSession.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockClimbingPhysics.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContacts.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysics.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
@@ -475,6 +482,7 @@ This gate does not establish full Pillars of Fortune movement parity.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictionsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionPayloadTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionSessionTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockClimbingPhysicsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysicsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
@@ -798,21 +806,23 @@ index 0000000..b648ca3
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index 1c9125e..350b404 100644
+index 1c9125e..bf44991 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-@@ -21,27 +21,142 @@
+@@ -21,27 +21,167 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
 +import com.llamalad7.mixinextras.expression.Definition;
 +import com.llamalad7.mixinextras.expression.Expression;
 +import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
++import com.llamalad7.mixinextras.injector.ModifyReturnValue;
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockGeyserPhysics;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockClimbingPhysics;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockFlightPhysics;
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockFlightMotion;
 +import net.minecraft.client.player.LocalPlayer;
@@ -844,6 +854,29 @@ index 1c9125e..350b404 100644
  @Mixin(LivingEntity.class)
  public abstract class MixinLivingEntity {
  
++    @ModifyReturnValue(method = "handleOnClimbable", at = @At("RETURN"))
++    private Vec3 applyNativeClimbingBeforeMovement(final Vec3 javaMotion, final Vec3 requestedMotion) {
++        if ((Object) this instanceof LocalPlayer player && BedrockClimbingPhysics.applies(player)) {
++            return new Vec3(javaMotion.x, BedrockClimbingPhysics.beforeMovement(requestedMotion.y,
++                    player.input.keyPresses.jump(), player.isShiftKeyDown()), javaMotion.z);
++        }
++        return javaMotion;
++    }
++
++    @WrapOperation(method = "handleRelativeFrictionAndCalculateMovement", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;onClimbable()Z"))
++    private boolean retainCollisionResolvedClimbingMotion(final LivingEntity entity, final Operation<Boolean> original) {
++        // Native jump climbing precedes move. Java's later impulse would replace collision-resolved motion.
++        return !(entity instanceof LocalPlayer player && BedrockClimbingPhysics.applies(player)) && original.call(entity);
++    }
++
++    @Inject(method = "travelInAir", at = @At("RETURN"))
++    private void applyNativeWallClimbingAfterGravity(final Vec3 input, final CallbackInfo ci) {
++        if ((Object) this instanceof LocalPlayer player && BedrockClimbingPhysics.applies(player)) {
++            final Vec3 motion = player.getDeltaMovement();
++            player.setDeltaMovement(motion.x, BedrockClimbingPhysics.afterGravity(motion.y, player.horizontalCollision), motion.z);
++        }
++    }
++
 +    @Inject(method = "travel", at = @At("HEAD"))
 +    private void applyNativeGeyserTravel(final Vec3 input, final CallbackInfo ci) {
 +        if ((Object) this instanceof LocalPlayer player && BedrockInputPermissions.isBedrockConnection()) {
@@ -945,10 +978,10 @@ index 1c9125e..350b404 100644
      private boolean changeFluidGravityCondition(final LivingEntity instance) {
          return BedrockInputPermissions.isBedrockConnection() ? instance.isSwimming() : instance.isSprinting();
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index e5a8167..cb62bf3 100644
+index e5a8167..c15ef5e 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,22 +21,244 @@
+@@ -21,22 +21,248 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -967,6 +1000,7 @@ index e5a8167..cb62bf3 100644
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockFluidPhysics;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockFlightPhysics;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockPlayerPosture;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockClimbingPhysics;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -1075,6 +1109,9 @@ index e5a8167..cb62bf3 100644
 +
 +    @Override
 +    public void jumpFromGround() {
++        if (BedrockClimbingPhysics.applies((LocalPlayer) (Object) this)) {
++            return;
++        }
 +        super.jumpFromGround();
 +        this.viaFabricPlusBedrock$groundJump = BedrockInputPermissions.isBedrockConnection();
 +    }
@@ -1991,6 +2028,55 @@ index 0000000..46eeaaf
 +        return Float.isFinite(fx) && Float.isFinite(fy) && Float.isFinite(fz) ? new Position3f(fx, fy, fz) : null;
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockClimbingPhysics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockClimbingPhysics.java
+new file mode 100644
+index 0000000..14ff9c2
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockClimbingPhysics.java
+@@ -0,0 +1,43 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.world.level.block.Blocks;
++
++/** Target 1.26.51 climbing stages, before collision and after ordinary gravity. */
++public final class BedrockClimbingPhysics {
++
++    private static final float CLIMB_SPEED = 0.2F;
++
++    private BedrockClimbingPhysics() {
++    }
++
++    public static boolean applies(final LocalPlayer player) {
++        if (!BedrockInputPermissions.isBedrockConnection() || player.getAbilities().flying
++                || player.isSpectator() || player.isFallFlying() || player.isSwimming()
++                || player.isInWater() || player.isInLava() || !player.onClimbable()) {
++            return false;
++        }
++        final var state = player.getInBlockState();
++        return state.is(Blocks.LADDER) || state.is(Blocks.VINE)
++                || state.is(Blocks.TWISTING_VINES) || state.is(Blocks.TWISTING_VINES_PLANT)
++                || state.is(Blocks.WEEPING_VINES) || state.is(Blocks.WEEPING_VINES_PLANT);
++    }
++
++    public static double beforeMovement(final double verticalMotion, final boolean jumping, final boolean sneaking) {
++        if (jumping) {
++            return CLIMB_SPEED;
++        }
++        return sneaking && verticalMotion < 0 ? 0 : Math.max(verticalMotion, -CLIMB_SPEED);
++    }
++
++    public static double afterGravity(final double verticalMotion, final boolean horizontalCollision) {
++        return horizontalCollision ? CLIMB_SPEED : verticalMotion;
++    }
++
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContacts.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContacts.java
 new file mode 100644
 index 0000000..9f16513
@@ -2886,6 +2972,65 @@ index 0000000..5a56768
 +            return this.session.sample(this.listener, this.player, this.actor, frame);
 +        }
 +    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockClimbingPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockClimbingPhysicsTest.java
+new file mode 100644
+index 0000000..b1d54e6
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockClimbingPhysicsTest.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import net.minecraft.core.Direction;
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.shapes.Shapes;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class BedrockClimbingPhysicsTest {
++
++    @Test
++    void advancesJumpClimbingBeforeGravityRatherThanMovingByThePreviousDampedImpulse() {
++        double position = 250;
++        double motion = -0.0784F;
++        for (int tick = 0; tick < 40; tick++) {
++            final double movement = BedrockClimbingPhysics.beforeMovement(motion, true, false);
++            position += movement;
++            motion = BedrockClimbingPhysics.afterGravity((movement - 0.08F) * 0.98F, false);
++            assertEquals(0.11760000884532928, motion, 0.00000001);
++        }
++        assertEquals(258, position, 0.000001);
++    }
++
++    @Test
++    void clampsNativeDescentAndRetainsSneakingHoldWithoutSuppressingUpwardMotion() {
++        assertEquals(-0.2F, BedrockClimbingPhysics.beforeMovement(-1, false, false));
++        assertEquals(-0.2744F, (BedrockClimbingPhysics.beforeMovement(-1, false, false) - 0.08F) * 0.98F, 0.00000002);
++        assertEquals(0, BedrockClimbingPhysics.beforeMovement(-1, false, true));
++        assertEquals(0.1, BedrockClimbingPhysics.beforeMovement(0.1, false, true));
++        assertEquals(0.2F, BedrockClimbingPhysics.beforeMovement(-1, true, true));
++    }
++
++    @Test
++    void wallContactAppliesItsImpulseAfterGravityAndJumpClimbingRetainsCeilingCollision() {
++        assertEquals(0.2F, BedrockClimbingPhysics.afterGravity(-0.0784F, true));
++        final var body = new AABB(0.2, 0, 0.2, 0.8, 1.8F, 0.8);
++        final double requested = BedrockClimbingPhysics.beforeMovement(-0.0784F, true, false);
++        final double clipped = BedrockCollisionContacts.collide(Shapes.box(0, 1.9, 0, 1, 2.9, 1), Direction.Axis.Y, body, requested);
++        assertEquals(0.1, clipped, 0.000001);
++        assertTrue(clipped < requested);
++        // Entity.restituteMovementAfterCollisions clears velocity at a non-bouncing ceiling.
++        final double collisionMotion = 0;
++        assertEquals(-0.0784F, BedrockClimbingPhysics.afterGravity((collisionMotion - 0.08F) * 0.98F, false), 0.00000001);
++    }
++
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java
 new file mode 100644

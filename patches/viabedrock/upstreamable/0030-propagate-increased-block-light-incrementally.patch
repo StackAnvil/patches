@@ -1,4 +1,4 @@
-From dc8c1ea9b97f67a9c5297761afbe0b366d1e4beb Mon Sep 17 00:00:00 2001
+From 4c8ea67ee3ec6914a96beab16b0b6019b2e406fb Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 03:59:09 +0200
 Subject: [PATCH] perf(lighting): propagate increased block light incrementally
@@ -51,21 +51,25 @@ rules confirmed by the same measurements. Keep this in core for both
 direct and ViaProxy clients. Regression tests cover chunk-border full and
 incremental propagation, cache immutability and source removal. Native
 assets and probe output remain private. Rendered image parity remains open.
+
+Bound the lifetime of background lighting jobs through result application or discard, including slow connection event loops, rejected executors and failures. Releasing worker capacity before completion delivery allowed queued callbacks to retain unlimited region snapshots. Keep one permit per job and release it exactly once.
+
+Keep uniform lighting snapshots as one state instead of 4,096 integers. Reuse the emission workspace for block light, and avoid allocating arrays for uniform zero/full light sections. Preserve mixed-section, secondary-water, border and incremental propagation semantics. Stress tests exercise 32,000 submissions with blocked result delivery, abandoned trackers and exception cleanup. Full-height and dense/compact parity tests check the storage bound and output. A private 24-section benchmark produces identical light data with approximately 27 percent less allocation per update; its mostly uniform snapshot uses approximately 96 percent less state-array storage. These measurements do not establish game-wide heap or frame-rate improvement.
 ---
- .../api/chunk/light/LightEngine.java          | 168 ++++++++++++-
- .../protocol/data/BedrockMappingData.java     |  32 ++-
- .../protocol/storage/ChunkTracker.java        | 221 ++++++++++++++++--
- .../api/chunk/light/LightEngineTest.java      | 141 +++++++++++
- .../protocol/data/BlockLightEmissionTest.java |  91 ++++++++
- .../data/BlockLightFilteringTest.java         |  97 ++++++++
- .../protocol/storage/ChunkTrackerTest.java    |  45 ++++
- 7 files changed, 762 insertions(+), 33 deletions(-)
+ .../api/chunk/light/LightEngine.java          | 228 ++++++++++--
+ .../protocol/data/BedrockMappingData.java     |  32 +-
+ .../protocol/storage/ChunkTracker.java        | 332 +++++++++++++++---
+ .../api/chunk/light/LightEngineTest.java      | 211 +++++++++++
+ .../protocol/data/BlockLightEmissionTest.java |  91 +++++
+ .../data/BlockLightFilteringTest.java         |  97 +++++
+ .../protocol/storage/ChunkTrackerTest.java    | 168 +++++++++
+ 7 files changed, 1071 insertions(+), 88 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightEmissionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java b/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java
-index 7083d9305..96383c938 100644
+index 7083d9305..d101d0b5a 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java
 @@ -18,13 +18,14 @@
@@ -84,7 +88,15 @@ index 7083d9305..96383c938 100644
   * {@code max(1, opacity)} of that block. Sky light of level 15 travels downwards without losing
   * level as long as it does not enter a light filtering block. Blocks with an opacity of 15 or
   * above fully block light.
-@@ -58,6 +59,142 @@ public final class LightEngine {
+@@ -51,6 +52,7 @@ public final class LightEngine {
+      *                      {@code chunkIndex = (chunkZOffset + 1) * 3 + (chunkXOffset + 1)} and
+      *                      {@code blockIndex = y * 256 | z * 16 | x}. Chunks and sections that have
+      *                      not been loaded are {@code null} and are treated as fully opaque.
++     *                      Uniform sections may contain only their one block state.
+      * @param sectionCount  The amount of chunk sections of a chunk column
+      * @param skyLight      Whether the dimension has sky light
+      * @param emissionTable Light emission (0-15) per java block state id
+@@ -58,6 +60,143 @@ public final class LightEngine {
       * @return The light data of all loaded chunks of the region; {@code null} for unloaded chunks
       */
      public static ChunkLight[] computeRegionLight(final int[][][] regionStates, final int sectionCount, final boolean skyLight, final byte[] emissionTable, final byte[] opacityTable) {
@@ -219,7 +231,8 @@ index 7083d9305..96383c938 100644
 +        if (chunk == null || chunk[y >> 4] == null) {
 +            return 15;
 +        }
-+        final int state = chunk[y >> 4][((y & 15) << 8) | ((z & 15) << 4) | (x & 15)];
++        final int[] section = chunk[y >> 4];
++        final int state = section[section.length == 1 ? 0 : ((y & 15) << 8) | ((z & 15) << 4) | (x & 15)];
 +        return opacityTable[state] & 0xFF;
 +    }
 +
@@ -227,17 +240,31 @@ index 7083d9305..96383c938 100644
          if (regionStates.length != 9) {
              throw new IllegalArgumentException("Region must contain exactly 9 chunks");
          }
-@@ -71,6 +208,9 @@ public final class LightEngine {
-         final byte[] emission = new byte[opacity.length];
+@@ -68,12 +207,14 @@ public final class LightEngine {
+         final int height = sectionCount << 4;
+         // Block index scheme: (y * REGION_SIZE + z) * REGION_SIZE + x
+         final byte[] opacity = new byte[REGION_SIZE * REGION_SIZE * height];
+-        final byte[] emission = new byte[opacity.length];
++        final byte[] blockLightData = new byte[opacity.length];
          Arrays.fill(opacity, (byte) 15); // Unloaded chunks are treated as fully opaque
-         fillRegion(regionStates, opacity, emission, emissionTable, opacityTable, height);
+-        fillRegion(regionStates, opacity, emission, emissionTable, opacityTable, height);
++        fillRegion(regionStates, opacity, blockLightData, emissionTable, opacityTable, height);
 +        if (secondaryWater != null) {
 +            applySecondaryWater(opacity, secondaryWater);
 +        }
  
          final byte[] skyLightData = skyLight ? new byte[opacity.length] : null;
-         final byte[] blockLightData = new byte[opacity.length];
-@@ -88,7 +228,7 @@ public final class LightEngine {
+-        final byte[] blockLightData = new byte[opacity.length];
+ 
+         final IntQueue queue = new IntQueue();
+         if (skyLightData != null) {
+@@ -83,12 +224,12 @@ public final class LightEngine {
+             propagate(skyLightData, opacity, queue, height, true);
+             queue.clear();
+         }
+-        seedBlockLight(blockLightData, emission, queue, height);
++        enqueueBlockLightSources(blockLightData, queue);
+         propagate(blockLightData, opacity, queue, height, false);
  
          final ChunkLight[] results = new ChunkLight[9];
          for (int chunkIndex = 0; chunkIndex < 9; chunkIndex++) {
@@ -246,7 +273,7 @@ index 7083d9305..96383c938 100644
                  continue;
              }
  
-@@ -105,6 +245,30 @@ public final class LightEngine {
+@@ -105,6 +246,30 @@ public final class LightEngine {
          return results;
      }
  
@@ -277,6 +304,83 @@ index 7083d9305..96383c938 100644
      /**
       * Fills the opacity and emission arrays of the 3x3 chunk region from the java block states.
       */
+@@ -230,14 +395,13 @@ public final class LightEngine {
+         }
+     }
+ 
+-    private static void seedBlockLight(final byte[] blockLight, final byte[] emission, final IntQueue queue, final int height) {
+-        for (int index = 0; index < emission.length; index++) {
+-            final int level = emission[index] & 0xFF;
++    private static void enqueueBlockLightSources(final byte[] blockLight, final IntQueue queue) {
++        for (int index = 0; index < blockLight.length; index++) {
++            final int level = blockLight[index] & 0xFF;
+             if (level == 0) {
+                 continue;
+             }
+ 
+-            blockLight[index] = (byte) level;
+             if (level > 1) {
+                 final int y = index / REGION_SIZE_SQUARED;
+                 final int remainder = index % REGION_SIZE_SQUARED;
+@@ -323,38 +487,34 @@ public final class LightEngine {
+      * returned for fully lit sections.
+      */
+     private static byte[] extractSection(final byte[] light, final int baseX, final int baseZ, final int sectionIndex, final int height) {
+-        final byte[] data = new byte[LIGHT_LENGTH];
+-        boolean allZero = true;
+-        boolean allFifteen = true;
++        final int firstLevel = light[(sectionIndex << 4) * REGION_SIZE_SQUARED + baseZ * REGION_SIZE + baseX] & 0xFF;
++        boolean uniform = firstLevel == 0 || firstLevel == 15;
++        for (int y = 0; y < 16 && uniform; y++) {
++            final int layerBase = ((sectionIndex << 4) + y) * REGION_SIZE_SQUARED;
++            for (int z = 0; z < 16 && uniform; z++) {
++                final int rowBase = layerBase + (baseZ + z) * REGION_SIZE + baseX;
++                for (int x = 0; x < 16; x++) {
++                    if ((light[rowBase + x] & 0xFF) != firstLevel) {
++                        uniform = false;
++                        break;
++                    }
++                }
++            }
++        }
++        if (uniform) {
++            return firstLevel == 0 ? null : ChunkLight.FULL;
++        }
+ 
++        final byte[] data = new byte[LIGHT_LENGTH];
+         for (int y = 0; y < 16; y++) {
+             final int layerBase = ((sectionIndex << 4) + y) * REGION_SIZE_SQUARED;
+             for (int z = 0; z < 16; z++) {
+                 int index = layerBase + (baseZ + z) * REGION_SIZE + baseX;
+-                for (int x = 0; x < 16; x++, index++) {
+-                    final int level = light[index] & 0xFF;
+-                    final int byteIndex = (y << 7) | (z << 3) | (x >> 1);
+-                    if ((x & 1) == 0) {
+-                        data[byteIndex] |= (byte) level;
+-                    } else {
+-                        data[byteIndex] |= (byte) (level << 4);
+-                    }
+-                    if (level != 0) {
+-                        allZero = false;
+-                    }
+-                    if (level != 15) {
+-                        allFifteen = false;
+-                    }
++                for (int x = 0; x < 16; x += 2, index += 2) {
++                    data[(y << 7) | (z << 3) | (x >> 1)] = (byte) (light[index] | light[index + 1] << 4);
+                 }
+             }
+         }
+-
+-        if (allZero) {
+-            return null;
+-        }
+-        if (allFifteen) {
+-            return ChunkLight.FULL;
+-        }
+         return data;
+     }
+ 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java b/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
 index 98d435ad8..ae1e0fe72 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
@@ -370,22 +474,29 @@ index 98d435ad8..ae1e0fe72 100644
              return Integer.parseInt(blockState.properties().getOrDefault(property, String.valueOf(fallback)));
          } catch (final NumberFormatException e) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-index 12898b47f..a8e23e21c 100644
+index 12898b47f..07b236527 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-@@ -70,9 +70,10 @@ import java.util.*;
+@@ -67,12 +67,17 @@ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
+ import net.raphimc.viabedrock.api.model.NativeBlockSection;
+ 
+ import java.util.*;
++import java.util.concurrent.Executor;
  import java.util.concurrent.ExecutorService;
  import java.util.concurrent.Executors;
  import java.util.concurrent.Semaphore;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.function.BiConsumer;
 +import java.util.function.IntPredicate;
 +import java.util.function.LongPredicate;
++import java.util.function.Supplier;
  import java.util.logging.Level;
  
 -// TODO: Feature: Incremental light updates instead of whole section recomputations
  public class ChunkTracker extends StoredObject {
  
      private static final int MAX_SUB_CHUNK_REQUEST_OFFSETS_PER_PACKET = 256;
-@@ -91,6 +92,7 @@ public class ChunkTracker extends StoredObject {
+@@ -91,6 +96,7 @@ public class ChunkTracker extends StoredObject {
      private final Set<Long> dirtyChunks = new LinkedHashSet<>();
  
      private final Long2ObjectMap<int[][]> javaBlockStateCache = new Long2ObjectOpenHashMap<>(); // chunk key -> per section java block states
@@ -393,7 +504,7 @@ index 12898b47f..a8e23e21c 100644
      private final Long2ObjectMap<ChunkLight> chunkLight = new Long2ObjectOpenHashMap<>(); // Only chunks sent to the client have cached light
      private final LongSet lightDirtyChunks = new LongOpenHashSet();
      private final LongSet pendingLightComputations = new LongOpenHashSet();
-@@ -170,7 +172,10 @@ public class ChunkTracker extends StoredObject {
+@@ -170,7 +176,10 @@ public class ChunkTracker extends StoredObject {
                  chunk.getSections()[i] = new BedrockChunkSectionImpl(true);
              }
          }
@@ -405,7 +516,7 @@ index 12898b47f..a8e23e21c 100644
  
          return chunk;
      }
-@@ -186,6 +191,7 @@ public class ChunkTracker extends StoredObject {
+@@ -186,6 +195,7 @@ public class ChunkTracker extends StoredObject {
              && position.chunkZ == chunkPos.chunkZ());
          this.dirtyChunks.remove(chunkKey);
          this.javaBlockStateCache.remove(chunkKey);
@@ -413,7 +524,7 @@ index 12898b47f..a8e23e21c 100644
          this.chunkLight.remove(chunkKey);
          this.lightDirtyChunks.remove(chunkKey);
          this.lightVersions.remove(chunkKey);
-@@ -483,8 +489,10 @@ public class ChunkTracker extends StoredObject {
+@@ -483,8 +493,10 @@ public class ChunkTracker extends StoredObject {
          }
          final DataPalette palette = section.palettes(PaletteType.BLOCKS).get(layer);
          final int prevBlockState = palette.idAt(sectionX, sectionY, sectionZ);
@@ -424,7 +535,7 @@ index 12898b47f..a8e23e21c 100644
          final String tag = blockStateRewriter.tag(blockState);
  
          int remappedBlockState = this.getJavaBlockState(blockPosition);
-@@ -498,14 +506,14 @@ public class ChunkTracker extends StoredObject {
+@@ -498,14 +510,14 @@ public class ChunkTracker extends StoredObject {
                  this.sendNativeBlocks(new NativeBlockIdentifiers.Update(this.dimension.ordinal(), blockPosition, blockState));
              }
              this.invalidateJavaBlockStates(blockPosition.x() >> 4, blockPosition.y() >> 4, blockPosition.z() >> 4);
@@ -446,7 +557,7 @@ index 12898b47f..a8e23e21c 100644
  
              if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
                  entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState));
-@@ -531,6 +539,87 @@ public class ChunkTracker extends StoredObject {
+@@ -531,6 +543,87 @@ public class ChunkTracker extends StoredObject {
          return new IntObjectImmutablePair<>(remappedBlockState, null);
      }
  
@@ -534,7 +645,7 @@ index 12898b47f..a8e23e21c 100644
      public BedrockChunkSection handleBlockPalette(final BedrockChunkSection section) {
          this.replaceLegacyBlocks(section);
          this.resolvePersistentIds(section);
-@@ -800,17 +889,21 @@ public class ChunkTracker extends StoredObject {
+@@ -800,17 +893,21 @@ public class ChunkTracker extends StoredObject {
  
      private ChunkLight computeChunkLight(final int chunkX, final int chunkZ) {
          final int[][][] regionStates = new int[9][][];
@@ -560,7 +671,7 @@ index 12898b47f..a8e23e21c 100644
          for (int dz = -1; dz <= 1; dz++) {
              for (int dx = -1; dx <= 1; dx++) {
                  final BedrockChunk neighbor = this.chunks.get(ChunkPosition.chunkKey(chunkX + dx, chunkZ + dz));
-@@ -820,9 +913,10 @@ public class ChunkTracker extends StoredObject {
+@@ -820,9 +917,10 @@ public class ChunkTracker extends StoredObject {
  
                  final int chunkIndex = (dz + 1) * 3 + (dx + 1);
                  regionStates[chunkIndex] = this.snapshotChunkStates(neighbor);
@@ -572,10 +683,11 @@ index 12898b47f..a8e23e21c 100644
      }
  
      private int[][] snapshotChunkStates(final BedrockChunk chunk) {
-@@ -833,18 +927,56 @@ public class ChunkTracker extends StoredObject {
+@@ -833,27 +931,53 @@ public class ChunkTracker extends StoredObject {
          return states.clone();
      }
  
+-    private void submitLightUpdate(final long chunkKey) {
 +    private BitSet[] snapshotSecondaryWater(final BedrockChunk chunk) {
 +        final BitSet[] sections = this.secondaryWaterCache.computeIfAbsent(ChunkPosition.chunkKey(chunk.getX(), chunk.getZ()),
 +            key -> new BitSet[this.worldHeight >> 4]);
@@ -614,28 +726,74 @@ index 12898b47f..a8e23e21c 100644
 +        return water;
 +    }
 +
-     private void submitLightUpdate(final long chunkKey) {
++    private void submitLightUpdate(final long chunkKey, final LightUpdateTask task) {
          final ChunkPosition position = new ChunkPosition(chunkKey);
          final BedrockChunk chunk = this.chunks.get(chunkKey);
          final long version = this.lightVersions.getOrDefault(chunkKey, 0L);
 -        final int[][][] regionStates = this.snapshotRegionStates(position.chunkX(), position.chunkZ());
 +        final LightSnapshot snapshot = this.snapshotRegionStates(position.chunkX(), position.chunkZ());
          this.pendingLightComputations.add(chunkKey);
-         LIGHT_EXECUTOR.execute(() -> {
-             ChunkLight light = null;
-             Throwable failure = null;
-             try {
+-        LIGHT_EXECUTOR.execute(() -> {
+-            ChunkLight light = null;
+-            Throwable failure = null;
+-            try {
 -                light = LightEngine.computeRegionLight(regionStates, this.worldHeight >> 4, this.skyLight,
 -                    BedrockProtocol.MAPPINGS.getJavaBlockLightEmission(), BedrockProtocol.MAPPINGS.getJavaBlockOpacity())[4];
-+                light = LightEngine.computeCenterLight(snapshot.states(), snapshot.secondaryWater(), this.worldHeight >> 4, this.skyLight,
-+                    BedrockProtocol.MAPPINGS.getJavaBlockLightEmission(), BedrockProtocol.MAPPINGS.getJavaBlockOpacity());
-             } catch (final Throwable e) {
-                 failure = e;
-             } finally {
-@@ -930,6 +1062,27 @@ public class ChunkTracker extends StoredObject {
+-            } catch (final Throwable e) {
+-                failure = e;
+-            } finally {
+-                LIGHT_SLOTS.release();
+-            }
+-
+-            final ChunkLight result = light;
+-            final Throwable error = failure;
+-            this.user().getChannel().eventLoop().execute(() -> {
++        task.execute(LIGHT_EXECUTOR, this.user().getChannel().eventLoop(),
++            () -> LightEngine.computeCenterLight(snapshot.states(), snapshot.secondaryWater(), this.worldHeight >> 4, this.skyLight,
++                BedrockProtocol.MAPPINGS.getJavaBlockLightEmission(), BedrockProtocol.MAPPINGS.getJavaBlockOpacity()), (result, error) -> {
+                 this.pendingLightComputations.remove(chunkKey);
+                 if (!this.user().getChannel().isActive()) {
+                     return;
+@@ -883,7 +1007,6 @@ public class ChunkTracker extends StoredObject {
+                 this.writeLightData(lightUpdate, lightData);
+                 lightUpdate.send(BedrockProtocol.class);
+             });
+-        });
+     }
+ 
+     private int[][] getJavaBlockStates(final BedrockChunk chunk) {
+@@ -901,13 +1024,12 @@ public class ChunkTracker extends StoredObject {
+ 
+     /**
+      * Converts the bedrock block states of a chunk section into java block states, indexed with
+-     * {@code y * 256 | z * 16 | x}.
++     * {@code y * 256 | z * 16 | x}. Uniform sections retain only their one state.
+      */
+     private int[] buildJavaBlockStates(final BedrockChunkSection section) {
+-        final int[] states = new int[ChunkSection.SIZE];
+         final List<DataPalette> blockPalettes = section.palettes(PaletteType.BLOCKS);
+         if (blockPalettes.isEmpty()) {
+-            return states; // All air
++            return new int[]{ProtocolConstants.JAVA_AIR_ID}; // All air
+         }
+ 
+         final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
+@@ -917,6 +1039,10 @@ public class ChunkTracker extends StoredObject {
+             final int javaId = blockStateRewriter.javaId(layer0.idByIndex(i));
+             entryJavaIds[i] = javaId != -1 ? javaId : ProtocolConstants.JAVA_AIR_ID;
+         }
++        if (layer0.size() == 1 && blockPalettes.size() == 1) {
++            return entryJavaIds;
++        }
++        final int[] states = new int[ChunkSection.SIZE];
+         if (layer0.size() == 1) {
+             if (entryJavaIds[0] != ProtocolConstants.JAVA_AIR_ID) {
+                 Arrays.fill(states, entryJavaIds[0]);
+@@ -930,7 +1056,37 @@ public class ChunkTracker extends StoredObject {
                  }
              }
          }
+-        return states;
 +        if (blockPalettes.size() > 1) {
 +            final DataPalette layer1 = blockPalettes.get(1);
 +            final int airId = this.bedrockAirId();
@@ -657,10 +815,20 @@ index 12898b47f..a8e23e21c 100644
 +                }
 +            }
 +        }
-         return states;
++        return compactUniformSection(states);
++    }
++
++    static int[] compactUniformSection(final int[] states) {
++        for (int i = 1; i < states.length; i++) {
++            if (states[i] != states[0]) {
++                return states;
++            }
++        }
++        return new int[]{states[0]};
      }
  
-@@ -942,6 +1095,10 @@ public class ChunkTracker extends StoredObject {
+     private void invalidateJavaBlockStates(final int chunkX, final int subChunkY, final int chunkZ) {
+@@ -942,6 +1098,10 @@ public class ChunkTracker extends StoredObject {
          final int sectionIndex = subChunkY + Math.abs(this.minY >> 4);
          if (sectionIndex >= 0 && sectionIndex < chunkStates.length) {
              chunkStates[sectionIndex] = null;
@@ -671,24 +839,40 @@ index 12898b47f..a8e23e21c 100644
          }
      }
  
-@@ -1022,12 +1179,12 @@ public class ChunkTracker extends StoredObject {
+@@ -1021,23 +1181,50 @@ public class ChunkTracker extends StoredObject {
+             this.sendChunk(chunkPos.chunkX(), chunkPos.chunkZ());
          }
  
-         while (!this.lightDirtyChunks.isEmpty() && System.nanoTime() < deadline && LIGHT_SLOTS.tryAcquire()) {
+-        while (!this.lightDirtyChunks.isEmpty() && System.nanoTime() < deadline && LIGHT_SLOTS.tryAcquire()) {
 -            final long chunkKey = this.lightDirtyChunks.iterator().nextLong();
 -            this.lightDirtyChunks.remove(chunkKey);
 -            if (!this.chunkLight.containsKey(chunkKey) || this.pendingLightComputations.contains(chunkKey)) {
-+            final OptionalLong update = takeLightUpdate(this.lightDirtyChunks, this.pendingLightComputations, this.chunkLight::containsKey);
-+            if (update.isEmpty()) {
-                 LIGHT_SLOTS.release();
+-                LIGHT_SLOTS.release();
 -                continue;
++        while (!this.lightDirtyChunks.isEmpty() && System.nanoTime() < deadline) {
++            final LightUpdateTask task = LightUpdateTask.reserve(LIGHT_SLOTS);
++            if (task == null) {
 +                break;
              }
++            final OptionalLong update = takeLightUpdate(this.lightDirtyChunks, this.pendingLightComputations, this.chunkLight::containsKey);
++            if (update.isEmpty()) {
++                task.close();
++                break;
++            }
 +            final long chunkKey = update.getAsLong();
              try {
-                 this.submitLightUpdate(chunkKey);
+-                this.submitLightUpdate(chunkKey);
++                this.submitLightUpdate(chunkKey, task);
              } catch (final RuntimeException e) {
-@@ -1038,6 +1195,25 @@ public class ChunkTracker extends StoredObject {
+                 this.pendingLightComputations.remove(chunkKey);
+-                LIGHT_SLOTS.release();
++                task.close();
+                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Could not submit chunk light update", e);
++            } catch (final Error failure) {
++                this.pendingLightComputations.remove(chunkKey);
++                task.close();
++                throw failure;
+             }
          }
      }
  
@@ -714,10 +898,64 @@ index 12898b47f..a8e23e21c 100644
      private long distanceToCenterSquared(final int chunkX, final int chunkZ) {
          final long dx = (long) chunkX - this.centerX;
          final long dz = (long) chunkZ - this.centerZ;
-@@ -1334,6 +1510,9 @@ public class ChunkTracker extends StoredObject {
+@@ -1334,6 +1521,63 @@ public class ChunkTracker extends StoredObject {
          }
      }
  
++    static final class LightUpdateTask implements AutoCloseable {
++
++        private final Semaphore slots;
++        private final AtomicBoolean completed = new AtomicBoolean();
++
++        private LightUpdateTask(final Semaphore slots) {
++            this.slots = slots;
++        }
++
++        static LightUpdateTask reserve(final Semaphore slots) {
++            return slots.tryAcquire() ? new LightUpdateTask(slots) : null;
++        }
++
++        void execute(final Executor worker, final Executor completion, final Supplier<ChunkLight> calculation,
++                     final BiConsumer<ChunkLight, Throwable> update) {
++            try {
++                worker.execute(() -> {
++                    ChunkLight light = null;
++                    Throwable failure = null;
++                    try {
++                        light = calculation.get();
++                    } catch (final Throwable error) {
++                        failure = error;
++                    }
++                    final ChunkLight result = light;
++                    final Throwable error = failure;
++                    try {
++                        completion.execute(() -> {
++                            try {
++                                update.accept(result, error);
++                            } finally {
++                                this.close();
++                            }
++                        });
++                    } catch (final RuntimeException | Error rejected) {
++                        this.close();
++                        throw rejected;
++                    }
++                });
++            } catch (final RuntimeException | Error rejected) {
++                this.close();
++                throw rejected;
++            }
++        }
++
++        @Override
++        public void close() {
++            if (this.completed.compareAndSet(false, true)) {
++                this.slots.release();
++            }
++        }
++
++    }
++
 +    private record LightSnapshot(int[][][] states, BitSet[][] secondaryWater) {
 +    }
 +
@@ -726,10 +964,10 @@ index 12898b47f..a8e23e21c 100644
  
 diff --git a/src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java b/src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
 new file mode 100644
-index 000000000..346bbe129
+index 000000000..695c24ce8
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,211 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -749,16 +987,86 @@ index 000000000..346bbe129
 + */
 +package net.raphimc.viabedrock.api.chunk.light;
 +
++import com.sun.management.ThreadMXBean;
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.Arrays;
++import java.lang.management.ManagementFactory;
 +import java.util.BitSet;
 +import java.util.Random;
 +
 +import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 +import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertSame;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
 +
 +class LightEngineTest {
++
++    @Test
++    void fullHeightAirRegionsReuseUniformOutputsWithinThreeWorkingBuffers() {
++        final var threadBean = ManagementFactory.getThreadMXBean();
++        assumeTrue(threadBean instanceof ThreadMXBean);
++        final var allocations = (ThreadMXBean) threadBean;
++        assumeTrue(allocations.isThreadAllocatedMemorySupported());
++        allocations.setThreadAllocatedMemoryEnabled(true);
++        final int[][][] region = new int[9][24][];
++        for (final int[][] chunk : region) {
++            for (int section = 0; section < chunk.length; section++) {
++                chunk[section] = new int[]{0};
++            }
++        }
++        final byte[] emission = {0};
++        final byte[] opacity = {0};
++        final long thread = Thread.currentThread().threadId();
++        for (int run = 0; run < 8; run++) {
++            final long before = allocations.getThreadAllocatedBytes(thread);
++            final ChunkLight light = LightEngine.computeCenterLight(region, 24, true, emission, opacity);
++            final long allocated = allocations.getThreadAllocatedBytes(thread) - before;
++            assertTrue(allocated <= 3L * 48 * 48 * 384 + 256_000, () -> "Allocated " + allocated + " bytes");
++            for (int section = 0; section < light.skyLightLength(); section++) {
++                assertSame(ChunkLight.FULL, light.skyLight(section));
++                assertNull(light.blockLight(section));
++            }
++        }
++    }
++
++    @Test
++    void compactUniformSectionsPreserveFullAndIncrementalLightAcrossBorders() {
++        final byte[] emission = {0, 0, 14, 0};
++        final byte[] opacity = {0, 15, 0, 2};
++        final int[][][] expanded = new int[9][2][4096];
++        final int[][][] compact = new int[9][2][];
++        for (int chunk = 0; chunk < 9; chunk++) {
++            final int state = chunk == 0 ? 1 : chunk == 1 ? 3 : 0;
++            for (int section = 0; section < 2; section++) {
++                Arrays.fill(expanded[chunk][section], state);
++                compact[chunk][section] = new int[]{state};
++            }
++        }
++        for (final boolean skyLight : new boolean[]{false, true}) {
++            final ChunkLight[] expected = LightEngine.computeRegionLight(expanded, 2, skyLight, emission, opacity);
++            final ChunkLight[] actual = LightEngine.computeRegionLight(compact, 2, skyLight, emission, opacity);
++            assertLightEquals(expected, actual);
++            expanded[4][0][(8 << 8) | (8 << 4) | 15] = 2;
++            compact[4][0] = expanded[4][0].clone();
++            final ChunkLight[] brightened = LightEngine.brightenBlockLight(compact, 2, 15, 8, 8, 14, opacity, actual);
++            assertLightEquals(LightEngine.computeRegionLight(expanded, 2, skyLight, emission, opacity), brightened);
++            assertEquals(13, nibble(brightened[5].blockLight(1), 0, 8, 8));
++            expanded[4][0][(8 << 8) | (8 << 4) | 15] = 0;
++            compact[4][0] = new int[]{0};
++        }
++    }
++
++    private static void assertLightEquals(final ChunkLight[] expected, final ChunkLight[] actual) {
++        for (int chunk = 0; chunk < 9; chunk++) {
++            for (int section = 0; section < expected[chunk].skyLightLength(); section++) {
++                assertArrayEquals(expected[chunk].skyLight(section), actual[chunk].skyLight(section));
++                assertArrayEquals(expected[chunk].blockLight(section), actual[chunk].blockLight(section));
++            }
++        }
++    }
 +
 +    @Test
 +    void centerOnlyOutputMatchesFullRegionAcrossChunkBorders() {
@@ -1072,21 +1380,131 @@ index 000000000..147e776c7
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
-index 130e48f58..e8a79525c 100644
+index 130e48f58..17bc55d4d 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
-@@ -10,6 +10,7 @@
+@@ -9,17 +9,139 @@
+  */
  package net.raphimc.viabedrock.protocol.storage;
  
++import net.raphimc.viabedrock.api.chunk.light.ChunkLight;
  import com.viaversion.viaversion.api.minecraft.chunks.PaletteType;
 +import com.viaversion.viaversion.libs.fastutil.longs.LongLinkedOpenHashSet;
  import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
  import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
  import org.junit.jupiter.api.Test;
-@@ -20,6 +21,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
++import java.util.ArrayDeque;
++import java.util.Queue;
++import java.util.concurrent.Executor;
++import java.util.concurrent.RejectedExecutionException;
++import java.util.concurrent.Semaphore;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertSame;
++import static org.junit.jupiter.api.Assertions.assertThrows;
  
  class ChunkTrackerTest {
  
++    @Test
++    void slowResultDeliveryBoundsRetainedLightJobsAcrossRepeatedSubmissionBursts() {
++        final Semaphore slots = new Semaphore(2);
++        final ManualExecutor workers = new ManualExecutor();
++        final ManualExecutor completion = new ManualExecutor();
++        final AtomicInteger applied = new AtomicInteger();
++        for (int burst = 0; burst < 32; burst++) {
++            for (int submission = 0; submission < 1000; submission++) {
++                final var task = ChunkTracker.LightUpdateTask.reserve(slots);
++                if (task != null) {
++                    task.execute(workers, completion, () -> new ChunkLight(24, true), (_, error) -> {
++                        assertNull(error);
++                        applied.incrementAndGet();
++                    });
++                }
++                workers.drain();
++                assertEquals(0, workers.tasks.size());
++                assertTrue(completion.tasks.size() <= 2);
++            }
++            assertEquals(0, slots.availablePermits());
++            assertEquals(2, completion.tasks.size());
++            completion.drain();
++            assertEquals(2, slots.availablePermits());
++            assertEquals((burst + 1) * 2, applied.get());
++        }
++    }
++
++    @Test
++    void abandonedTrackerResultsReleaseCapacityAfterDeliveryWithoutApplyingOldLight() {
++        final Semaphore slots = new Semaphore(1);
++        final ManualExecutor workers = new ManualExecutor();
++        final ManualExecutor completion = new ManualExecutor();
++        final AtomicBoolean currentTracker = new AtomicBoolean(true);
++        final AtomicInteger applied = new AtomicInteger();
++        final var task = ChunkTracker.LightUpdateTask.reserve(slots);
++        task.execute(workers, completion, () -> new ChunkLight(24, true), (_, _) -> {
++            if (currentTracker.get()) {
++                applied.incrementAndGet();
++            }
++        });
++        workers.drain();
++        currentTracker.set(false); // Disconnect or a replaced dimension tracker discards this result.
++        assertNull(ChunkTracker.LightUpdateTask.reserve(slots));
++        completion.drain();
++        assertEquals(0, applied.get());
++        assertEquals(1, slots.availablePermits());
++        task.close(); // Cleanup after a failed submit cannot release the same capacity twice.
++        assertEquals(1, slots.availablePermits());
++        final var replacement = ChunkTracker.LightUpdateTask.reserve(slots);
++        replacement.execute(workers, completion, () -> new ChunkLight(24, false), (_, _) -> applied.incrementAndGet());
++        workers.drain();
++        completion.drain();
++        assertEquals(1, applied.get());
++        assertEquals(1, slots.availablePermits());
++    }
++
++    @Test
++    void calculationFailureAndRejectedExecutorsReturnExactlyOnePermit() {
++        final Semaphore slots = new Semaphore(1);
++        final ManualExecutor workers = new ManualExecutor();
++        final ManualExecutor completion = new ManualExecutor();
++        final RuntimeException failure = new IllegalStateException();
++        final var failed = ChunkTracker.LightUpdateTask.reserve(slots);
++        failed.execute(workers, completion, () -> {
++            throw failure;
++        }, (light, error) -> {
++            assertNull(light);
++            assertSame(failure, error);
++        });
++        workers.drain();
++        assertEquals(0, slots.availablePermits());
++        completion.drain();
++        assertEquals(1, slots.availablePermits());
++
++        final Executor rejected = _ -> {
++            throw new RejectedExecutionException();
++        };
++        final var rejectedWorker = ChunkTracker.LightUpdateTask.reserve(slots);
++        assertThrows(RejectedExecutionException.class,
++                () -> rejectedWorker.execute(rejected, completion, () -> new ChunkLight(24, false), (_, _) -> { }));
++        assertEquals(1, slots.availablePermits());
++        final var rejectedCompletion = ChunkTracker.LightUpdateTask.reserve(slots);
++        rejectedCompletion.execute(workers, rejected, () -> new ChunkLight(24, false), (_, _) -> { });
++        assertThrows(RejectedExecutionException.class, workers::drain);
++        assertEquals(1, slots.availablePermits());
++        final var failedApplication = ChunkTracker.LightUpdateTask.reserve(slots);
++        assertThrows(IllegalStateException.class, () -> failedApplication.execute(Runnable::run, Runnable::run,
++                () -> new ChunkLight(24, false), (_, _) -> {
++                    throw failure;
++                }));
++        assertEquals(1, slots.availablePermits());
++    }
++
 +    @Test
 +    void retainsReplacementLightingWhileAnOlderJobIsStillPending() {
 +        final var dirty = new LongLinkedOpenHashSet(new long[]{77L, -1L, 42L});
@@ -1105,7 +1523,7 @@ index 130e48f58..e8a79525c 100644
      @Test
      void ignoresRepeatedSubChunkAfterApplyingPendingUpdates() {
          final BedrockChunkSectionImpl section = new BedrockChunkSectionImpl();
-@@ -32,6 +48,35 @@ class ChunkTrackerTest {
+@@ -32,6 +154,35 @@ class ChunkTrackerTest {
          assertEquals(3, section.palette(PaletteType.BLOCKS).idAt(0));
      }
  
@@ -1141,5 +1559,27 @@ index 130e48f58..e8a79525c 100644
      private static BedrockChunkSectionImpl sectionWithBlock(final int blockId) {
          final BedrockChunkSectionImpl section = new BedrockChunkSectionImpl();
          final BedrockDataPalette palette = new BedrockDataPalette();
+@@ -40,4 +191,21 @@ class ChunkTrackerTest {
+         return section;
+     }
+ 
++    private static final class ManualExecutor implements Executor {
++
++        private final Queue<Runnable> tasks = new ArrayDeque<>();
++
++        @Override
++        public void execute(final Runnable task) {
++            this.tasks.add(task);
++        }
++
++        private void drain() {
++            while (!this.tasks.isEmpty()) {
++                this.tasks.remove().run();
++            }
++        }
++
++    }
++
+ }
 -- 
-2.55.0
+2.56.0
