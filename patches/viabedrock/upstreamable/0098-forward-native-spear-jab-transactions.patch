@@ -1,0 +1,156 @@
+From 4313426c87db49a5ea03dc40c17abc2906713381 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 19:03:10 +0200
+Subject: [PATCH] fix(interaction): forward native spear jab transactions
+
+Java 26.3 sends PLAYER_ACTION STAB for spear attacks. Translate it to the target Bedrock 2193 ItemUse action Use_As_Attack (3), including the selected item and camera endpoint, and avoid a duplicate swing transaction.
+
+A Bedrock 1.26.51.1 native capture confirms air and entity jabs use action 3. Lunge III produces a server SET_ACTOR_MOTION response within about 50 ms, so preserve server-authoritative impulse handling instead of inventing client physics. Numeric wire tests verify the captured field order and attack orientation.
+---
+ .../protocol/packet/ClientPlayerPackets.java  | 34 +++++++-
+ .../protocol/packet/SpearJabTest.java         | 82 +++++++++++++++++++
+ 2 files changed, 115 insertions(+), 1 deletion(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/SpearJabTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index 867eae49f..a48b535fa 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -100,6 +100,28 @@ public final class ClientPlayerPackets {
+         }
+     }
+ 
++    static void writeSpearJabTransaction(final PacketWrapper wrapper, final Type<BedrockItem> itemType,
++                                        final int hotbarSlot, final BedrockItem held,
++                                        final Position3f position, final Position3f rotation) {
++        final Position3f direction = MathUtil.calculateCameraOrientation(rotation.y(), rotation.x());
++        wrapper.write(BedrockTypes.VAR_INT, 0); // legacy request id
++        wrapper.write(Types.BOOLEAN, false); // has legacy data
++        wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ComplexInventoryTransaction_Type.ItemUseTransaction.getValue());
++        wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, 0); // actions count
++        wrapper.write(BedrockTypes.VAR_INT, ItemUseActionType.Use_As_Attack.getValue());
++        wrapper.write(Types.BYTE, (byte) ItemUseTriggerType.Unknown.getValue());
++        wrapper.write(BedrockTypes.BLOCK_POSITION, new BlockPosition(0, 0, 0));
++        wrapper.write(Types.BYTE, (byte) 0); // face
++        wrapper.write(BedrockTypes.VAR_INT, hotbarSlot);
++        wrapper.write(Types.BYTE, (byte) HandSlot.Mainhand.getValue());
++        wrapper.write(itemType, held);
++        wrapper.write(BedrockTypes.POSITION_3F, position);
++        wrapper.write(BedrockTypes.POSITION_3F, position.add(direction));
++        wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, 0); // block runtime id
++        wrapper.write(Types.BYTE, (byte) ItemUsePredictedResult.Failure.getValue());
++        wrapper.write(Types.BYTE, (byte) ItemUseClientCooldownState.Off.getValue());
++    }
++
+     static Entity predictedVehicle(final EntityTracker entityTracker, final ClientPlayerEntity clientPlayer) {
+         final Entity vehicle = entityTracker.getEntityByRid(clientPlayer.mountEntityRuntimeId());
+         if (vehicle == null || !(vehicle.javaType().isOrHasParent(EntityTypes26_3.ABSTRACT_BOAT)
+@@ -419,7 +441,17 @@ public final class ClientPlayerPackets {
+                     chunkTracker.handleBlockChange(position, 0, chunkTracker.bedrockAirId());
+                     PacketFactory.sendJavaBlockUpdate(wrapper.user(), position, ProtocolConstants.JAVA_AIR_ID);
+                 }
+-                case SWAP_ITEM_WITH_OFFHAND, STAB -> {
++                case SWAP_ITEM_WITH_OFFHAND -> {
++                }
++                case STAB -> {
++                    final InventoryContainer inventory = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
++                    final PacketWrapper jab = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
++                    writeSpearJabTransaction(jab, wrapper.user().get(ItemRewriter.class).newItemType(),
++                            Byte.toUnsignedInt(inventory.getSelectedHotbarSlot()),
++                            inventory.getSelectedHotbarItem(), clientPlayer.position(), clientPlayer.rotation());
++                    jab.sendToServer(BedrockProtocol.class);
++                    clientPlayer.sendSwingPacketToServer();
++                    clientPlayer.cancelNextSwingPacket();
+                 }
+                 default -> throw new IllegalStateException("Unhandled PlayerActionAction: " + action);
+             }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/SpearJabTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/SpearJabTest.java
+new file mode 100644
+index 000000000..5cac6c5be
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/SpearJabTest.java
+@@ -0,0 +1,82 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import net.raphimc.viabedrock.protocol.types.item.NetworkItemStackDescriptorType;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++
++class SpearJabTest {
++
++    @Test
++    void airAndEntityFacingJabsUseTheNativeAttackWireFields() throws Exception {
++        for (final float pitch : new float[]{0F, 12F}) {
++            final var itemType = new NetworkItemStackDescriptorType(0, new Int2ObjectOpenHashMap<>(), false);
++            final Position3f position = new Position3f(0.5F, 66.62001F, 0.5F);
++            final PacketWrapper wrapper = new PacketWrapperImpl(ServerboundBedrockPackets.INVENTORY_TRANSACTION, null, null);
++            ClientPlayerPackets.writeSpearJabTransaction(wrapper, itemType, 7, new BedrockItem(858), position,
++                    new Position3f(pitch, 0F, 0F));
++            final ByteBuf buffer = Unpooled.buffer();
++            try {
++                wrapper.writeToBuffer(buffer);
++                assertEquals(30, Types.VAR_INT.read(buffer));
++                assertEquals(0, BedrockTypes.VAR_INT.read(buffer));
++                assertFalse(Types.BOOLEAN.read(buffer));
++                assertEquals(2, BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
++                assertEquals(0, BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
++                assertEquals(3, BedrockTypes.VAR_INT.read(buffer));
++                assertEquals(0, buffer.readByte());
++                assertEquals(new BlockPosition(0, 0, 0), BedrockTypes.BLOCK_POSITION.read(buffer));
++                assertEquals(0, buffer.readByte());
++                assertEquals(7, BedrockTypes.VAR_INT.read(buffer));
++                assertEquals(0, buffer.readByte());
++                assertEquals(858, itemType.read(buffer).identifier());
++                assertEquals(position, BedrockTypes.POSITION_3F.read(buffer));
++                final Position3f direction = BedrockTypes.POSITION_3F.read(buffer).subtract(position);
++                assertEquals(0F, direction.x(), 1E-6F);
++                assertEquals(-(float) Math.sin(Math.toRadians(pitch)), direction.y(), 1E-5F);
++                assertEquals((float) Math.cos(Math.toRadians(pitch)), direction.z(), 1E-6F);
++                assertEquals(0, BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
++                assertEquals(0, buffer.readByte());
++                assertEquals(0, buffer.readByte());
++                assertFalse(buffer.isReadable());
++            } finally {
++                buffer.release();
++            }
++        }
++    }
++
++    @Test
++    void jabEndpointRotatesWithTheCamera() {
++        final var itemType = new NetworkItemStackDescriptorType(0, new Int2ObjectOpenHashMap<>(), false);
++        final PacketWrapper wrapper = new PacketWrapperImpl(ServerboundBedrockPackets.INVENTORY_TRANSACTION, null, null);
++        final Position3f position = new Position3f(3F, 64F, 5F);
++        ClientPlayerPackets.writeSpearJabTransaction(wrapper, itemType, 0, new BedrockItem(858), position,
++                new Position3f(30F, 90F, 90F));
++        final Position3f endpoint = wrapper.get(BedrockTypes.POSITION_3F, 1);
++        assertEquals(position.x() - (float) Math.cos(Math.toRadians(30)), endpoint.x(), 1E-6F);
++        assertEquals(position.y() - 0.5F, endpoint.y(), 1E-6F);
++        assertEquals(position.z(), endpoint.z(), 1E-6F);
++    }
++
++}
+-- 
+2.56.0

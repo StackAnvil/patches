@@ -1,4 +1,4 @@
-From 539e748edef362dd29786555e621fb11d844219f Mon Sep 17 00:00:00 2001
+From 538c631ed80c744ff8bf1ef261a3acdb957080b1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 17:35:43 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -17,24 +17,26 @@ palette identity, replacement/deletion, equipment destinations, and
 acknowledgment ordering across GUI close. No Geyser changes are required.
 
 Open the native player inventory before sending creative requests and wait for its acknowledgement. Preserve writes across delayed OPEN responses and local Java GUI closure. Writes arriving during a pending native CLOSE remain queued and reopen the inventory after the acknowledgement, rather than disappearing between native windows. Packet-handler tests cover rapid writes with distinct slots and quantities during that close.
+
+Retain exact creative entry identity and complete native item snapshots; reject ambiguous same-Java-item fallbacks rather than choosing arbitrary potion/custom variants. Enforce the native creative stack maximum. Catalog and transfer tests cover exact markers, component differences and oversized selections.
 ---
- .../protocol/model/CreativeCatalog.java       |  93 +++++++++
- .../protocol/packet/InventoryPackets.java     | 189 ++++++++++++------
+ .../protocol/model/CreativeCatalog.java       | 142 +++++++++++++
+ .../protocol/packet/InventoryPackets.java     | 190 +++++++++++------
  .../protocol/rewriter/ItemRewriter.java       |  31 +--
  .../storage/InventoryRequestTracker.java      |  24 +++
- .../protocol/model/CreativeCatalogTest.java   |  59 ++++++
- .../protocol/packet/InventoryPacketsTest.java | 173 +++++++++++-----
+ .../protocol/model/CreativeCatalogTest.java   | 109 ++++++++++
+ .../protocol/packet/InventoryPacketsTest.java | 196 +++++++++++++-----
  .../storage/InventoryRequestTrackerTest.java  |  83 ++++++++
- 7 files changed, 513 insertions(+), 139 deletions(-)
+ 7 files changed, 636 insertions(+), 139 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java b/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
 new file mode 100644
-index 000000000..fd1f79985
+index 000000000..fcbaa4e46
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,142 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -55,11 +57,16 @@ index 000000000..fd1f79985
 +import com.viaversion.nbt.tag.IntTag;
 +import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 +import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.api.minecraft.item.data.PotionContents;
 +import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
 +import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
++import net.raphimc.viabedrock.api.model.NativeItemStackData;
++import net.raphimc.viabedrock.protocol.rewriter.ItemDataRewriter;
 +
 +import java.util.ArrayList;
++import java.util.Arrays;
 +import java.util.List;
++import java.util.Objects;
 +
 +/** The creative inventory advertised by one Bedrock server connection. */
 +public final class CreativeCatalog {
@@ -113,11 +120,55 @@ index 000000000..fd1f79985
 +    public Entry creativeEntry(final Item javaItem) {
 +        final CompoundTag data = javaItem.dataContainer().get(StructuredDataKey.CUSTOM_DATA);
 +        final int entryId = data != null && data.get(ENTRY_KEY) instanceof IntTag id ? id.asInt() : 0;
-+        final Entry entry = entryId != 0 ? this.byEntryId.get(entryId) : this.byJavaItemId.get(javaItem.identifier());
-+        if (entry == null || entry.javaItem().identifier() != javaItem.identifier()) {
++        if (entryId != 0) {
++            final Entry entry = this.byEntryId.get(entryId);
++            return entry != null && entry.javaItem().identifier() == javaItem.identifier() ? entry : null;
++        }
++        final NativeItemStackData nativeStack = data == null ? null
++                : NativeItemStackData.fromTag(data.getCompoundTag(ItemDataRewriter.BEDROCK_STACK_TAG));
++        if (nativeStack != null) {
++            for (final Entry entry : this.entries) {
++                final BedrockItem item = entry.bedrockItem();
++                if (entry.javaItem().identifier() == javaItem.identifier()
++                        && nativeStack.equals(NativeItemStackData.fromItem(item))) {
++                    return entry;
++                }
++            }
 +            return null;
 +        }
-+        return entry;
++        Entry match = null;
++        boolean ambiguous = false;
++        for (final Entry entry : this.entries) {
++            if (entry.javaItem().identifier() != javaItem.identifier() || !sameVariants(javaItem, entry.javaItem())) {
++                continue;
++            }
++            if (match == null || entry.canonical() && !match.canonical()) {
++                match = entry;
++                ambiguous = false;
++            } else if (entry.canonical() == match.canonical()
++                    && !NativeItemStackData.fromItem(entry.bedrockItem())
++                            .equals(NativeItemStackData.fromItem(match.bedrockItem()))) {
++                ambiguous = true;
++            }
++        }
++        return ambiguous ? null : match;
++    }
++
++    private static boolean sameVariants(final Item left, final Item right) {
++        return samePotion(left.dataContainer().get(StructuredDataKey.POTION_CONTENTS1_21_2),
++                        right.dataContainer().get(StructuredDataKey.POTION_CONTENTS1_21_2))
++                && Objects.equals(left.dataContainer().get(StructuredDataKey.BLOCK_STATE),
++                        right.dataContainer().get(StructuredDataKey.BLOCK_STATE))
++                && Objects.equals(left.dataContainer().get(StructuredDataKey.INSTRUMENT26_1),
++                        right.dataContainer().get(StructuredDataKey.INSTRUMENT26_1));
++    }
++
++    private static boolean samePotion(final PotionContents left, final PotionContents right) {
++        return left == right || left != null && right != null
++                && Objects.equals(left.potion(), right.potion())
++                && Objects.equals(left.customColor(), right.customColor())
++                && Objects.equals(left.customName(), right.customName())
++                && Arrays.equals(left.customEffects(), right.customEffects());
 +    }
 +
 +    public record Group(int category, String name, Item icon) {
@@ -129,10 +180,10 @@ index 000000000..fd1f79985
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index 2e699beef..99b988ceb 100644
+index 707d707eb..4141ff340 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-@@ -87,13 +87,18 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransa
+@@ -89,13 +89,18 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransa
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
@@ -151,7 +202,7 @@ index 2e699beef..99b988ceb 100644
  import net.raphimc.viabedrock.protocol.model.recipe.EnchantData;
  import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
-@@ -108,6 +113,7 @@ import net.raphimc.viabedrock.protocol.types.recipe.CraftingDataReader;
+@@ -110,6 +115,7 @@ import net.raphimc.viabedrock.protocol.types.recipe.CraftingDataReader;
  
  import java.util.ArrayList;
  import java.util.List;
@@ -159,7 +210,7 @@ index 2e699beef..99b988ceb 100644
  import java.util.logging.Level;
  
  public final class InventoryPackets {
-@@ -229,22 +235,33 @@ public final class InventoryPackets {
+@@ -239,22 +245,33 @@ public final class InventoryPackets {
              wrapper.cancel();
              final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
              final int groups = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
@@ -200,7 +251,7 @@ index 2e699beef..99b988ceb 100644
          });
          protocol.registerClientbound(
                  ClientboundBedrockPackets.CONTAINER_OPEN,
-@@ -991,41 +1008,7 @@ public final class InventoryPackets {
+@@ -1008,41 +1025,7 @@ public final class InventoryPackets {
          protocol.registerServerbound(
                  ServerboundPackets26_3.SET_CREATIVE_MODE_SLOT,
                  null,
@@ -243,7 +294,7 @@ index 2e699beef..99b988ceb 100644
          protocol.registerServerbound(
                  ServerboundPackets26_3.CUSTOM_CLICK_ACTION,
                  ServerboundBedrockPackets.MODAL_FORM_RESPONSE,
-@@ -1127,7 +1110,7 @@ public final class InventoryPackets {
+@@ -1149,7 +1132,7 @@ public final class InventoryPackets {
                                      if (container == null) {
                                          if (containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
                                              wrapper.user().get(InventoryRequestTracker.class)
@@ -252,7 +303,7 @@ index 2e699beef..99b988ceb 100644
                                          }
                                          wrapper.cancel();
                                          return;
-@@ -1650,31 +1633,107 @@ public final class InventoryPackets {
+@@ -1672,31 +1655,108 @@ public final class InventoryPackets {
          return "container." + name;
      }
  
@@ -298,7 +349,8 @@ index 2e699beef..99b988ceb 100644
 +        final int slot = target.bedrockSlot(javaSlot);
 +        final CreativeCatalog.Entry entry = javaItem.isEmpty() ? null
 +                : user.get(ItemRewriter.class).creativeCatalog().creativeEntry(javaItem);
-+        if (!javaItem.isEmpty() && (entry == null || javaItem.amount() < 1 || javaItem.amount() > 255)) {
++        if (!javaItem.isEmpty() && (entry == null || javaItem.amount() < 1 || javaItem.amount() > Math.min(255,
++                user.get(ItemRewriter.class).maxStackSize(entry.bedrockItem())))) {
 +            return false;
 +        }
 +        if (tracker.getCurrentContainer() == null) {
@@ -383,7 +435,7 @@ index 2e699beef..99b988ceb 100644
  
      public static boolean handleLegacyOffhandClick(final UserConnection user, final Container container,
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index a3c6b2485..78b87ae54 100644
+index a102e10c2..20b01c125 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -49,6 +49,7 @@ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
@@ -413,7 +465,7 @@ index a3c6b2485..78b87ae54 100644
  
      static {
          // TODO: Add missing item nbt rewriters
-@@ -457,29 +458,13 @@ public class ItemRewriter extends StoredObject {
+@@ -456,29 +457,13 @@ public class ItemRewriter extends StoredObject {
                  "Translating Java items to Bedrock is not yet supported");
      }
  
@@ -499,22 +551,24 @@ index 2e4ca27f4..1053c810b 100644
  
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
 new file mode 100644
-index 000000000..0b94d23b9
+index 000000000..dfb8c95ff
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,109 @@
 +package net.raphimc.viabedrock.protocol.model;
 +
++import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.viaversion.api.data.FullMappings;
 +import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
 +import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 +import com.viaversion.viaversion.api.minecraft.item.Item;
 +import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
-+import org.junit.jupiter.api.Test;
-+
++import com.viaversion.viaversion.api.minecraft.item.data.PotionContents;
++import com.viaversion.viaversion.api.minecraft.item.data.PotionEffect;
 +import java.lang.reflect.Field;
 +import java.lang.reflect.Proxy;
 +import java.util.List;
++import org.junit.jupiter.api.Test;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +import static org.junit.jupiter.api.Assertions.assertNull;
@@ -534,7 +588,7 @@ index 000000000..0b94d23b9
 +        assertEquals(12, catalog.creativeEntry(catalog.entries().get(1).javaItem()).netId());
 +        assertEquals(11, catalog.entries().get(0).javaItem().dataContainer().get(StructuredDataKey.CUSTOM_DATA)
 +                .getInt("viabedrock:creative_entry"));
-+        assertEquals(100, catalog.creativeEntry(paper).bedrockItem().identifier());
++        assertNull(catalog.creativeEntry(paper));
 +        assertNull(catalog.creativeEntry(javaItem(2)));
 +    }
 +
@@ -551,6 +605,54 @@ index 000000000..0b94d23b9
 +        assertEquals(201, catalog.creativeEntry(catalog.entries().get(1).javaItem()).bedrockItem().identifier());
 +    }
 +
++    @Test
++    void retainsPotionVariantIdentityThroughCreativeSelectionAndOwnedStacks() throws ReflectiveOperationException {
++        final Item strength = javaItem(3);
++        final Item oozing = javaItem(3);
++        strength.dataContainer().set(StructuredDataKey.POTION_CONTENTS1_21_2,
++                new PotionContents(30, null,
++                        new PotionEffect[0]));
++        oozing.dataContainer().set(StructuredDataKey.POTION_CONTENTS1_21_2,
++                new PotionContents(42, null,
++                        new PotionEffect[0]));
++        final BedrockItem nativeStrength = new BedrockItem(100, (short) 31, (byte) 1, null);
++        final BedrockItem nativeOozing = new BedrockItem(100, (short) 43, (byte) 1, null);
++        final CreativeCatalog catalog = new CreativeCatalog(List.of(), List.of(
++                new CreativeCatalog.Entry(11, 0, nativeStrength, strength, false, true),
++                new CreativeCatalog.Entry(12, 0, nativeOozing, oozing, false, true)));
++        assertEquals(11, catalog.creativeEntry(strength.copy()).netId());
++        assertEquals(12, catalog.creativeEntry(oozing.copy()).netId());
++        assertNull(catalog.creativeEntry(javaItem(3)));
++        final Item owned = javaItem(3);
++        final var context = new CompoundTag();
++        context.put(net.raphimc.viabedrock.protocol.rewriter.ItemDataRewriter.BEDROCK_STACK_TAG,
++                net.raphimc.viabedrock.api.model.NativeItemStackData.fromItem(nativeStrength).toTag());
++        owned.dataContainer().set(StructuredDataKey.CUSTOM_DATA, context);
++        assertEquals(11, catalog.creativeEntry(owned).netId());
++    }
++
++    @Test
++    void rejectsAmbiguousFireworkAndBookVariantsWithoutPaletteOrNativeIdentity() throws ReflectiveOperationException {
++        final Item item = javaItem(5);
++        final var firstTag = new CompoundTag();
++        firstTag.putInt("value", 1);
++        final var secondTag = new CompoundTag();
++        secondTag.putInt("value", 2);
++        final var first = new BedrockItem(100, (short) 0, (byte) 1, firstTag);
++        final var second = new BedrockItem(100, (short) 0, (byte) 1, secondTag);
++        final var catalog = new CreativeCatalog(List.of(), List.of(
++                new CreativeCatalog.Entry(31, 0, first, item, false, true),
++                new CreativeCatalog.Entry(32, 0, second, item, false, true)));
++        assertNull(catalog.creativeEntry(item));
++        final Item owned = javaItem(5);
++        final var context = new CompoundTag();
++        context.put(net.raphimc.viabedrock.protocol.rewriter.ItemDataRewriter.BEDROCK_STACK_TAG,
++                net.raphimc.viabedrock.api.model.NativeItemStackData.fromItem(second).toTag());
++        owned.dataContainer().set(StructuredDataKey.CUSTOM_DATA, context);
++        assertEquals(32, catalog.creativeEntry(owned).netId());
++        assertEquals(31, catalog.creativeEntry(catalog.entries().getFirst().javaItem()).netId());
++    }
++
 +    private static Item javaItem(final int identifier) throws ReflectiveOperationException {
 +        final StructuredDataContainer data = new StructuredDataContainer();
 +        final FullMappings mappings = (FullMappings) Proxy.newProxyInstance(FullMappings.class.getClassLoader(),
@@ -563,7 +665,7 @@ index 000000000..0b94d23b9
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
-index 6cf158244..73bfac801 100644
+index 6cf158244..d9192fba9 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
 @@ -17,14 +17,21 @@ package net.raphimc.viabedrock.protocol.packet;
@@ -638,7 +740,7 @@ index 6cf158244..73bfac801 100644
      @Test
      void nativePlayerInventoryCloseAcknowledgementDoesNotCloseTheJavaCreativeScreen() {
          final CloseFixture fixture = new CloseFixture();
-@@ -219,62 +254,81 @@ class InventoryPacketsTest {
+@@ -219,65 +254,107 @@ class InventoryPacketsTest {
      }
  
      @Test
@@ -770,7 +872,33 @@ index 6cf158244..73bfac801 100644
          }
      }
  
-@@ -285,7 +339,7 @@ class InventoryPacketsTest {
++    @Test
++    void rejectsOverstackedCreativeWeaponsBeforeOpeningInventory() {
++        final CloseFixture fixture = new CloseFixture();
++        final var entities = org.mockito.Mockito.mock(net.raphimc.viabedrock.protocol.storage.EntityTracker.class);
++        final var player = org.mockito.Mockito.mock(net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity.class);
++        org.mockito.Mockito.when(entities.getClientPlayer()).thenReturn(player);
++        org.mockito.Mockito.when(player.javaGameMode()).thenReturn(net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode.CREATIVE);
++        fixture.storage.put(net.raphimc.viabedrock.protocol.storage.EntityTracker.class, entities);
++        final var rewriter = org.mockito.Mockito.mock(net.raphimc.viabedrock.protocol.rewriter.ItemRewriter.class);
++        final var catalog = org.mockito.Mockito.mock(net.raphimc.viabedrock.protocol.model.CreativeCatalog.class);
++        final Item weapon = new StructuredItem(7, 64, new StructuredDataContainer());
++        final BedrockItem nativeWeapon = new BedrockItem(13);
++        org.mockito.Mockito.when(rewriter.creativeCatalog()).thenReturn(catalog);
++        org.mockito.Mockito.when(catalog.creativeEntry(weapon)).thenReturn(
++                new net.raphimc.viabedrock.protocol.model.CreativeCatalog.Entry(9, 0, nativeWeapon, weapon, true, false));
++        org.mockito.Mockito.when(rewriter.maxStackSize(nativeWeapon)).thenReturn(1);
++        fixture.storage.put(net.raphimc.viabedrock.protocol.rewriter.ItemRewriter.class, rewriter);
++        assertFalse(InventoryPackets.handleCreativeSlot(fixture.user, 36, weapon));
++        assertFalse(fixture.requests.hasPending());
++        assertFalse(fixture.requests.isWaitingForInventoryOpen());
++        assertTrue(fixture.inventory.getInventoryContainer().getItem(0).isEmpty());
++    }
++
+     private static final class CloseFixture {
+ 
+         private final Map<Class<?>, Object> storage = new HashMap<>();
+@@ -285,7 +362,7 @@ class InventoryPacketsTest {
                  UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
                  (proxy, method, args) -> method.getName().equals("get") ? this.storage.get(args[0]) : null);
          private final ClosingInventoryTracker inventory = new ClosingInventoryTracker(this.user);
@@ -779,7 +907,7 @@ index 6cf158244..73bfac801 100644
  
          private CloseFixture() {
              this.storage.put(InventoryTracker.class, this.inventory);
-@@ -317,4 +371,21 @@ class InventoryPacketsTest {
+@@ -317,4 +394,21 @@ class InventoryPacketsTest {
          }
      }
  
@@ -802,10 +930,10 @@ index 6cf158244..73bfac801 100644
 +
  }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
-index ea48f09ca..87c83f490 100644
+index 3fbfc940f..6f5151097 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
-@@ -270,6 +270,89 @@ class InventoryRequestTrackerTest {
+@@ -325,6 +325,89 @@ class InventoryRequestTrackerTest {
          }
      }
  

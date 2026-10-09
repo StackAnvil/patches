@@ -1,16 +1,250 @@
-From a1d9ac0ded42da8a10ca43a2f81b372d85f2d80c Mon Sep 17 00:00:00 2001
+From e1b5d21b09bb8db27c36f8db1f9f3d9b865a1525 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:00:35 +0200
 Subject: [PATCH] fix(world): translate command block edits to Bedrock
 
 Java 26.3 edits command blocks through a dedicated serverbound packet, which ViaBedrock did not handle. Translate its mode and flags to the Bedrock 2193 update packet so closing the editor applies the change. Preserve Bedrock-only block entity settings that the Java editor cannot display.
----
- .../protocol/packet/WorldPackets.java         | 46 +++++++++++++++++++
- .../protocol/packet/WorldPacketsTest.java     | 46 +++++++++++++++++++
- 2 files changed, 92 insertions(+)
 
+Preserve TickDelay and ExecuteOnFirstTick in a bounded native edit payload. A native COMMAND_BLOCK container now opens the Java editor from its authoritative loaded tag, with operator permission checks and a matching native window close lifecycle. Java lacks these native fields, so an advertised addon channel carries complete edits. Codec, session and command-mode tests cover invalid fields and close gating.
+---
+ .../api/model/CommandBlockEdit.java           |  56 +++++++++
+ .../api/model/CommandBlockOpen.java           |  49 ++++++++
+ .../protocol/packet/InventoryPackets.java     |  22 ++++
+ .../protocol/packet/JoinPackets.java          |   2 +
+ .../protocol/packet/MultiStatePackets.java    |  13 +++
+ .../protocol/packet/WorldPackets.java         | 106 ++++++++++++++++++
+ .../CommandBlockBlockEntityRewriter.java      |   2 +
+ .../protocol/storage/CommandBlockSession.java |  38 +++++++
+ .../api/model/CommandBlockEditTest.java       |  63 +++++++++++
+ .../protocol/packet/WorldPacketsTest.java     |  46 ++++++++
+ .../storage/CommandBlockSessionTest.java      |  24 ++++
+ 11 files changed, 421 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CommandBlockEdit.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CommandBlockOpen.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CommandBlockSession.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CommandBlockEditTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CommandBlockSessionTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CommandBlockEdit.java b/src/main/java/net/raphimc/viabedrock/api/model/CommandBlockEdit.java
+new file mode 100644
+index 000000000..df5f7a59f
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CommandBlockEdit.java
+@@ -0,0 +1,56 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++/** One complete command block edit, including Bedrock settings absent from Java's packet. */
++public record CommandBlockEdit(BlockPosition position, String command, int mode, boolean trackOutput,
++                               boolean conditional, boolean automatic, int tickDelay, boolean executeOnFirstTick) {
++
++    public static final String CHANNEL = "viabedrock:command_block_edit_v1";
++    public static final int MAX_COMMAND_LENGTH = 32500;
++    public static final Type<CommandBlockEdit> TYPE = new Type<>(CommandBlockEdit.class) {
++        @Override
++        public CommandBlockEdit read(final ByteBuf buffer) {
++            if (Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported native command block edit");
++            }
++            final var edit = new CommandBlockEdit(Types.BLOCK_POSITION1_14.read(buffer), Types.STRING.read(buffer),
++                    Types.VAR_INT.readPrimitive(buffer), buffer.readBoolean(), buffer.readBoolean(), buffer.readBoolean(),
++                    Types.VAR_INT.readPrimitive(buffer), buffer.readBoolean());
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Unexpected command block edit fields");
++            }
++            return edit;
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final CommandBlockEdit edit) {
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.BLOCK_POSITION1_14.write(buffer, edit.position);
++            Types.STRING.write(buffer, edit.command);
++            Types.VAR_INT.writePrimitive(buffer, edit.mode);
++            buffer.writeBoolean(edit.trackOutput);
++            buffer.writeBoolean(edit.conditional);
++            buffer.writeBoolean(edit.automatic);
++            Types.VAR_INT.writePrimitive(buffer, edit.tickDelay);
++            buffer.writeBoolean(edit.executeOnFirstTick);
++        }
++    };
++
++    public CommandBlockEdit {
++        if (position == null || command == null || command.length() > MAX_COMMAND_LENGTH
++                || mode < 0 || mode > 2 || tickDelay < 0) {
++            throw new IllegalArgumentException("Invalid native command block edit");
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CommandBlockOpen.java b/src/main/java/net/raphimc/viabedrock/api/model/CommandBlockOpen.java
+new file mode 100644
+index 000000000..0a8d1be06
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CommandBlockOpen.java
+@@ -0,0 +1,49 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++public record CommandBlockOpen(boolean open, byte containerId, BlockPosition position) {
++
++    public static final String CHANNEL = "viabedrock:command_block_open_v1";
++    public static final Type<CommandBlockOpen> TYPE = new Type<>(CommandBlockOpen.class) {
++        @Override
++        public CommandBlockOpen read(final ByteBuf buffer) {
++            if (Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported command block screen");
++            }
++            final boolean open = buffer.readBoolean();
++            final byte id = buffer.readByte();
++            final BlockPosition position = open ? Types.BLOCK_POSITION1_14.read(buffer) : null;
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Unexpected command screen fields");
++            }
++            return new CommandBlockOpen(open, id, position);
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final CommandBlockOpen message) {
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            buffer.writeBoolean(message.open);
++            buffer.writeByte(message.containerId);
++            if (message.open) {
++                Types.BLOCK_POSITION1_14.write(buffer, message.position);
++            }
++        }
++    };
++
++    public CommandBlockOpen {
++        if (open != (position != null)) {
++            throw new IllegalArgumentException("Invalid command block screen position");
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index 4b233b07a..9be115b5f 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -56,6 +56,7 @@ import net.lenni0451.mcstructs_bedrock.forms.types.CustomForm;
+ import net.lenni0451.mcstructs_bedrock.forms.types.ModalForm;
+ import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTextUtils;
+ import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.CommandBlockOpen;
+ import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
+ import net.raphimc.viabedrock.api.model.container.ChestContainer;
+ import net.raphimc.viabedrock.api.model.container.Container;
+@@ -121,6 +122,13 @@ public final class InventoryPackets {
+                     return;
+                 }
+                 case CONTAINER -> container = new ChestContainer(wrapper.user(), containerId, title, position, 27);
++                case COMMAND_BLOCK -> {
++                    wrapper.cancel();
++                    if (!WorldPackets.openNativeCommandBlock(wrapper.user(), containerId, blockEntity)) {
++                        PacketFactory.sendBedrockContainerClose(wrapper.user(), containerId, ContainerType.NONE);
++                    }
++                    return;
++                }
+                 case NONE, CAULDRON, JUKEBOX, ARMOR, HAND, HUD, DECORATED_POT -> { // Bedrock client can't open these containers
+                     wrapper.cancel();
+                     return;
+@@ -147,6 +155,15 @@ public final class InventoryPackets {
+                     final ContainerType containerType = ContainerType.getByValue(wrapper.read(Types.BYTE)); // type
+                     final boolean serverInitiated = wrapper.read(Types.BOOLEAN); // server initiated
+ 
++                    final CommandBlockSession command = wrapper.user().get(CommandBlockSession.class);
++                    if (command != null && command.matches((byte) (int) wrapper.get(Types.VAR_INT, 0))) {
++                        WorldPackets.sendNativeCommandScreen(wrapper.user(), new CommandBlockOpen(false, command.containerId(), null));
++                        wrapper.user().remove(CommandBlockSession.class);
++                        wrapper.cancel();
++                        return;
++                    }
++
++
+                     final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+                     final Container container = serverInitiated ? inventoryTracker.getCurrentContainer() : inventoryTracker.getPendingCloseContainer();
+                     if (container == null) {
+@@ -511,6 +528,11 @@ public final class InventoryPackets {
+                 handler(wrapper -> {
+                     final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+                     final byte containerId = wrapper.get(Types.BYTE, 0);
++                    final CommandBlockSession command = wrapper.user().get(CommandBlockSession.class);
++                    if (command != null && command.matches(containerId)) {
++                        command.beginClose();
++                        return;
++                    }
+                     final Container container = inventoryTracker.getContainerServerbound(containerId);
+                     if (container == null) {
+                         wrapper.cancel();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index be2709a1a..d0c291fc7 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -572,6 +572,8 @@ public final class JoinPackets {
+         joinGame.send(BedrockProtocol.class);
+         user.get(PlayerWaypointTracker.class).markJoined();
+ 
++        WorldPackets.sendNativeCommandCapability(user);
++
+         clientPlayer.createTeam();
+         clientPlayer.sendInitialEntityData();
+         clientPlayer.updateAttributes(clientPlayer.attributes().values().toArray(new EntityAttribute[0]));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index edb0b43c2..1909c2178 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -28,6 +28,7 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets
+ import com.viaversion.viaversion.util.Key;
+ import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
+ import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.CommandBlockEdit;
+ import net.raphimc.viabedrock.api.model.LocatorBarSnapshot;
+ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
+ import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
+@@ -133,9 +134,21 @@ public final class MultiStatePackets {
+     public static final PacketHandler CUSTOM_PAYLOAD_HANDLER = wrapper -> {
+         wrapper.cancel();
+         final String channel = Key.namespaced(wrapper.read(Types.STRING)); // channel
++        if (channel.equals(CommandBlockEdit.CHANNEL)) {
++            if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY) {
++                try {
++                    final var edit = wrapper.read(CommandBlockEdit.TYPE);
++                    WorldPackets.handleNativeCommandBlockEdit(wrapper.user(), edit);
++                } catch (final IllegalArgumentException | IndexOutOfBoundsException malformed) {
++                    // Malformed fields never become a Bedrock command edit.
++                }
++            }
++            return;
++        }
+         if (channel.equals("minecraft:register")) {
+             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
+             wrapper.user().get(ChannelStorage.class).addChannels(channels);
++            WorldPackets.sendNativeCommandCapability(wrapper.user());
+             if (channels.contains(LocatorBarSnapshot.CHANNEL) && wrapper.user().has(PlayerWaypointTracker.class)) {
+                 wrapper.user().get(PlayerWaypointTracker.class).sendSnapshot();
+             }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
-index 6b467af7d..55d1b6b33 100644
+index 6b467af7d..08bbb4e57 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 @@ -17,7 +17,10 @@
@@ -24,15 +258,33 @@ index 6b467af7d..55d1b6b33 100644
  import com.viaversion.nbt.tag.Tag;
  import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.minecraft.*;
-@@ -50,6 +53,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+@@ -36,6 +39,8 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets
+ import io.netty.buffer.ByteBuf;
+ import io.netty.buffer.Unpooled;
+ import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.CommandBlockEdit;
++import net.raphimc.viabedrock.api.model.CommandBlockOpen;
+ import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
+ import net.raphimc.viabedrock.api.chunk.BedrockChunk;
+ import net.raphimc.viabedrock.api.chunk.BlockEntityWithBlockState;
+@@ -50,6 +55,8 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.data.enums.Dimension;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.AbilitiesIndex;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CommandBlockMode;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ServerboundLoadingScreenPacketType;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SpawnPositionType;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SubChunkPacketPayload_HeightMapDataType;
-@@ -607,6 +611,48 @@ public final class WorldPackets {
+@@ -67,6 +74,7 @@ import net.raphimc.viabedrock.protocol.storage.*;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ import net.raphimc.viabedrock.protocol.types.array.ByteArrayType;
+ 
++import java.nio.charset.StandardCharsets;
+ import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.List;
+@@ -607,6 +615,104 @@ public final class WorldPackets {
              wrapper.write(BedrockTypes.BLOCK_POSITION, position); // position
              wrapper.write(BedrockTypes.NETWORK_TAG, signTag.copy()); // block entity tag
          });
@@ -51,6 +303,62 @@ index 6b467af7d..55d1b6b33 100644
 +            final CompoundTag tag = blockEntity != null ? blockEntity.tag() : new CompoundTag();
 +            writeCommandBlockUpdate(wrapper, position, command, mode, (flags & 1) != 0, (flags & 2) != 0, (flags & 4) != 0, tag);
 +        });
++    }
++
++    static void sendNativeCommandCapability(final UserConnection user) {
++        if (user.getProtocolInfo().getClientState() != State.PLAY) {
++            return;
++        }
++        final var capability = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user);
++        capability.write(Types.STRING, "minecraft:register");
++        capability.write(Types.REMAINING_BYTES,
++                CommandBlockEdit.CHANNEL.getBytes(StandardCharsets.UTF_8));
++        capability.send(BedrockProtocol.class);
++    }
++
++    static boolean openNativeCommandBlock(final UserConnection user, final byte containerId,
++                                          final BedrockBlockEntity block) {
++        if (block == null || !"CommandBlock".equals(block.tag().getString("id"))
++                || !user.get(EntityTracker.class).getClientPlayer().abilities().getBooleanValue(AbilitiesIndex.OperatorCommands)
++                || !user.get(ChannelStorage.class).hasChannel(CommandBlockOpen.CHANNEL)) {
++            return false;
++        }
++        final ChunkTracker chunks = user.get(ChunkTracker.class);
++        final var javaBlock = BlockEntityRewriter.toJava(user, chunks.getBlockState(block.position()), block);
++        if (javaBlock == null || javaBlock.tag() == null) {
++            return false;
++        }
++        PacketFactory.sendJavaBlockEntityData(user, block.position(), javaBlock);
++        user.put(new CommandBlockSession(containerId, block.position()));
++        sendNativeCommandScreen(user, new CommandBlockOpen(true, containerId, block.position()));
++        return true;
++    }
++
++    static void sendNativeCommandScreen(final UserConnection user, final CommandBlockOpen message) {
++        final var screen = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user);
++        screen.write(Types.STRING, CommandBlockOpen.CHANNEL);
++        screen.write(CommandBlockOpen.TYPE, message);
++        screen.send(BedrockProtocol.class);
++    }
++
++    static void handleNativeCommandBlockEdit(final UserConnection user,
++                                            final CommandBlockEdit edit) {
++        final BedrockBlockEntity block = user.get(ChunkTracker.class).getBlockEntity(edit.position());
++        if (block == null || !"CommandBlock".equals(block.tag().getString("id"))
++                || !user.get(EntityTracker.class).getClientPlayer().abilities().getBooleanValue(AbilitiesIndex.OperatorCommands)) {
++            return;
++        }
++        final CommandBlockSession session = user.get(CommandBlockSession.class);
++        if (session != null && !session.canEdit(edit.position())) {
++            return;
++        }
++        final CompoundTag tag = block.tag().copy();
++        tag.putInt("TickDelay", edit.tickDelay());
++        tag.putByte("ExecuteOnFirstTick", (byte) (edit.executeOnFirstTick() ? 1 : 0));
++        final var update = PacketWrapper.create(ServerboundBedrockPackets.COMMAND_BLOCK_UPDATE, user);
++        writeCommandBlockUpdate(update, edit.position(), edit.command(), commandBlockMode(edit.mode()),
++                edit.trackOutput(), edit.conditional(), edit.automatic(), tag);
++        update.sendToServer(BedrockProtocol.class);
 +    }
 +
 +    static CommandBlockMode commandBlockMode(final int javaMode) {
@@ -81,6 +389,132 @@ index 6b467af7d..55d1b6b33 100644
      }
  
      static boolean isJukebox(final int javaBlockState) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/CommandBlockBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/CommandBlockBlockEntityRewriter.java
+index b3e0b2801..a2f39befa 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/CommandBlockBlockEntityRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/CommandBlockBlockEntityRewriter.java
+@@ -45,6 +45,8 @@ public class CommandBlockBlockEntityRewriter implements BlockEntityRewriter.Rewr
+         this.copy(bedrockTag, javaTag, "powered", ByteTag.class);
+         this.copy(bedrockTag, javaTag, "conditionMet", ByteTag.class);
+         this.copy(bedrockTag, javaTag, "auto", ByteTag.class);
++        this.copy(bedrockTag, javaTag, "TickDelay", IntTag.class);
++        this.copy(bedrockTag, javaTag, "ExecuteOnFirstTick", ByteTag.class);
+         this.copyCustomName(user, bedrockTag, javaTag);
+ 
+         if (bedrockTag.get("LastOutput") instanceof StringTag lastOutputTag) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CommandBlockSession.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CommandBlockSession.java
+new file mode 100644
+index 000000000..c90ab45ea
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CommandBlockSession.java
+@@ -0,0 +1,38 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StorableObject;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++
++public final class CommandBlockSession implements StorableObject {
++
++    private final byte containerId;
++    private final BlockPosition position;
++    private boolean closing;
++
++    public CommandBlockSession(final byte containerId, final BlockPosition position) {
++        this.containerId = containerId;
++        this.position = position;
++    }
++
++    public byte containerId() {
++        return this.containerId;
++    }
++
++    public boolean matches(final byte containerId) {
++        return this.containerId == containerId;
++    }
++
++    public boolean canEdit(final BlockPosition position) {
++        return !this.closing && this.position.equals(position);
++    }
++
++    public void beginClose() {
++        this.closing = true;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CommandBlockEditTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CommandBlockEditTest.java
+new file mode 100644
+index 000000000..98c172318
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CommandBlockEditTest.java
+@@ -0,0 +1,63 @@
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import io.netty.buffer.Unpooled;
++import java.util.Random;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++class CommandBlockEditTest {
++
++    @Test
++    void commandScreenRoundTripsOpeningAndClosingTheSameWindow() {
++        for (final boolean open : new boolean[]{true, false}) {
++            final CommandBlockOpen message = new CommandBlockOpen(open, (byte) 7,
++                    open ? new BlockPosition(-14, 96, 28) : null);
++            final var buffer = Unpooled.buffer();
++            try {
++                CommandBlockOpen.TYPE.write(buffer, message);
++                assertEquals(message, CommandBlockOpen.TYPE.read(buffer));
++            } finally {
++                buffer.release();
++            }
++        }
++    }
++
++    @Test
++    void preservesNativeSettingsAcrossEveryModeAndFlagCombination() {
++        final var random = new Random(2193);
++        for (int mode = 0; mode < 3; mode++) {
++            for (int flags = 0; flags < 16; flags++) {
++                final var edit = new CommandBlockEdit(new BlockPosition(random.nextInt(-30_000_000, 30_000_001), random.nextInt(-2048, 2048), random.nextInt(-30_000_000, 30_000_001)),
++                        "", mode, (flags & 1) != 0, (flags & 2) != 0, (flags & 4) != 0,
++                        random.nextInt(Integer.MAX_VALUE), (flags & 8) != 0);
++                final var buffer = Unpooled.buffer();
++                try {
++                    CommandBlockEdit.TYPE.write(buffer, edit);
++                    assertEquals(edit, CommandBlockEdit.TYPE.read(buffer));
++                    assertEquals(0, buffer.readableBytes());
++                } finally {
++                    buffer.release();
++                }
++            }
++        }
++    }
++
++    @Test
++    void rejectsInvalidSettingsAndTrailingFields() {
++        final var position = new BlockPosition(0, 64, 0);
++        assertThrows(IllegalArgumentException.class, () -> new CommandBlockEdit(position, "", -1, false, false, false, 0, false));
++        assertThrows(IllegalArgumentException.class, () -> new CommandBlockEdit(position, "", 3, false, false, false, 0, false));
++        assertThrows(IllegalArgumentException.class, () -> new CommandBlockEdit(position, "", 0, false, false, false, -1, false));
++        final var buffer = Unpooled.buffer();
++        try {
++            CommandBlockEdit.TYPE.write(buffer, new CommandBlockEdit(position, "", 0, false, false, false, 0, true));
++            buffer.writeByte(1);
++            assertThrows(IllegalArgumentException.class, () -> CommandBlockEdit.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java
 index 1926784fa..f11e8b700 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java
@@ -158,5 +592,35 @@ index 1926784fa..f11e8b700 100644
      @Test
      void writesCompleteLegacyTimeWithTheDaylightRuleRate() throws Exception {
          final WorldClockTracker tracker = new WorldClockTracker();
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CommandBlockSessionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CommandBlockSessionTest.java
+new file mode 100644
+index 000000000..1448ea0a5
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CommandBlockSessionTest.java
+@@ -0,0 +1,24 @@
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class CommandBlockSessionTest {
++
++    @Test
++    void commandWindowIdentityAndCloseStateLimitEdits() {
++        final BlockPosition position = new BlockPosition(4, 75, 8);
++        final CommandBlockSession session = new CommandBlockSession((byte) 7, position);
++        assertTrue(session.matches((byte) 7));
++        assertFalse(session.matches((byte) 8));
++        assertTrue(session.canEdit(position));
++        assertFalse(session.canEdit(new BlockPosition(5, 75, 8)));
++        session.beginClose();
++        assertFalse(session.canEdit(position));
++        assertTrue(session.matches((byte) 7));
++    }
++
++}
 -- 
-2.55.0
+2.56.0

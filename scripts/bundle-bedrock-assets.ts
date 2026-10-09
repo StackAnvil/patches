@@ -147,6 +147,36 @@ export async function bundleBedrockAssets(game: string, version: string, destina
       }
     }
   }
+  // Native attachables outside resource packs form the lowest-priority vanilla layer.
+  // A resource-pack definition for the same identifier must retain precedence.
+  const attachableIdentifiers = new Set<string>();
+  function attachableIdentifier(bytes: Buffer): string | undefined {
+    const description = JSON5.parse(bytes.toString("utf8"))["minecraft:attachable"]?.description;
+    return typeof description?.identifier === "string" ? description.identifier : undefined;
+  }
+  for (const [path, bytes] of files) {
+    if (path.startsWith("library/") && path.includes("/attachables/") && path.endsWith(".json")) {
+      const identifier = attachableIdentifier(bytes);
+      if (identifier) attachableIdentifiers.add(identifier);
+    }
+  }
+  const definitions = join(game, "data", "definitions", "attachables");
+  const definitionsStat = await lstat(definitions).catch(() => null);
+  if (definitionsStat?.isSymbolicLink()) throw new Error("Bedrock attachable definitions contain a symbolic link");
+  if (definitionsStat?.isDirectory()) for await (const original of walk(definitions)) {
+    const path = relative(definitions, original).replaceAll("\\", "/");
+    if (!path.endsWith(".json")) continue;
+    const bytes = await readFile(original);
+    if (bytes.length > fileLimit) throw new Error(`Bedrock asset exceeds file limit: ${path}`);
+    const identifier = attachableIdentifier(bytes);
+    if (!identifier || attachableIdentifiers.has(identifier)) continue;
+    const key = `library/vanilla_base/attachables/definitions/${path}`;
+    if (!validPath(key) || files.has(key)) throw new Error("Invalid built-in attachable definition path");
+    expandedBytes += bytes.length;
+    if (expandedBytes > totalLimit || files.size >= 32768) throw new Error("Bedrock bundle exceeds limits");
+    files.set(key, bytes);
+    attachableIdentifiers.add(identifier);
+  }
   const staging = `${destination}.staging`;
   await rm(staging, { force: true, recursive: true });
   await mkdir(staging, { recursive: true });

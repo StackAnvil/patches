@@ -78,3 +78,27 @@ test("extracts actor dependencies with valid material syntax and excludes empty 
     .toEqual({ materials: { "child:entity": { "+defines": ["ALPHA_TEST"] } } });
   expect(files.get("library/vanilla_1.26.51/attachables/shield.json")!().length).toBeGreaterThan(0);
 });
+
+test("inherits native attachable definitions without replacing resource-pack identities", async () => {
+  const game = await mkdtemp(join(tmpdir(), "stackanvil-native-definitions-"));
+  extracted.push(game);
+  const root = join(game, "data", "resource_packs", "vanilla_1.26.51");
+  const definitions = join(game, "data", "definitions", "attachables");
+  await mkdir(join(root, "attachables"), { recursive: true });
+  await mkdir(definitions, { recursive: true });
+  await writeFile(join(root, "manifest.json"), JSON.stringify({ header: { version: [1, 26, 51] } }));
+  const definition = (identifier: string, geometry: string) => JSON.stringify({
+    "minecraft:attachable": { description: { identifier, geometry: { default: geometry } } },
+  });
+  const accepted = definition("minecraft:shield", "geometry.updated");
+  const fallback = definition("minecraft:crossbow", "geometry.crossbow");
+  await writeFile(join(root, "attachables", "renamed-shield.json"), accepted);
+  await writeFile(join(definitions, "shield.json"), definition("minecraft:shield", "geometry.old"));
+  await writeFile(join(definitions, "crossbow.entity.json"), fallback);
+  const output = join(game, "bundle");
+  await bundleBedrockAssets(game, "1.26.51.1", output);
+  const files = zipEntries(await readFile(join(output, "builtin-01.zip")));
+  expect(files.get("library/vanilla_1.26.51/attachables/renamed-shield.json")!().toString()).toBe(accepted);
+  expect(files.get("library/vanilla_base/attachables/definitions/crossbow.entity.json")!().toString()).toBe(fallback);
+  expect(files.has("library/vanilla_base/attachables/definitions/shield.json")).toBe(false);
+});

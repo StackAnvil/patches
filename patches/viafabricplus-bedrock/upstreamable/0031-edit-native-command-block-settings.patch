@@ -1,0 +1,357 @@
+From 09ae33739abaefea64d21465ab0b2f4b7e5141a8 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 19:11:12 +0200
+Subject: [PATCH] feat(command): edit native command block settings
+
+Open the Java command editor for an authoritative native COMMAND_BLOCK window. Retain the native TickDelay and ExecuteOnFirstTick fields, advertise the complete edit payload, and close the matching native window when the editor closes. Java 26.3 lacks these two Bedrock 1.26.51.1 fields. Preserve operator permission and loaded block-entity checks. Core bounded codec and session tests plus addon compilation validate the editor bridge.
+---
+ .../bedrock/ViaFabricPlusBedrock.java         |   4 +
+ .../access/IBedrockCommandBlockSettings.java  |  11 ++
+ .../MixinBedrockCommandBlockSettings.java     |  30 ++++++
+ .../MixinBedrockCommandBlockScreen.java       | 102 ++++++++++++++++++
+ .../screen/BedrockCommandBlockScreen.java     |  66 ++++++++++++
+ .../screen/CommandBlockEditPayload.java       |  20 ++++
+ .../screen/CommandBlockOpenPayload.java       |  20 ++++
+ .../viafabricplus-bedrock/lang/en_us.json     |   2 +
+ .../viafabricplus-bedrock.mixins.json         |   2 +
+ 9 files changed, 257 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockCommandBlockSettings.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockCommandBlockSettings.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBedrockCommandBlockScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCommandBlockScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/CommandBlockEditPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/CommandBlockOpenPayload.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index eba5804..55d92c6 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -83,6 +83,8 @@ import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
+ import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusEmoteProvider;
+ import org.apache.logging.log4j.LogManager;
+ import org.apache.logging.log4j.Logger;
++import com.viaversion.viafabricplus.bedrock.screen.BedrockCommandBlockScreen;
++import com.viaversion.viafabricplus.bedrock.screen.CommandBlockEditPayload;
+ import com.viaversion.viafabricplus.bedrock.screen.ui.BedrockHudOverlays;
+ import com.viaversion.viafabricplus.bedrock.screen.form.BedrockNativeForms;
+ import com.viaversion.viafabricplus.bedrock.screen.npc.BedrockNativeNpcs;
+@@ -160,6 +162,8 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+         ClientPlayNetworking.registerGlobalReceiver(NativeParticlePlaybackPayload.TYPE,
+                 (payload, context) -> BedrockServerParticles.accept(payload.message()));
+         PayloadTypeRegistry.serverboundPlay().register(RawInputPayload.TYPE, RawInputPayload.CODEC);
++        PayloadTypeRegistry.serverboundPlay().register(CommandBlockEditPayload.TYPE, CommandBlockEditPayload.CODEC);
++        BedrockCommandBlockScreen.register();
+         PayloadTypeRegistry.serverboundPlay().register(PlayerPredictionPayload.TYPE, PlayerPredictionPayload.CODEC);
+         BedrockPlayerCorrections.register();
+         BedrockMovementEffects.register();
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockCommandBlockSettings.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockCommandBlockSettings.java
+new file mode 100644
+index 0000000..f4db214
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockCommandBlockSettings.java
+@@ -0,0 +1,11 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.access;
++
++public interface IBedrockCommandBlockSettings {
++    int viaFabricPlusBedrock$tickDelay();
++    boolean viaFabricPlusBedrock$executeOnFirstTick();
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockCommandBlockSettings.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockCommandBlockSettings.java
+new file mode 100644
+index 0000000..00a7310
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockCommandBlockSettings.java
+@@ -0,0 +1,30 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockCommandBlockSettings;
++import net.minecraft.world.level.block.entity.CommandBlockEntity;
++import net.minecraft.world.level.storage.ValueInput;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Unique;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(CommandBlockEntity.class)
++public abstract class MixinBedrockCommandBlockSettings implements IBedrockCommandBlockSettings {
++    @Unique private int viaFabricPlusBedrock$tickDelay;
++    @Unique private boolean viaFabricPlusBedrock$executeOnFirstTick;
++
++    @Inject(method = "loadAdditional", at = @At("TAIL"))
++    private void retainNativeSettings(final ValueInput input, final CallbackInfo ci) {
++        this.viaFabricPlusBedrock$tickDelay = Math.max(0, input.getIntOr("TickDelay", 0));
++        this.viaFabricPlusBedrock$executeOnFirstTick = input.getBooleanOr("ExecuteOnFirstTick", false);
++    }
++
++    @Override public int viaFabricPlusBedrock$tickDelay() { return this.viaFabricPlusBedrock$tickDelay; }
++    @Override public boolean viaFabricPlusBedrock$executeOnFirstTick() { return this.viaFabricPlusBedrock$executeOnFirstTick; }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBedrockCommandBlockScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBedrockCommandBlockScreen.java
+new file mode 100644
+index 0000000..fbfc579
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBedrockCommandBlockScreen.java
+@@ -0,0 +1,102 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.inventory;
++
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockCommandBlockSettings;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.screen.CommandBlockEditPayload;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.minecraft.client.gui.components.CycleButton;
++import net.minecraft.client.gui.components.EditBox;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.screens.inventory.AbstractCommandBlockEditScreen;
++import net.minecraft.client.gui.screens.inventory.CommandBlockEditScreen;
++import net.minecraft.network.chat.Component;
++import net.minecraft.world.level.block.entity.CommandBlockEntity;
++import net.raphimc.viabedrock.api.model.CommandBlockEdit;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.Unique;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(CommandBlockEditScreen.class)
++public abstract class MixinBedrockCommandBlockScreen extends AbstractCommandBlockEditScreen {
++    @Shadow private CommandBlockEntity autoCommandBlock;
++    @Shadow private CommandBlockEntity.Mode mode;
++    @Shadow private boolean conditional;
++    @Shadow private boolean autoexec;
++    @Unique private EditBox viaFabricPlusBedrock$tickDelay;
++    @Unique private CycleButton<Boolean> viaFabricPlusBedrock$firstTick;
++    @Unique private boolean viaFabricPlusBedrock$initialized;
++    @Unique private String viaFabricPlusBedrock$validDelay = "0";
++
++    @Inject(method = "addExtraControls", at = @At("TAIL"))
++    private void addNativeControls(final CallbackInfo ci) {
++        if (!BedrockInputPermissions.isBedrockConnection() || !ClientPlayNetworking.canSend(CommandBlockEditPayload.TYPE)) return;
++        final var settings = (IBedrockCommandBlockSettings) this.autoCommandBlock;
++        final String delay = this.viaFabricPlusBedrock$tickDelay == null
++                ? Integer.toString(settings.viaFabricPlusBedrock$tickDelay()) : this.viaFabricPlusBedrock$tickDelay.getValue();
++        final boolean first = this.viaFabricPlusBedrock$firstTick == null
++                ? settings.viaFabricPlusBedrock$executeOnFirstTick() : this.viaFabricPlusBedrock$firstTick.getValue();
++        this.viaFabricPlusBedrock$tickDelay = this.addRenderableWidget(new EditBox(this.font,
++                this.width / 2 - 150, 200, 100, 20, Component.translatable("command_block.viafabricplus.tick_delay")));
++        this.viaFabricPlusBedrock$tickDelay.setMaxLength(10);
++        this.viaFabricPlusBedrock$validDelay = delay;
++        this.viaFabricPlusBedrock$tickDelay.setResponder(value -> {
++            if (value.isEmpty() || validDelay(value)) this.viaFabricPlusBedrock$validDelay = value;
++            else this.viaFabricPlusBedrock$tickDelay.setValue(this.viaFabricPlusBedrock$validDelay);
++        });
++        this.viaFabricPlusBedrock$tickDelay.setValue(delay);
++        this.viaFabricPlusBedrock$firstTick = this.addRenderableWidget(CycleButton.booleanBuilder(
++                Component.translatable("options.on"), Component.translatable("options.off"), first).create(
++                this.width / 2 - 40, 200, 190, 20, Component.translatable("command_block.viafabricplus.first_tick"), (button, value) -> {}));
++    }
++
++    @Inject(method = "init", at = @At("TAIL"))
++    private void leaveRoomForNativeControls(final CallbackInfo ci) {
++        if (this.viaFabricPlusBedrock$tickDelay == null) return;
++        final int actionsY = Math.max(this.doneButton.getY(), this.viaFabricPlusBedrock$tickDelay.getBottom() + 12);
++        this.doneButton.setY(actionsY);
++        this.cancelButton.setY(actionsY);
++    }
++
++    @Unique private static boolean validDelay(final String value) {
++        try { return !value.startsWith("-") && Integer.parseInt(value) >= 0; }
++        catch (final NumberFormatException invalid) { return false; }
++    }
++
++    @Inject(method = "updateGui", at = @At("TAIL"))
++    private void refreshNativeSettings(final CallbackInfo ci) {
++        if (this.viaFabricPlusBedrock$tickDelay == null || this.viaFabricPlusBedrock$initialized) return;
++        final var settings = (IBedrockCommandBlockSettings) this.autoCommandBlock;
++        this.viaFabricPlusBedrock$tickDelay.setValue(Integer.toString(settings.viaFabricPlusBedrock$tickDelay()));
++        this.viaFabricPlusBedrock$firstTick.setValue(settings.viaFabricPlusBedrock$executeOnFirstTick());
++        this.viaFabricPlusBedrock$initialized = true;
++    }
++
++    @Inject(method = "populateAndSendPacket", at = @At("HEAD"), cancellable = true)
++    private void sendNativeEdit(final CallbackInfo ci) {
++        if (!BedrockInputPermissions.isBedrockConnection() || this.viaFabricPlusBedrock$tickDelay == null) return;
++        final var position = this.autoCommandBlock.getBlockPos();
++        final String delay = this.viaFabricPlusBedrock$tickDelay.getValue();
++        ClientPlayNetworking.send(new CommandBlockEditPayload(new CommandBlockEdit(
++                new BlockPosition(position.getX(), position.getY(), position.getZ()), this.commandEdit.getValue(),
++                this.mode.ordinal(), this.autoCommandBlock.getCommandBlock().isTrackOutput(), this.conditional, this.autoexec,
++                delay.isEmpty() ? 0 : Integer.parseInt(delay), this.viaFabricPlusBedrock$firstTick.getValue())));
++        ci.cancel();
++    }
++
++    @Override
++    public void extractRenderState(final GuiGraphicsExtractor graphics, final int mouseX, final int mouseY, final float delta) {
++        super.extractRenderState(graphics, mouseX, mouseY, delta);
++        if (this.viaFabricPlusBedrock$tickDelay != null) {
++            graphics.text(this.font, Component.translatable("command_block.viafabricplus.tick_delay"), this.width / 2 - 150, 189, 0xFFA0A0A0, false);
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCommandBlockScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCommandBlockScreen.java
+new file mode 100644
+index 0000000..834ab1f
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCommandBlockScreen.java
+@@ -0,0 +1,66 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
++import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.screens.inventory.CommandBlockEditScreen;
++import net.minecraft.core.BlockPos;
++import net.minecraft.network.Connection;
++import net.minecraft.network.protocol.game.ServerboundContainerClosePacket;
++import net.minecraft.world.level.block.entity.CommandBlockEntity;
++import net.raphimc.viabedrock.api.model.CommandBlockOpen;
++
++public final class BedrockCommandBlockScreen extends CommandBlockEditScreen {
++    private final Connection connection;
++    private final byte containerId;
++    private boolean serverClosed;
++
++    private BedrockCommandBlockScreen(final CommandBlockEntity block, final Connection connection, final byte containerId) {
++        super(block);
++        this.connection = connection;
++        this.containerId = containerId;
++    }
++
++    public static void register() {
++        PayloadTypeRegistry.clientboundPlay().register(CommandBlockOpenPayload.TYPE, CommandBlockOpenPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++                ClientPlayNetworking.registerReceiver(CommandBlockOpenPayload.TYPE, (payload, context) -> {
++                    if (context.client().getConnection() == listener) accept(context.client(), payload.message());
++                }));
++    }
++
++    private static void accept(final Minecraft client, final CommandBlockOpen message) {
++        if (!BedrockInputPermissions.isBedrockConnection() || client.getConnection() == null || client.level == null) return;
++        if (!message.open()) {
++            if (client.gui.screen() instanceof BedrockCommandBlockScreen screen && screen.containerId == message.containerId()) {
++                screen.serverClosed = true;
++                client.setScreenAndShow(null);
++            }
++            return;
++        }
++        final var position = message.position();
++        if (!(client.level.getBlockEntity(new BlockPos(position.x(), position.y(), position.z())) instanceof CommandBlockEntity block)) {
++            client.getConnection().send(new ServerboundContainerClosePacket(Byte.toUnsignedInt(message.containerId())));
++            return;
++        }
++        final var screen = new BedrockCommandBlockScreen(block, client.getConnection().getConnection(), message.containerId());
++        client.setScreenAndShow(screen);
++        screen.updateGui();
++    }
++
++    @Override
++    public void removed() {
++        super.removed();
++        if (!this.serverClosed && this.minecraft.getConnection() != null
++                && this.minecraft.getConnection().getConnection() == this.connection) {
++            this.minecraft.getConnection().send(new ServerboundContainerClosePacket(Byte.toUnsignedInt(this.containerId)));
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/CommandBlockEditPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/CommandBlockEditPayload.java
+new file mode 100644
+index 0000000..8eae116
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/CommandBlockEditPayload.java
+@@ -0,0 +1,20 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.CommandBlockEdit;
++
++public record CommandBlockEditPayload(CommandBlockEdit edit) implements CustomPacketPayload {
++    public static final Type<CommandBlockEditPayload> TYPE = new Type<>(Identifier.parse(CommandBlockEdit.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, CommandBlockEditPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> CommandBlockEdit.TYPE.write(buffer, payload.edit),
++            buffer -> new CommandBlockEditPayload(CommandBlockEdit.TYPE.read(buffer)));
++    @Override public Type<CommandBlockEditPayload> type() { return TYPE; }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/CommandBlockOpenPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/CommandBlockOpenPayload.java
+new file mode 100644
+index 0000000..98706a7
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/CommandBlockOpenPayload.java
+@@ -0,0 +1,20 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.CommandBlockOpen;
++
++public record CommandBlockOpenPayload(CommandBlockOpen message) implements CustomPacketPayload {
++    public static final Type<CommandBlockOpenPayload> TYPE = new Type<>(Identifier.parse(CommandBlockOpen.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, CommandBlockOpenPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> CommandBlockOpen.TYPE.write(buffer, payload.message),
++            buffer -> new CommandBlockOpenPayload(CommandBlockOpen.TYPE.read(buffer)));
++    @Override public Type<CommandBlockOpenPayload> type() { return TYPE; }
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+index 545727e..3100bd6 100644
+--- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
++++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+@@ -1,4 +1,6 @@
+ {
++  "command_block.viafabricplus.tick_delay": "Delay in ticks",
++  "command_block.viafabricplus.first_tick": "Execute on first tick",
+   "base.viafabricplus.accept": "Accept",
+   "base.viafabricplus.code": "Code",
+   "base.viafabricplus.copy_link": "Copy link",
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index b74774e..9136d23 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -142,6 +142,8 @@
+     "features.movement.MixinLocalPlayer",
+     "features.movement.MixinPlayerCorrectionPacketListener",
+     "features.movement.MixinPlayer",
++    "features.block.MixinBedrockCommandBlockSettings",
++    "features.inventory.MixinBedrockCommandBlockScreen",
+     "features.sound.MixinBedrockChannelAccess",
+     "features.sound.MixinBedrockChannel",
+     "features.sound.MixinBedrockPcmChannel",
+-- 
+2.56.0

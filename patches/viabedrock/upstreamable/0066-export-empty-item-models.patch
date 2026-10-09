@@ -1,4 +1,4 @@
-From bfd140886ae197ba70c7e3566b568ca578b87a96 Mon Sep 17 00:00:00 2001
+From abe9c6374b804f54dd5a5b3b078fc0be91566415 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] fix(models): export complete asset pairs and empty item
@@ -80,16 +80,18 @@ transforms, lighting and ambient occlusion. In a separate nine-iteration
 model parsing benchmark with two warm-ups, median parsing falls from
 1274 to 254 ms and allocation from 4949 to 786 MiB. This isolates parsing
 rather than claiming complete reload or joining improvements.
+
+Use native inventory atlas icons in GUI, ground, fixed and shelf contexts while retaining held attachable geometry. Target item schemas and model tests cover the native spear icon and complete display-context routing.
 ---
  .../api/model/entity/CustomEntity.java        |   9 +
  .../definition/AttachableDefinitions.java     |  41 ++-
  .../protocol/rewriter/ItemRewriter.java       |   6 +-
- .../CustomAttachableResourceRewriter.java     |  57 ++--
+ .../CustomAttachableResourceRewriter.java     |  77 +++--
  .../CustomEntityResourceRewriter.java         |  37 +--
- .../ItemModelResourceRewriter.java            | 103 ++++++-
- .../ItemModelResourceRewriterTest.java        | 102 ++++++
+ .../ItemModelResourceRewriter.java            | 127 +++++++-
+ .../ItemModelResourceRewriterTest.java        | 123 ++++++++
  .../resourcepack/ModelResourceAssetsTest.java | 290 ++++++++++++++++++
- 8 files changed, 588 insertions(+), 57 deletions(-)
+ 8 files changed, 651 insertions(+), 59 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 
@@ -193,10 +195,10 @@ index 2989d7b33..9f4d7b708 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index bb94f4e0d..509de5de7 100644
+index de4633e5a..a0c902311 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-@@ -196,10 +196,7 @@ public class ItemRewriter extends StoredObject {
+@@ -197,10 +197,7 @@ public class ItemRewriter extends StoredObject {
                      data.set(StructuredDataKey.ITEM_NAME, TextUtil.stringToNbt(resourcePackStorage.getTexts().get("item." + Key.stripMinecraftNamespace(identifier) + ".name")));
                  }
  
@@ -208,7 +210,7 @@ index bb94f4e0d..509de5de7 100644
                      data.set(StructuredDataKey.ITEM_MODEL, CustomItemTextureResourceRewriter.getItemModel(itemDefinition.iconComponent()));
                      data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomItemTextureResourceRewriter.getCustomModelData("0"));
                  } else {
-@@ -231,6 +228,7 @@ public class ItemRewriter extends StoredObject {
+@@ -232,6 +229,7 @@ public class ItemRewriter extends StoredObject {
              ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
          }
  
@@ -217,7 +219,7 @@ index bb94f4e0d..509de5de7 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
-index 400839521..e95e788a8 100644
+index 400839521..fcc26eee9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
 @@ -17,20 +17,21 @@
@@ -245,7 +247,7 @@ index 400839521..e95e788a8 100644
  import java.util.function.Consumer;
  import java.util.function.Supplier;
  
-@@ -42,46 +43,51 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
+@@ -42,46 +43,69 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
          return new ItemModel(Key.of("viabedrock", SUB_FOLDER + '/' + StringUtil.makeIdentifierValueSafe(attachableIdentifier)));
      }
  
@@ -273,9 +275,7 @@ index 400839521..e95e788a8 100644
      }
  
 -    private Content handleAttachableDefinition(final ResourcePackStorage resourcePackStorage, final AttachableDefinitions.AttachableDefinition attachableDefinition) {
-+    private Content handleAttachableDefinition(final ResourcePackStorage resourcePackStorage, final AttachableDefinitions.AttachableDefinition attachableDefinition,
-+                                              final Map<BedrockGeometryModel, CompiledGeometry> geometries) {
-         final ItemModelContent javaContent = new ItemModelContent(attachableDefinition.identifier());
+-        final ItemModelContent javaContent = new ItemModelContent(attachableDefinition.identifier());
 -        for (String bedrockPath : attachableDefinition.attachableData().getTextures().values()) {
 -            for (ResourcePack pack : resourcePackStorage.getPackStackTopToBottom()) {
 -                final Content.LazyImage texture = pack.content().getShortnameImage(bedrockPath);
@@ -284,14 +284,31 @@ index 400839521..e95e788a8 100644
 -                    break;
 -                }
 -            }
--        }
++    private static JsonObject inventoryIcon(final ResourcePackStorage packs, final String identifier) {
++        final var definition = packs.getItems().get(identifier);
++        final String icon = definition != null && definition.iconComponent() != null
++                ? definition.iconComponent() : Key.stripMinecraftNamespace(identifier);
++        final var textures = packs.getTextures().itemTextures().get(icon);
++        if (textures == null || textures.isEmpty()) {
++            return null;
++        }
++        final String path = textures.getFirst().texturePath();
++        if (packs.getPackStackTopToBottom().stream().noneMatch(pack -> pack.content().getShortnameImage(path) != null)) {
++            return null;
+         }
++        final JsonObject model = new JsonObject();
++        model.addProperty("type", "minecraft:model");
++        model.addProperty("model", "viabedrock:item_textures/" + StringUtil.makeIdentifierValueSafe(icon) + "/0");
++        return model;
++    }
++
++    private Content handleAttachableDefinition(final ResourcePackStorage resourcePackStorage, final AttachableDefinitions.AttachableDefinition attachableDefinition,
++                                              final Map<BedrockGeometryModel, CompiledGeometry> geometries) {
++        final ItemModelContent javaContent = new ItemModelContent(attachableDefinition.identifier());
 +        final Set<String> textures = this.copyTextures(resourcePackStorage, attachableDefinition.attachableData().getTextures().values(), javaContent);
          for (Map.Entry<String, String> modelEntry : attachableDefinition.attachableData().getGeometries().entrySet()) {
              final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
 -            if (bedrockGeometry == null) {
--                continue;
--            }
--            if (!attachableDefinition.attachableData().getTextures().containsKey(modelEntry.getKey())) {
 +            final String bedrockTexturePath = attachableDefinition.attachableData().getTextures().get(modelEntry.getKey());
 +            final String modelKey = modelEntry.getKey();
 +            final boolean hasTexture = textures.contains(bedrockTexturePath);
@@ -299,6 +316,9 @@ index 400839521..e95e788a8 100644
 +            if (bedrockGeometry == null || !hasTexture) {
                  continue;
              }
+-            if (!attachableDefinition.attachableData().getTextures().containsKey(modelEntry.getKey())) {
+-                continue;
+-            }
 -
 -            final String javaTexturePath = this.getJavaTexturePath(attachableDefinition.attachableData().getTextures().get(modelEntry.getKey()));
 -            final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + javaTexturePath, RotationType.POST_1_21_11);
@@ -319,7 +339,7 @@ index 400839521..e95e788a8 100644
  
              final JsonObject value = new JsonObject();
              value.add("scale", scaling);
-@@ -97,7 +103,6 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
+@@ -97,11 +121,10 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
  
              itemModel.add("display", display);
  
@@ -327,6 +347,11 @@ index 400839521..e95e788a8 100644
              javaContent.putModel(modelKey, itemModel);
              resourcePackStorage.getConverterData().put("ca_" + attachableDefinition.identifier() + '_' + modelKey, true);
          }
+-        javaContent.generateItemDefinition();
++        javaContent.generateItemDefinition(inventoryIcon(resourcePackStorage, attachableDefinition.identifier()));
+         return javaContent;
+     }
+ 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
 index 600703503..e68258a94 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
@@ -398,7 +423,7 @@ index 600703503..e68258a94 100644
          }
          javaContent.generateItemDefinition();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
-index 799413e57..021fd0706 100644
+index 799413e57..4deef2b98 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
 @@ -20,11 +20,26 @@ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
@@ -505,7 +530,7 @@ index 799413e57..021fd0706 100644
      protected class ItemModelContent extends InMemoryContent {
  
          private final Map<String, String> modelDefinitions = new HashMap<>();
-@@ -52,7 +137,15 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
+@@ -52,13 +137,25 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
              this.itemPath = ItemModelResourceRewriter.this.subFolder + '/' + StringUtil.makeIdentifierValueSafe(itemName);
          }
  
@@ -521,7 +546,17 @@ index 799413e57..021fd0706 100644
              final String modelPath = this.itemPath + '/' + StringUtil.makeIdentifierValueSafe(name);
              this.modelDefinitions.put(name, modelPath);
              this.putJson("assets/viabedrock/models/" + modelPath + ".json", json);
-@@ -72,9 +165,13 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
+         }
+ 
+         protected void generateItemDefinition() {
++            this.generateItemDefinition(null);
++        }
++
++        protected void generateItemDefinition(final JsonObject inventoryModel) {
+             final JsonArray modelCases = new JsonArray();
+             for (Map.Entry<String, String> modelDefinition : this.modelDefinitions.entrySet()) {
+                 final JsonObject model = new JsonObject();
+@@ -72,11 +169,33 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
              }
  
              final JsonObject model = new JsonObject();
@@ -536,14 +571,35 @@ index 799413e57..021fd0706 100644
 +                model.add("cases", modelCases);
 +            }
              final JsonObject itemDefinitionObj = new JsonObject();
-             itemDefinitionObj.add("model", model);
+-            itemDefinitionObj.add("model", model);
++            if (inventoryModel == null) {
++                itemDefinitionObj.add("model", model);
++            } else {
++                final JsonArray contexts = new JsonArray();
++                for (final String context : List.of("gui", "ground", "fixed", "on_shelf")) {
++                    contexts.add(context);
++                }
++                final JsonObject inventory = new JsonObject();
++                inventory.add("when", contexts);
++                inventory.add("model", inventoryModel);
++                final JsonArray cases = new JsonArray();
++                cases.add(inventory);
++                final JsonObject displayModel = new JsonObject();
++                displayModel.addProperty("type", "minecraft:select");
++                displayModel.addProperty("property", "minecraft:display_context");
++                displayModel.add("cases", cases);
++                displayModel.add("fallback", model);
++                itemDefinitionObj.add("model", displayModel);
++            }
              this.putJson("assets/viabedrock/items/" + this.itemPath + ".json", itemDefinitionObj);
+         }
+ 
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
 new file mode 100644
-index 000000000..fb948103f
+index 000000000..84c8e7df5
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,123 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -625,6 +681,27 @@ index 000000000..fb948103f
 +            }
 +        }
 +        assertArrayEquals(original, compiled.data());
++    }
++
++    @Test
++    void separatesInventoryIconsFromNativeHeldGeometry() {
++        final JsonObject icon = new JsonObject();
++        icon.addProperty("type", "minecraft:model");
++        icon.addProperty("model", "viabedrock:item_textures/spear/0");
++        final TestRewriter rewriter = new TestRewriter();
++        final var content = rewriter.new ItemModelContent("spear");
++        final JsonObject geometry = new JsonObject();
++        geometry.addProperty("parent", "minecraft:item/generated");
++        content.putModel("default", geometry);
++        content.generateItemDefinition(icon);
++        final var model = content.getJson("assets/viabedrock/items/entities/spear.json").getAsJsonObject("model");
++        assertEquals("minecraft:display_context", model.get("property").getAsString());
++        final var inventory = model.getAsJsonArray("cases").get(0).getAsJsonObject();
++        assertEquals(icon, inventory.get("model"));
++        assertEquals(4, inventory.getAsJsonArray("when").size());
++        assertEquals("minecraft:custom_model_data", model.getAsJsonObject("fallback").get("property").getAsString());
++        assertEquals("default", model.getAsJsonObject("fallback").getAsJsonArray("cases").get(0)
++                .getAsJsonObject().get("when").getAsString());
 +    }
 +
 +    private static final class TestRewriter extends ItemModelResourceRewriter {
@@ -943,4 +1020,4 @@ index 000000000..5d513b681
 +
 +}
 -- 
-2.55.0
+2.56.0

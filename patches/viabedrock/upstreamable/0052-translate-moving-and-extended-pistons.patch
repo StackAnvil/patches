@@ -1,21 +1,44 @@
-From 54587915b2b0551dacf246d93ea173ada26148ab Mon Sep 17 00:00:00 2001
+From 5e2d4b65e009390a189f38063fb1b8dee4a07196 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 09:00:35 +0200
 Subject: [PATCH] fix(block-entities): translate moving and extended pistons
 
 Bedrock stores piston extension in the PistonArm block entity and the carried block in a separate MovingBlock entity. Translate both into Java block states and moving-piston data so the client can render the animation and its carried block. The mapping follows fields captured from a native 1.26.51 server and uses the existing block-state sanitizer for carried blocks.
+
+Geyser sends MovingBlock tags before the new PistonArm progress and does not supply a moving head entity. Ignore stale opposite-direction progress, synthesize the arm animation, and refresh carried tags across chunk boundaries. Java 26.3 creates moving piston entities only from local piston events, so the addon must create them for translated block updates. Tests cover native progress reversal, stale tags and head/base animation positions. Evidence: GeyserMC/Geyser core translator/level/block/entity/PistonBlockEntity.java and Java 26.3 MovingPistonBlock/ClientPacketListener bytecode.
 ---
+ .../protocol/packet/WorldPackets.java         |   2 +
  .../rewriter/BlockEntityRewriter.java         |   7 +-
- .../MovingBlockBlockEntityRewriter.java       | 115 ++++++++++++++++++
- .../PistonBlockEntityRewriter.java            |  45 +++++++
- .../MovingBlockBlockEntityRewriterTest.java   |  53 ++++++++
- .../PistonBlockEntityRewriterTest.java        |  38 ++++++
- 5 files changed, 255 insertions(+), 3 deletions(-)
+ .../MovingBlockBlockEntityRewriter.java       | 124 ++++++++++++++++++
+ .../PistonBlockEntityRewriter.java            | 124 ++++++++++++++++++
+ .../MovingBlockBlockEntityRewriterTest.java   |  69 ++++++++++
+ .../PistonBlockEntityRewriterTest.java        |  65 +++++++++
+ 6 files changed, 388 insertions(+), 3 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriter.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriterTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index 08bbb4e57..3aa8cf306 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -70,6 +70,7 @@ import net.raphimc.viabedrock.protocol.model.Position3f;
+ import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.blockentity.SignBlockEntityRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.blockentity.PistonBlockEntityRewriter;
+ import net.raphimc.viabedrock.protocol.storage.*;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ import net.raphimc.viabedrock.protocol.types.array.ByteArrayType;
+@@ -518,6 +519,7 @@ public final class WorldPackets {
+                         PacketFactory.sendJavaBlockUpdate(wrapper.user(), bedrockBlockEntity.position(), blockEntityWithBlockState.blockState());
+                     }
+ 
++                    PistonBlockEntityRewriter.sendAnimationUpdates(wrapper.user(), bedrockBlockEntity);
+                     if (javaBlockEntity != null && javaBlockEntity.tag() != null) {
+                         wrapper.write(Types.VAR_INT, javaBlockEntity.typeId()); // type
+                         wrapper.write(Types.COMPOUND_TAG, javaBlockEntity.tag()); // block entity tag
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockEntityRewriter.java
 index 85dc3b674..e903b7de4 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockEntityRewriter.java
@@ -43,10 +66,10 @@ index 85dc3b674..e903b7de4 100644
                  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriter.java
 new file mode 100644
-index 000000000..c60d133cc
+index 000000000..2f335cdc8
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriter.java
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,124 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -123,7 +146,7 @@ index 000000000..c60d133cc
 +        return new BlockEntityWithBlockState(javaBlockEntity, movingId);
 +    }
 +
-+    private static BlockPosition pistonPosition(final CompoundTag tag) {
++    static BlockPosition pistonPosition(final CompoundTag tag) {
 +        if (tag.get("pistonPosX") instanceof NumberTag x && tag.get("pistonPosY") instanceof NumberTag y
 +                && tag.get("pistonPosZ") instanceof NumberTag z) {
 +            return new BlockPosition(x.asInt(), y.asInt(), z.asInt());
@@ -152,22 +175,31 @@ index 000000000..c60d133cc
 +        javaTag.put("blockState", javaState);
 +        javaTag.putInt("facing", Direction.valueOf(pistonState.properties().get("facing").toUpperCase(Locale.ROOT)).verticalId());
 +        final boolean extending = movingTag.get("expanding") instanceof NumberTag expanding && expanding.asInt() != 0;
-+        final float bedrockProgress = pistonTag != null && pistonTag.get("Progress") instanceof NumberTag progressTag
-+                ? progressTag.asFloat() : 0f;
-+        final float progress = extending ? bedrockProgress : 1f - bedrockProgress;
-+        javaTag.putFloat("progress", Math.max(0f, Math.min(1f, progress)));
++        javaTag.putFloat("progress", javaProgress(extending, pistonTag));
 +        javaTag.putByte("extending", (byte) (extending ? 1 : 0));
 +        javaTag.putByte("source", (byte) 0);
 +        return javaTag;
 +    }
 +
++    static float javaProgress(final boolean extending, final CompoundTag pistonTag) {
++        // MovingBlock can arrive before the new PistonArm tag. Do not reuse the
++        // completed progress of the previous motion in the opposite direction.
++        if (pistonTag == null || !(pistonTag.get("State") instanceof NumberTag state)
++                || extending != (state.asInt() == 1 || state.asInt() == 2)
++                || !(pistonTag.get("Progress") instanceof NumberTag progress)) {
++            return 0f;
++        }
++        final float value = extending ? progress.asFloat() : 1f - progress.asFloat();
++        return Float.isFinite(value) ? Math.max(0f, Math.min(1f, value)) : 0f;
++    }
++
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriter.java
 new file mode 100644
-index 000000000..2cccb9990
+index 000000000..8d2ab6fa3
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriter.java
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,124 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -182,13 +214,21 @@ index 000000000..2cccb9990
 +import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.nbt.tag.NumberTag;
 +import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
 +import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
++import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntityImpl;
 +import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
 +import net.raphimc.viabedrock.api.chunk.BlockEntityWithBlockState;
 +import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.api.util.PacketFactory;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.Direction;
++import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 +import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
 +import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
++
++import java.util.Locale;
++import java.util.Map;
 +
 +public class PistonBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
 +
@@ -199,6 +239,75 @@ index 000000000..2cccb9990
 +        final BlockState pistonState = javaBlockState(currentState, bedrockBlockEntity.tag());
 +        final int pistonId = BedrockProtocol.MAPPINGS.getJavaBlockStates().getOrDefault(pistonState, currentId);
 +        return new BlockEntityWithBlockState(bedrockBlockEntity.packedXZ(), bedrockBlockEntity.y(), pistonId);
++    }
++
++    public static void sendAnimationUpdates(final UserConnection user, final BedrockBlockEntity piston) {
++        if (!"PistonArm".equals(piston.tag().getString("id"))
++                || !(piston.tag().get("State") instanceof NumberTag stateTag)) {
++            return;
++        }
++        final int state = stateTag.asInt();
++        if (state < 0 || state > 3) {
++            return;
++        }
++        final ChunkTracker tracker = user.get(ChunkTracker.class);
++        final int baseId = tracker.getJavaBlockState(piston.position());
++        final BlockState base = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(baseId);
++        if (base == null || !(base.identifier().equals("piston") || base.identifier().equals("sticky_piston"))) {
++            return;
++        }
++        final Animation animation = animation(piston.position(), base, piston.tag());
++        if (animation != null) {
++            final int movingId = BedrockProtocol.MAPPINGS.getJavaBlockStates().get(MovingBlockBlockEntityRewriter.movingPistonState(base));
++            PacketFactory.sendJavaBlockUpdate(user, animation.position(), movingId);
++            PacketFactory.sendJavaBlockEntityData(user, animation.position(), new BlockEntityImpl(
++                    BlockEntity.pack(animation.position().x(), animation.position().z()), (short) animation.position().y(),
++                    BedrockProtocol.MAPPINGS.getJavaBlockEntities().get(CustomBlockTags.PISTON), animation.data()));
++        }
++        // Geyser sends carried blocks before the arm's new progress. Refresh
++        // only those belonging to this piston, including chunk-boundary pushes.
++        final MovingBlockBlockEntityRewriter rewriter = new MovingBlockBlockEntityRewriter();
++        for (int x = (piston.position().x() - 12) >> 4; x <= (piston.position().x() + 12) >> 4; x++) {
++            for (int z = (piston.position().z() - 12) >> 4; z <= (piston.position().z() + 12) >> 4; z++) {
++                final var chunk = tracker.getChunk(x, z);
++                if (chunk == null) {
++                    continue;
++                }
++                for (final BlockEntity entity : chunk.blockEntities()) {
++                    if (!(entity instanceof BedrockBlockEntity moving)
++                            || !piston.position().equals(MovingBlockBlockEntityRewriter.pistonPosition(moving.tag()))) {
++                        continue;
++                    }
++                    final BlockEntity translated = rewriter.toJava(user, moving);
++                    if (translated != null && translated.tag() != null) {
++                        PacketFactory.sendJavaBlockEntityData(user, moving.position(), translated.withTypeId(
++                                BedrockProtocol.MAPPINGS.getJavaBlockEntities().get(CustomBlockTags.PISTON)));
++                    }
++                }
++            }
++        }
++    }
++
++    static Animation animation(final BlockPosition basePosition, final BlockState base, final CompoundTag pistonTag) {
++        if (!(pistonTag.get("State") instanceof NumberTag stateTag)) {
++            return null;
++        }
++        final int state = stateTag.asInt();
++        if (state != 1 && state != 3) {
++            return null;
++        }
++        final boolean extending = state == 1;
++        final Direction direction = Direction.valueOf(base.properties().get("facing").toUpperCase(Locale.ROOT));
++        final BlockPosition position = extending ? basePosition.getRelative(direction.blockFace()) : basePosition;
++        final BlockState carried = extending
++                ? new BlockState("piston_head", Map.of("facing", base.properties().get("facing"),
++                        "type", base.identifier().equals("sticky_piston") ? "sticky" : "normal", "short", "false"))
++                : base.withProperty("extended", "false");
++        final CompoundTag moving = new CompoundTag();
++        moving.putByte("expanding", (byte) (extending ? 1 : 0));
++        final CompoundTag data = MovingBlockBlockEntityRewriter.javaData(moving, carried, base, pistonTag);
++        data.putByte("source", (byte) 1);
++        return new Animation(position, data);
 +    }
 +
 +    static BlockState javaBlockState(final BlockState currentState, final CompoundTag bedrockTag) {
@@ -212,13 +321,15 @@ index 000000000..2cccb9990
 +        return currentState;
 +    }
 +
++    record Animation(BlockPosition position, CompoundTag data) { }
++
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriterTest.java
 new file mode 100644
-index 000000000..5adbd9a55
+index 000000000..12950a17e
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriterTest.java
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,69 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -243,6 +354,7 @@ index 000000000..5adbd9a55
 +        final CompoundTag moving = new CompoundTag();
 +        moving.putByte("expanding", (byte) 1);
 +        final CompoundTag piston = new CompoundTag();
++        piston.putByte("State", (byte) 1);
 +        piston.putFloat("Progress", 0.5f);
 +        final BlockState base = BlockState.fromString("minecraft:sticky_piston[extended=false,facing=east]");
 +        final BlockState carried = BlockState.fromString("minecraft:oak_stairs[facing=west,half=bottom,shape=straight,waterlogged=false]");
@@ -264,6 +376,7 @@ index 000000000..5adbd9a55
 +        final CompoundTag piston = new CompoundTag();
 +        final BlockState base = BlockState.fromString("minecraft:sticky_piston[extended=false,facing=east]");
 +
++        piston.putByte("State", (byte) 3);
 +        piston.putFloat("Progress", 1f);
 +        assertEquals(0f, MovingBlockBlockEntityRewriter.javaData(moving, BlockState.fromString("minecraft:stone"), base, piston).getFloat("progress"));
 +
@@ -271,13 +384,27 @@ index 000000000..5adbd9a55
 +        assertEquals(1f, MovingBlockBlockEntityRewriter.javaData(moving, BlockState.fromString("minecraft:stone"), base, piston).getFloat("progress"));
 +    }
 +
++    @Test
++    void startsAtZeroWhenTheMovingBlockPrecedesTheNewArmTag() {
++        final CompoundTag piston = new CompoundTag();
++        piston.putByte("State", (byte) 0);
++        piston.putFloat("Progress", 0f);
++        assertEquals(0f, MovingBlockBlockEntityRewriter.javaProgress(true, piston));
++        piston.putByte("State", (byte) 2);
++        piston.putFloat("Progress", 1f);
++        assertEquals(0f, MovingBlockBlockEntityRewriter.javaProgress(false, piston));
++        piston.putByte("State", (byte) 1);
++        piston.putFloat("Progress", Float.NaN);
++        assertEquals(0f, MovingBlockBlockEntityRewriter.javaProgress(true, piston));
++    }
++
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriterTest.java
 new file mode 100644
-index 000000000..e5f88e015
+index 000000000..bf3b259fc
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriterTest.java
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,65 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -291,9 +418,11 @@ index 000000000..e5f88e015
 +
 +import com.viaversion.nbt.tag.CompoundTag;
 +import net.raphimc.viabedrock.api.model.BlockState;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
 +import org.junit.jupiter.api.Test;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
 +
 +class PistonBlockEntityRewriterTest {
 +
@@ -315,6 +444,31 @@ index 000000000..e5f88e015
 +        assertEquals(RETRACTED, PistonBlockEntityRewriter.javaBlockState(RETRACTED, tag));
 +    }
 +
++    @Test
++    void animatesTheHeadOnExtensionAndTheBaseOnRetraction() {
++        final BlockPosition position = new BlockPosition(16, 64, 0);
++        final CompoundTag tag = new CompoundTag();
++        tag.putByte("State", (byte) 1);
++        tag.putFloat("Progress", 0.5f);
++        final var extension = PistonBlockEntityRewriter.animation(position, RETRACTED, tag);
++        assertEquals(new BlockPosition(15, 64, 0), extension.position());
++        assertEquals((byte) 1, extension.data().getByte("source"));
++        assertEquals((byte) 1, extension.data().getByte("extending"));
++        assertEquals(0.5f, extension.data().getFloat("progress"));
++
++        tag.putByte("State", (byte) 3);
++        tag.putFloat("Progress", 1f);
++        final var retraction = PistonBlockEntityRewriter.animation(position, RETRACTED, tag);
++        assertEquals(position, retraction.position());
++        assertEquals((byte) 0, retraction.data().getByte("extending"));
++        assertEquals(0f, retraction.data().getFloat("progress"));
++
++        tag.putByte("State", (byte) 0);
++        assertNull(PistonBlockEntityRewriter.animation(position, RETRACTED, tag));
++        tag.putByte("State", (byte) 2);
++        assertNull(PistonBlockEntityRewriter.animation(position, RETRACTED, tag));
++    }
++
 +}
 -- 
-2.55.0
+2.56.0

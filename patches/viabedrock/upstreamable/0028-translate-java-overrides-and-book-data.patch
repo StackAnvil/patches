@@ -1,4 +1,4 @@
-From e367f6c14ec299ede3b5a886703191a40ea17325 Mon Sep 17 00:00:00 2001
+From 10af752d537adbdf500d875001815971e434a28f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 03:58:56 +0200
 Subject: [PATCH] feat(items): translate Java overrides and book data
@@ -42,19 +42,72 @@ in a controlled placed chest, but the previous Java component is empty.
 Bounded execution of the matching native item assembler confirms per-member
 StringTag defaults, LF boundaries and per-entry style. Java network roundtrip
 and style tests verify the standard fallback; native UI pixels remain unverified.
+
+Resolve Bedrock rawtext item lore, including translated parameters and newlines. Target Geyser 26_50/Potion mappings confirm trial potion metadata 43-46 and tipped-arrow metadata 44-47; preserve these effect components and ominous bottle amplifier 0-4. Known stew/star auxiliary ranges retain native identity and server-applied behavior without fabricated effect durations. Tests exercise shipped mappings, rawtext and bottle bounds.
 ---
+ .../raphimc/viabedrock/api/util/TextUtil.java |  25 ++
  .../protocol/model/FireworkData.java          |  86 +++++++
- .../protocol/rewriter/ItemDataRewriter.java   | 212 +++++++++++++++++-
- .../protocol/rewriter/ItemRewriter.java       |   5 +-
- .../protocol/model/FireworkDataTest.java      | 117 ++++++++++
- .../rewriter/ItemDataRewriterTest.java        | 163 ++++++++++++++
- .../protocol/rewriter/ItemLoreTest.java       |  94 ++++++++
- 6 files changed, 672 insertions(+), 5 deletions(-)
+ .../protocol/rewriter/ItemDataRewriter.java   | 234 +++++++++++++++++-
+ .../protocol/rewriter/ItemRewriter.java       |   8 +-
+ .../viabedrock/data/custom/item_mappings.json |  64 +++++
+ .../protocol/model/FireworkDataTest.java      | 117 +++++++++
+ .../rewriter/ItemDataRewriterTest.java        | 211 ++++++++++++++++
+ .../protocol/rewriter/ItemLoreTest.java       | 105 ++++++++
+ 8 files changed, 844 insertions(+), 6 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/FireworkData.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/FireworkDataTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemLoreTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java b/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java
+index 20a57fb89..129790fdc 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java
++++ b/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java
+@@ -22,12 +22,15 @@ import com.viaversion.nbt.tag.ListTag;
+ import com.viaversion.nbt.tag.StringTag;
+ import com.viaversion.nbt.tag.Tag;
+ import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonParser;
+ import com.viaversion.viaversion.libs.mcstructs.text.Style;
+ import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
+ import com.viaversion.viaversion.libs.mcstructs.text.TextFormatting;
+ import com.viaversion.viaversion.libs.mcstructs.text.serializer.LegacyStringDeserializer;
+ import com.viaversion.viaversion.libs.mcstructs.text.utils.TextUtils;
+ import net.lenni0451.mcstructs_bedrock.text.BedrockTextFormatting;
++import net.lenni0451.mcstructs_bedrock.text.components.TranslationBedrockComponent;
++import net.lenni0451.mcstructs_bedrock.text.serializer.BedrockComponentSerializer;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+ 
+ import java.util.EnumSet;
+@@ -55,6 +58,28 @@ public final class TextUtil {
+         }
+     }).orElse(null);
+ 
++    /** Resolve item rawtext while keeping ordinary and malformed text literal. */
++    public static String resolveRawText(final String value, final Function<String, String> translator) {
++        if (!value.stripLeading().startsWith("{")) {
++            return value;
++        }
++        try {
++            final var parsed = JsonParser.parseString(value);
++            if (!parsed.isJsonObject() || !parsed.getAsJsonObject().has("rawtext")) {
++                return value;
++            }
++            final var root = BedrockComponentSerializer.deserialize(value);
++            root.forEach(component -> {
++                if (component instanceof TranslationBedrockComponent translation) {
++                    translation.setTranslator(translator);
++                }
++            });
++            return root.asString();
++        } catch (final RuntimeException malformed) {
++            return value;
++        }
++    }
++
+     public static String stringToJson(final String text) {
+         return textComponentToJson(stringToTextComponent(text));
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/FireworkData.java b/src/main/java/net/raphimc/viabedrock/protocol/model/FireworkData.java
 new file mode 100644
 index 000000000..fcb59797a
@@ -148,10 +201,10 @@ index 000000000..fcb59797a
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-index e21bdddba..d4271d6d8 100644
+index e21bdddba..3f3878107 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-@@ -19,24 +19,230 @@ package net.raphimc.viabedrock.protocol.rewriter;
+@@ -19,24 +19,252 @@ package net.raphimc.viabedrock.protocol.rewriter;
  
  import com.viaversion.nbt.tag.*;
  import com.viaversion.viaversion.api.connection.UserConnection;
@@ -181,6 +234,7 @@ index e21bdddba..d4271d6d8 100644
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.FireworkData;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  
 +import java.util.ArrayList;
 +import java.util.HashMap;
@@ -212,12 +266,16 @@ index e21bdddba..d4271d6d8 100644
 +    }
 +
 +    static Tag[] itemLore(final CompoundTag display) {
++        return itemLore(display, Function.identity());
++    }
++
++    static Tag[] itemLore(final CompoundTag display, final Function<String, String> translator) {
 +        if (!(display.get("Lore") instanceof ListTag<?> lore)) {
 +            return null;
 +        }
 +        final List<Tag> lines = new ArrayList<>();
 +        for (final Tag entry : lore) {
-+            final String text = entry instanceof StringTag value ? value.getValue() : "";
++            final String text = entry instanceof StringTag value ? TextUtil.resolveRawText(value.getValue(), translator) : "";
 +            // Each native entry starts purple and italic. Split after parsing so
 +            // formatting carries across embedded LF without leaking to the next entry.
 +            for (final var line : TextUtils.split(TextUtil.stringToTextComponent("§5§o" + text), "\n", false)) {
@@ -343,9 +401,26 @@ index e21bdddba..d4271d6d8 100644
 +        return projectile == null || projectile.isEmpty() ? new Item[0] : new Item[]{projectile};
 +    }
 +
++    /** Auxiliary variants translated by native item data rather than legacy mapping overrides. */
++    static boolean hasNativeAuxiliaryValue(final String identifier, final int value) {
++        return switch (identifier) {
++            case "minecraft:ominous_bottle" -> value >= 0 && value <= 4;
++            // Native recipes select the server-applied food effect. Its identity is kept in the stack snapshot.
++            case "minecraft:suspicious_stew" -> value >= 0 && value <= 12;
++            // The explosion component carries the actual colors; this value is the native creative color index.
++            case "minecraft:firework_star" -> value >= 0 && value <= 15;
++            default -> false;
++        };
++    }
++
      // BedrockTag can be null
 -    public static void handleItem(final UserConnection user, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
 +    public static void handleItem(final UserConnection user, final String identifier, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
++
++        if (identifier.equals("minecraft:ominous_bottle")
++                && hasNativeAuxiliaryValue(identifier, bedrockItem.data() & 0xFFFF)) {
++            javaItem.dataContainer().set(StructuredDataKey.OMINOUS_BOTTLE_AMPLIFIER, bedrockItem.data() & 0xFFFF);
++        }
 +
 +        if (identifier.equals("minecraft:firework_rocket")) {
 +            javaItem.dataContainer().set(StructuredDataKey.FIREWORKS,
@@ -362,7 +437,7 @@ index e21bdddba..d4271d6d8 100644
  
          if (bedrockTag != null) {
 +            if (bedrockTag.get("display") instanceof CompoundTag display) {
-+                final Tag[] lore = itemLore(display);
++                final Tag[] lore = itemLore(display, user.get(ResourcePackStorage.class).getTexts().lookup());
 +                if (lore != null) {
 +                    javaItem.dataContainer().set(StructuredDataKey.LORE, lore);
 +                }
@@ -383,7 +458,7 @@ index e21bdddba..d4271d6d8 100644
  
              if (bedrockTag.get("Damage") instanceof NumberTag durability) {
                  javaItem.dataContainer().set(StructuredDataKey.DAMAGE, durability.asInt());
-@@ -52,7 +258,9 @@ public final class ItemDataRewriter {
+@@ -52,7 +280,9 @@ public final class ItemDataRewriter {
                      javaEnchantments = enchantmentsData.value();
                  }
  
@@ -395,10 +470,20 @@ index e21bdddba..d4271d6d8 100644
                      if (enchantment instanceof CompoundTag compoundTag) {
                          //id and lvl must be a short. Else bedrock defaults to protection (id 0) and lvl 0 (TODO: implement the fallback)
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index c8f728380..bb94f4e0d 100644
+index c8f728380..de4633e5a 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-@@ -174,8 +174,7 @@ public class ItemRewriter extends StoredObject {
+@@ -157,7 +157,8 @@ public class ItemRewriter extends StoredObject {
+                 final Map<Integer, BedrockMappingData.JavaItemMapping> metaItemMappings = BedrockProtocol.MAPPINGS.getBedrockToJavaMetaItems().get(identifier);
+                 if (metaItemMappings != null) {
+                     if (!metaItemMappings.containsKey(meta)) {
+-                        if (metaItemMappings.size() != 1 || meta != 0) {
++                        if ((metaItemMappings.size() != 1 || meta != 0)
++                                && !ItemDataRewriter.hasNativeAuxiliaryValue(identifier, meta)) {
+                             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing meta: " + meta + " for item: " + identifier);
+                         }
+                         javaItemMapping = metaItemMappings.get(null);
+@@ -174,8 +175,7 @@ public class ItemRewriter extends StoredObject {
          if (javaItemMapping != null) {
              final StructuredDataContainer data = ProtocolConstants.createStructuredDataContainer();
              if (javaItemMapping.overrideTag() != null) {
@@ -408,7 +493,7 @@ index c8f728380..bb94f4e0d 100644
              }
              if (javaItemMapping.name() != null) {
                  final ResourcePackStorage resourcePackStorage = this.user().get(ResourcePackStorage.class);
-@@ -225,7 +224,7 @@ public class ItemRewriter extends StoredObject {
+@@ -225,7 +225,7 @@ public class ItemRewriter extends StoredObject {
              }
          }
  
@@ -417,6 +502,102 @@ index c8f728380..bb94f4e0d 100644
  
          final String tag = BedrockProtocol.MAPPINGS.getBedrockCustomItemTags().get(identifier);
          if (ITEM_NBT_REWRITERS.containsKey(tag)) {
+diff --git a/src/main/resources/assets/viabedrock/data/custom/item_mappings.json b/src/main/resources/assets/viabedrock/data/custom/item_mappings.json
+index 48dab92a5..bfa7b7780 100644
+--- a/src/main/resources/assets/viabedrock/data/custom/item_mappings.json
++++ b/src/main/resources/assets/viabedrock/data/custom/item_mappings.json
+@@ -489,6 +489,22 @@
+       "43": {
+         "java_id": "minecraft:tipped_arrow",
+         "java_tag": "{Potion:\"minecraft:strong_slowness\"}"
++      },
++      "44": {
++        "java_id": "minecraft:tipped_arrow",
++        "java_tag": "{Potion:\"minecraft:wind_charged\"}"
++      },
++      "45": {
++        "java_id": "minecraft:tipped_arrow",
++        "java_tag": "{Potion:\"minecraft:weaving\"}"
++      },
++      "46": {
++        "java_id": "minecraft:tipped_arrow",
++        "java_tag": "{Potion:\"minecraft:oozing\"}"
++      },
++      "47": {
++        "java_id": "minecraft:tipped_arrow",
++        "java_tag": "{Potion:\"minecraft:infested\"}"
+       }
+     }
+   },
+@@ -8502,6 +8518,22 @@
+       "42": {
+         "java_id": "minecraft:lingering_potion",
+         "java_tag": "{Potion:\"minecraft:strong_slowness\"}"
++      },
++      "43": {
++        "java_id": "minecraft:lingering_potion",
++        "java_tag": "{Potion:\"minecraft:wind_charged\"}"
++      },
++      "44": {
++        "java_id": "minecraft:lingering_potion",
++        "java_tag": "{Potion:\"minecraft:weaving\"}"
++      },
++      "45": {
++        "java_id": "minecraft:lingering_potion",
++        "java_tag": "{Potion:\"minecraft:oozing\"}"
++      },
++      "46": {
++        "java_id": "minecraft:lingering_potion",
++        "java_tag": "{Potion:\"minecraft:infested\"}"
+       }
+     }
+   },
+@@ -11038,6 +11070,22 @@
+       "42": {
+         "java_id": "minecraft:potion",
+         "java_tag": "{Potion:\"minecraft:strong_slowness\"}"
++      },
++      "43": {
++        "java_id": "minecraft:potion",
++        "java_tag": "{Potion:\"minecraft:wind_charged\"}"
++      },
++      "44": {
++        "java_id": "minecraft:potion",
++        "java_tag": "{Potion:\"minecraft:weaving\"}"
++      },
++      "45": {
++        "java_id": "minecraft:potion",
++        "java_tag": "{Potion:\"minecraft:oozing\"}"
++      },
++      "46": {
++        "java_id": "minecraft:potion",
++        "java_tag": "{Potion:\"minecraft:infested\"}"
+       }
+     }
+   },
+@@ -12784,6 +12832,22 @@
+       "42": {
+         "java_id": "minecraft:splash_potion",
+         "java_tag": "{Potion:\"minecraft:strong_slowness\"}"
++      },
++      "43": {
++        "java_id": "minecraft:splash_potion",
++        "java_tag": "{Potion:\"minecraft:wind_charged\"}"
++      },
++      "44": {
++        "java_id": "minecraft:splash_potion",
++        "java_tag": "{Potion:\"minecraft:weaving\"}"
++      },
++      "45": {
++        "java_id": "minecraft:splash_potion",
++        "java_tag": "{Potion:\"minecraft:oozing\"}"
++      },
++      "46": {
++        "java_id": "minecraft:splash_potion",
++        "java_tag": "{Potion:\"minecraft:infested\"}"
+       }
+     }
+   },
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/FireworkDataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/FireworkDataTest.java
 new file mode 100644
 index 000000000..1c3355a88
@@ -542,28 +723,35 @@ index 000000000..1c3355a88
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java
 new file mode 100644
-index 000000000..07942f490
+index 000000000..7fbf1541d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,211 @@
 +package net.raphimc.viabedrock.protocol.rewriter;
 +
++import com.viaversion.nbt.stringified.SNBT;
 +import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.viaversion.api.data.FullMappings;
++import com.viaversion.viaversion.api.minecraft.data.StructuredData;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 +import com.viaversion.viaversion.api.minecraft.item.Item;
 +import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
-+import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
-+import com.viaversion.viaversion.api.minecraft.data.StructuredData;
-+import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
-+import com.viaversion.viaversion.api.minecraft.item.data.Fireworks;
-+import com.viaversion.viaversion.api.minecraft.item.data.FireworkExplosion;
 +import com.viaversion.viaversion.api.minecraft.item.data.BlockStateProperties;
++import com.viaversion.viaversion.api.minecraft.item.data.FireworkExplosion;
++import com.viaversion.viaversion.api.minecraft.item.data.Fireworks;
 +import com.viaversion.viaversion.api.minecraft.item.data.PotionContents;
 +import com.viaversion.viaversion.api.minecraft.item.data.PotionEffect;
 +import com.viaversion.viaversion.api.minecraft.item.data.WritableBook;
 +import com.viaversion.viaversion.api.minecraft.item.data.WrittenBook;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import org.junit.jupiter.api.Test;
 +
++import java.io.InputStreamReader;
++import java.lang.reflect.Proxy;
++import java.nio.charset.StandardCharsets;
 +import java.util.function.Function;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -657,6 +845,47 @@ index 000000000..07942f490
 +    }
 +
 +    @Test
++    void translatesTrialPotionVariantsFromNativeAuxiliaryValuesForEveryContainerAndArrow() throws Exception {
++        try (var input = new InputStreamReader(ItemDataRewriterTest.class.getResourceAsStream(
++                "/assets/viabedrock/data/custom/item_mappings.json"), StandardCharsets.UTF_8)) {
++            final var mappings = JsonParser.parseReader(input).getAsJsonObject();
++            for (final String item : new String[]{"minecraft:potion", "minecraft:splash_potion",
++                "minecraft:lingering_potion", "minecraft:arrow"}) {
++                final var metas = mappings.getAsJsonObject(item).getAsJsonObject("meta");
++                for (int nativePotion = 43; nativePotion <= 46; nativePotion++) {
++                    final int auxiliary = nativePotion + (item.equals("minecraft:arrow") ? 1 : 0);
++                    final var override = SNBT.deserializeCompoundTag(metas.getAsJsonObject(Integer.toString(auxiliary))
++                            .get("java_tag").getAsString());
++                    final PotionContents result = ItemDataRewriter.potionContents(override);
++                    assertNotNull(result);
++                    assertEquals(nativePotion - 1, result.potion());
++                    assertEquals(0, result.customEffects().length);
++                }
++            }
++        }
++    }
++
++    @Test
++    void nativeOminousBottleLevelsReachTheirJavaComponentWithoutNbtOverrides() throws Exception {
++        final var data = new StructuredDataContainer();
++        final var mappings = (FullMappings) Proxy.newProxyInstance(FullMappings.class.getClassLoader(),
++                new Class<?>[]{FullMappings.class}, (proxy, method, arguments) -> 0);
++        final var lookup = StructuredDataContainer.class.getDeclaredField("lookup");
++        lookup.setAccessible(true);
++        lookup.set(data, mappings);
++        final Item javaItem = new StructuredItem(1, 1, data);
++        for (short amplifier = 0; amplifier <= 4; amplifier++) {
++            final BedrockItem nativeItem = new BedrockItem(500, amplifier, (byte) 1, null);
++            ItemDataRewriter.handleItem(null, "minecraft:ominous_bottle", nativeItem, null, javaItem);
++            assertEquals((int) amplifier, data.get(StructuredDataKey.OMINOUS_BOTTLE_AMPLIFIER));
++            assertEquals(amplifier, nativeItem.data());
++        }
++        final BedrockItem invalid = new BedrockItem(500, (short) 5, (byte) 1, null);
++        ItemDataRewriter.handleItem(null, "minecraft:ominous_bottle", invalid, null, javaItem);
++        assertEquals(4, data.get(StructuredDataKey.OMINOUS_BOTTLE_AMPLIFIER));
++    }
++
++    @Test
 +    void convertsMappedBlockStateValuesWithoutMutatingSource() {
 +        final CompoundTag blockState = new CompoundTag();
 +        blockState.putInt("level", 10);
@@ -711,10 +940,10 @@ index 000000000..07942f490
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemLoreTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemLoreTest.java
 new file mode 100644
-index 000000000..e6afd5226
+index 000000000..fc1184758
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemLoreTest.java
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,105 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -796,6 +1025,17 @@ index 000000000..e6afd5226
 +        assertEquals(List.of("", ""), texts(ItemDataRewriter.itemLore(display)));
 +    }
 +
++    @Test
++    void resolvesNativeFireworkRawTextAndKeepsOrdinaryJsonLiteral() {
++        final var display = new CompoundTag();
++        display.put("Lore", new ListTag<>(List.of(
++                new StringTag("{\"rawtext\":[{\"translate\":\"item.fireworks.flight\",\"with\":[\"3\"]},{\"text\":\"\\nBlue\"}]}"),
++                new StringTag("{\"text\":\"literal\"}"), new StringTag("{malformed"))));
++        final Tag[] lines = ItemDataRewriter.itemLore(display,
++                key -> key.equals("item.fireworks.flight") ? "Flight Duration: %s" : key);
++        assertEquals(List.of("Flight Duration: 3", "Blue", "{\"text\":\"literal\"}", "{malformed"), texts(lines));
++    }
++
 +    private static TextComponent component(final Tag tag) {
 +        return ProtocolConstants.JAVA_TEXT_COMPONENT_SERIALIZER.deserializeNbtTree(tag);
 +    }
@@ -810,4 +1050,4 @@ index 000000000..e6afd5226
 +
 +}
 -- 
-2.55.0
+2.56.0

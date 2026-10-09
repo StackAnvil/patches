@@ -1,0 +1,244 @@
+From 37cedefbd2fefdbbc54eaf9524d1798b81595e86 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 19:11:12 +0200
+Subject: [PATCH] fix(blocks): align native block random offsets
+
+Select the native offset sampler at runtime rather than during Java block bootstrap, before the user selects a protocol. Native Bedrock 1.26.51.1 build 51061372 fixtures establish the signed-coordinate sampler and X/Z-only seed. Keep the original Java offset function outside Bedrock sessions. Center Java bamboo collision boxes and apply the same native origin bias to the model and hitbox. Targeted tests cover sampler bounds, negative coordinates and bamboo origin alignment.
+---
+ .../bedrock/block/BedrockBlockOffsets.java    |  32 +++++
+ .../features/block/MixinBambooStalkBlock.java |   4 +-
+ .../block/MixinBlockBehaviour_Properties.java | 111 ++----------------
+ .../block/BedrockBlockOffsetsTest.java        |  29 +++++
+ 4 files changed, 76 insertions(+), 100 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOffsets.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOffsetsTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOffsets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOffsets.java
+new file mode 100644
+index 0000000..cd9dfa0
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOffsets.java
+@@ -0,0 +1,32 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.block;
++
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.block.state.BlockBehaviour;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.CustomBlockOffset;
++
++/** Shares the native random offset between the rendered model and its physical shape. */
++public final class BedrockBlockOffsets {
++    private static final CustomBlockOffset.Axis XZ = new CustomBlockOffset.Axis(-0.25F, 0.25F, 16);
++    private static final CustomBlockOffset HORIZONTAL = new CustomBlockOffset(XZ, CustomBlockOffset.ZERO, XZ);
++    private static final CustomBlockOffset VERTICAL = new CustomBlockOffset(XZ,
++            new CustomBlockOffset.Axis(-0.2F, 0F, 16), XZ);
++
++    private BedrockBlockOffsets() {}
++
++    public static Vec3 offset(final BlockPos position, final BlockBehaviour.OffsetType type,
++                              final boolean bamboo, final boolean thick) {
++        if (type == BlockBehaviour.OffsetType.NONE) return Vec3.ZERO;
++        final var random = (type == BlockBehaviour.OffsetType.XYZ ? VERTICAL : HORIZONTAL)
++                .at(position.getX(), position.getY(), position.getZ());
++        // Java bamboo meshes are centered on pixel eight. Native stalks start at eight,
++        // with widths two and three. Translate the shared model/shape origin once.
++        final double origin = bamboo ? (thick ? 1.5D : 1D) / 16D : 0D;
++        return new Vec3(random.x() + origin, random.y(), random.z() + origin);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBambooStalkBlock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBambooStalkBlock.java
+index b86bf54..c7870f9 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBambooStalkBlock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBambooStalkBlock.java
+@@ -51,10 +51,10 @@ public abstract class MixinBambooStalkBlock {
+     public static IntegerProperty AGE;
+ 
+     @Unique
+-    private static final VoxelShape viaFabricPlusBedrock$shape_small = Block.box(8D, 0.0D, 8D, 10D, 16.0D, 10D);
++    private static final VoxelShape viaFabricPlusBedrock$shape_small = Block.box(7D, 0.0D, 7D, 9D, 16.0D, 9D);
+ 
+     @Unique
+-    private static final VoxelShape viaFabricPlusBedrock$shape_large = Block.box(8D, 0.0D, 8D, 11D, 16.0D, 11D);
++    private static final VoxelShape viaFabricPlusBedrock$shape_large = Block.box(6.5D, 0.0D, 6.5D, 9.5D, 16.0D, 9.5D);
+ 
+     @Inject(method = {"getShape", "getCollisionShape"}, at = @At("HEAD"), cancellable = true)
+     private void fixBambooShape(final BlockState state, final BlockGetter level, final BlockPos pos, final CollisionContext context, final CallbackInfoReturnable<VoxelShape> cir) {
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockBehaviour_Properties.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockBehaviour_Properties.java
+index e454483..ce3b5f9 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockBehaviour_Properties.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockBehaviour_Properties.java
+@@ -22,118 +22,33 @@
+ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
+ 
+ import com.viaversion.viafabricplus.ViaFabricPlus;
+-import net.minecraft.core.BlockPos;
++import com.viaversion.viafabricplus.bedrock.block.BedrockBlockOffsets;
++import net.minecraft.world.level.block.BambooStalkBlock;
+ import net.minecraft.world.level.block.state.BlockBehaviour;
+-import net.minecraft.world.level.levelgen.RandomSupport;
+-import net.minecraft.world.level.levelgen.Xoroshiro128PlusPlus;
+-import net.minecraft.world.phys.Vec3;
+ import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+ import org.spongepowered.asm.mixin.Mixin;
+ import org.spongepowered.asm.mixin.Shadow;
+-import org.spongepowered.asm.mixin.Unique;
+ import org.spongepowered.asm.mixin.injection.At;
+ import org.spongepowered.asm.mixin.injection.Inject;
+ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+ 
+ @Mixin(BlockBehaviour.Properties.class)
+ public abstract class MixinBlockBehaviour_Properties {
+-
+-    // Bedrock random offset parameters for bamboo (uses BlockRandomOffsetDefaults::XZ)
+-    @Unique
+-    private static final float viaFabricPlusBedrock$OFFSET_MIN = -0.25F; // -4/16
+-
+-    @Unique
+-    private static final float viaFabricPlusBedrock$OFFSET_MAX = 0.25F;  // 4/16
+-
+-    @Unique
+-    private static final int viaFabricPlusBedrock$STEPS = 16; // Quantization steps
+-
+     @Shadow
+     private BlockBehaviour.OffsetFunction offsetFunction;
+ 
+     @Inject(method = "offsetType", at = @At("RETURN"))
+-    private void fixBlockOffsets(final BlockBehaviour.OffsetType offsetType, final CallbackInfoReturnable<BlockBehaviour.Properties> cir) {
+-        if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST) && offsetType != BlockBehaviour.OffsetType.NONE) {
+-            this.offsetFunction = (state, pos) -> viaFabricPlusBedrock$randomlyModifyPosition(pos, offsetType);
+-        }
+-    }
+-
+-    /**
+-     * Bedrock position hash algorithm. Only uses X and Z coordinates (Y is NOT used).
+-     */
+-    @Unique
+-    private static long viaFabricPlusBedrock$positionHash(final int x, final int z) {
+-        // Step 1: Initial hash from X and Z
+-        final long v1 = (116129781L * z) ^ ((0x2FC20F00000001L * Integer.toUnsignedLong(x)) >> 32);
+-
+-        // Step 2: LCG-style mixing
+-        // Note: Bedrock uses cdqe instruction which sign-extends low 32 bits to 64 bits
+-        final long temp = (v1 * (42317861L * v1 + 11L)) >>> 16;
+-        return (int) temp ^ 0x6A09E667F3BCC909L;
+-    }
+-
+-    /**
+-     * Converts a random long to a float in [0, 1) the way Bedrock does: (random >>> 40) * 2^-24.
+-     */
+-    @Unique
+-    private static float viaFabricPlusBedrock$randomToFloat(final long random) {
+-        return (random >>> 40) * 5.9604645e-8F;
+-    }
+-
+-    /**
+-     * Calculates an offset value with quantization to discrete steps (Bedrock algorithm).
+-     */
+-    @Unique
+-    private static float viaFabricPlusBedrock$calculateOffsetValue(final float min, final float max, final float random) {
+-        if (min >= max) {
+-            return min;
+-        }
+-
+-        if (viaFabricPlusBedrock$STEPS == 1) {
+-            return (min + max) * 0.5F;
+-        } else if (viaFabricPlusBedrock$STEPS > 1) {
+-            final float range = max - min;
+-            final float stepSize = range / (viaFabricPlusBedrock$STEPS - 1);
+-            final float index = (float) Math.floor(viaFabricPlusBedrock$STEPS * random);
+-            return min + index * stepSize;
+-        } else {
+-            return min + (max - min) * random;
+-        }
+-    }
+-
+-    /**
+-     * Calculates the random offset for a given position.
+-     */
+-    @Unique
+-    private static Vec3 viaFabricPlusBedrock$randomlyModifyPosition(final BlockPos pos, final BlockBehaviour.OffsetType type) {
+-        // Use Bedrock's custom position hash
+-        final long seed = viaFabricPlusBedrock$positionHash(pos.getX(), pos.getZ());
+-
+-        // Use Minecraft's SplitMix64 (mixStafford13) to generate the PRNG state
+-        final long s0 = RandomSupport.mixStafford13(seed);
+-        final long s1 = RandomSupport.mixStafford13(seed + RandomSupport.GOLDEN_RATIO_64);
+-
+-        // Use Minecraft's Xoroshiro128PlusPlus
+-        final Xoroshiro128PlusPlus prng = new Xoroshiro128PlusPlus(s0, s1);
+-
+-        // Generate X offset with quantization
+-        final float offsetX = viaFabricPlusBedrock$calculateOffsetValue(viaFabricPlusBedrock$OFFSET_MIN, viaFabricPlusBedrock$OFFSET_MAX, viaFabricPlusBedrock$randomToFloat(prng.nextLong()));
+-        final float offsetY = switch (type) {
+-            case XZ -> {
+-                // Y offset - must consume random even though Y range is (0,0) in XZ mode
+-                // BDS advances PRNG state regardless of whether the offset is computed
+-                prng.nextLong();
+-
+-                yield 0;
+-            }
+-            // Generate Y offset with quantization
+-            case XYZ -> viaFabricPlusBedrock$calculateOffsetValue(-0.2F, 0, viaFabricPlusBedrock$randomToFloat(prng.nextLong()));
+-            case NONE -> 0;
++    private void fixBlockOffsets(final BlockBehaviour.OffsetType type, final CallbackInfoReturnable<BlockBehaviour.Properties> cir) {
++        if (type == BlockBehaviour.OffsetType.NONE) return;
++        final BlockBehaviour.OffsetFunction javaOffset = this.offsetFunction;
++        // Properties are built before the player chooses a server. Decide per lookup,
++        // so switching between Java and Bedrock never leaves a global native offset behind.
++        this.offsetFunction = (state, pos) -> {
++            if (!ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST))
++                return javaOffset.evaluate(state, pos);
++            final boolean bamboo = state.getBlock() instanceof BambooStalkBlock;
++            return BedrockBlockOffsets.offset(pos, type, bamboo,
++                    bamboo && state.getValue(BambooStalkBlock.AGE) == BambooStalkBlock.AGE_THICK_BAMBOO);
+         };
+-
+-        // Generate Z offset with quantization
+-        final float offsetZ = viaFabricPlusBedrock$calculateOffsetValue(viaFabricPlusBedrock$OFFSET_MIN, viaFabricPlusBedrock$OFFSET_MAX, viaFabricPlusBedrock$randomToFloat(prng.nextLong()));
+-        return new Vec3(offsetX, offsetY, offsetZ);
+     }
+-
+ }
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOffsetsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOffsetsTest.java
+new file mode 100644
+index 0000000..ab92281
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOffsetsTest.java
+@@ -0,0 +1,29 @@
++package com.viaversion.viafabricplus.bedrock.block;
++
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.block.state.BlockBehaviour;
++import net.raphimc.viabedrock.api.model.CustomBlockOffset;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class BedrockBlockOffsetsTest {
++    @Test
++    void alignsBothStalkMeshesAndShapesWithTheNativeStalkOrigin() {
++        final var axis = new CustomBlockOffset.Axis(-0.25F, 0.25F, 16);
++        final var sampler = new CustomBlockOffset(axis, CustomBlockOffset.ZERO, axis);
++        for (final var position : new BlockPos[]{new BlockPos(0, 64, 0), new BlockPos(-17, 80, 93),
++                new BlockPos(Integer.MIN_VALUE, 10, Integer.MAX_VALUE)}) {
++            final var nativeOffset = sampler.at(position.getX(), position.getY(), position.getZ());
++            for (final boolean thick : new boolean[]{false, true}) {
++                final var offset = BedrockBlockOffsets.offset(position, BlockBehaviour.OffsetType.XZ, true, thick);
++                final double javaStart = thick ? 6.5D : 7D;
++                final double javaEnd = thick ? 9.5D : 9D;
++                assertEquals(8D / 16D + nativeOffset.x(), javaStart / 16D + offset.x, 1E-9);
++                assertEquals((thick ? 11D : 10D) / 16D + nativeOffset.z(), javaEnd / 16D + offset.z, 1E-9);
++                assertEquals(0D, offset.y);
++                assertEquals(offset, BedrockBlockOffsets.offset(position.above(200), BlockBehaviour.OffsetType.XZ, true, thick));
++            }
++        }
++    }
++}
+-- 
+2.56.0
+

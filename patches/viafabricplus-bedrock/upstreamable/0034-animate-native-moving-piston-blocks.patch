@@ -1,0 +1,99 @@
+From b2ea584d7dda3bd624852e29a9570d289da6a2a2 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 19:11:12 +0200
+Subject: [PATCH] fix(render): animate native moving piston blocks
+
+Create a Java moving piston block entity when translated native piston data arrives for the matching moving-piston state. Java 26.3 MovingPistonBlock.newBlockEntity returns null and ClientPacketListener.handleBlockEntityData only loads an existing entity, so remote translated piston updates previously disappeared without animation. Native server actor pushes remain authoritative; suppress Java local moving-piston entity pushes in Bedrock sessions to avoid duplication. Retain normal Java behavior outside Bedrock sessions.
+---
+ .../block/MixinBedrockMovingPistonBlock.java  | 30 +++++++++++++++++++
+ .../MixinBedrockPistonMovingBlockEntity.java  | 28 +++++++++++++++++
+ .../viafabricplus-bedrock.mixins.json         |  2 ++
+ 3 files changed, 60 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockMovingPistonBlock.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockPistonMovingBlockEntity.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockMovingPistonBlock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockMovingPistonBlock.java
+new file mode 100644
+index 0000000..2cfa54d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockMovingPistonBlock.java
+@@ -0,0 +1,30 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.block.entity.BlockEntity;
++import net.minecraft.world.level.block.piston.MovingPistonBlock;
++import net.minecraft.world.level.block.piston.PistonMovingBlockEntity;
++import net.minecraft.world.level.block.state.BlockState;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++@Mixin(MovingPistonBlock.class)
++public abstract class MixinBedrockMovingPistonBlock {
++    @Inject(method = "newBlockEntity", at = @At("RETURN"), cancellable = true)
++    private void createNativeMovingBlock(final BlockPos position, final BlockState state,
++                                        final CallbackInfoReturnable<BlockEntity> cir) {
++        // Java normally creates this entity from a local piston block event.
++        // Bedrock instead supplies the carried state through block entity data.
++        if (cir.getReturnValue() == null && BedrockInputPermissions.isBedrockConnection()) {
++            cir.setReturnValue(new PistonMovingBlockEntity(position, state));
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockPistonMovingBlockEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockPistonMovingBlockEntity.java
+new file mode 100644
+index 0000000..a064b0b
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockPistonMovingBlockEntity.java
+@@ -0,0 +1,28 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.Level;
++import net.minecraft.world.level.block.piston.PistonMovingBlockEntity;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(PistonMovingBlockEntity.class)
++public abstract class MixinBedrockPistonMovingBlockEntity {
++    @Inject(method = {"moveCollidedEntities", "moveStuckEntities"}, at = @At("HEAD"), cancellable = true)
++    private static void keepNativeActorMotion(final Level level, final BlockPos position, final float progress,
++                                             final PistonMovingBlockEntity piston, final CallbackInfo ci) {
++        // The translated entity animates the block. Bedrock supplies actor motion
++        // separately, so Java's piston physics must not apply a second push.
++        if (level.isClientSide() && BedrockInputPermissions.isBedrockConnection()) {
++            ci.cancel();
++        }
++    }
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 6b9e264..036a7dc 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -145,6 +145,8 @@
+     "features.sound.MixinBedrockMiningAudio",
+     "features.block.MixinBedrockCommandBlockSettings",
+     "features.inventory.MixinBedrockCommandBlockScreen",
++    "features.block.MixinBedrockMovingPistonBlock",
++    "features.block.MixinBedrockPistonMovingBlockEntity",
+     "features.sound.MixinBedrockChannelAccess",
+     "features.sound.MixinBedrockChannel",
+     "features.sound.MixinBedrockPcmChannel",
+-- 
+2.56.0

@@ -1,4 +1,4 @@
-From 715a1f04f3f1fa02360c5f1c2430bc1e77297bc0 Mon Sep 17 00:00:00 2001
+From 28ff8c541be381afb335e2a6a018b298a6a0aa4b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:27:08 +0200
 Subject: [PATCH] feat(entities): translate Bedrock metadata and properties
@@ -151,6 +151,8 @@ three nested cubes without a camera-facing expression. Java 26.3's crystal
 renderer draws a beam whenever its optional target is present. This fixes
 the translation and retains the ordinary crystal animation.
 Reference: https://github.com/GeyserMC/Geyser/blob/master/core/src/main/java/org/geysermc/geyser/entity/type/EnderCrystalEntity.java
+
+Target BDS 1.26.51.1 sulfur behavior variants small=1 and medium=2 use the Java shared cube SIZE metadata rather than a baby flag. Reconstruct thrown potion item data from native flags/AUX_VALUE_DATA and preserve cloud DATA_PARTICLE/EFFECT_COLOR so lingering trial potions retain appearance. Targeted actor metadata tests verify size and potion/cloud data.
 ---
  .../api/model/NativeActorHitboxes.java        |  91 +++
  .../api/model/NativeActorPickingMessage.java  | 111 +++
@@ -159,20 +161,20 @@ Reference: https://github.com/GeyserMC/Geyser/blob/master/core/src/main/java/org
  .../api/model/entity/PlayerEntity.java        |  40 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../data/enums/bedrock/ActorFlags.java        |   6 +-
- .../protocol/model/entity/EntityProperty.java |  40 ++
- .../model/entity/EntityPropertyList.java      | 119 ++++
+ .../protocol/model/entity/EntityProperty.java |  40 +
+ .../model/entity/EntityPropertyList.java      | 119 +++
  .../protocol/packet/ClientPlayerPackets.java  |   2 +-
  .../protocol/packet/EntityPackets.java        |  33 +-
  .../protocol/packet/JoinPackets.java          |   2 +-
  .../protocol/packet/MultiStatePackets.java    |   6 +
  .../protocol/packet/OtherPlayerPackets.java   |   5 +-
- .../rewriter/EntityMetadataRewriter.java      | 653 ++++++++++++++++--
+ .../rewriter/EntityMetadataRewriter.java      | 713 ++++++++++++++++--
  .../storage/EntityPropertyTracker.java        |  61 ++
  .../protocol/storage/EntityTracker.java       |  75 ++
  .../storage/InteractionHitboxProxies.java     | 171 +++++
  .../entity_flag_molang_query_mappings.json    |   6 +-
  .../api/model/NativeActorHitboxesTest.java    | 101 +++
- .../model/NativeActorPickingMessageTest.java  |  79 +++
+ .../model/NativeActorPickingMessageTest.java  |  79 ++
  .../entity/EntityPropertyRenderTest.java      |  75 ++
  .../model/entity/PlayerCrawlingPoseTest.java  | 132 ++++
  .../enums/bedrock/ActorFlagsMappingTest.java  |  27 +
@@ -181,8 +183,9 @@ Reference: https://github.com/GeyserMC/Geyser/blob/master/core/src/main/java/org
  .../rewriter/EntityBodyVisibilityTest.java    | 253 +++++++
  .../rewriter/EntityMetadataRewriterTest.java  | 294 ++++++++
  .../rewriter/EntityNameFormattingTest.java    | 256 +++++++
- .../storage/InteractionHitboxProxiesTest.java | 251 +++++++
- 30 files changed, 3165 insertions(+), 71 deletions(-)
+ .../rewriter/PotionActorMetadataTest.java     | 107 +++
+ .../storage/InteractionHitboxProxiesTest.java | 251 ++++++
+ 31 files changed, 3328 insertions(+), 75 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityProperty.java
@@ -199,6 +202,7 @@ Reference: https://github.com/GeyserMC/Geyser/blob/master/core/src/main/java/org
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityBodyVisibilityTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityNameFormattingTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/PotionActorMetadataTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java
@@ -678,7 +682,7 @@ index 82b9eb731..0dcbfcaca 100644
      protected boolean translateAttribute(final EntityAttribute attribute, final PacketWrapper javaAttributes, final AtomicInteger attributeCount, final List<EntityData> javaEntityData) {
          return switch (attribute.name()) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
-index b6bc8edb9..221ba305f 100644
+index e7c8a3e13..653a370ea 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 @@ -83,6 +83,7 @@ public class BedrockProtocol
@@ -689,7 +693,7 @@ index b6bc8edb9..221ba305f 100644
          ClientboundBedrockPackets.START_GAME
      );
  
-@@ -186,6 +187,7 @@ public class BedrockProtocol
+@@ -187,6 +188,7 @@ public class BedrockProtocol
  
          user.put(new InventoryTransactionRewriter(user));
          user.put(new MapTracker(user));
@@ -886,10 +890,10 @@ index 000000000..c41178f5a
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index 867eae49f..98eb2a583 100644
+index a48b535fa..8e2fa6a84 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-@@ -496,7 +496,7 @@ public final class ClientPlayerPackets {
+@@ -528,7 +528,7 @@ public final class ClientPlayerPackets {
              wrapper.write(wrapper.user().get(ItemRewriter.class).newItemType(), inventoryContainer.getSelectedHotbarItem()); // held item
              wrapper.write(BedrockTypes.POSITION_3F, entityTracker.getClientPlayer().position()); // player position
              final Vector3d location = wrapper.read(Types.LOW_PRECISION_VECTOR); // location
@@ -1015,7 +1019,7 @@ index a70aee047..6cfdba901 100644
  
      private static Entity writeEntityMotion(final PacketWrapper wrapper, final long runtimeId, final Position3f motion) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 03744fe03..e829f07a0 100644
+index 77a517d69..7ea1ae6b9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -291,7 +291,7 @@ public final class JoinPackets {
@@ -1028,10 +1032,10 @@ index 03744fe03..e829f07a0 100644
                  wrapper.read(BedrockTypes.UUID); // world template id
                  wrapper.read(Types.BOOLEAN); // client side generation
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index 60d8c1e5f..2112c08ba 100644
+index 5de8cd3dd..25bd1c0d2 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-@@ -33,6 +33,7 @@ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
+@@ -34,6 +34,7 @@ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
  import net.raphimc.viabedrock.api.model.NativeCustomEntityMessage;
  import net.raphimc.viabedrock.api.model.NativeActorMessage;
  import net.raphimc.viabedrock.api.model.NativeActorBoundsMessage;
@@ -1039,7 +1043,7 @@ index 60d8c1e5f..2112c08ba 100644
  import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
  import net.raphimc.viabedrock.api.model.PlayerInput;
  import net.raphimc.viabedrock.api.model.PlayerPrediction;
-@@ -166,6 +167,7 @@ public final class MultiStatePackets {
+@@ -178,6 +179,7 @@ public final class MultiStatePackets {
              if ((channels.contains(NativeActorMessage.CHANNEL) || channels.contains(NativeActorMessage.CURRENT_CHANNEL))
                      && wrapper.user().has(EntityTracker.class)) {
                  wrapper.user().get(EntityTracker.class).sendNativeActorSnapshots();
@@ -1047,7 +1051,7 @@ index 60d8c1e5f..2112c08ba 100644
              }
              return;
          }
-@@ -213,6 +215,10 @@ public final class MultiStatePackets {
+@@ -226,6 +228,10 @@ public final class MultiStatePackets {
                      || channels.contains(NativeActorBoundsMessage.CHANNEL)) && wrapper.user().has(EntityTracker.class)) {
                  wrapper.user().get(EntityTracker.class).sendNativeActorSnapshots();
              }
@@ -1089,10 +1093,10 @@ index 04eb4f2e1..55811996e 100644
                  entityTracker.applyEntityLink(link);
              }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-index 8a71196b8..a0a1a3705 100644
+index 8a71196b8..315c143be 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-@@ -17,56 +17,89 @@
+@@ -17,56 +17,93 @@
   */
  package net.raphimc.viabedrock.protocol.rewriter;
  
@@ -1101,6 +1105,8 @@ index 8a71196b8..a0a1a3705 100644
  import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.minecraft.BlockPosition;
  import com.viaversion.viaversion.api.minecraft.EulerAngle;
++import com.viaversion.viaversion.api.minecraft.Particle;
++import com.viaversion.viaversion.api.type.Types;
  import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
  import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 +import com.viaversion.viaversion.api.minecraft.entitydata.EntityDataType;
@@ -1118,6 +1124,7 @@ index 8a71196b8..a0a1a3705 100644
 +import net.raphimc.viabedrock.protocol.model.entity.EntityPropertyList;
 +import net.raphimc.viabedrock.protocol.storage.EntityPropertyTracker;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ParticleType;
  import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 +import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
 +import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
@@ -1180,6 +1187,7 @@ index 8a71196b8..a0a1a3705 100644
 +            case RESERVED_0, RESERVED_092 -> { // Entity flags mask
 +                final Set<ActorFlags> bedrockFlags = entity.entityFlags();
 +                updateSharedFlags(entity, javaEntityData);
++                updatePotionItem(user, entity, javaEntityData);
 +
 +                if (entity.javaType().isOrHasParent(EntityTypes26_3.LIVING_ENTITY)) {
 +                    javaEntityData.add(livingUseMetadata(entity));
@@ -1203,7 +1211,7 @@ index 8a71196b8..a0a1a3705 100644
  
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SILENT), VersionedTypes.V26_3.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.SILENT)));
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.NO_GRAVITY), VersionedTypes.V26_3.entityDataTypes().booleanType, !bedrockFlags.contains(ActorFlags.HAS_GRAVITY)));
-@@ -80,6 +113,16 @@ public final class EntityMetadataRewriter {
+@@ -80,6 +117,16 @@ public final class EntityMetadataRewriter {
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.MOB_FLAGS), VersionedTypes.V26_3.entityDataTypes().byteType, mobBitMask));
                  }
  
@@ -1220,7 +1228,7 @@ index 8a71196b8..a0a1a3705 100644
                  if (entity.javaType().is(EntityTypes26_3.ALLAY)) {
                      final boolean dancing = bedrockFlags.contains(ActorFlags.DANCING);
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.DANCING), VersionedTypes.V26_3.entityDataTypes().booleanType, dancing));
-@@ -88,6 +131,13 @@ public final class EntityMetadataRewriter {
+@@ -88,6 +135,13 @@ public final class EntityMetadataRewriter {
                  if (entity.javaType().isOrHasParent(EntityTypes26_3.ABSTRACT_AGEABLE)) {
                      final boolean isBaby = bedrockFlags.contains(ActorFlags.BABY);
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_3.entityDataTypes().booleanType, isBaby));
@@ -1234,7 +1242,7 @@ index 8a71196b8..a0a1a3705 100644
                  }
  
                  if (entity.javaType().is(EntityTypes26_3.AXOLOTL)) {
-@@ -96,36 +146,31 @@ public final class EntityMetadataRewriter {
+@@ -96,36 +150,31 @@ public final class EntityMetadataRewriter {
                  }
  
                  if (entity.javaType().is(EntityTypes26_3.BEE)) {
@@ -1280,7 +1288,7 @@ index 8a71196b8..a0a1a3705 100644
                          sniffingState = 2;
                      } else if (bedrockFlags.contains(ActorFlags.SNIFFING)) {
                          sniffingState = 3;
-@@ -133,18 +178,20 @@ public final class EntityMetadataRewriter {
+@@ -133,18 +182,20 @@ public final class EntityMetadataRewriter {
                          sniffingState = 4;
                      } else if (bedrockFlags.contains(ActorFlags.DIGGING)) {
                          sniffingState = 5;
@@ -1305,7 +1313,7 @@ index 8a71196b8..a0a1a3705 100644
                  if (entity.javaType().is(EntityTypes26_3.TURTLE)) { //TODO: Test
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.HAS_EGG), VersionedTypes.V26_3.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.IS_PREGNANT)));
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LAYING_EGG), VersionedTypes.V26_3.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.LAYING_EGG)));
-@@ -166,8 +213,13 @@ public final class EntityMetadataRewriter {
+@@ -166,8 +217,13 @@ public final class EntityMetadataRewriter {
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_3.entityDataTypes().byteType, tamableBitMask));
                  }
  
@@ -1321,7 +1329,7 @@ index 8a71196b8..a0a1a3705 100644
                  }
  
                  if (entity.javaType().is(EntityTypes26_3.BOGGED)) {
-@@ -183,6 +235,12 @@ public final class EntityMetadataRewriter {
+@@ -183,6 +239,12 @@ public final class EntityMetadataRewriter {
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_IGNITED), VersionedTypes.V26_3.entityDataTypes().booleanType, ignited));
                  }
  
@@ -1334,7 +1342,7 @@ index 8a71196b8..a0a1a3705 100644
                  if (entity.javaType().is(EntityTypes26_3.ZOGLIN)) {
                      final boolean isBaby = bedrockFlags.contains(ActorFlags.BABY);
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_3.entityDataTypes().booleanType, isBaby));
-@@ -211,6 +269,14 @@ public final class EntityMetadataRewriter {
+@@ -211,6 +273,14 @@ public final class EntityMetadataRewriter {
                  final int variant = readNumber(entityData).intValue();
  
                  switch (entity.javaType()) {
@@ -1349,7 +1357,7 @@ index 8a71196b8..a0a1a3705 100644
                      case WOLF -> {
                          final int javaVariant = switch (variant) {
                              case 0 -> 4; // PALE
-@@ -245,8 +311,7 @@ public final class EntityMetadataRewriter {
+@@ -245,8 +315,7 @@ public final class EntityMetadataRewriter {
                          javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_3.entityDataTypes().frogVariantType, javaVariant));
                      }
                      case TROPICAL_FISH -> {
@@ -1359,7 +1367,7 @@ index 8a71196b8..a0a1a3705 100644
                      }
                      case PUFFERFISH -> {
                      } // For some reason bedrock sends the puffed state here as well as in the PUFFED_STATE Actor ID so we ignore this one
-@@ -268,6 +333,17 @@ public final class EntityMetadataRewriter {
+@@ -268,6 +337,17 @@ public final class EntityMetadataRewriter {
                          };
                          javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_3.entityDataTypes().varIntType, javaVariant));
                      }
@@ -1377,7 +1385,16 @@ index 8a71196b8..a0a1a3705 100644
                      case MOOSHROOM -> {
                          final int javaVariant = switch (variant) {
                              case 0 -> 0; // RED
-@@ -302,13 +378,12 @@ public final class EntityMetadataRewriter {
+@@ -279,7 +359,7 @@ public final class EntityMetadataRewriter {
+                         };
+                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TYPE), VersionedTypes.V26_3.entityDataTypes().varIntType, javaVariant));
+                     }
+-                    case SLIME, MAGMA_CUBE -> {
++                    case SLIME, MAGMA_CUBE, SULFUR_CUBE -> {
+                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SIZE), VersionedTypes.V26_3.entityDataTypes().varIntType, variant));
+                     }
+                     case RABBIT -> { // TODO: Test when I can
+@@ -302,13 +382,12 @@ public final class EntityMetadataRewriter {
                  final int javaColorIndex = readNumber(entityData).intValue();
  
                  switch (entity.javaType()) {
@@ -1394,7 +1411,7 @@ index 8a71196b8..a0a1a3705 100644
                      }
                      default -> {
                          if (javaColorIndex != 0) { // For some reason bedrock seems to send color index 0 for many entities that don't have colors
-@@ -317,6 +392,37 @@ public final class EntityMetadataRewriter {
+@@ -317,6 +396,37 @@ public final class EntityMetadataRewriter {
                      }
                  }
              }
@@ -1432,7 +1449,7 @@ index 8a71196b8..a0a1a3705 100644
              case OWNER -> {
                  final long ownerId = readNumber(entityData).longValue();
                  if (entity.javaType().isOrHasParent(EntityTypes26_3.TAMABLE_ANIMAL)) {
-@@ -345,10 +451,7 @@ public final class EntityMetadataRewriter {
+@@ -345,10 +455,7 @@ public final class EntityMetadataRewriter {
                      break;
                  }
  
@@ -1444,7 +1461,7 @@ index 8a71196b8..a0a1a3705 100644
  
                  final int poseIndex = readNumber(entityData).intValue();
  
-@@ -484,7 +587,6 @@ public final class EntityMetadataRewriter {
+@@ -484,7 +591,6 @@ public final class EntityMetadataRewriter {
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LEFT_LEG_POSE), VersionedTypes.V26_3.entityDataTypes().rotationsType, leftLegPose));
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.RIGHT_LEG_POSE), VersionedTypes.V26_3.entityDataTypes().rotationsType, rightLegPose));
              }
@@ -1452,7 +1469,7 @@ index 8a71196b8..a0a1a3705 100644
              case PUFFED_STATE -> {
                  final int javaPuffedState = readNumber(entityData).intValue();
                  if (entity.javaType().is(EntityTypes26_3.PUFFERFISH)) {
-@@ -549,7 +651,7 @@ public final class EntityMetadataRewriter {
+@@ -549,19 +655,32 @@ public final class EntityMetadataRewriter {
              }
              case DATA_WAITING -> {
                  if (entity.javaType().is(EntityTypes26_3.AREA_EFFECT_CLOUD)) {
@@ -1461,10 +1478,23 @@ index 8a71196b8..a0a1a3705 100644
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.WAITING), VersionedTypes.V26_3.entityDataTypes().booleanType, isWaiting));
                  } else {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received DATA_WAITING for non-AREA_EFFECT_CLOUD entity " + entity.type());
-@@ -562,6 +664,14 @@ public final class EntityMetadataRewriter {
+                 }
+             }
+-            case DATA_PARTICLE -> {
++            case DATA_PARTICLE, EFFECT_COLOR -> {
+                 if (entity.javaType().is(EntityTypes26_3.AREA_EFFECT_CLOUD)) {
+-                    // final int particleIdOrColour = readNumber(entityData).intValue(); //TODO: not sure what this is exactly
+-                } else {
++                    final Particle particle = cloudParticle(entity);
++                    if (particle != null) {
++                        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.PARTICLE),
++                                VersionedTypes.V26_3.entityDataTypes().particleType, particle));
++                    }
++                } else if (id == ActorDataIds.DATA_PARTICLE) {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received DATA_PARTICLE for non-AREA_EFFECT_CLOUD entity " + entity.type());
                  }
              }
++            case AUX_VALUE_DATA -> updatePotionItem(user, entity, javaEntityData);
 +            case VALUE -> {
 +                if (entity.javaType().is(EntityTypes26_3.EXPERIENCE_ORB)) {
 +                    final int exp = readNumber(entityData).intValue();
@@ -1476,7 +1506,7 @@ index 8a71196b8..a0a1a3705 100644
              case INV -> {
                  if (entity.javaType().is(EntityTypes26_3.WITHER)) {
                      final int invulnerabilityTicks = readNumber(entityData).intValue();
-@@ -593,6 +703,34 @@ public final class EntityMetadataRewriter {
+@@ -593,6 +712,34 @@ public final class EntityMetadataRewriter {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for unsupported entity " + entity.type() + " with non-zero value " + targetId);
                  }
              }
@@ -1511,7 +1541,7 @@ index 8a71196b8..a0a1a3705 100644
              case AGENT, BALLOON_ANCHOR -> {
              } // Education edition only, ignore
              default -> {
-@@ -603,6 +741,401 @@ public final class EntityMetadataRewriter {
+@@ -603,6 +750,401 @@ public final class EntityMetadataRewriter {
          return true;
      }
  
@@ -1913,7 +1943,7 @@ index 8a71196b8..a0a1a3705 100644
      private static Number readNumber(final EntityData data) {
          if (data.dataType() == null || data.getValue() == null) {
              throw new IllegalArgumentException("EntityData " + data.id() + " has null data type or value");
-@@ -617,6 +1150,20 @@ public final class EntityMetadataRewriter {
+@@ -617,6 +1159,63 @@ public final class EntityMetadataRewriter {
          };
      }
  
@@ -1929,6 +1959,49 @@ index 8a71196b8..a0a1a3705 100644
 +        stack.putByte("Count", (byte) 1);
 +        stack.put("tag", tag.copy());
 +        return convert.apply(stack);
++    }
++
++    private static void updatePotionItem(final UserConnection user, final Entity entity, final List<EntityData> javaEntityData) {
++        if (!entity.javaType().is(EntityTypes26_3.SPLASH_POTION) && !entity.javaType().is(EntityTypes26_3.LINGERING_POTION)) {
++            return;
++        }
++        final ItemRewriter items = user.get(ItemRewriter.class);
++        if (items == null) {
++            return;
++        }
++        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.ITEM_STACK),
++                VersionedTypes.V26_3.entityDataTypes().itemType, potionDisplayItem(entity, items::javaItemStack)));
++    }
++
++    static Item potionDisplayItem(final Entity entity, final Function<CompoundTag, Item> convert) {
++        final String identifier = entity.entityFlags().contains(ActorFlags.LINGERING)
++                || "minecraft:lingering_potion".equals(entity.type()) ? "minecraft:lingering_potion" : "minecraft:splash_potion";
++        final EntityData auxiliary = entity.entityData().get(ActorDataIds.AUX_VALUE_DATA);
++        final short damage = auxiliary == null ? 0 : readNumber(auxiliary).shortValue();
++        final CompoundTag stack = new CompoundTag();
++        stack.putString("Name", identifier);
++        stack.putShort("Damage", damage);
++        stack.putByte("Count", (byte) 1);
++        return convert.apply(stack);
++    }
++
++    static Particle cloudParticle(final Entity entity) {
++        final EntityData nativeParticle = entity.entityData().get(ActorDataIds.DATA_PARTICLE);
++        if (nativeParticle == null) {
++            return null;
++        }
++        final ParticleType type = ParticleType.getByValue(readNumber(nativeParticle).intValue());
++        final var mapping = BedrockProtocol.MAPPINGS.getBedrockToJavaLevelEventParticles().get(type);
++        if (mapping == null) {
++            return null;
++        }
++        final Particle particle = mapping.particle().copy();
++        if (type == ParticleType.MobSpell || type == ParticleType.MobSpellAmbient || type == ParticleType.MobSpellInstantaneous) {
++            final EntityData nativeColor = entity.entityData().get(ActorDataIds.EFFECT_COLOR);
++            final int color = nativeColor == null ? 0 : readNumber(nativeColor).intValue();
++            particle.add(Types.INT, 0xFF000000 | color & 0xFFFFFF);
++        }
++        return particle;
 +    }
 +
      private EntityMetadataRewriter() {
@@ -3887,6 +3960,119 @@ index 000000000..d2100b69a
 +        field.setAccessible(true);
 +        this.oldMappings.put(field, field.get(BedrockProtocol.MAPPINGS));
 +        field.set(BedrockProtocol.MAPPINGS, value);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PotionActorMetadataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PotionActorMetadataTest.java
+new file mode 100644
+index 000000000..fab7b16c2
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PotionActorMetadataTest.java
+@@ -0,0 +1,107 @@
++package net.raphimc.viabedrock.protocol.rewriter;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.Particle;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import com.viaversion.viaversion.api.type.Types;
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.function.Function;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ParticleType;
++import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class PotionActorMetadataTest {
++
++    private static final UserConnection USER = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++            new Class<?>[]{UserConnection.class}, (_, method, args) -> null);
++
++    @BeforeAll
++    static void initializeStructuredDataKeys() throws Exception {
++        Class.forName("com.viaversion.viaversion.api.minecraft.data.StructuredDataKey");
++    }
++
++    @Test
++    void restoresProjectileDamageAndLingeringAppearanceThroughTheOrdinaryItemPath() {
++        final Entity entity = new Entity(USER, 1, 1, "minecraft:splash_potion", 1, null, EntityTypes26_3.SPLASH_POTION);
++        final Item result = new StructuredItem(1, 1);
++        final List<CompoundTag> snapshots = new ArrayList<>();
++        final Function<CompoundTag, Item> convert = stack -> {
++            snapshots.add(stack.copy());
++            return result;
++        };
++        entity.entityData().put(ActorDataIds.AUX_VALUE_DATA, new EntityData(36, EntityDataTypesBedrock.SHORT, (short) 31));
++        assertSame(result, EntityMetadataRewriter.potionDisplayItem(entity, convert));
++        entity.entityData().put(ActorDataIds.RESERVED_0, new EntityData(0, EntityDataTypesBedrock.LONG, 1L << ActorFlags.LINGERING.getValue()));
++        assertSame(result, EntityMetadataRewriter.potionDisplayItem(entity, convert));
++        assertEquals("minecraft:splash_potion", snapshots.getFirst().getString("Name"));
++        assertEquals("minecraft:lingering_potion", snapshots.getLast().getString("Name"));
++        for (final CompoundTag snapshot : snapshots) {
++            assertEquals(31, snapshot.getShort("Damage"));
++            assertEquals(1, snapshot.getByte("Count"));
++        }
++        entity.entityData().put(ActorDataIds.AUX_VALUE_DATA, new EntityData(36, EntityDataTypesBedrock.SHORT, (short) 0));
++        EntityMetadataRewriter.potionDisplayItem(entity, convert);
++        assertEquals(0, snapshots.getLast().getShort("Damage"));
++    }
++
++    @Test
++    void mapsSulfurCubeVariantsToTheSharedCubeSizeField() throws Exception {
++        final var fields = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("javaEntityDataFields");
++        fields.setAccessible(true);
++        final Object previous = fields.get(BedrockProtocol.MAPPINGS);
++        try {
++            fields.set(BedrockProtocol.MAPPINGS, Map.of(EntityTypes26_3.SULFUR_CUBE, List.of(EntityDataFields.SIZE)));
++            final Entity entity = new Entity(USER, 1, 1, "minecraft:sulfur_cube", 1, null, EntityTypes26_3.SULFUR_CUBE);
++            for (final int size : new int[]{1, 2}) {
++                final List<EntityData> output = new ArrayList<>();
++                EntityMetadataRewriter.rewrite(USER, entity, ActorDataIds.VARIANT,
++                        new EntityData(2, EntityDataTypesBedrock.INT, size), output);
++                assertEquals(size, output.getFirst().getValue());
++                assertEquals(0, output.getFirst().id());
++            }
++        } finally {
++            fields.set(BedrockProtocol.MAPPINGS, previous);
++        }
++    }
++
++    @Test
++    void appliesLateCloudColorsAndPreservesCachedParticleTemplates() throws Exception {
++        final var mappings = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("bedrockToJavaLevelEventParticles");
++        mappings.setAccessible(true);
++        final Object previous = mappings.get(BedrockProtocol.MAPPINGS);
++        final Particle template = new Particle(17);
++        try {
++            mappings.set(BedrockProtocol.MAPPINGS, Map.of(ParticleType.MobSpell,
++                    new BedrockMappingData.JavaParticle(template, 0, 0, 0, 0, 0)));
++            final Entity cloud = new Entity(USER, 1, 1, "minecraft:area_effect_cloud", 1, null, EntityTypes26_3.AREA_EFFECT_CLOUD);
++            assertNull(EntityMetadataRewriter.cloudParticle(cloud));
++            cloud.entityData().put(ActorDataIds.DATA_PARTICLE, new EntityData(61, EntityDataTypesBedrock.INT, ParticleType.MobSpell.getValue()));
++            for (final int color : new int[]{0x123456, 0xABCDEF, 0}) {
++                cloud.entityData().put(ActorDataIds.EFFECT_COLOR, new EntityData(8, EntityDataTypesBedrock.INT, color));
++                final Particle particle = EntityMetadataRewriter.cloudParticle(cloud);
++                assertEquals(0xFF000000 | color, particle.getArguments().get(0).getValue());
++                assertEquals(Types.INT, particle.getArguments().get(0).getType());
++                assertTrue(template.getArguments().isEmpty());
++            }
++        } finally {
++            mappings.set(BedrockProtocol.MAPPINGS, previous);
++        }
 +    }
 +
 +}

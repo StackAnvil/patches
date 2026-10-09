@@ -1,30 +1,34 @@
-From 4746a6915045f76c6f321f0a21d36d81bd67acdc Mon Sep 17 00:00:00 2001
+From 8bfb14a24d4357bce2982eeef55180fd8775ff67 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 17:45:01 +0200
 Subject: [PATCH] feat(bedrock): show server creative items in a Bedrock tab
 
 Build the Bedrock tab from the connected server catalog and hide unavailable item types in vanilla category tabs. Carry catalog entry identity and converted item model data through the Java creative UI so duplicate fallback items select the intended Bedrock stack. Minecraft keeps the display-items callback protected, so a small package bridge registers the tab without reflection.
+
+Retain the exact native catalog entry and complete item snapshot through Java creative tabs. Match recipe-book tab entries by item definition before component parsing changes equality; derive group representatives without inventing variants. Respect the native maximum creative stack and avoid ambiguous same-Java-item transfer fallbacks. Catalog tests cover representative selection, exact identity and variant ambiguity.
 ---
- .../creative/BedrockCreativeCatalog.java      | 111 ++++++++++++++++++
- .../MixinCreativeModeInventoryScreen.java     |  26 ++++
- ...xinCreativeModeTab_ItemDisplayBuilder.java |  47 ++++++++
- .../creative/MixinCreativeModeTabs.java       |  60 ++++++++++
- .../world/item/BedrockCreativeTab.java        |  52 ++++++++
+ .../creative/BedrockCreativeCatalog.java      |  82 +++++++++
+ .../MixinCreativeModeInventoryScreen.java     |  26 +++
+ ...xinCreativeModeTab_ItemDisplayBuilder.java |  74 ++++++++
+ .../creative/MixinCreativeModeTabs.java       |  60 +++++++
+ .../world/item/BedrockCreativeTab.java        |  55 ++++++
  .../viafabricplus-bedrock/lang/en_us.json     |   2 +
  .../viafabricplus-bedrock.mixins.json         |   3 +
- 7 files changed, 301 insertions(+)
+ .../creative/BedrockCreativeCatalogTest.java  | 158 ++++++++++++++++++
+ 8 files changed, 460 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalog.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/creative/MixinCreativeModeInventoryScreen.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/creative/MixinCreativeModeTab_ItemDisplayBuilder.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/creative/MixinCreativeModeTabs.java
  create mode 100644 src/main/java/net/minecraft/world/item/BedrockCreativeTab.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalogTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalog.java
 new file mode 100644
-index 0000000..5efc378
+index 0000000..c50c8b4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalog.java
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,82 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -39,32 +43,19 @@ index 0000000..5efc378
 +
 +import com.viaversion.viafabricplus.ViaFabricPlus;
 +import com.viaversion.viaversion.api.connection.UserConnection;
-+import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
-+import net.minecraft.core.component.DataComponents;
-+import net.minecraft.core.registries.BuiltInRegistries;
-+import net.minecraft.nbt.NbtIo;
-+import net.minecraft.nbt.NbtAccounter;
-+import com.viaversion.nbt.io.NBTIO;
-+import java.io.ByteArrayOutputStream;
-+import java.io.ByteArrayInputStream;
-+import java.io.DataOutputStream;
-+import java.io.DataInputStream;
-+import java.io.IOException;
-+import net.minecraft.network.chat.Component;
-+import net.minecraft.resources.Identifier;
-+import net.minecraft.world.item.Item;
++import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
++import io.netty.buffer.Unpooled;
++import net.minecraft.client.Minecraft;
++import net.minecraft.core.RegistryAccess;
++import net.minecraft.network.RegistryFriendlyByteBuf;
 +import net.minecraft.world.item.ItemStack;
-+import net.minecraft.world.item.Items;
-+import net.minecraft.world.item.component.CustomData;
-+import net.minecraft.world.item.component.CustomModelData;
-+import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.model.CreativeCatalog;
 +import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 +import org.jetbrains.annotations.Nullable;
 +
-+import java.util.ArrayList;
-+import java.util.Arrays;
 +import java.util.List;
++import java.util.Set;
++import java.util.stream.Collectors;
 +
 +public final class BedrockCreativeCatalog {
 +
@@ -77,63 +68,47 @@ index 0000000..5efc378
 +        return rewriter != null ? rewriter.creativeCatalog() : null;
 +    }
 +
-+    public static boolean contains(final Item item, final CreativeCatalog catalog) {
-+        final String javaIdentifier = BuiltInRegistries.ITEM.getKey(item).toString();
-+        final Integer javaId = BedrockProtocol.MAPPINGS.getJavaItems().get(javaIdentifier);
-+        return javaId != null && catalog.containsJavaItem(javaId);
++    /** Use the native group icon as the anchor in Java's more detailed creative tabs. */
++    public static List<CreativeCatalog.Entry> entriesForDisplay(final CreativeCatalog catalog, final int javaItemId) {
++        final Set<Integer> canonicalIds = catalog.entries().stream().filter(CreativeCatalog.Entry::canonical)
++            .map(entry -> entry.javaItem().identifier()).collect(Collectors.toSet());
++        return catalog.entries().stream().filter(CreativeCatalog.Entry::canonical).filter(entry -> {
++            if (entry.groupIndex() >= 0 && entry.groupIndex() < catalog.groups().size()) {
++                final var icon = catalog.groups().get(entry.groupIndex()).icon();
++                final boolean hasAnchor = !icon.isEmpty() && canonicalIds.contains(icon.identifier());
++                if (hasAnchor) {
++                    return icon.identifier() == javaItemId;
++                }
++            }
++            return entry.javaItem().identifier() == javaItemId;
++        }).toList();
 +    }
 +
-+    public static ItemStack toNative(final CreativeCatalog.Entry entry, final String bedrockIdentifier) {
-+        final com.viaversion.viaversion.api.minecraft.item.Item javaItem = entry.javaItem();
-+        final String javaIdentifier = BedrockProtocol.MAPPINGS.getJavaItems().inverse().get(javaItem.identifier());
-+        final Identifier itemId = javaIdentifier != null ? Identifier.tryParse(javaIdentifier) : null;
-+        final Item nativeItem = itemId != null ? BuiltInRegistries.ITEM.getValue(itemId) : null;
-+        final ItemStack stack = new ItemStack(nativeItem != null ? nativeItem : Items.PAPER);
++    public static ItemStack toNative(final CreativeCatalog.Entry entry) {
++        final var connection = Minecraft.getInstance().getConnection();
++        if (connection == null) {
++            return ItemStack.EMPTY;
++        }
++        return toNative(entry.javaItem(), connection.registryAccess());
++    }
 +
-+        final com.viaversion.nbt.tag.CompoundTag data = javaItem.dataContainer().get(StructuredDataKey.CUSTOM_DATA);
-+        if (data != null) {
-+            try {
-+                final var bytes = new ByteArrayOutputStream();
-+                NBTIO.writeTag(new DataOutputStream(bytes), data, true);
-+                final var nativeData = NbtIo.read(new DataInputStream(new ByteArrayInputStream(bytes.toByteArray())),
-+                        NbtAccounter.create(2 * 1024 * 1024));
-+                stack.set(DataComponents.CUSTOM_DATA, CustomData.of(nativeData));
-+            } catch (final IOException exception) {
-+                throw new IllegalArgumentException("Cannot decode creative item data", exception);
++    public static ItemStack toNative(final com.viaversion.viaversion.api.minecraft.item.Item item,
++                                     final RegistryAccess registries) {
++        final var buffer = new RegistryFriendlyByteBuf(Unpooled.buffer(), registries);
++        try {
++            // Decode the same complete component patch used by normal inventory packets.
++            VersionedTypes.V26_3.item.write(buffer, item);
++            final ItemStack result = ItemStack.OPTIONAL_STREAM_CODEC.decode(buffer);
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Trailing creative item data");
 +            }
++            result.setCount(1);
++            return result;
++        } catch (final Exception exception) {
++            throw new IllegalArgumentException("Cannot decode creative item data", exception);
++        } finally {
++            buffer.release();
 +        }
-+
-+        final var itemModel = javaItem.dataContainer().get(StructuredDataKey.ITEM_MODEL);
-+        if (itemModel != null) {
-+            final Identifier modelId = Identifier.tryParse(itemModel.key().toString());
-+            if (modelId != null) {
-+                stack.set(DataComponents.ITEM_MODEL, modelId);
-+            }
-+        }
-+        final var customModelData = javaItem.dataContainer().get(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4);
-+        if (customModelData != null) {
-+            final List<Float> floats = new ArrayList<>(customModelData.floats().length);
-+            for (final float value : customModelData.floats()) {
-+                floats.add(value);
-+            }
-+            final List<Boolean> booleans = new ArrayList<>(customModelData.booleans().length);
-+            for (final boolean value : customModelData.booleans()) {
-+                booleans.add(value);
-+            }
-+            stack.set(DataComponents.CUSTOM_MODEL_DATA, new CustomModelData(
-+                floats,
-+                booleans,
-+                Arrays.asList(customModelData.strings()),
-+                Arrays.stream(customModelData.colors()).boxed().toList()));
-+        }
-+        final com.viaversion.nbt.tag.Tag translatedName = javaItem.dataContainer().get(StructuredDataKey.ITEM_NAME);
-+        if (translatedName instanceof com.viaversion.nbt.tag.CompoundTag name
-+            && name.get("text") instanceof com.viaversion.nbt.tag.StringTag text) {
-+            stack.set(DataComponents.ITEM_NAME, Component.literal(text.getValue()));
-+        } else if (bedrockIdentifier != null) {
-+            stack.set(DataComponents.ITEM_NAME, Component.literal(bedrockIdentifier));
-+        }
-+        return stack;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/creative/MixinCreativeModeInventoryScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/creative/MixinCreativeModeInventoryScreen.java
@@ -170,10 +145,10 @@ index 0000000..447b4a7
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/creative/MixinCreativeModeTab_ItemDisplayBuilder.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/creative/MixinCreativeModeTab_ItemDisplayBuilder.java
 new file mode 100644
-index 0000000..9da65d9
+index 0000000..1526ed5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/creative/MixinCreativeModeTab_ItemDisplayBuilder.java
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,74 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -187,18 +162,23 @@ index 0000000..9da65d9
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.creative;
 +
 +import com.viaversion.viafabricplus.bedrock.creative.BedrockCreativeCatalog;
-+import com.llamalad7.mixinextras.sugar.Local;
 +import net.minecraft.core.registries.BuiltInRegistries;
 +import net.minecraft.resources.Identifier;
++import net.minecraft.world.item.BedrockCreativeTab;
 +import net.minecraft.world.item.CreativeModeTab;
 +import net.minecraft.world.item.ItemStack;
 +import net.raphimc.viabedrock.protocol.model.CreativeCatalog;
 +import org.spongepowered.asm.mixin.Final;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.Unique;
 +import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Coerce;
 +import org.spongepowered.asm.mixin.injection.Inject;
 +import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++import java.util.HashSet;
++import java.util.Set;
 +
 +@Mixin(targets = "net.minecraft.world.item.CreativeModeTab$ItemDisplayBuilder")
 +public abstract class MixinCreativeModeTab_ItemDisplayBuilder {
@@ -207,17 +187,39 @@ index 0000000..9da65d9
 +    @Final
 +    private CreativeModeTab tab;
 +
++    @Unique
++    private final Set<Integer> viaFabricPlusBedrock$inserted = new HashSet<>();
++
++    @Unique
++    private boolean viaFabricPlusBedrock$inserting;
++
 +    @Inject(method = "accept(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/item/CreativeModeTab$TabVisibility;)V",
 +        at = @At("HEAD"), cancellable = true)
-+    private void hideUnavailableBedrockItems(final CallbackInfo ci, @Local(argsOnly = true) final ItemStack stack) {
-+        if (this.tab.getType() != CreativeModeTab.Type.CATEGORY
++    private void useServerCreativeItems(final ItemStack stack, @Coerce final Object visibility,
++                                        final CallbackInfo ci) {
++        if (this.viaFabricPlusBedrock$inserting || this.tab.getType() != CreativeModeTab.Type.CATEGORY
 +            || !Identifier.DEFAULT_NAMESPACE.equals(BuiltInRegistries.CREATIVE_MODE_TAB.getKey(this.tab).getNamespace())) {
 +            return;
 +        }
 +        final CreativeCatalog catalog = BedrockCreativeCatalog.current();
-+        if (catalog != null && !catalog.entries().isEmpty()
-+            && !BedrockCreativeCatalog.contains(stack.getItem(), catalog)) {
-+            ci.cancel();
++        if (catalog == null || catalog.entries().isEmpty()) {
++            return;
++        }
++        ci.cancel();
++        final String identifier = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
++        final Integer javaId = net.raphimc.viabedrock.protocol.BedrockProtocol.MAPPINGS.getJavaItems().get(identifier);
++        if (javaId == null) {
++            return;
++        }
++        this.viaFabricPlusBedrock$inserting = true;
++        try {
++            for (final CreativeCatalog.Entry entry : BedrockCreativeCatalog.entriesForDisplay(catalog, javaId)) {
++                if (this.viaFabricPlusBedrock$inserted.add(entry.netId())) {
++                    BedrockCreativeTab.accept(this, BedrockCreativeCatalog.toNative(entry), visibility);
++                }
++            }
++        } finally {
++            this.viaFabricPlusBedrock$inserting = false;
 +        }
 +    }
 +}
@@ -289,10 +291,10 @@ index 0000000..2af5f4e
 +}
 diff --git a/src/main/java/net/minecraft/world/item/BedrockCreativeTab.java b/src/main/java/net/minecraft/world/item/BedrockCreativeTab.java
 new file mode 100644
-index 0000000..e2cb70c
+index 0000000..e8f418f
 --- /dev/null
 +++ b/src/main/java/net/minecraft/world/item/BedrockCreativeTab.java
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,55 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -322,6 +324,10 @@ index 0000000..e2cb70c
 +    private BedrockCreativeTab() {
 +    }
 +
++    public static void accept(final Object output, final ItemStack stack, final Object visibility) {
++        ((CreativeModeTab.Output) output).accept(stack, (CreativeModeTab.TabVisibility) visibility);
++    }
++
 +    public static void register(final Registry<CreativeModeTab> registry) {
 +        final CreativeModeTab tab = CreativeModeTab.builder(CreativeModeTab.Row.TOP, 7)
 +            .title(Component.translatable("itemGroup.viafabricplus.bedrock"))
@@ -334,8 +340,7 @@ index 0000000..e2cb70c
 +                }
 +                for (final CreativeCatalog.Entry entry : rewriter.creativeCatalog().entries()) {
 +                    if (entry.bedrockOnly()) {
-+                        output.accept(BedrockCreativeCatalog.toNative(entry,
-+                            rewriter.getItems().inverse().get(entry.bedrockItem().identifier())));
++                        output.accept(BedrockCreativeCatalog.toNative(entry));
 +                    }
 +                }
 +            })
@@ -346,7 +351,7 @@ index 0000000..e2cb70c
 +    }
 +}
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
-index af5fa6c..1d0fa2b 100644
+index ab90032..db52332 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 +++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 @@ -2,6 +2,8 @@
@@ -359,7 +364,7 @@ index af5fa6c..1d0fa2b 100644
    "bedrock_settings.viafabricplus.account": "Account for Bedrock Edition",
    "bedrock_settings.viafabricplus.account.login": "Click to log in",
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index b6372bd..67feb4c 100644
+index e6fc94a..7c1b0aa 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
 @@ -44,6 +44,9 @@
@@ -372,5 +377,169 @@ index b6372bd..67feb4c 100644
      "features.misc.MixinClientSuggestionProvider",
      "features.misc.MixinInventoryScreen",
      "features.misc.MixinMinecraft",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalogTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalogTest.java
+new file mode 100644
+index 0000000..0c8028b
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalogTest.java
+@@ -0,0 +1,158 @@
++package com.viaversion.viafabricplus.bedrock.creative;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.data.FullMappings;
++import com.viaversion.viaversion.api.minecraft.data.StructuredData;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import com.viaversion.viaversion.api.minecraft.item.data.PotionContents;
++import com.viaversion.viaversion.api.minecraft.item.data.PotionEffect;
++import com.viaversion.viaversion.api.type.types.item.ItemType1_20_5;
++import com.viaversion.viaversion.api.type.types.item.StructuredDataType;
++import io.netty.buffer.Unpooled;
++import java.lang.reflect.Proxy;
++import java.util.List;
++import net.minecraft.SharedConstants;
++import net.minecraft.core.RegistryAccess;
++import net.minecraft.core.component.DataComponentMap;
++import net.minecraft.core.component.DataComponents;
++import net.minecraft.core.registries.BuiltInRegistries;
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.resources.Identifier;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.item.Item;
++import net.minecraft.world.item.ItemStack;
++import net.minecraft.world.item.Items;
++import net.raphimc.viabedrock.api.model.NativeItemStackData;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.CreativeCatalog;
++import net.raphimc.viabedrock.protocol.rewriter.ItemDataRewriter;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockCreativeCatalogTest {
++    @BeforeAll
++    static void bootstrap() throws Exception {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++        bindTestItemDefaults(Items.LINGERING_POTION);
++        bindTestItemDefaults(Items.PAPER);
++        Class.forName(StructuredDataKey.class.getName());
++    }
++
++    private static void bindTestItemDefaults(final Item item) {
++        // The client normally receives these holder defaults from the server's component registry.
++        if (!item.builtInRegistryHolder().areComponentsBound()) {
++            item.builtInRegistryHolder().bindComponents(DataComponentMap.EMPTY);
++        }
++    }
++
++    @Test
++    void convertsCompletePotionAndCreativeIdentityUsingMinecraftWireCodec() throws Exception {
++        final var registries = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
++        final var custom = new CompoundTag();
++        custom.putInt("viabedrock:creative_entry", 72);
++        final var data = new StructuredDataContainer(new StructuredData<?>[]{
++                StructuredData.of(StructuredDataKey.CUSTOM_DATA, custom,
++                        BuiltInRegistries.DATA_COMPONENT_TYPE.getId(DataComponents.CUSTOM_DATA)),
++                StructuredData.of(StructuredDataKey.POTION_CONTENTS1_21_2,
++                        new PotionContents(null, 0x23AABC, new PotionEffect[0], "test"),
++                        BuiltInRegistries.DATA_COMPONENT_TYPE.getId(DataComponents.POTION_CONTENTS)),
++                StructuredData.of(StructuredDataKey.MAX_STACK_SIZE, 1,
++                        BuiltInRegistries.DATA_COMPONENT_TYPE.getId(DataComponents.MAX_STACK_SIZE))});
++        final var input = new StructuredItem(BuiltInRegistries.ITEM.getId(Items.LINGERING_POTION), 64, data);
++        final var result = BedrockCreativeCatalog.toNative(input,
++                registries);
++        assertSame(Items.LINGERING_POTION, result.getItem());
++        assertEquals(1, result.getCount());
++        assertEquals(1, result.getMaxStackSize());
++        assertEquals(0x23AABC, result.get(DataComponents.POTION_CONTENTS).customColor().orElseThrow());
++        assertEquals("test", result.get(DataComponents.POTION_CONTENTS).customName().orElseThrow());
++        assertEquals(72, result.get(DataComponents.CUSTOM_DATA).copyTag().getIntOr("viabedrock:creative_entry", 0));
++        assertEquals(64, input.amount());
++    }
++
++    @Test
++    void preservesCustomItemSnapshotThroughNativeCodecAndCreativeSelection() throws Exception {
++        final var nativeData = new CompoundTag();
++        nativeData.putString("custom_id", "geysermc:furnace_minecart");
++        final var nativeItem = new BedrockItem(5001, (short) 0, (byte) 1, nativeData);
++        final var context = new CompoundTag();
++        context.put(ItemDataRewriter.BEDROCK_STACK_TAG,
++            NativeItemStackData.fromItem(nativeItem).toTag());
++        final var data = new StructuredDataContainer(new StructuredData<?>[]{
++            StructuredData.of(StructuredDataKey.CUSTOM_DATA, context,
++                BuiltInRegistries.DATA_COMPONENT_TYPE.getId(DataComponents.CUSTOM_DATA)),
++            StructuredData.of(StructuredDataKey.MAX_STACK_SIZE, 1,
++                BuiltInRegistries.DATA_COMPONENT_TYPE.getId(DataComponents.MAX_STACK_SIZE))});
++        bindMappings(data);
++        final var item = new StructuredItem(BuiltInRegistries.ITEM.getId(Items.PAPER), 1, data);
++        final var catalog = new CreativeCatalog(List.of(), List.of(
++            new CreativeCatalog.Entry(42, 0, nativeItem, item, true, false)));
++        final var result = BedrockCreativeCatalog.toNative(catalog.entries().getFirst().javaItem(),
++            RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY));
++        assertEquals(1, result.getMaxStackSize());
++        final var buffer = new RegistryFriendlyByteBuf(Unpooled.buffer(),
++            RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY));
++        try {
++            ItemStack.OPTIONAL_STREAM_CODEC.encode(buffer, result);
++            final var componentTypes = new StructuredDataKey<?>[BuiltInRegistries.DATA_COMPONENT_TYPE.size()];
++            componentTypes[BuiltInRegistries.DATA_COMPONENT_TYPE.getId(DataComponents.CUSTOM_DATA)] = StructuredDataKey.CUSTOM_DATA;
++            componentTypes[BuiltInRegistries.DATA_COMPONENT_TYPE.getId(DataComponents.MAX_STACK_SIZE)] = StructuredDataKey.MAX_STACK_SIZE;
++            final var componentCodec = new StructuredDataType();
++            final var types = StructuredDataType.class.getDeclaredField("types");
++            types.setAccessible(true);
++            types.set(componentCodec, componentTypes);
++            final var roundTrip = new ItemType1_20_5(componentCodec).read(buffer);
++            assertFalse(buffer.isReadable());
++            assertEquals(42, catalog.creativeEntry(roundTrip).netId());
++            assertEquals(nativeData, catalog.creativeEntry(roundTrip).bedrockItem().tag());
++            assertEquals(5001, catalog.creativeEntry(roundTrip).bedrockItem().identifier());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void anchorsNativeGroupsToTheirIconsAndKeepsUnknownGroupsInTheirJavaLocation() throws Exception {
++        final var icon = mappedItem(3);
++        final var catalog = new CreativeCatalog(List.of(
++            new CreativeCatalog.Group(2, "flower", icon)), List.of(
++            entry(41, 0, 3), entry(42, 0, 7), entry(43, 5, 9)));
++        assertEquals(List.of(41, 42), BedrockCreativeCatalog.entriesForDisplay(catalog, 3).stream()
++            .map(CreativeCatalog.Entry::netId).toList());
++        assertTrue(BedrockCreativeCatalog.entriesForDisplay(catalog, 7).isEmpty());
++        assertEquals(43, BedrockCreativeCatalog.entriesForDisplay(catalog, 9).getFirst().netId());
++    }
++
++    private static CreativeCatalog.Entry entry(final int netId, final int group,
++                                                final int javaId) throws Exception {
++        return new CreativeCatalog.Entry(netId, group,
++            new BedrockItem(netId), mappedItem(javaId), false, true);
++    }
++
++    private static StructuredItem mappedItem(final int javaId) throws Exception {
++        final var data = new StructuredDataContainer();
++        bindMappings(data);
++        return new StructuredItem(javaId, 1, data);
++    }
++
++    private static void bindMappings(final StructuredDataContainer data) throws Exception {
++        final var mappings = (FullMappings) Proxy.newProxyInstance(
++            FullMappings.class.getClassLoader(),
++            new Class<?>[]{FullMappings.class}, (proxy, method, args) -> {
++                if (method.getName().equals("id")) {
++                    final var type = BuiltInRegistries.DATA_COMPONENT_TYPE.getValue(Identifier.parse((String) args[0]));
++                    return type != null ? BuiltInRegistries.DATA_COMPONENT_TYPE.getId(type) : 0;
++                }
++                return 0;
++            });
++        final var lookup = StructuredDataContainer.class.getDeclaredField("lookup");
++        lookup.setAccessible(true);
++        lookup.set(data, mappings);
++    }
++
++}
 -- 
 2.56.0

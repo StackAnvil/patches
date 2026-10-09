@@ -1,4 +1,4 @@
-From 822fdafd2553930af2a4ba05a424c3e0a40b1138 Mon Sep 17 00:00:00 2001
+From ad674effbb309800255977a539951d005793918a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -213,6 +213,8 @@ and heterogeneous channel/ambient patterns. All 12,288 corner selections
 match. Original tessellator constants establish face tolerances of
 0.0005 and 0.9995. Cached solidity, geometry-full initialization, per-type
 ambient overrides, and visible native comparison remain separate work.
+
+Parse native item atlas object texture paths and object entries inside arrays. Targeted atlas tests preserve path precedence and invalid entry handling.
 ---
  .../api/model/CustomBlockCulling.java         | 206 +++++++
  .../api/model/CustomBlockFaceLighting.java    |  98 +++
@@ -224,7 +226,7 @@ ambient overrides, and visible native comparison remain separate work.
  .../definition/BlockDefinitions.java          |  17 +-
  .../definition/CustomBlockDefinition.java     |  73 +++
  .../definition/ModelDefinitions.java          |   7 +
- .../definition/TextureDefinitions.java        |  54 ++
+ .../definition/TextureDefinitions.java        |  65 +-
  .../http/ConvertedResourcePackCache.java      |  14 +-
  .../viabedrock/protocol/BedrockProtocol.java  |  27 +-
  .../protocol/packet/JoinPackets.java          |  30 +-
@@ -244,6 +246,7 @@ ambient overrides, and visible native comparison remain separate work.
  .../api/model/CustomBlockLightingTest.java    | 171 ++++++
  .../api/model/CustomBlockOffsetTest.java      |  80 +++
  .../api/model/CustomBlockPropertiesTest.java  |  69 +++
+ .../definition/TextureDefinitionsTest.java    |  42 ++
  .../http/ConvertedResourcePackCacheTest.java  |  29 +
  .../rewriter/CustomBlockBoneGeometryTest.java | 177 ++++++
  .../CustomBlockModelSelectionTest.java        | 512 ++++++++++++++++
@@ -254,7 +257,7 @@ ambient overrides, and visible native comparison remain separate work.
  .../protocol/storage/ChunkTrackerTest.java    |  24 +
  .../storage/CustomBlockPackStorageTest.java   | 169 ++++++
  .../storage/VoxelShapeRegistryTest.java       | 130 ++++
- 40 files changed, 4524 insertions(+), 23 deletions(-)
+ 41 files changed, 4576 insertions(+), 24 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
@@ -274,6 +277,7 @@ ambient overrides, and visible native comparison remain separate work.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockOffsetTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java
@@ -1207,7 +1211,7 @@ index d267ff7fe..f4e91c4de 100644
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java
-index ba8c2db57..56c12e584 100644
+index ba8c2db57..6df862698 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java
 @@ -29,9 +29,33 @@ import java.util.logging.Level;
@@ -1244,7 +1248,25 @@ index ba8c2db57..56c12e584 100644
              if (pack.content().contains("textures/item_texture.json")) {
                  try {
                      final JsonObject itemTexture = pack.content().getJson("textures/item_texture.json");
-@@ -63,6 +87,36 @@ public class TextureDefinitions {
+@@ -46,7 +70,16 @@ public class TextureDefinitions {
+                                 itemTextureDefinitions.add(new ItemTextureDefinition(name, textures.getAsString()));
+                             } else if (textures.isJsonArray()) {
+                                 for (JsonElement texture : textures.getAsJsonArray()) {
+-                                    itemTextureDefinitions.add(new ItemTextureDefinition(name, texture.getAsString()));
++                                    final String path = firstTexturePath(texture);
++                                    if (path != null) {
++                                        itemTextureDefinitions.add(new ItemTextureDefinition(name, path));
++                                    }
++                                }
++                            }
++                            if (textures.isJsonObject()) {
++                                final String path = firstTexturePath(textures);
++                                if (path != null) {
++                                    itemTextureDefinitions.add(new ItemTextureDefinition(name, path));
+                                 }
+                             }
+                             this.itemTextures.put(name, itemTextureDefinitions);
+@@ -63,6 +96,36 @@ public class TextureDefinitions {
          return Collections.unmodifiableMap(this.itemTextures);
      }
  
@@ -1391,7 +1413,7 @@ index 0a88cbd57..84b46db1b 100644
                  final PacketWrapper playStatus = PacketWrapper.create(ClientboundBedrockPackets.PLAY_STATUS, wrapper.user());
                  playStatus.write(Types.INT, PlayStatus.LoginSuccess.getValue()); // status
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 66f14e23b..95fdd0800 100644
+index 3562ee17a..2bc019200 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -383,7 +383,8 @@ public final class JoinPackets {
@@ -3669,6 +3691,54 @@ index 000000000..0e855c20b
 +                List.of(new CustomBlockVisual.Box(0, 0, 0, Double.POSITIVE_INFINITY, 1, 1)), List.of(), true, 0, 15, CustomBlockOffset.NONE));
 +        assertThrows(IllegalArgumentException.class, () -> new CustomBlockProperties("test:block", 42,
 +                List.of(new CustomBlockVisual.Box(1, 0, 0, 0, 1, 1)), List.of(), true, 0, 15, CustomBlockOffset.NONE));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitionsTest.java
+new file mode 100644
+index 000000000..9b0790e12
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitionsTest.java
+@@ -0,0 +1,42 @@
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class TextureDefinitionsTest {
++
++    @Test
++    void keepsObjectAndArrayItemTexturePathsInNativeOrderAndHonorsOverrides() {
++        final ResourcePack lower = pack("{\"icon\":{\"textures\":\"old\"},\"unsupported\":{\"textures\":\"old\"}}");
++        final ResourcePack higher = pack("{\"icon\":{\"textures\":[{\"path\":\"custom/icon\"},\"custom/other\"]},\"single\":{\"textures\":{\"path\":\"custom/single\"}},\"unsupported\":{\"textures\":{}}}");
++        final var storage = mock(ResourcePackStorage.class);
++        when(storage.getPackStackBottomToTop()).thenReturn(List.of(lower, higher));
++        final var textures = new TextureDefinitions(storage).itemTextures();
++        assertEquals(List.of("custom/icon", "custom/other"), textures.get("icon").stream()
++                .map(TextureDefinitions.ItemTextureDefinition::texturePath).toList());
++        assertEquals("custom/single", textures.get("single").getFirst().texturePath());
++        assertTrue(textures.get("unsupported").isEmpty());
++    }
++
++    private static ResourcePack pack(final String textureData) {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID()
++                + "\",\"version\":[1,0,0],\"name\":\"test\"}}");
++        final JsonObject atlas = new JsonObject();
++        atlas.addProperty("texture_name", "atlas.items");
++        atlas.add("texture_data", JsonParser.parseString(textureData));
++        content.putJson("textures/item_texture.json", atlas);
++        return new ResourcePack(content);
 +    }
 +
 +}
