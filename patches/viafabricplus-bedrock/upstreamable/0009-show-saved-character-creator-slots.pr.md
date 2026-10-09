@@ -2944,3 +2944,9 @@ The first-person root uses the native player render height of 1.62001, separatel
 Owner geometry queries expose authored root locator offsets in model coordinates. Bone pivot subtraction and render-axis conversion apply only to drawing locators. The target armor animations use these owner offsets for custom bodies. A numerical test covers rotated bones and raw axis values.
 
 The crouching root error is corrected. The reported low standing hand only on CubeCraft still needs a matched pose comparison. Visible armor parity still needs the reported skin identity.
+
+## Default native player playback
+
+Classic skins now use the bundled target player graph for bodies and dressing-room previews. Preview playback keeps its own animation clock and variables. Body models apply the graph's visibility rules. The Java hand preference affects first-person rendering only.
+
+Equipment setup runs after the owner's per-frame resets and before its animations. A numerical regression covers repeated setup and removal on unequip. Missing-query tracking also reaches nested bone evaluation without changing Molang's existing zero defaults.

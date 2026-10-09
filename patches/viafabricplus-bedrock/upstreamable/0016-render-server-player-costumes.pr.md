@@ -130,3 +130,9 @@ The complete stack replays, and the full add-on build passes 616 tests with 117 
 ## Reuse parsed built-in models
 
 Server overlays reuse immutable parsed built-in model declarations and parse only accepted layers. Higher packs still replace model identifiers, and callers receive copies from model lookup. Existing library tests cover pack order, partial overlays, texture precedence and independent identifiers.
+
+## Inherited client entity definitions
+
+Resolve the target client entity definition beneath accepted server packs. Animation-only and controller-only player overrides now inherit the native player definition, resource aliases, textures and geometry. Server files keep their precedence. Legacy geometry parents resolve against the complete inherited library.
+
+Tests cover animation-only player overrides, inherited resources and higher-priority crystal textures. Unsupported definitions retain the existing renderer fallback.

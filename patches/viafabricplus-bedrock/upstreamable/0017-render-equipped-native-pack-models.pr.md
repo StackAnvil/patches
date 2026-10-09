@@ -59,3 +59,11 @@ Tests cover owner binding, server replacement and inherited texture dimensions. 
 Equipment storage now prepares off the render thread. It keeps referenced models and textures, attachables, materials and animation controllers. Legacy parents resolve against the complete inherited library before unused models are omitted. Ordinary equipment remains available while preparation runs.
 
 The saved CubeCraft pack retains 107 attachables and 24 equipped models, compared with 1,005 models before this change. Three local equipment preparation samples drop from about 2.8 to 3.8 seconds to 306 to 358 ms. These measurements exclude network downloads and complete client startup. Existing tests cover server overrides, owner selection and legacy inheritance across files.
+
+## Native held equipment
+
+Supported held attachables now render in both first-person and world views. Evaluate authored bone bindings with the equipment slot and handedness. Bind each model to the owner's complete bone matrix. First-person equipment keeps its own playback lifetime.
+
+Current equipment supplies parent setup before owner animations on every frame. This also restores native armor visibility on ordinary classic skins. First-person bindings check the selected owner's bones before replacing a Java item draw. Unsupported surfaces, enchanted items and banner-pattern items retain Java rendering.
+
+Focused tests cover handedness, spyglass bindings and owner transforms. These checks do not establish complete native item parity.

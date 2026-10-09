@@ -1,4 +1,4 @@
-From 6e55be594780cc7530713a99f61ae9add29e3881 Mon Sep 17 00:00:00 2001
+From e9de72ec963d4d4daaf096c8997df5ca6e2d68a1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:39:38 +0200
 Subject: [PATCH] feat(players): render server player controllers and costumes
@@ -128,23 +128,35 @@ waist transform across positive, zero, and negative camera pitch. Other
 head queries and costume posture comparisons remain separate coverage.
 
 Reuse parsed immutable built-in model declarations when creating a server overlay. Parse only newly accepted layers and retain highest-pack identifier replacement. Each model lookup still returns an isolated copy; actor graph parsing and texture precedence remain unchanged.
+
+Inherit the bundled Bedrock 1.26.51.1 player description, animations and
+render controllers before accepted server assets. Animation-only and
+render-controller-only packs override the native resources without needing
+to repeat player.entity.json. Normalize only the actor's referenced models
+and retain server provenance and skin animation aliases. Load the resolved
+dependencies off the render thread and invalidate them with the resource
+generation. Ordinary classic owner graphs now also receive armor setup.
 ---
- .../appearance/BedrockActorAnimation.java     |   4 +
+ .../appearance/BedrockActorAnimation.java     |  12 +
+ .../appearance/BedrockEntityResources.java    | 103 ++++++
  .../appearance/BedrockResourceLibrary.java    |  11 +-
  .../bedrock/render/BedrockPersonaLayer.java   |   1 +
  .../render/BedrockPlayerCostumeLayer.java     |  32 ++
  .../bedrock/render/BedrockPlayerQueries.java  |  22 ++
  .../bedrock/render/BedrockPlayerRenderer.java |   2 +
- .../bedrock/render/BedrockPlayerSkins.java    | 291 +++++++++++++++++-
- .../BedrockPlayerControllersTest.java         |  86 ++++++
+ .../bedrock/render/BedrockPlayerSkins.java    | 297 +++++++++++++++++-
+ .../BedrockEntityResourcesTest.java           |  59 ++++
+ .../BedrockPlayerControllersTest.java         |  86 +++++
  .../BedrockResourceLibraryTest.java           |  84 +++++
  .../BedrockServerActorVisibilityTest.java     |  45 +++
- .../BedrockPlayerCommandResourcesTest.java    |  68 ++++
+ .../BedrockPlayerCommandResourcesTest.java    |  67 ++++
  .../render/BedrockPlayerGeometryTest.java     |  32 ++
  .../render/BedrockPlayerQueriesTest.java      |  37 +++
- 13 files changed, 703 insertions(+), 12 deletions(-)
+ 15 files changed, 878 insertions(+), 12 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerCostumeLayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerQueries.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResourcesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerActorVisibilityTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerCommandResourcesTest.java
@@ -152,10 +164,10 @@ Reuse parsed immutable built-in model declarations when creating a server overla
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerQueriesTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-index 0797fbb..39ba6e6 100644
+index 5b92013..0fc19bc 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-@@ -77,6 +77,10 @@ public final class BedrockActorAnimation {
+@@ -77,6 +77,18 @@ public final class BedrockActorAnimation {
          return new ServerResources(Map.copyOf(animations), Map.copyOf(controllers), library);
      }
  
@@ -163,9 +175,126 @@ index 0797fbb..39ba6e6 100644
 +        return serverEntity(packs, "minecraft:player");
 +    }
 +
++    public static BedrockActorAnimation serverPlayer(final ResourcePackStorage packs, final BedrockClassicOptions options) throws IOException {
++        final var resources = serverResources(packs);
++        final var definition = packs.getEntities().getDescription("minecraft:player");
++        return definition == null ? null : new BedrockActorAnimation(
++                JsonParser.parseString(definition.toString()).getAsJsonObject(), options.animations(),
++                resources.animations(), resources.controllers(), resources.effects());
++    }
++
      public static BedrockActorAnimation serverEntity(final ResourcePackStorage packs,
                                                       final String identifier) throws IOException {
          return serverActor(packs, "entity/", "minecraft:client_entity", identifier);
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
+new file mode 100644
+index 0000000..8293687
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
+@@ -0,0 +1,103 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.HashSet;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.CompletionException;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++/** Resolves one actor's native dependencies below accepted server overrides, off the render thread. */
++public final class BedrockEntityResources {
++    private static ResourcePackStorage source;
++    private static final Map<String, CompletableFuture<ResourcePackStorage>> ACTORS = new HashMap<>();
++
++    private BedrockEntityResources() {}
++
++    public static synchronized ResourcePackStorage get(final ResourcePackStorage accepted, final String identifier) {
++        if (accepted == null) return null;
++        if (source != accepted) { clear(); source = accepted; }
++        final var result = ACTORS.computeIfAbsent(identifier, _ -> CompletableFuture.supplyAsync(() -> {
++            try {
++                return merge(BedrockBuiltinAssets.load().library(),
++                        NativeActorLibrary.resources(accepted.getPackStackBottomToTop(), accepted::isServerPack), identifier);
++            } catch (IOException invalid) { throw new CompletionException(invalid); }
++        }));
++        // A failed actor keeps its Java fallback for this generation, without repeated log spam.
++        return result.isCompletedExceptionally() ? null : result.getNow(null);
++    }
++
++    static ResourcePackStorage merge(final BedrockResourceLibrary builtin,
++                                     final List<NativeActorLibrary.Layer> accepted, final String identifier) throws IOException {
++        final var library = BedrockResourceLibrary.withServerPacks(builtin,
++                accepted.stream().map(NativeActorLibrary.Layer::resources).toList());
++        final var entity = library.entity(identifier);
++        if (entity == null) return null;
++        final var description = entity.getAsJsonObject("description");
++        final Set<String> textures = new HashSet<>();
++        if (description.has("textures")) description.getAsJsonObject("textures").entrySet()
++                .forEach(entry -> textures.add(entry.getValue().getAsString()));
++        final List<NativeActorLibrary.Layer> layers = new ArrayList<>(
++                NativeActorLibrary.resources(builtin.resourcePacks(), _ -> false));
++        layers.addAll(accepted);
++        final List<NativeActorLibrary.Layer> selected = new ArrayList<>();
++        for (final var layer : layers) {
++            final Map<String, byte[]> files = new LinkedHashMap<>();
++            for (final var entry : layer.resources().entrySet()) {
++                final String path = entry.getKey();
++                if (path.startsWith("entity/") && path.endsWith(".json")) {
++                    final var nativeEntity = com.google.gson.JsonParser.parseString(new String(entry.getValue(), StandardCharsets.UTF_8))
++                            .getAsJsonObject().getAsJsonObject("minecraft:client_entity");
++                    if (nativeEntity != null && identifier.equals(nativeEntity.getAsJsonObject("description").get("identifier").getAsString()))
++                        files.put(path, entry.getValue());
++                }
++                if (path.equals("manifest.json") || path.startsWith("materials/") || path.startsWith("animations/")
++                        || path.startsWith("animation_controllers/") || path.startsWith("render_controllers/")
++                        || textures.stream().anyMatch(texture -> path.startsWith(texture + "."))) files.put(path, entry.getValue());
++            }
++            selected.add(new NativeActorLibrary.Layer(layer.server(), files));
++        }
++        // Normalize only this actor's geometry, resolving legacy parents against the complete library.
++        final JsonArray geometries = new JsonArray();
++        if (description.has("geometry")) for (final var entry : description.getAsJsonObject("geometry").entrySet()) {
++            final String name = entry.getValue().getAsString();
++            final var document = library.model(name);
++            if (document == null) continue;
++            if (document.has("minecraft:geometry")) document.getAsJsonArray("minecraft:geometry").forEach(geometries::add);
++            else geometries.add(BedrockLegacyGeometry.read(document, name, library::model));
++        }
++        final JsonObject model = new JsonObject();
++        model.addProperty("format_version", "1.12.0");
++        model.add("minecraft:geometry", geometries);
++        final JsonObject definition = new JsonObject(), manifest = new JsonObject();
++        definition.addProperty("format_version", "1.10.0");
++        definition.add("minecraft:client_entity", entity);
++        manifest.addProperty("format_version", 2);
++        final var header = new JsonObject();
++        header.addProperty("name", "Resolved native actor");
++        header.addProperty("uuid", java.util.UUID.nameUUIDFromBytes(identifier.getBytes(StandardCharsets.UTF_8)).toString());
++        final var version = new JsonArray(); version.add(1); version.add(0); version.add(0);
++        header.add("version", version); manifest.add("header", header);
++        selected.add(new NativeActorLibrary.Layer(false, Map.of(
++                "manifest.json", bytes(manifest), "entity/resolved.json", bytes(definition), "models/entity/resolved.json", bytes(model))));
++        return ResourcePackStorage.nativeActors(selected);
++    }
++
++    private static byte[] bytes(final JsonObject json) { return json.toString().getBytes(StandardCharsets.UTF_8); }
++
++    public static synchronized void clear() { source = null; ACTORS.clear(); }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 index 4922b46..d9d7ca6 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
@@ -300,7 +429,7 @@ index 5ddf747..2b4a386 100644
              return this.nativeMaterial(this.getTextureLocation(state));
          }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index a6cef3e..6b2e76e 100644
+index 4b433c7..b8d2382 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -34,7 +34,7 @@ import com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerAnimations;
@@ -330,16 +459,15 @@ index a6cef3e..6b2e76e 100644
  
      private BedrockPlayerSkins() {
      }
-@@ -266,7 +270,27 @@ public final class BedrockPlayerSkins {
+@@ -265,7 +269,30 @@ public final class BedrockPlayerSkins {
  
      public static AvatarRenderer<?> renderer(final UUID playerUuid) {
          final Appearance appearance = APPEARANCES.get(playerUuid);
 -        final Geometry geometry = geometry(appearance, BedrockEmotePlayback.playing(playerUuid) || actor(appearance) != null);
 +        final ResourcePackStorage packs = serverPacks();
-+        final boolean commands = BedrockActorState.animations(playerUuid) != null;
-+        final ServerResources resources = serverResources(packs, commands);
++        final ServerResources resources = serverResources(packs);
 +        final boolean serverPlayer = resources != null && resources.override();
-+        final boolean graphActive = resources != null && (serverPlayer || commands);
++        final boolean graphActive = resources != null;
 +        if (appearance != null && (appearance.serverPacks != packs || appearance.serverGraphActive != graphActive)) {
 +            appearance.releaseServerTextures();
 +            appearance.serverPacks = packs;
@@ -353,34 +481,41 @@ index a6cef3e..6b2e76e 100644
 +                final var definition = packs.getEntities().get("minecraft:player");
 +                appearance.serverControllers = new BedrockPlayerControllers(definition.entityData(), packs.getRenderControllers().renderControllers(), resources.uvAnimations());
 +            }
-+            if (graphActive && resources.graph() != null) appearance.serverActor = resources.graph().playback();
++            if (graphActive && resources.graph() != null) {
++                try {
++                    appearance.serverActor = BedrockActorAnimation.serverPlayer(packs, appearance.options).playback();
++                } catch (IOException invalid) { LOGGER.warn("Could not load native skin animation aliases", invalid); }
++            }
 +        }
 +        final Geometry geometry = geometry(appearance, serverPlayer || BedrockEmotePlayback.playing(playerUuid) || actor(appearance) != null);
          if (appearance == null || geometry == null || rendererContext == null) {
              return null;
          }
-@@ -282,6 +306,154 @@ public final class BedrockPlayerSkins {
+@@ -281,6 +308,157 @@ public final class BedrockPlayerSkins {
          return appearance.renderer;
      }
  
 +    private static ResourcePackStorage serverPacks() {
-+        return BedrockActorResources.get();
++        return com.viaversion.viafabricplus.bedrock.appearance.BedrockEntityResources.get(BedrockActorResources.get(), "minecraft:player");
 +    }
 +
-+    private static ServerResources serverResources(final ResourcePackStorage packs, final boolean commands) {
-+        if (cachedServerPacks == packs && (cachedServerResources != null || !commands)) return cachedServerResources;
++    private static ServerResources serverResources(final ResourcePackStorage packs) {
++        if (cachedServerPacks == packs) return cachedServerResources;
 +        cachedServerPacks = packs;
 +        cachedServerResources = null;
 +        if (packs == null || packs.getEntities() == null || packs.getEntities().get("minecraft:player") == null) return null;
 +        boolean override = false;
 +        for (final var pack : packs.getPackStackTopToBottom()) {
 +            if (!packs.isServerPack(pack)) continue;
++            if (!pack.content().getFilesDeep("animations/", ".json").isEmpty()
++                    || !pack.content().getFilesDeep("animation_controllers/", ".json").isEmpty()
++                    || !pack.content().getFilesDeep("render_controllers/", ".json").isEmpty()) override = true;
 +            for (final String path : pack.content().getFilesDeep("entity/", ".json")) {
 +                final JsonObject entity = pack.content().getJson(path).getAsJsonObject("minecraft:client_entity");
 +                if (entity != null && "minecraft:player".equals(entity.getAsJsonObject("description").get("identifier").getAsString())) override = true;
 +            }
 +        }
-+        if (!override && !commands) return null;
++
 +        BedrockActorAnimation graph = null;
 +        try {
 +            graph = BedrockActorAnimation.serverPlayer(packs);
@@ -514,7 +649,7 @@ index a6cef3e..6b2e76e 100644
      private static Geometry geometry(final Appearance appearance, final boolean animated) {
          if (appearance == null) return null;
          if (appearance.geometry != null) return appearance.geometry;
-@@ -307,6 +479,7 @@ public final class BedrockPlayerSkins {
+@@ -306,6 +484,7 @@ public final class BedrockPlayerSkins {
      }
  
      private static BedrockActorAnimation.Playback actor(final Appearance appearance) {
@@ -522,7 +657,7 @@ index a6cef3e..6b2e76e 100644
          return appearance == null ? null : appearance.animations.body();
      }
  
-@@ -427,7 +600,8 @@ public final class BedrockPlayerSkins {
+@@ -431,7 +610,8 @@ public final class BedrockPlayerSkins {
                  : BedrockFirstPersonCamera.Rotation.ZERO;
          final var scale = appearance.firstPersonActor.scale();
          final var nativeState = BedrockActorState.state(player.getUUID());
@@ -532,7 +667,7 @@ index a6cef3e..6b2e76e 100644
          if (geometry != null && appearance.firstPersonModels == null) {
              final List<FirstPersonSurface> surfaces = new ArrayList<>();
              surfaces.add(new FirstPersonSurface(BedrockGeometry.animatedModel(geometry.model(), geometry.meshes()), appearance.bodyId));
-@@ -435,19 +609,81 @@ public final class BedrockPlayerSkins {
+@@ -439,19 +619,81 @@ public final class BedrockPlayerSkins {
                  surfaces.add(new FirstPersonSurface(BedrockGeometry.animatedModel(surface.geometry().model(), surface.geometry().meshes()), surface.texture()));
              appearance.firstPersonModels = List.copyOf(surfaces);
          }
@@ -617,7 +752,7 @@ index a6cef3e..6b2e76e 100644
      /** Submits the actor once before Java's per-hand item transforms. */
      public static void submitFirstPersonActor(final PoseStack poses, final net.minecraft.client.renderer.SubmitNodeCollector collector,
                                                final int packedLight) {
-@@ -459,7 +695,8 @@ public final class BedrockPlayerSkins {
+@@ -463,7 +705,8 @@ public final class BedrockPlayerSkins {
              for (int index = 0; index < frame.surfaces.size(); index++) {
                  final var surface = frame.surfaces.get(index);
                  collector.order(index == 0 ? 0 : 1).submitModelPart(surface.model.model().root(), poses, surface.material(),
@@ -627,7 +762,7 @@ index a6cef3e..6b2e76e 100644
              }
          } finally {
              poses.popPose();
-@@ -567,6 +804,12 @@ public final class BedrockPlayerSkins {
+@@ -571,6 +814,12 @@ public final class BedrockPlayerSkins {
          queries.put("is_alive", entity.isAlive());
          final var owner = BedrockActorState.lifetime(entity.getUUID());
          queries.put("spellcolor", (BedrockActorAnimation.Query) _ -> BedrockActorState.spellColor(entity.getUUID(), owner));
@@ -640,7 +775,7 @@ index a6cef3e..6b2e76e 100644
          queries.put("is_on_ground", entity.onGround());
          queries.put("is_in_water", (BedrockActorAnimation.Query) _ -> entity.isInWater());
          queries.put("ground_speed", (BedrockActorAnimation.Query) _ -> BedrockParticleQueries.groundSpeed(entity.getDeltaMovement()));
-@@ -581,6 +824,7 @@ public final class BedrockPlayerSkins {
+@@ -585,6 +834,7 @@ public final class BedrockPlayerSkins {
          queries.put("blocking", BedrockActorState.isBlocking(entity.getUUID(), entity.isBlocking()));
          queries.put("shield_blocking_bob", BedrockActorState.shieldBlockingBob(entity.getUUID(), partialTick));
          queries.put("target_x_rotation", state.xRot);
@@ -648,7 +783,7 @@ index a6cef3e..6b2e76e 100644
          queries.put("target_y_rotation", state.yRot);
          queries.put("body_y_rotation", state.bodyRot);
          queries.put("walk_distance", entity instanceof BedrockWalkingAnimation.Provider walking
-@@ -820,6 +1064,8 @@ public final class BedrockPlayerSkins {
+@@ -830,6 +1080,8 @@ public final class BedrockPlayerSkins {
          PLAYER_BY_TEXTURE.clear();
          SKIN_ASSEMBLER.clear();
          skinConnection = null;
@@ -657,7 +792,7 @@ index a6cef3e..6b2e76e 100644
      }
  
      private static void release(final Appearance appearance) {
-@@ -832,6 +1078,7 @@ public final class BedrockPlayerSkins {
+@@ -842,6 +1094,7 @@ public final class BedrockPlayerSkins {
          for (final AnimatedSurface surface : appearance.surfaces) {
              textureManager.release(surface.texture());
          }
@@ -665,7 +800,7 @@ index a6cef3e..6b2e76e 100644
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
-@@ -883,11 +1130,15 @@ public final class BedrockPlayerSkins {
+@@ -893,11 +1146,15 @@ public final class BedrockPlayerSkins {
                  3, geometryName(skin.skinResourcePatch(), "animated_128x128")),
                  skin.geometryData(), skin.skinData(), skin.animations());
          }
@@ -683,7 +818,7 @@ index a6cef3e..6b2e76e 100644
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
              final BedrockGeometryModel model = models.stream().filter(value -> value.getIdentifier().equals(name)).findFirst()
                  .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
-@@ -1103,6 +1354,28 @@ public final class BedrockPlayerSkins {
+@@ -1114,6 +1371,28 @@ public final class BedrockPlayerSkins {
          private Map<String, BedrockBoneAnimation.Transform> previewPose = Map.of();
          private List<PreviewSurface> previewSurfaces;
          private long rendererEpoch;
@@ -712,6 +847,71 @@ index a6cef3e..6b2e76e 100644
  
          private Appearance(final PlayerSkin skin, final PlayerSkin headSkin, final Identifier headId, final Geometry geometry, final boolean slim,
                             final Identifier bodyId, final Identifier capeId, final List<AnimatedSurface> surfaces, final BedrockClassicOptions options) {
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResourcesTest.java
+new file mode 100644
+index 0000000..fc750e1
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResourcesTest.java
+@@ -0,0 +1,59 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.Map;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.Assumptions;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockEntityResourcesTest {
++    @Test
++    void mergesAnimationOnlyOverridesAndKeepsNativePlayerControllersAndServerProvenance() throws Exception {
++        Assumptions.assumeTrue(getClass().getResource("/assets/viafabricplus-bedrock/builtin/manifest.json") != null);
++        final var override = layer(Map.of("animations/override.json", bytes("""
++                {"format_version":"1.10.0","animations":{"animation.humanoid.base_pose":{
++                 "loop":true,"bones":{"head":{"rotation":[17,0,0]}}}}}
++                """)));
++        final var packs = BedrockEntityResources.merge(BedrockBuiltinAssets.load().library(), List.of(override), "minecraft:player");
++        assertNotNull(packs.getEntities().get("minecraft:player"));
++        assertFalse(packs.getRenderControllers().renderControllers().isEmpty());
++        assertTrue(packs.getPackStackBottomToTop().stream().anyMatch(packs::isServerPack));
++        final var graph = BedrockActorAnimation.serverPlayer(packs).playback();
++        final var pose = graph.sample(0, new BedrockActorAnimation.Frame(Map.of("is_alive", true),
++                Map.of("is_first_person", 0F, "is_paperdoll", 0F, "map_face_icon", 0F)), false, null, null);
++        assertEquals(17F, pose.get("head").rotation().x(), .001F);
++    }
++
++    @Test
++    void normalizesOnlyTheRequestedActorsModelsAndHonorsHigherTextureAndControllerOverrides() throws Exception {
++        Assumptions.assumeTrue(getClass().getResource("/assets/viafabricplus-bedrock/builtin/manifest.json") != null);
++        final var lower = layer(Map.of("textures/entity/endercrystal/endercrystal.png", new byte[]{3}));
++        final var higher = layer(Map.of(
++                "textures/entity/endercrystal/endercrystal.png", new byte[]{9},
++                "render_controllers/crystal.json", bytes("""
++                 {"render_controllers":{"controller.render.ender_crystal":{
++                   "geometry":"Geometry.default","materials":[{"*":"Material.default"}],"textures":["Texture.beam"]}}}
++                 """)));
++        final var packs = BedrockEntityResources.merge(BedrockBuiltinAssets.load().library(), List.of(lower, higher), "minecraft:ender_crystal");
++        assertEquals(1, packs.getModels().entityModels().size());
++        assertNotNull(packs.getModels().entityModels().get("geometry.ender_crystal"));
++        final var controller = packs.getRenderControllers().renderControllers().get("controller.render.ender_crystal");
++        assertEquals(1, controller.textureExpressions().size());
++        final var first = packs.getPackStackTopToBottom().stream().filter(pack -> pack.content().contains("textures/entity/endercrystal/endercrystal.png")).findFirst().orElseThrow();
++        assertArrayEquals(new byte[]{9}, first.content().get("textures/entity/endercrystal/endercrystal.png"));
++    }
++    private static NativeActorLibrary.Layer layer(final Map<String, byte[]> resources) {
++        final var files = new java.util.HashMap<>(resources);
++        files.put("manifest.json", bytes("{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\"" + java.util.UUID.randomUUID()
++                + "\",\"version\":[1,0,0]}}"));
++        return new NativeActorLibrary.Layer(true, files);
++    }
++    private static byte[] bytes(final String value) { return value.getBytes(StandardCharsets.UTF_8); }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
 new file mode 100644
 index 0000000..578bd60
@@ -952,10 +1152,10 @@ index 0000000..fb9cb72
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerCommandResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerCommandResourcesTest.java
 new file mode 100644
-index 0000000..3dc0ec1
+index 0000000..e1687e9
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerCommandResourcesTest.java
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,67 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -977,23 +1177,22 @@ index 0000000..3dc0ec1
 +
 +final class BedrockPlayerCommandResourcesTest {
 +    @Test
-+    void loadsBuiltinCommandsAfterAnEarlierVanillaLookupWithoutCreatingAServerCostume() throws Exception {
++    void loadsNativeGraphWithoutServerOverridesAndRetainsCommandsAcrossLookups() throws Exception {
 +        final var packs = packs(false);
-+        assertNull(resources(packs, false));
-+        final var result = resources(packs, true);
++        final var result = resources(packs);
 +        assertNotNull(result);
 +        assertEquals(false, value(result, "override"));
-+        assertSame(result, resources(packs, false));
++        assertSame(result, resources(packs));
 +        final var graph = (BedrockActorAnimation) value(result, "graph");
 +        final var commands = new NativeAnimationControllers();
 +        commands.apply(new ActorAnimationCommand("pose", "default", "0", 1, "slot", 0));
 +        final var playback = graph.playback();
 +        playback.commands(commands);
 +        assertEquals(17, playback.sample(0, new BedrockActorAnimation.Frame(Map.of(), Map.of())).get("arm").rotation().x());
-+        final var server = resources(packs(true), false);
++        final var server = resources(packs(true));
 +        assertEquals(true, value(server, "override"));
 +        assertNotSame(result, server);
-+        assertNull(resources(packs(false), false));
++        assertEquals(false, value(resources(packs(false)), "override"));
 +    }
 +
 +    private static ResourcePackStorage packs(final boolean server) throws Exception {
@@ -1012,10 +1211,10 @@ index 0000000..3dc0ec1
 +        return ResourcePackStorage.nativeActors(List.of(new NativeActorLibrary.Layer(server, files)));
 +    }
 +
-+    private static Object resources(final ResourcePackStorage packs, final boolean commands) throws Exception {
-+        final var method = BedrockPlayerSkins.class.getDeclaredMethod("serverResources", ResourcePackStorage.class, boolean.class);
++    private static Object resources(final ResourcePackStorage packs) throws Exception {
++        final var method = BedrockPlayerSkins.class.getDeclaredMethod("serverResources", ResourcePackStorage.class);
 +        method.setAccessible(true);
-+        return method.invoke(null, packs, commands);
++        return method.invoke(null, packs);
 +    }
 +
 +    private static Object value(final Object record, final String name) throws Exception {

@@ -1,0 +1,425 @@
+From da84108f5f7e33a8aa1a36e4f9092c940e2c9710 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 16:10:14 +0200
+Subject: [PATCH] feat(render): use supported native world actor definitions
+
+Ordinary mapped Java entities previously skipped the bundled Bedrock client entity definitions. Resolve the target 1.26.51.1 definition beneath accepted packs and retain independent native animation lifetimes, materials, bone visibility and authoritative actor state. The bundled end crystal uses its authored rotation instead of a camera-facing approximation.
+
+Replace the Java appearance only after every selected surface resolves. Preserve Java fallback for missing queries, effects, equipment, sleeping, riding, unsupported materials and active crystal beams, and retain the original shadow radius. Tests exercise the bundled crystal, camera independence and unsupported overrides.
+---
+ .../BedrockWorldActorAppearance.java          |  71 ++++++
+ .../render/MixinEntityRenderDispatcher.java   |  16 ++
+ .../render/BedrockWorldActorRenderer.java     | 215 ++++++++++++++++++
+ .../BedrockWorldActorAppearanceTest.java      |  50 ++++
+ 4 files changed, 352 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
+new file mode 100644
+index 0000000..fae7458
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
+@@ -0,0 +1,71 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.awt.image.BufferedImage;
++import java.io.IOException;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorMaterialDefinitions;
++
++/** A native world appearance replaces Java only when its entire sampled draw is supported. */
++public final class BedrockWorldActorAppearance {
++    private final Map<String, BufferedImage> images = new java.util.HashMap<>();
++    private final ResourcePackStorage packs;
++    private final BedrockActorAnimation graph;
++    private final org.cube.converter.data.bedrock.BedrockEntityData definition;
++    private final BedrockActorMaterialDefinitions materials;
++
++    public BedrockWorldActorAppearance(final ResourcePackStorage packs, final String identifier) throws IOException {
++        this.packs = packs;
++        this.definition = packs.getEntities().get(identifier).entityData();
++        this.graph = BedrockActorAnimation.serverEntity(packs, identifier);
++        this.materials = BedrockActorMaterialDefinitions.load(packs);
++    }
++
++    public Playback playback() { return new Playback(); }
++
++    public final class Playback {
++        private final BedrockActorAnimation.Playback animation = graph.playback();
++        private final BedrockPlayerControllers controllers = new BedrockPlayerControllers(definition,
++                packs.getRenderControllers().renderControllers());
++
++        public void commands(final net.raphimc.viabedrock.api.model.NativeAnimationControllers commands) { this.animation.commands(commands); }
++
++        public Frame sample(final float seconds, final BedrockActorAnimation.Frame input) throws IOException {
++            // Effect locators and special entity layers need their own world integration.
++            if (graph.hasEffects()) return null;
++            final var pose = this.animation.sample(seconds, input, false, null, null);
++            final var selection = this.animation.renderControllers(this.controllers);
++            final var scale = this.animation.scale();
++            if (!this.animation.hasCompleteQueries() || selection.surfaces().isEmpty()) return null;
++            final List<Draw> draws = new ArrayList<>();
++            for (final var surface : selection.surfaces()) {
++                final var controller = packs.getRenderControllers().renderControllers().get(surface.controller());
++                if (controller == null || !controller.materialsMap().keySet().equals(Set.of("*"))) return null;
++                final var geometry = packs.getModels().entityModels().get(surface.geometry());
++                final var material = materials.alphaTest(surface.material()).orElse(null);
++                if (geometry == null || material == null) return null;
++                BufferedImage image = images.get(surface.texture());
++                if (image == null) for (final var pack : packs.getPackStackTopToBottom()) {
++                    final var found = pack.content().getShortnameImage(surface.texture());
++                    if (found != null) { image = found.getImage(); images.put(surface.texture(), image); break; }
++                }
++                if (image == null) return null;
++                draws.add(new Draw(surface, geometry, image, material));
++            }
++            return new Frame(pose, scale, List.copyOf(draws));
++        }
++    }
++
++    public record Frame(Map<String, BedrockBoneAnimation.Transform> pose, BedrockBoneAnimation.Vector scale, List<Draw> draws) {}
++    public record Draw(BedrockPlayerControllers.Surface surface, BedrockGeometryModel geometry,
++                       BufferedImage image, BedrockActorMaterialDefinitions.AlphaTest material) {}
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
+index 94877d4..7b5265c 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
+@@ -21,6 +21,7 @@ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
+ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockEntityRenderer;
++import com.viaversion.viafabricplus.bedrock.render.BedrockWorldActorRenderer;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockGuiActorRenderer;
+ import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockGuiActorRenderer;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
+@@ -49,6 +50,8 @@ public abstract class MixinEntityRenderDispatcher implements IBedrockGuiActorRen
+     @Unique
+     private BedrockEntityRenderer stackanvil$bedrockRenderer;
+ 
++    @Unique private BedrockWorldActorRenderer stackanvil$worldActorRenderer;
++
+     @Unique
+     private BedrockGuiActorRenderer stackanvil$guiActorRenderer;
+ 
+@@ -67,6 +70,8 @@ public abstract class MixinEntityRenderDispatcher implements IBedrockGuiActorRen
+     ) {
+         final Map<EntityType<?>, EntityRenderer<?, ?>> renderers = original.call(context);
+         this.stackanvil$bedrockRenderer = new BedrockEntityRenderer(context);
++        if (this.stackanvil$worldActorRenderer != null) this.stackanvil$worldActorRenderer.clear();
++        this.stackanvil$worldActorRenderer = new BedrockWorldActorRenderer(context);
+         if (this.stackanvil$guiActorRenderer != null) this.stackanvil$guiActorRenderer.clear();
+         this.stackanvil$guiActorRenderer = new BedrockGuiActorRenderer(context);
+         BedrockPlayerSkins.rendererContext(context);
+@@ -89,9 +94,20 @@ public abstract class MixinEntityRenderDispatcher implements IBedrockGuiActorRen
+         }
+     }
+ 
++    @SuppressWarnings("unchecked")
++    @Inject(method = "getRenderer(Lnet/minecraft/world/entity/Entity;)Lnet/minecraft/client/renderer/entity/EntityRenderer;", at = @At("RETURN"), cancellable = true)
++    private <T extends Entity> void nativeWorldActor(final T entity, final CallbackInfoReturnable<EntityRenderer<? super T, ?>> callback) {
++        if (this.stackanvil$worldActorRenderer != null && this.stackanvil$worldActorRenderer.prepare(entity, (EntityRenderer<Entity, ?>) callback.getReturnValue()))
++            callback.setReturnValue((EntityRenderer<? super T, ?>) this.stackanvil$worldActorRenderer);
++    }
++
+     @SuppressWarnings("unchecked")
+     @Inject(method = "getRenderer(Lnet/minecraft/client/renderer/entity/state/EntityRenderState;)Lnet/minecraft/client/renderer/entity/EntityRenderer;", at = @At("HEAD"), cancellable = true)
+     private <S extends EntityRenderState> void bedrockEntityRenderState(final S state, final CallbackInfoReturnable<EntityRenderer<?, ? super S>> cir) {
++        if (state instanceof BedrockWorldActorRenderer.State && this.stackanvil$worldActorRenderer != null) {
++            cir.setReturnValue((EntityRenderer<?, ? super S>) this.stackanvil$worldActorRenderer);
++            return;
++        }
+         if (state instanceof BedrockGuiActorRenderer.State && this.stackanvil$guiActorRenderer != null) {
+             cir.setReturnValue((EntityRenderer<?, ? super S>) this.stackanvil$guiActorRenderer);
+             return;
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
+new file mode 100644
+index 0000000..f8f3498
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
+@@ -0,0 +1,215 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.mojang.blaze3d.platform.NativeImage;
++import com.mojang.blaze3d.vertex.PoseStack;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockParticleQueries;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockEntityResources;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockWorldActorAppearance;
++import java.io.IOException;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Optional;
++import java.util.Set;
++import java.util.UUID;
++import java.util.WeakHashMap;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.model.Model;
++import net.minecraft.client.renderer.SubmitNodeCollector;
++import net.minecraft.client.renderer.entity.EntityRenderer;
++import net.minecraft.client.renderer.entity.EntityRendererProvider;
++import net.minecraft.client.renderer.entity.state.EntityRenderState;
++import net.minecraft.client.renderer.rendertype.RenderType;
++import net.minecraft.client.renderer.state.level.CameraRenderState;
++import net.minecraft.client.renderer.texture.DynamicTexture;
++import net.minecraft.client.renderer.texture.OverlayTexture;
++import net.minecraft.resources.Identifier;
++import net.minecraft.util.Mth;
++import net.minecraft.world.entity.Avatar;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.EquipmentSlot;
++import net.minecraft.world.entity.LivingEntity;
++import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++/** Keeps Java gameplay entities while using supported native definitions for their appearance. */
++public final class BedrockWorldActorRenderer extends EntityRenderer<Entity, BedrockWorldActorRenderer.State> {
++    private final Map<Entity, Actor> actors = new WeakHashMap<>();
++    private final Map<ResourcePackStorage, Optional<BedrockWorldActorAppearance>> appearances = new HashMap<>();
++    private final Map<ModelKey, Model<EntityRenderState>> models = new HashMap<>();
++    private final Map<TextureKey, Identifier> textures = new HashMap<>();
++    private final Map<MaterialKey, RenderType> renderTypes = new java.util.LinkedHashMap<>(16, .75F, true) {
++        @Override protected boolean removeEldestEntry(final Map.Entry<MaterialKey, RenderType> entry) { return this.size() > 256; }
++    };
++    private ResourcePackStorage accepted;
++    private Object level;
++    private final String textureRoot = "world_actors/" + UUID.randomUUID() + "/";
++
++    public BedrockWorldActorRenderer(final EntityRendererProvider.Context context) { super(context); }
++    @Override public State createRenderState() { return new State(); }
++
++    public void clear() {
++        this.textures.values().forEach(Minecraft.getInstance().getTextureManager()::release);
++        this.textures.clear(); this.models.clear(); this.renderTypes.clear(); this.actors.clear(); this.appearances.clear();
++        this.accepted = null; this.level = null;
++    }
++
++    /** A native draw never replaces a Java renderer until its graph, material and bindings resolve. */
++    public boolean prepare(final Entity entity, final EntityRenderer<Entity, ?> original) {
++        final var accepted = BedrockActorResources.get();
++        if (this.accepted != accepted || this.level != entity.level()) {
++            this.clear(); this.accepted = accepted; this.level = entity.level();
++        }
++        final var snapshot = BedrockActorState.state(entity.getUUID());
++        if (accepted == null || snapshot == null || !entity.isAlive() || entity.isInvisible()
++                || entity instanceof Avatar) return false;
++        if (entity instanceof LivingEntity living) {
++            // Retain Java equipment, sleeping, riding, and death layers until they have native counterparts.
++            if (living.isPassenger() || living.isSleeping()) return false;
++            for (final var slot : EquipmentSlot.values()) if (!living.getItemBySlot(slot).isEmpty()) return false;
++        } else if (!(entity instanceof EndCrystal crystal) || crystal.getBeamTarget() != null) return false;
++        final var packs = BedrockEntityResources.get(accepted, snapshot.identifier());
++        if (packs == null) return false;
++        final var appearance = this.appearances.computeIfAbsent(packs, _ -> {
++            try { return Optional.of(new BedrockWorldActorAppearance(packs, snapshot.identifier())); }
++            catch (IOException | RuntimeException unsupported) { return Optional.empty(); }
++        }).orElse(null);
++        if (appearance == null) return false;
++        var actor = this.actors.get(entity);
++        if (actor == null || actor.packs != packs || !actor.lifetime.equals(snapshot.lifetime())) {
++            actor = new Actor(packs, snapshot.lifetime(), appearance.playback());
++            this.actors.put(entity, actor);
++        }
++        if (actor.failed) return false;
++        final float partial = Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(false);
++        final float age = entity.tickCount + partial;
++        if (actor.age == age) return actor.frame != null;
++        actor.age = age;
++        final float yaw = entity instanceof LivingEntity living ? Mth.rotLerp(partial, living.yBodyRotO, living.yBodyRot)
++                : Mth.rotLerp(partial, entity.yRotO, entity.getYRot());
++        final var camera = Minecraft.getInstance().gameRenderer.mainCamera().position().subtract(entity.getPosition(partial));
++        final var input = new BedrockActorFrame(age / 20F, yaw, camera.x, camera.y, camera.z).input(snapshot);
++        final Map<String, Object> queries = new HashMap<>(input.queries());
++        queries.put("is_alive", true); queries.put("is_on_ground", entity.onGround()); queries.put("is_in_water", entity.isInWater());
++        queries.put("is_in_ui", false); queries.put("is_first_person", false);
++        queries.put("property", (BedrockActorAnimation.Query) args -> {
++            if (args.size() != 1 || !snapshot.properties().containsKey(String.valueOf(args.getFirst())))
++                throw new IllegalArgumentException("Missing native entity property");
++            return snapshot.properties().get(String.valueOf(args.getFirst()));
++        });
++        queries.put("position_delta", (BedrockActorAnimation.Query) args -> args.size() != 1 ? 0F : switch (((Number) args.getFirst()).intValue()) {
++            case 0 -> entity.getX() - entity.xo; case 1 -> entity.getY() - entity.yo; case 2 -> entity.getZ() - entity.zo; default -> 0F;
++        });
++        if (entity instanceof LivingEntity living) {
++            queries.put("target_x_rotation", Mth.rotLerp(partial, entity.xRotO, entity.getXRot()));
++            queries.put("target_y_rotation", Mth.rotLerp(partial, living.yHeadRotO, living.yHeadRot) - yaw);
++            queries.put("modified_distance_moved", living.walkAnimation.position(partial));
++            queries.put("modified_move_speed", living.walkAnimation.speed(partial));
++            queries.put("ground_speed", BedrockParticleQueries.groundSpeed(entity.getDeltaMovement()));
++            queries.put("is_sleeping", false); queries.put("is_riding", false); queries.put("is_using_item", false);
++            queries.put("get_equipped_item_name", (BedrockActorAnimation.Query) _ -> "");
++            queries.put("is_item_name_any", (BedrockActorAnimation.Query) _ -> false);
++        } else if (entity instanceof EndCrystal crystal) queries.put("show_bottom", crystal.showsBottom());
++        try {
++            actor.playback.commands(BedrockActorState.animations(entity.getUUID()));
++            actor.shadowRadius = original.createRenderState(entity, partial).shadowRadius;
++            actor.frame = actor.playback.sample(age / 20F, new BedrockActorAnimation.Frame(queries, Map.of()));
++            actor.yaw = yaw; actor.scale = snapshot.scale();
++            if (actor.frame == null) { actor.failed = true; return false; }
++            // Complete texture registration before selecting the renderer, so missing images keep Java visible.
++            for (final var draw : actor.frame.draws()) this.texture(packs, draw);
++            return true;
++        } catch (IOException | RuntimeException unsupported) {
++            actor.failed = true; actor.frame = null; return false;
++        }
++    }
++
++    @Override
++    public void extractRenderState(final Entity entity, final State state, final float partial) {
++        super.extractRenderState(entity, state, partial);
++        final var actor = this.actors.get(entity);
++        state.nativeShadowRadius = actor.shadowRadius;
++        state.pose = actor.frame.pose(); state.yaw = actor.yaw; state.scale = actor.scale; state.scriptScale = actor.frame.scale();
++        state.overlay = OverlayTexture.pack(0, entity instanceof LivingEntity living && living.hurtTime > 0);
++        final List<Draw> draws = new ArrayList<>();
++        for (final var draw : actor.frame.draws()) {
++            final var surface = draw.surface();
++            final Set<String> bones = draw.geometry().getParents().stream().map(bone -> bone.getName()).filter(name -> {
++                boolean visible = true;
++                for (final var rule : surface.visibility()) if (rule.matches(name)) visible = rule.visible();
++                return visible;
++            }).collect(java.util.stream.Collectors.toSet());
++            final var model = this.models.computeIfAbsent(new ModelKey(actor.packs, surface.geometry(), bones),
++                    _ -> BedrockGeometry.entityModel(draw.geometry(), bones));
++            final var uv = surface.uv();
++            final var material = new MaterialKey(this.textures.get(new TextureKey(actor.packs, surface.texture())), draw.material(),
++                    surface.ignoreLighting(), surface.lightMultiplier(), new BedrockActorUvTransform(uv.offsetX(), uv.offsetY(), uv.scaleX(), uv.scaleY()),
++                    BedrockActorRenderTypes.usesNetherLighting());
++            final var type = this.renderTypes.computeIfAbsent(material, key -> BedrockActorRenderTypes.create(key.texture(),
++                    key.material().cull(), key.ignoreLighting(), key.material().emissive(), key.multiplier(), key.uv(), key.nether()));
++            draws.add(new Draw(model, type, surface.ignoreLighting()));
++        }
++        state.draws = List.copyOf(draws);
++    }
++
++    private void texture(final ResourcePackStorage packs, final BedrockWorldActorAppearance.Draw draw) {
++        final var key = new TextureKey(packs, draw.surface().texture());
++        if (this.textures.containsKey(key)) return;
++        final var image = draw.image();
++        final var pixels = new NativeImage(image.getWidth(), image.getHeight(), false);
++        for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
++            final int argb = image.getRGB(x,y);
++            pixels.setPixelABGR(x,y,(argb & 0xFF00FF00) | ((argb & 0xFF) << 16) | ((argb >>> 16) & 0xFF));
++        }
++        final var id = Identifier.fromNamespaceAndPath("viafabricplus-bedrock", this.textureRoot + this.textures.size());
++        Minecraft.getInstance().getTextureManager().register(id, new DynamicTexture(id::toString,pixels));
++        this.textures.put(key, id);
++    }
++
++    @Override protected float getShadowRadius(final State state) { return state.nativeShadowRadius; }
++
++    @Override
++    public void submit(final State state, final PoseStack poses, final SubmitNodeCollector nodes, final CameraRenderState camera) {
++        poses.pushPose();
++        try {
++            BedrockEntityRenderer.applyActorTransform(poses, state.yaw, state.scale);
++            poses.translate(0,1.5F,0); poses.scale(state.scriptScale.x(),state.scriptScale.y(),state.scriptScale.z()); poses.translate(0,-1.5F,0);
++            for (final var draw : state.draws) nodes.submitModel(draw.model(), state, poses, draw.type(),
++                    BedrockActorRenderTypes.lightCoords(state.lightCoords, draw.ignoreLighting()), state.overlay, state.outlineColor);
++        } finally { poses.popPose(); }
++        super.submit(state, poses, nodes, camera);
++    }
++
++    public static final class State extends EntityRenderState implements BedrockAnimatedEntityState {
++        private Map<String, BedrockBoneAnimation.Transform> pose = Map.of();
++        private float yaw, scale, nativeShadowRadius;
++        private int overlay;
++        private BedrockBoneAnimation.Vector scriptScale;
++        private List<Draw> draws = List.of();
++        @Override public Map<String, BedrockBoneAnimation.Transform> pose() { return this.pose; }
++        @Override public BedrockActorAnimation.Visibility visibility() { return BedrockActorAnimation.Visibility.UNSPECIFIED; }
++    }
++    private static final class Actor {
++        private final ResourcePackStorage packs;
++        private final UUID lifetime;
++        private final BedrockWorldActorAppearance.Playback playback;
++        private float age = Float.NaN, yaw, scale, shadowRadius;
++        private boolean failed;
++        private BedrockWorldActorAppearance.Frame frame;
++        private Actor(final ResourcePackStorage packs, final UUID lifetime, final BedrockWorldActorAppearance.Playback playback) {
++            this.packs = packs; this.lifetime = lifetime; this.playback = playback;
++        }
++    }
++    private record MaterialKey(Identifier texture, BedrockActorMaterialDefinitions.AlphaTest material, boolean ignoreLighting, float multiplier, BedrockActorUvTransform uv, boolean nether) {}
++    private record ModelKey(ResourcePackStorage packs, String geometry, Set<String> bones) {}
++    private record TextureKey(ResourcePackStorage packs, String path) {}
++    private record Draw(Model<EntityRenderState> model, RenderType type, boolean ignoreLighting) {}
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
+new file mode 100644
+index 0000000..414f7a7
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
+@@ -0,0 +1,50 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.Map;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.Assumptions;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockWorldActorAppearanceTest {
++    private static BedrockWorldActorAppearance appearance(final String controller) throws Exception {
++        Assumptions.assumeTrue(BedrockWorldActorAppearance.class.getResource("/assets/viafabricplus-bedrock/builtin/manifest.json") != null);
++        final var files = new java.util.HashMap<String, byte[]>();
++        files.put("manifest.json", ("{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\""
++                + java.util.UUID.randomUUID() + "\",\"version\":[1,0,0]}}").getBytes(StandardCharsets.UTF_8));
++        if (controller != null) files.put("render_controllers/override.json", controller.getBytes(StandardCharsets.UTF_8));
++        final var packs = BedrockEntityResources.merge(BedrockBuiltinAssets.load().library(),
++                List.of(new NativeActorLibrary.Layer(true, files)), "minecraft:ender_crystal");
++        return new BedrockWorldActorAppearance(packs, "minecraft:ender_crystal");
++    }
++
++    @Test
++    void rendersTheBundledCrystalWithoutServerOverridesAndDoesNotFaceTheCamera() throws Exception {
++        final var actor = appearance(null).playback();
++        final var first = actor.sample(0, new BedrockActorAnimation.Frame(Map.of("show_bottom", true, "rotation_to_camera", 0F), Map.of("time_offset", 0F)));
++        assertNotNull(first);
++        assertEquals(1, first.draws().size());
++        assertNotNull(first.draws().getFirst().image());
++        assertFalse(first.pose().isEmpty());
++        final var turned = appearance(null).playback().sample(0, new BedrockActorAnimation.Frame(Map.of("show_bottom", false, "rotation_to_camera", 180F), Map.of("time_offset", 0F)));
++        assertEquals(first.pose(), turned.pose());
++        assertTrue(first.draws().getFirst().surface().visibility().getFirst().visible());
++        assertFalse(turned.draws().getFirst().surface().visibility().getFirst().visible());
++    }
++
++    @Test
++    void keepsJavaFallbackWhenAnOverrideNeedsAnUnsupportedQueryOrMaterial() throws Exception {
++        for (final String unsupported : List.of("query.unsupported", "Material.unsupported")) {
++            final var actor = appearance("{\"render_controllers\":{\"controller.render.ender_crystal\":{\"geometry\":\"Geometry.default\",\"materials\":[{\"*\":\""
++                    + unsupported + "\"}],\"textures\":[\"Texture.default\"]}}}").playback();
++            assertNull(actor.sample(0, new BedrockActorAnimation.Frame(Map.of("show_bottom", true), Map.of())));
++        }
++    }
++}
+-- 
+2.56.0
