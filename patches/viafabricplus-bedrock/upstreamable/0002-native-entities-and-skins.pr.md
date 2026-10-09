@@ -264,3 +264,11 @@ The reported Apple GPU needs a fresh visual comparison.
 Licensed material documents now provide the native inheritance graph.
 The renderer removes built-in GPU layout, sampler and skinning metadata that Java replaces with its own buffers and CPU poses.
 Server material validation remains strict.
+
+## Follow-up: player heads and shader emission
+
+Installed native skin textures now come from `PlayerInfo.getSkin`, which also supplies tab and Chat Heads consumers. Offline Bedrock connections display tab heads when native skins exist. Connection authentication remains unchanged.
+
+With Iris active, native emissive masks use an opaque lit pass and additive emitted radiance. The target 1.26.51.1 shader weights lighting by source alpha and emission by inverse alpha. Preserve per-pixel weights, UV transforms, culling and texture upload lifetimes. The exhaustive mask regression checks all alpha/channel pairs and several lighting levels.
+
+The private CubeCraft replay reaches playable spawn with Complementary Reimagined r5.9.3 and passes the rendering audit. Native skins install unchanged and active models resolve. This does not establish parity for every shader pack, Chat Heads configuration or reported glowing entity.

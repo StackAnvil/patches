@@ -2936,3 +2936,11 @@ The executable identity and native float thresholds are recorded in the patch bo
 The targeted emitter regression passes.
 All 48 executed native constant cases match the Java implementation.
 Native code and probe results remain private.
+
+## Follow-up: crouching hand and armor locators
+
+The first-person root uses the native player render height of 1.62001, separately from camera posture. The target constructor and executed first-person matrix establish this offset. Java crouching eye height previously raised the hand's model root.
+
+Owner geometry queries expose authored root locator offsets in model coordinates. Bone pivot subtraction and render-axis conversion apply only to drawing locators. The target armor animations use these owner offsets for custom bodies. A numerical test covers rotated bones and raw axis values.
+
+The crouching root error is corrected. The reported low standing hand only on CubeCraft still needs a matched pose comparison. Visible armor parity still needs the reported skin identity.

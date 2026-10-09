@@ -81,3 +81,9 @@ Private execution of the native scalar and SIMD instructions passes 443 byte and
 The focused classic suite passes 24 tests, with two unrelated optional fixtures skipped. The licensed Vex integration test passes. Tests cover mixed-case inheritance, parent lookup, non-ASCII names, duplicate detection, cycles, and normalized persistence.
 
 The replayed full stack builds and bundles successfully. The full add-on suite passes 382 tests, with 95 optional fixtures skipped. The licensed Vex and base-library tests run in this build. No account profiles change.
+
+## Follow-up: legacy armor inheritance
+
+Legacy child `reset` clears inherited cubes before adding local cubes. Nonzero child inflation replaces inherited cube inflation; zero keeps the inherited values. The matching 1.26.51.1 loader executes these operations at `1460ff5f0` through `1460ff610` and `1460ff929` through `1460ff963`.
+
+A private instruction execution probe passes 32 reset, cube-count and inflation cases. JSON parsing and allocation are outside that probe. Unit tests cover reset with local cubes, nonzero replacement and the zero boundary. This corrects the earlier note about freezing inherited cube inflation.

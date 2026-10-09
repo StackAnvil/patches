@@ -1371,3 +1371,9 @@ The full 31-patch replay succeeds. The private clean build passes 722 cases: 604
 It uses the frozen vehicle core and pinned licensed asset input.
 Native collision, GPU capture, and strict BDS trajectories on direct and ViaProxy routes remain separate verification gates.
 No installed artifacts or runtime processes change during these checks.
+
+## Follow-up: block escape permission
+
+Suppress Java's block-escape push when a known native actor snapshot omits `PUSH_TOWARDS_CLOSEST_SPACE` (flag 109). The matching 1.26.51.1 system at `14901c270` checks this flag before creating its escape request. Three saved CubeCraft actor snapshots omit the flag. Unknown native state keeps Java's existing behavior.
+
+This removes an unsupported source of sideways velocity during block overlap. The supplied log has no movement-correction diagnostics. Pillars of Fortune jumping and block-placement falls still need a live gameplay comparison; this gate alone does not establish movement parity.

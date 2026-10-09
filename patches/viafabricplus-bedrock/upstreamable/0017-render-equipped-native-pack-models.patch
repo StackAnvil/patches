@@ -1,4 +1,4 @@
-From cd63069cee545cafe4103f4a5faa281f4e160bd0 Mon Sep 17 00:00:00 2001
+From 5a6005f905aa1dbc64cea32abc6f223e0d4244a2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 18:26:58 +0200
 Subject: [PATCH] feat(attachables): render equipped native pack models
@@ -56,30 +56,46 @@ visibility. Legacy player skin imports fold bone names to ASCII lowercase,
 while server controller rules retain their authored spelling. Cached
 patterns restore the arm and sleeve without changing exact matching for
 custom actors or the order of explicit visibility overrides.
+
+Load the licensed 1.26.51.1 equipment library below accepted server packs.
+Resolve declared legacy equipment geometry through the existing native
+inheritance rules, including parents in another file or a higher pack.
+Native player armor definitions need these parents and owner root-locator
+queries; falling back to Java armor discards custom body offsets.
+
+Tests cover native owner bindings, replacement conditions and cross-file
+inheritance with an accepted parent override. The bundled iron chestplate
+resolves its geometry, alpha-test material and native animation in a private
+resource probe. Full visible armor parity still needs the reported skin.
 ---
  .../appearance/BedrockActorAnimation.java     |  10 +
  .../BedrockAttachableSelection.java           |  51 +++
+ .../appearance/BedrockEquipmentResources.java |  90 +++++
  .../render/MixinAvatarAnimationRenderer.java  |  18 +-
  .../render/MixinAvatarAnimationState.java     |  11 +-
+ .../bedrock/render/BedrockActorResources.java |   2 +
  .../bedrock/render/BedrockAnimatedModel.java  |  63 +++-
  .../bedrock/render/BedrockEquipmentCache.java |  41 +++
  .../BedrockEquippedAttachableLayer.java       |  34 ++
- .../render/BedrockPlayerAttachables.java      | 304 ++++++++++++++++++
+ .../render/BedrockPlayerAttachables.java      | 312 ++++++++++++++++++
  .../bedrock/render/BedrockPlayerModel.java    |   6 +
  .../bedrock/render/BedrockPlayerSkins.java    |  20 +-
  .../BedrockAttachableSelectionTest.java       |  46 +++
+ .../BedrockEquipmentResourcesTest.java        |  86 +++++
  .../BedrockEquippedAnimationTest.java         |  46 +++
  .../BedrockPlayerControllersTest.java         |  22 ++
  .../render/BedrockAttachableMatricesTest.java | 150 +++++++++
  .../render/BedrockCostumeVisibilityTest.java  |  45 +++
  .../render/BedrockEquippedAttachableTest.java |  98 ++++++
  .../render/BedrockPlayerModelTest.java        |  58 ++++
- 17 files changed, 1019 insertions(+), 4 deletions(-)
+ 20 files changed, 1205 insertions(+), 4 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelectionTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResourcesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAttachableMatricesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCostumeVisibilityTest.java
@@ -170,6 +186,102 @@ index 0000000..a66cd4c
 +        }
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java
+new file mode 100644
+index 0000000..123d475
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java
+@@ -0,0 +1,90 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.LinkedHashMap;
++import java.util.HashSet;
++import java.util.Set;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++/** Native equipment inherits the bundled target library below accepted server overrides. */
++public final class BedrockEquipmentResources {
++    private static ResourcePackStorage source, equipment;
++
++    private BedrockEquipmentResources() {}
++
++    public static ResourcePackStorage get(final ResourcePackStorage accepted) throws IOException {
++        if (accepted == null) return null;
++        if (source != accepted) {
++            equipment = merge(BedrockBuiltinAssets.load().library(),
++                    NativeActorLibrary.resources(accepted.getPackStackBottomToTop(), accepted::isServerPack));
++            source = accepted;
++        }
++        return equipment;
++    }
++
++    static ResourcePackStorage merge(final BedrockResourceLibrary builtin,
++                                     final List<NativeActorLibrary.Layer> accepted) throws IOException {
++        final List<NativeActorLibrary.Layer> layers = new ArrayList<>(
++                NativeActorLibrary.resources(builtin.resourcePacks(), _ -> false));
++        layers.addAll(accepted);
++        final BedrockResourceLibrary library = BedrockResourceLibrary.withServerPacks(builtin,
++                accepted.stream().map(NativeActorLibrary.Layer::resources).toList());
++        final Set<String> equippedModels = new HashSet<>();
++        for (final var layer : layers) {
++            for (final var entry : layer.resources().entrySet()) {
++                if (!entry.getKey().startsWith("attachables/") || !entry.getKey().endsWith(".json")) continue;
++                final JsonObject attachable = JsonParser.parseString(new String(entry.getValue(),
++                        StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("minecraft:attachable");
++                if (attachable == null) continue;
++                final JsonObject geometries = attachable.getAsJsonObject("description").getAsJsonObject("geometry");
++                if (geometries != null) geometries.entrySet().forEach(entryModel -> equippedModels.add(entryModel.getValue().getAsString()));
++            }
++        }
++        final List<NativeActorLibrary.Layer> resolved = new ArrayList<>();
++        for (final var layer : layers) {
++            final var resources = new LinkedHashMap<>(layer.resources());
++            for (final var entry : layer.resources().entrySet()) {
++                if (!entry.getKey().startsWith("models/") || !entry.getKey().endsWith(".json")) continue;
++                final JsonObject document = JsonParser.parseString(
++                        new String(entry.getValue(), StandardCharsets.UTF_8)).getAsJsonObject();
++                if (document.has("minecraft:geometry") || document.keySet().stream()
++                        .noneMatch(name -> name.startsWith("geometry.") && name.contains(":"))) continue;
++                // Equipment needs only declared models; their parents resolve against the complete library.
++                final JsonArray geometries = new JsonArray();
++                for (final var definition : document.entrySet()) {
++                    if (!definition.getKey().startsWith("geometry.")
++                            || !equippedModels.contains(definition.getKey().split(":", -1)[0])) continue;
++                    final JsonObject selected = new JsonObject();
++                    if (document.has("format_version")) selected.add("format_version", document.get("format_version"));
++                    selected.add(definition.getKey(), definition.getValue());
++                    geometries.add(BedrockLegacyGeometry.read(selected,
++                            definition.getKey().split(":", -1)[0], library::model));
++                }
++                if (geometries.isEmpty()) continue;
++                final JsonObject normalized = new JsonObject();
++                normalized.addProperty("format_version", "1.12.0");
++                normalized.add("minecraft:geometry", geometries);
++                resources.put(entry.getKey(), normalized.toString().getBytes(StandardCharsets.UTF_8));
++            }
++            resolved.add(new NativeActorLibrary.Layer(layer.server(), resources));
++        }
++        return ResourcePackStorage.nativeActors(resolved);
++    }
++
++    public static void clear() {
++        source = null;
++        equipment = null;
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java
 index dc7282e..a871253 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java
@@ -244,6 +356,26 @@ index aa2083a..cbc48ea 100644
      @Unique private Map<String, BedrockBoneAnimation.Transform> bedrock$animationPose = Map.of();
  
      @Override
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
+index da726c2..1e9157e 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
+@@ -6,6 +6,7 @@
+ package com.viaversion.viafabricplus.bedrock.render;
+ 
+ import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockEquipmentResources;
+ import net.minecraft.client.Minecraft;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ 
+@@ -34,6 +35,7 @@ public final class BedrockActorResources {
+     }
+ 
+     public static void clear() {
++        BedrockEquipmentResources.clear();
+         BedrockShaderEmission.clear();
+         BedrockAcceptedResources.clear();
+         loaded = false;
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 index 1c1c8c8..6ee9381 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
@@ -452,10 +584,10 @@ index 0000000..29abd83
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 new file mode 100644
-index 0000000..08b12cd
+index 0000000..8ab426b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
-@@ -0,0 +1,304 @@
+@@ -0,0 +1,312 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -467,6 +599,7 @@ index 0000000..08b12cd
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockAttachableSelection;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockEquipmentResources;
 +import net.raphimc.viabedrock.protocol.rewriter.ItemDataRewriter;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerControllers;
@@ -518,7 +651,13 @@ index 0000000..08b12cd
 +    }
 +
 +    public static List<Surface> extract(final Avatar entity, final AvatarRenderState state, final float partialTick) {
-+        final ResourcePackStorage packs = BedrockActorResources.get();
++        final ResourcePackStorage packs;
++        try {
++            packs = BedrockEquipmentResources.get(BedrockActorResources.get());
++        } catch (IOException invalid) {
++            ViaFabricPlusBedrock.impl().logger().warn("Could not read native equipment resources", invalid);
++            return List.of();
++        }
 +        if (packs == null || !packs.isLoadedOnJavaClient() || packs.getAttachables() == null) {
 +            if (currentPacks != null) clear();
 +            return List.of();
@@ -533,6 +672,7 @@ index 0000000..08b12cd
 +        final BedrockEquipmentCache<Equipped> equipment = EQUIPPED.computeIfAbsent(entity, _ -> new BedrockEquipmentCache<>());
 +        final List<Surface> result = new ArrayList<>();
 +        final Map<String, Object> queries = new HashMap<>(BedrockPlayerSkins.actorQueries(entity, state, partialTick));
++        queries.putAll(BedrockPlayerSkins.geometryQueries(state));
 +        queries.put("is_invisible", state.isInvisible);
 +        queries.put("owner_identifier", "minecraft:player");
 +        queries.put("is_owner_identifier_any", (BedrockActorAnimation.Query) names -> names.contains("minecraft:player"));
@@ -783,19 +923,19 @@ index 2224643..4cf95ab 100644
 +
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index ba919f8..8327ccc 100644
+index dc5696b..5964c45 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -780,7 +780,7 @@ public final class BedrockPlayerSkins {
-                                     BedrockFirstPersonCamera.Rotation camera, List<FirstPersonSurface> surfaces,
-                                     org.joml.Matrix4f root) {}
+@@ -789,7 +789,7 @@ public final class BedrockPlayerSkins {
+         return geometry == null ? Map.of() : geometry.queries();
+     }
  
 -    private static Map<String, Object> actorQueries(final Avatar entity, final AvatarRenderState state, final float partialTick) {
 +    static Map<String, Object> actorQueries(final Avatar entity, final AvatarRenderState state, final float partialTick) {
          final Map<String, Object> queries = new HashMap<>();
          queries.put("life_time", state.ageInTicks / 20F);
          queries.put("frame_alpha", partialTick);
-@@ -1038,10 +1038,28 @@ public final class BedrockPlayerSkins {
+@@ -1047,10 +1047,28 @@ public final class BedrockPlayerSkins {
          BedrockActorResources.clear();
          rendererContext = context;
          rendererEpoch++;
@@ -874,6 +1014,98 @@ index 0000000..6bdd22d
 +        root.addProperty("format_version", "1.10.0");
 +        root.add("minecraft:attachable", attachable);
 +        return root.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResourcesTest.java
+new file mode 100644
+index 0000000..dd4cab4
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResourcesTest.java
+@@ -0,0 +1,86 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.Map;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockEquipmentResourcesTest {
++    @Test
++    void inheritsNativeOwnerBindingsWhileRetainingServerReplacementConditions() throws Exception {
++        final String item = "minecraft:iron_chestplate", player = item + ".player";
++        final var builtin = BedrockResourceLibrary.read(Map.of(
++                "library/vanilla/attachables/generic.json", definition(item, null),
++                "library/vanilla/attachables/player.json", definition(player, "q.owner_identifier == 'minecraft:player'")));
++        final var inherited = BedrockEquipmentResources.merge(builtin, List.of());
++        final var selector = new BedrockAttachableSelection();
++        final var owner = new BedrockActorAnimation.Frame(Map.of("owner_identifier", "minecraft:player"), Map.of());
++        assertEquals(player, selector.select(inherited.getAttachables(), item, Map.of(), owner).identifier());
++        final var overridden = BedrockEquipmentResources.merge(builtin, List.of(new NativeActorLibrary.Layer(true,
++                Map.of("attachables/player.json", definition(player, "q.property('test:enabled')"),
++                        "manifest.json", manifest()))));
++        assertEquals(player, selector.select(overridden.getAttachables(), item, Map.of("test:enabled", true), owner).identifier());
++        assertEquals(item, selector.select(overridden.getAttachables(), item, Map.of("test:enabled", false), owner).identifier());
++        assertNotNull(overridden.getAttachables().attachables().get(item));
++    }
++
++    @Test
++    void resolvesCrossFileLegacyParentsUsingTheAcceptedPackOrder() throws Exception {
++        final byte[] base = """
++                {"format_version":"1.8.0","geometry.armor.base":{"texturewidth":64,"textureheight":32,
++                 "bones":[{"name":"body","pivot":[0,24,0]}]}}
++                """.getBytes(StandardCharsets.UTF_8);
++        final byte[] child = """
++                {"format_version":"1.8.0","geometry.armor.chest:geometry.armor.base":{
++                 "bones":[{"name":"body","pivot":[0,24,0],
++                 "cubes":[{"origin":[-4,12,-2],"size":[8,12,4],"uv":[0,0]}]}]}}
++                """.getBytes(StandardCharsets.UTF_8);
++        final var builtin = BedrockResourceLibrary.read(Map.of(
++                "library/vanilla/models/entity/base.json", base,
++                "library/vanilla/models/entity/chest.json", child,
++                "library/vanilla/attachables/chest.json", definition("test:chest", null)));
++        final var inherited = BedrockEquipmentResources.merge(builtin, List.of());
++        final var model = inherited.getModels().entityModels().get("geometry.armor.chest");
++        assertNotNull(model);
++        assertEquals(64, model.getTextureSize().getX());
++        assertEquals(32, model.getTextureSize().getY());
++        assertEquals(1, model.getParents().size());
++        final var replacement = new NativeActorLibrary.Layer(true, Map.of(
++                "manifest.json", manifest(),
++                "models/entity/base.json", new String(base, StandardCharsets.UTF_8)
++                        .replace("\"texturewidth\":64", "\"texturewidth\":128").getBytes(StandardCharsets.UTF_8)));
++        final var overridden = BedrockEquipmentResources.merge(builtin, List.of(replacement));
++        assertEquals(128, overridden.getModels().entityModels().get("geometry.armor.chest").getTextureSize().getX());
++    }
++
++    private static byte[] manifest() {
++        return ("{\"format_version\":3,\"header\":{\"uuid\":\"" + java.util.UUID.randomUUID()
++                + "\",\"version\":\"1.0.0\",\"name\":\"server\"}}").getBytes(StandardCharsets.UTF_8);
++    }
++
++    private static byte[] definition(final String identifier, final String condition) {
++        final var description = new com.google.gson.JsonObject();
++        description.addProperty("identifier", identifier);
++        final var geometry = new com.google.gson.JsonObject();
++        geometry.addProperty("default", "geometry.armor.chest");
++        description.add("geometry", geometry);
++        if (condition != null) {
++            final var bindings = new com.google.gson.JsonObject();
++            bindings.addProperty("minecraft:iron_chestplate", condition);
++            description.add("item", bindings);
++        }
++        final var attachable = new com.google.gson.JsonObject();
++        attachable.add("description", description);
++        final var root = new com.google.gson.JsonObject();
++        root.addProperty("format_version", "1.10.0");
++        root.add("minecraft:attachable", attachable);
++        return root.toString().getBytes(StandardCharsets.UTF_8);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java

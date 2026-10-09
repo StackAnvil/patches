@@ -1,4 +1,4 @@
-From 1e6fdae0b26c894ee327a2f53ec7a6aaa07c7e0c Mon Sep 17 00:00:00 2001
+From cd1aa555895588562e7acc6b0ad3d8d92e31f31c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:39 +0200
 Subject: [PATCH] feat(bedrock): add classic Dressing Room
@@ -76,29 +76,36 @@ fields, so its Vex rightArm/rightarm references resolve to one bone.
 Preserve non-ASCII characters and modern geometry names. Native scalar
 and SIMD instruction probes pass 443 byte and boundary cases. Reject
 ambiguous local names and cycles after normalization.
+
+Honor legacy child bone reset before appending its local cubes. Preserve
+inherited inflation for zero child inflation, and replace it for nonzero
+child inflation. Native 1.26.51.1 parser blocks 1460ff5f0-1460ff610 and
+1460ff929-1460ff963 establish these rules. Player armor uses reset to remove
+other armor slots, so retaining those inherited cubes renders extra armor.
+Tests cover replacement, local cubes and the zero-inflation boundary.
 ---
  README.md                                     |  12 +
  .../bedrock/ViaFabricPlusBedrock.java         |  11 +-
  .../appearance/BedrockAppearanceStore.java    | 327 +++++++++++++++++
  .../appearance/BedrockClassicModel.java       | 130 +++++++
  .../appearance/BedrockClassicOptions.java     | 150 ++++++++
- .../appearance/BedrockClassicSkinPack.java    | 214 ++++++++++++
- .../appearance/BedrockLegacyGeometry.java     | 289 +++++++++++++++
- .../bedrock/appearance/BedrockLegacySkin.java |  61 ++++
+ .../appearance/BedrockClassicSkinPack.java    | 214 +++++++++++
+ .../appearance/BedrockLegacyGeometry.java     | 294 +++++++++++++++
+ .../bedrock/appearance/BedrockLegacySkin.java |  61 +++
  .../appearance/ViaFabricPlusSkinProvider.java |  75 ++++
  .../friends/FriendWorldSkinProvider.java      |  41 ---
- .../render/MixinLivingEntitySkinLayers.java   |  59 ++++
+ .../render/MixinLivingEntitySkinLayers.java   |  59 +++
  .../bedrock/render/BedrockPlayerSkins.java    |  27 +-
  .../screen/BedrockClassicSkinPackScreen.java  | 126 +++++++
- .../screen/BedrockDressingRoomScreen.java     | 299 ++++++++++++++++
+ .../screen/BedrockDressingRoomScreen.java     | 299 +++++++++++++++
  .../bedrock/settings/BedrockSettings.java     |   5 +
  .../viafabricplus-bedrock/lang/en_us.json     |  23 ++
  .../viafabricplus-bedrock.mixins.json         |   1 +
- .../BedrockAppearanceStoreTest.java           | 194 +++++++++++
- .../appearance/BedrockClassicModelTest.java   | 328 ++++++++++++++++++
+ .../BedrockAppearanceStoreTest.java           | 194 ++++++++++
+ .../appearance/BedrockClassicModelTest.java   | 347 ++++++++++++++++++
  .../appearance/BedrockClassicOptionsTest.java | 173 +++++++++
  .../BedrockClassicSkinPackTest.java           | 268 ++++++++++++++
- 21 files changed, 2768 insertions(+), 45 deletions(-)
+ 21 files changed, 2792 insertions(+), 45 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicOptions.java
@@ -1032,10 +1039,10 @@ index 0000000..5f35a0d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java
 new file mode 100644
-index 0000000..a4b9618
+index 0000000..9fa366f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,294 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1187,8 +1194,13 @@ index 0000000..a4b9618
 +                            selected.get("texturewidth").getAsInt(),
 +                            selected.get("textureheight").getAsInt());
 +                final JsonObject inherited = bones.put(boneName, bone);
-+                if (inherited != null && inherited.has("cubes")) {
++                if (inherited != null && inherited.has("cubes")
++                        && !(bone.has("reset") && bone.get("reset").getAsBoolean())) {
 +                    final JsonArray cubes = inherited.getAsJsonArray("cubes").deepCopy();
++                    if (bone.has("inflate") && bone.get("inflate").getAsFloat() != 0) {
++                        for (final var cube : cubes)
++                            cube.getAsJsonObject().add("inflate", bone.get("inflate").deepCopy());
++                    }
 +                    if (bone.has("cubes")) cubes.addAll(bone.getAsJsonArray("cubes"));
 +                    if (cubes.size() > 2048)
 +                        throw new IOException("The skin geometry has too many cubes");
@@ -1586,7 +1598,7 @@ index 0000000..d6afe12
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 26acfa3..03894dc 100644
+index 262fedf..f00ebf6 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -19,6 +19,7 @@
@@ -1614,8 +1626,8 @@ index 26acfa3..03894dc 100644
          PLAYER_BY_TEXTURE.put(bodyId, playerUuid);
          return playerSkin;
      }
-@@ -143,6 +145,25 @@ public final class BedrockPlayerSkins {
-         return appearance == null ? fallback : appearance.skin;
+@@ -147,6 +149,25 @@ public final class BedrockPlayerSkins {
+         return !APPEARANCES.isEmpty();
      }
  
 +    /** Returns options belonging to this installed skin, including standard player models. */
@@ -1640,7 +1652,7 @@ index 26acfa3..03894dc 100644
      public static AvatarRenderer<?> renderer(final UUID playerUuid) {
          final Appearance appearance = APPEARANCES.get(playerUuid);
          if (appearance == null || appearance.geometry == null || rendererContext == null) {
-@@ -247,17 +268,19 @@ public final class BedrockPlayerSkins {
+@@ -251,17 +272,19 @@ public final class BedrockPlayerSkins {
          private final boolean slim;
          private final Identifier bodyId;
          private final Identifier capeId;
@@ -2167,10 +2179,10 @@ index 364ec25..49f0538 100644
    "bedrock_realms.viafabricplus.availability_check": "Checking availability...",
    "bedrock_realms.viafabricplus.no_worlds": "No worlds found :(",
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 1ca2ced..eaa3493 100644
+index 77e6b74..fe7d7e3 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -56,6 +56,7 @@
+@@ -60,6 +60,7 @@
      "features.render.MixinBedrockRidingPosition",
      "features.render.MixinEntityRenderDispatcher",
      "features.render.MixinMinecraftSkinLifecycle",
@@ -2380,10 +2392,10 @@ index 0000000..e7efc8c
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java
 new file mode 100644
-index 0000000..e78b679
+index 0000000..907cf5f
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,347 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -2580,7 +2592,7 @@ index 0000000..e78b679
 +    }
 +
 +    @Test
-+    void freezesCubeDefaultsBeforeApplyingChildBoneFlags() throws IOException {
++    void appliesChildInflationToInheritedCubesBeforeAppendingLocalCubes() throws IOException {
 +        final var model =
 +                BedrockClassicModel.read(
 +                        """
@@ -2597,7 +2609,7 @@ index 0000000..e78b679
 +        assertEquals(2, cubes.size());
 +        assertTrue(cubes.get(0).isMirror());
 +        assertFalse(cubes.get(1).isMirror());
-+        assertEquals(0.5, cubes.get(0).getInflate());
++        assertEquals(1, cubes.get(0).getInflate());
 +        assertEquals(0.25, cubes.get(1).getInflate());
 +        assertEquals(
 +                0,
@@ -2614,6 +2626,25 @@ index 0000000..e78b679
 +                        .getFirst()
 +                        .getCubes()
 +                        .size());
++    }
++
++    @Test
++    void resetsInheritedCubesAndRetainsParentInflationWhenChildInflationIsZero() throws IOException {
++        final String document = """
++                {"geometry.base":{"bones":[{"name":"body","inflate":0.5,
++                  "cubes":[{"origin":[0,0,0],"size":[2,2,2],"uv":[0,0]}]}]},
++                 "geometry.child:geometry.base":{"bones":[{"name":"body","reset":true,
++                  "cubes":[{"origin":[2,0,0],"size":[1,1,1],"uv":[8,0],"inflate":0.25}]}]}}
++                """;
++        final var reset = BedrockGeometryModel.fromJson(
++                BedrockClassicModel.read(document, "geometry.child").geometry()).getFirst();
++        assertEquals(1, reset.getParents().getFirst().getCubes().size());
++        assertEquals(0.25, reset.getParents().getFirst().getCubes().get(0).getInflate());
++        final var retained = BedrockGeometryModel.fromJson(BedrockClassicModel.read(
++                document.replace("\"reset\":true", "\"inflate\":0"), "geometry.child").geometry()).getFirst();
++        assertEquals(2, retained.getParents().getFirst().getCubes().size());
++        assertEquals(0.5, retained.getParents().getFirst().getCubes().get(0).getInflate());
++        assertEquals(0.25, retained.getParents().getFirst().getCubes().get(1).getInflate());
 +    }
 +
 +    @Test
@@ -3166,4 +3197,4 @@ index 0000000..1693cf5
 +
 +}
 -- 
-2.55.0
+2.56.0

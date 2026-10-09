@@ -47,3 +47,9 @@ The costume-rule overload now uses the same humanoid scope as actor-rule visibil
 These tests verify submitted model state. Candidate Vulkan and Iris rendering checks remain separate runtime gates.
 
 All four actor and costume cube regressions pass. The complete add-on stack replays all 30 patches. The full build passes 616 tests with 117 optional skips and no failures or errors. Actual candidate rendering remains pending.
+
+## Follow-up: bundled native armor dependencies
+
+Equipment inherits the licensed target library below accepted server packs. Resolve declared legacy equipment geometry through cross-file parents and accepted parent overrides. Preserve native item owner bindings and replacement conditions. The loaded library supplies armor models, textures, materials, controllers and offset animations.
+
+Tests cover owner binding, server replacement and inherited texture dimensions. A private bundled-resource probe selects the player iron chestplate and resolves its geometry, alpha-test material and animation. Explicit bone bindings and unsupported material families retain the existing fallback. Exact visible alignment on the reported custom-size skin remains pending.
