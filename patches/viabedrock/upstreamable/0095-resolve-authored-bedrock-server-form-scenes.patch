@@ -1,4 +1,4 @@
-From 073f8c4322613e0d61396cc5c33c631ea49aaeb2 Mon Sep 17 00:00:00 2001
+From e29272ee5972907a2f85afff456bd43979c2cc3e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:42:36 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -287,6 +287,12 @@ length, and keep optional missing references local to their branch.
 Targeted UI resolution tests cover shared roots and cycles. Native build
 51061372 animation-manager execution confirms successor reuse and same-frame
 carry. Other visual animation types remain an add-on parity requirement.
+
+Resolve offset and size property animation references alongside alpha,
+retaining typed endpoints and one root per shared definition. The pinned
+1.26.51.1 assets use relative vector references on valid controls. Regression
+tests cover property roots and explicit animation lists without duplicate
+updates. Other visual animation types remain unresolved parity work.
 ---
  build.gradle                                  |   11 +
  .../api/model/NativeContainerAction.java      |   93 ++
@@ -302,7 +308,7 @@ carry. Other visual animation types remain an add-on parity requirement.
  .../api/resourcepack/ui/HudActionbarUi.java   |   20 +
  .../api/resourcepack/ui/HudFactoryUi.java     |  127 ++
  .../api/resourcepack/ui/HudTitleUi.java       |   28 +
- .../api/resourcepack/ui/JsonUiProgram.java    | 1153 +++++++++++++++++
+ .../api/resourcepack/ui/JsonUiProgram.java    | 1163 +++++++++++++++++
  .../api/resourcepack/ui/NpcDialogueUi.java    |  311 +++++
  .../resourcepack/ui/NpcEditorBindings.java    |  324 +++++
  .../api/resourcepack/ui/NpcEditorState.java   |  322 +++++
@@ -314,7 +320,7 @@ carry. Other visual animation types remain an add-on parity requirement.
  .../viabedrock/protocol/BedrockProtocol.java  |    3 +
  .../protocol/data/BedrockMappingData.java     |   15 +-
  .../protocol/packet/HudPackets.java           |   23 +
- .../protocol/packet/InventoryPackets.java     |  580 ++++++---
+ .../protocol/packet/InventoryPackets.java     |  580 +++++---
  .../protocol/packet/NpcDialoguePackets.java   |  417 ++++--
  .../protocol/rewriter/ItemDataRewriter.java   |    1 -
  .../rewriter/ResourcePackRewriter.java        |    2 +
@@ -340,7 +346,7 @@ carry. Other visual animation types remain an add-on parity requirement.
  .../resourcepack/ui/NpcEditorStateTest.java   |  209 +++
  .../ui/ServerCustomFormUiTest.java            |  146 +++
  .../ui/ServerFormUiSliderStateTest.java       |  126 ++
- .../api/resourcepack/ui/ServerFormUiTest.java |  310 +++++
+ .../api/resourcepack/ui/ServerFormUiTest.java |  329 +++++
  .../api/resourcepack/ui/UiExpressionTest.java |   56 +
  .../api/resourcepack/ui/UiFontsTest.java      |  187 +++
  .../api/resourcepack/ui/UiTexturesTest.java   |  175 +++
@@ -349,7 +355,7 @@ carry. Other visual animation types remain an add-on parity requirement.
  .../protocol/packet/NativeHudPacketTest.java  |  160 +++
  .../packet/NpcDialoguePacketTest.java         |  301 ++++-
  .../storage/NativeContainerUiStateTest.java   |   57 +
- 61 files changed, 9230 insertions(+), 302 deletions(-)
+ 61 files changed, 9259 insertions(+), 302 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerStatus.java
@@ -1921,10 +1927,10 @@ index 000000000..4f11b0d3f
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 000000000..2fb7453a3
+index 000000000..9a8d33630
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,1153 @@
+@@ -0,0 +1,1163 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2733,10 +2739,17 @@ index 000000000..2fb7453a3
 +            final JsonArray animationRoots = new JsonArray();
 +            final JsonArray animationTracks = new JsonArray();
 +            final Map<String, Integer> animationIndices = new LinkedHashMap<>();
-+            if (node.has("alpha") && node.get("alpha").isJsonPrimitive()
-+                    && node.get("alpha").getAsJsonPrimitive().isString() && node.get("alpha").getAsString().startsWith("@")) {
-+                animationRoots.add(this.animation(node.get("alpha").getAsString(), values, animationTracks, animationIndices));
-+                node.addProperty("alpha", 1);
++            for (final String property : List.of("alpha", "offset", "size")) {
++                final JsonElement animationReference = node.get(property);
++                if (animationReference != null && animationReference.isJsonPrimitive() && animationReference.getAsJsonPrimitive().isString()
++                        && animationReference.getAsString().startsWith("@")) {
++                    final int root = this.animation(animationReference.getAsString(), values, animationTracks, animationIndices);
++                    if (!animationRoots.asList().contains(new JsonPrimitive(root))) {
++                        animationRoots.add(root);
++                    }
++                    // The runtime owns the animated value. Retain normal defaults before its first sample.
++                    node.remove(property);
++                }
 +            }
 +            if (node.has("anims") && node.get("anims").isJsonArray()) {
 +                for (final JsonElement animationReference : node.getAsJsonArray("anims")) {
@@ -2745,7 +2758,10 @@ index 000000000..2fb7453a3
 +                    }
 +                    final int trackCount = animationTracks.size();
 +                    try {
-+                        animationRoots.add(this.animation(animationReference.getAsString(), values, animationTracks, animationIndices));
++                        final int root = this.animation(animationReference.getAsString(), values, animationTracks, animationIndices);
++                        if (!animationRoots.asList().contains(new JsonPrimitive(root))) {
++                            animationRoots.add(root);
++                        }
 +                    } catch (final MissingControlException missing) {
 +                        while (animationTracks.size() > trackCount) {
 +                            animationTracks.remove(animationTracks.size() - 1);
@@ -8770,10 +8786,10 @@ index 000000000..362380ae1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
 new file mode 100644
-index 000000000..c3b9e6ac0
+index 000000000..90108275f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,329 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -8919,6 +8935,25 @@ index 000000000..c3b9e6ac0
 +        final var track = button.getAsJsonObject("animation_program").getAsJsonArray("tracks").get(0).getAsJsonObject();
 +        assertEquals(0.16F, track.get("duration").getAsFloat());
 +        assertEquals(1, track.get("to").getAsInt());
++    }
++
++    @Test
++    void resolvesPropertyAnimationRootsWithoutDuplicatingExplicitAnimationLists() {
++        final String animated = UI.replace("\"size\":[80,40],", "").replace("\"base_button\":{", """
++                "move":{"anim_type":"offset","from":[0,"100%y"],"to":[5,"-25%y"],"duration":1},
++                "grow":{"anim_type":"size","from":[20,20],"to":["100%",40],"duration":2},
++                "base_button":{"offset":"@move","size":"@grow","anims":["@move","@grow"],
++                """);
++        final var scene = new ServerFormUi(List.of(definitions(animated))).resolve(form("tile:One"));
++        assertNotNull(scene);
++        final var button = scene.getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject()
++                .getAsJsonArray("children").get(0).getAsJsonObject();
++        final var program = button.getAsJsonObject("animation_program");
++        assertEquals(2, program.getAsJsonArray("roots").size());
++        assertEquals(2, program.getAsJsonArray("tracks").size());
++        assertEquals(20, program.getAsJsonArray("tracks").get(1).getAsJsonObject().getAsJsonArray("from").get(0).getAsInt());
++        assertFalse(button.has("offset"));
++        assertFalse(button.has("size"));
 +    }
 +
 +    @Test
