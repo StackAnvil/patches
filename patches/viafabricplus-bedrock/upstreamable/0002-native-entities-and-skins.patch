@@ -1,4 +1,4 @@
-From 71f981872a0433bb483c29ee020fc6f0461e41f2 Mon Sep 17 00:00:00 2001
+From 6ca105b69de3b8717901959df19c94526c57d99e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -404,6 +404,18 @@ Keep the original body texture for native geometry. Release both textures
 when an appearance is replaced or cleared. Square and custom atlas images
 retain their existing identity. Pixel tests cover three legacy resolutions,
 face and hat UVs, transparent padding, and unchanged square images.
+
+Captured Galaxite on Bedrock 1.26.51.1/protocol 2193 supplies 128x128
+images whose 128x128 geometry keeps eight-unit head cube UVs. Other
+skins use a 64x64 geometry with the same image size. Java glyphs always
+sample a canonical 64-unit atlas, so texture resolution alone cannot
+select their face region. Project authored head and hat UVs using the
+model texture dimensions onto a private Java head atlas. Preserve all
+six faces for skull consumers, source alpha, and the untouched native
+body texture. Ordinary canonical skins continue sharing their texture.
+Flatten only ordinary unrotated eight-unit head cubes; arbitrary mesh
+portraits and animated persona faces remain separate rendering work.
+Pixel tests cover both geometry dimensions on the same double-size image.
 ---
  build.gradle.kts                              |   6 +
  .../bedrock/ViaFabricPlusBedrock.java         |  17 ++
@@ -443,7 +455,7 @@ face and hat UVs, transparent padding, and unchanged square images.
  .../bedrock/render/BedrockRidingAnchors.java  |  71 +++++
  .../bedrock/render/BedrockShaderEmission.java | 181 +++++++++++
  .../render/BedrockShaderPipelines.java        |  28 ++
- .../bedrock/render/BedrockSkinImages.java     |  22 ++
+ .../bedrock/render/BedrockSkinImages.java     | 105 +++++++
  .../render/CustomEntityRenderStore.java       |  71 +++++
  .../render/NativeCustomEntityPayload.java     |  24 ++
  .../bedrock/render/NativeSkinPayload.java     |  22 ++
@@ -465,9 +477,9 @@ face and hat UVs, transparent padding, and unchanged square images.
  .../render/BedrockPlayerMaterialsTest.java    |  42 +++
  .../render/BedrockRidingAnchorsTest.java      | 130 ++++++++
  .../render/BedrockShaderPipelinesTest.java    |  49 +++
- .../bedrock/render/BedrockSkinImagesTest.java |  41 +++
+ .../bedrock/render/BedrockSkinImagesTest.java |  82 +++++
  .../render/CustomEntityRenderStoreTest.java   |  62 ++++
- 62 files changed, 3870 insertions(+), 1 deletion(-)
+ 62 files changed, 3994 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockDynamicTexture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisPipelines.java
@@ -2560,7 +2572,7 @@ index 0000000..471807a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 new file mode 100644
-index 0000000..5768541
+index 0000000..45f54b4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -0,0 +1,283 @@
@@ -2688,9 +2700,10 @@ index 0000000..5768541
 +            PLAYER_BY_TEXTURE.remove(previous.bodyId);
 +            release(previous);
 +        }
++        final BedrockGeometryModel geometry = geometry(skin);
 +        final Identifier bodyId = textureId(playerUuid, "body");
 +        register(bodyId, skin.skinData());
-+        final BufferedImage headImage = BedrockSkinImages.javaHeadTexture(skin.skinData());
++        final BufferedImage headImage = BedrockSkinImages.javaHeadTexture(skin.skinData(), geometry);
 +        final Identifier headId = headImage == skin.skinData() ? bodyId : textureId(playerUuid, "head");
 +        if (!headId.equals(bodyId)) register(headId, headImage);
 +        final Identifier capeId = supportedImage(skin.capeData()) ? textureId(playerUuid, "cape") : null;
@@ -2701,7 +2714,6 @@ index 0000000..5768541
 +        final PlayerModelType modelType = slim ? PlayerModelType.SLIM : PlayerModelType.WIDE;
 +        final PlayerSkin playerSkin = PlayerSkin.insecure(new ClientAsset.ResourceTexture(bodyId, bodyId),
 +            capeId == null ? null : new ClientAsset.ResourceTexture(capeId, capeId), null, modelType);
-+        final BedrockGeometryModel geometry = geometry(skin);
 +        APPEARANCES.put(playerUuid, new Appearance(playerSkin, headId.equals(bodyId) ? playerSkin : PlayerSkin.insecure(
 +                new ClientAsset.ResourceTexture(headId, headId), null, null, modelType), headId, geometry, slim, bodyId, capeId));
 +        PLAYER_BY_TEXTURE.put(bodyId, playerUuid);
@@ -3147,10 +3159,10 @@ index 0000000..a8c9053
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImages.java
 new file mode 100644
-index 0000000..25105a0
+index 0000000..7fabea5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImages.java
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,105 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3159,9 +3171,92 @@ index 0000000..25105a0
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import java.awt.image.BufferedImage;
++import java.util.List;
++import java.util.Map;
++import java.util.Arrays;
++import org.cube.converter.model.element.Cube;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.cube.converter.util.element.Direction;
++import org.cube.converter.util.element.Position3V;
++import org.cube.converter.util.element.UVMap;
 +
 +final class BedrockSkinImages {
 +    private BedrockSkinImages() { }
++
++    /** Projects authored head faces onto the atlas sampled by Java glyphs and skulls. */
++    static BufferedImage javaHeadTexture(final BufferedImage source, final BedrockGeometryModel model) {
++        if (model == null || !Float.isFinite(model.getTextureSize().getX()) || !Float.isFinite(model.getTextureSize().getY())
++            || model.getTextureSize().getX() <= 0 || model.getTextureSize().getY() <= 0)
++            return javaHeadTexture(source);
++        final List<Cube> head = cubes(model, "head");
++        final Cube face = head.stream().filter(cube -> cube.getInflate() <= 0).findFirst().orElse(null);
++        final Cube hat = cubes(model, "hat").stream().findFirst()
++            .orElseGet(() -> head.stream().filter(cube -> cube.getInflate() > 0).findFirst().orElse(null));
++        if (!ordinaryHead(face) || hat != null && !ordinaryHead(hat)) return javaHeadTexture(source);
++        final int size = Math.max(64, source.getWidth());
++        if (sameCoordinates(source, model, face, 0, size) && hat != null && sameCoordinates(source, model, hat, 32, size))
++            return javaHeadTexture(source);
++        final BufferedImage atlas = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
++        copyFaces(source, atlas, model, face, 0);
++        if (hat != null) copyFaces(source, atlas, model, hat, 32);
++        return atlas;
++    }
++
++    private static List<Cube> cubes(final BedrockGeometryModel model, final String bone) {
++        return model.getParents().stream().filter(parent -> parent.getName().equalsIgnoreCase(bone))
++            .flatMap(parent -> parent.getCubes().entrySet().stream().sorted(Map.Entry.comparingByKey()).map(Map.Entry::getValue))
++            .toList();
++    }
++
++    private static boolean ordinaryHead(final Cube cube) {
++        return cube != null && cube.getSize().getX() == 8 && cube.getSize().getY() == 8 && cube.getSize().getZ() == 8
++            && cube.getRotation().getX() == 0 && cube.getRotation().getY() == 0 && cube.getRotation().getZ() == 0
++            && cube.getUvMap().getUvRotation().values().stream().allMatch(rotation -> rotation == 0);
++    }
++
++    private static UVMap target(final int offset) {
++        return UVMap.fromBoxUV(new Position3V(8, 8, 8), new Float[]{(float) offset, 0F}, false);
++    }
++
++    private static boolean sameCoordinates(final BufferedImage source, final BedrockGeometryModel model,
++                                           final Cube cube, final int offset, final int size) {
++        if (cube.getUvMap().getUvType() != UVMap.UVType.BOX) return false;
++        for (final var entry : target(offset).getUvMap().entrySet()) {
++            final Float[] uv = cube.getUvMap().getUvMap().get(entry.getKey());
++            if (uv == null) return false;
++            for (int i = 0; i < 4; i++) {
++                final float pixels = uv[i] * (i % 2 == 0 ? source.getWidth() / model.getTextureSize().getX()
++                    : source.getHeight() / model.getTextureSize().getY());
++                if (pixels != entry.getValue()[i] * size / 64) return false;
++            }
++        }
++        return true;
++    }
++
++    private static void copyFaces(final BufferedImage source, final BufferedImage atlas, final BedrockGeometryModel model,
++                                  final Cube cube, final int offset) {
++        final float scale = atlas.getWidth() / 64F;
++        for (final var entry : target(offset).getUvMap().entrySet()) {
++            final Float[] uv = cube.getUvMap().getUvMap().get(entry.getKey());
++            if (uv == null || Arrays.stream(uv).anyMatch(value -> value == null || !Float.isFinite(value))) continue;
++            final Float[] destination = entry.getValue();
++            final int left = Math.round(Math.min(destination[0], destination[2]) * scale);
++            final int top = Math.round(Math.min(destination[1], destination[3]) * scale);
++            final int right = Math.round(Math.max(destination[0], destination[2]) * scale);
++            final int bottom = Math.round(Math.max(destination[1], destination[3]) * scale);
++            final boolean turn = cube.getUvMap().getUvType() != UVMap.UVType.BOX
++                && (entry.getKey() == Direction.UP || entry.getKey() == Direction.DOWN);
++            for (int y = top; y < bottom; y++) for (int x = left; x < right; x++) {
++                float u = ((x + .5F) / scale - destination[0]) / (destination[2] - destination[0]);
++                float v = ((y + .5F) / scale - destination[1]) / (destination[3] - destination[1]);
++                if (turn) { u = 1 - u; v = 1 - v; }
++                final int sourceX = (int) Math.floor((uv[0] + u * (uv[2] - uv[0])) * source.getWidth() / model.getTextureSize().getX());
++                final int sourceY = (int) Math.floor((uv[1] + v * (uv[3] - uv[1])) * source.getHeight() / model.getTextureSize().getY());
++                if (sourceX >= 0 && sourceY >= 0 && sourceX < source.getWidth() && sourceY < source.getHeight())
++                    atlas.setRGB(x, y, source.getRGB(sourceX, sourceY));
++            }
++        }
++    }
 +
 +    /** Legacy skins keep their head and hat in the top half of the modern square atlas. */
 +    static BufferedImage javaHeadTexture(final BufferedImage source) {
@@ -4696,10 +4791,10 @@ index 0000000..cbdb67c
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImagesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImagesTest.java
 new file mode 100644
-index 0000000..d180a73
+index 0000000..354e25d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImagesTest.java
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,82 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4708,10 +4803,51 @@ index 0000000..d180a73
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import java.awt.image.BufferedImage;
++import org.cube.converter.model.element.Cube;
++import org.cube.converter.model.element.Parent;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.cube.converter.util.element.Position2V;
++import org.cube.converter.util.element.Position3V;
++import org.cube.converter.util.element.UVMap;
 +import org.junit.jupiter.api.Test;
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class BedrockSkinImagesTest {
++    @Test
++    void doubleSizeTexturesUseTheDeclaredGeometryAtlasForEveryHeadFace() {
++        final BufferedImage source = new BufferedImage(128, 128, BufferedImage.TYPE_INT_ARGB);
++        for (int y = 0; y < 128; y++) for (int x = 0; x < 128; x++)
++            source.setRGB(x, y, 0xFF000000 | y << 12 | x);
++        for (final int nativeSize : new int[] {64, 128}) {
++            final var model = head(nativeSize);
++            final BufferedImage atlas = BedrockSkinImages.javaHeadTexture(source, model);
++            if (nativeSize == 64) assertSame(source, atlas);
++            else assertNotSame(source, atlas);
++            for (final int offset : new int[] {0, 32}) {
++                for (final var uv : UVMap.fromBoxUV(new Position3V(8, 8, 8), new Float[]{(float) offset, 0F}, false).getUvMap().values()) {
++                    for (int y = Math.round(Math.min(uv[1], uv[3]) * 2); y < Math.round(Math.max(uv[1], uv[3]) * 2); y++) {
++                        for (int x = Math.round(Math.min(uv[0], uv[2]) * 2); x < Math.round(Math.max(uv[0], uv[2]) * 2); x++)
++                            assertEquals(source.getRGB(x * 64 / nativeSize, y * 64 / nativeSize), atlas.getRGB(x, y));
++                    }
++                }
++            }
++        }
++        assertEquals(0xFF018018, source.getRGB(24, 24));
++    }
++
++    private static BedrockGeometryModel head(final int textureSize) {
++        final var model = new BedrockGeometryModel("geometry.head", new Position2V(textureSize, textureSize));
++        final var bone = new Parent("head", new Position3V(0, 0, 0), new Position3V(0, 0, 0));
++        for (final int offset : new int[] {0, 32}) {
++            final var cube = new Cube(new Position3V(0, 0, 0), new Position3V(-4, 24, -4), new Position3V(8, 8, 8),
++                new Position3V(0, 0, 0), false, UVMap.fromBoxUV(new Position3V(8, 8, 8), new Float[]{(float) offset, 0F}, false));
++            cube.setInflate(offset == 0 ? 0 : .25F);
++            bone.getCubes().put(offset, cube);
++        }
++        model.getParents().add(bone);
++        return model;
++    }
++
 +    @Test
 +    void legacyHeadAndHatKeepTheirPixelsAtJavaGlyphCoordinates() {
 +        for (final int scale : new int[] {1, 2, 4}) {
