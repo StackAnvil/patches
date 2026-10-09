@@ -1,27 +1,166 @@
-From d566255b5fe1aab2731a23fd83854305336161c1 Mon Sep 17 00:00:00 2001
+From 63df1bd3ca10006664510fc6870380d26a40f560 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:36:04 +0200
-Subject: [PATCH] fix(hud): translate remote player locations into waypoints
+Subject: [PATCH] feat(hud): preserve native Bedrock locator updates
 
-Bedrock sends locator positions for players outside simulation distance through
-PlayerLocation. Translate those updates into Java tracked waypoints and remove
-them when Bedrock hides a player, the player leaves, or the dimension changes.
+Keep PlayerLocation compatibility translation and add the protocol 2193
+LocatorBar packet, including groups, actions, optional fields, custom
+textures, icon size, color, world position and actor position authority.
+Expose complete group snapshots to native client integrations after join
+and on late channel registration. Preserve groups across dimension changes.
 
-The protocol 2193 packet carries both a variant index and a location
-discriminator; consume both fields before reading coordinates.
+Native 1.26.51.1 captures and controlled packet fixtures establish packet
+341 and masks 1/2/4/8/16/32 for position, visibility, texture, size, color
+and authority. Omitted dirty texture/color reset; position, size and
+boolean fields require values. Actor bindings are supplied on Add, while
+duplicate adds and updates for unknown groups are ignored. These rules
+avoid copying mismatched constants from independent codecs.
+
+Test signed actor IDs, wire boundaries, field merging, group lifecycle
+and immutable snapshot round trips. Native rendering and route validation
+remain separate work; decoding alone does not establish HUD parity.
 ---
- .../viabedrock/protocol/BedrockProtocol.java  |  1 +
- .../protocol/packet/HudPackets.java           |  1 +
- .../protocol/packet/OtherPlayerPackets.java   | 35 +++++++
- .../protocol/packet/WorldPackets.java         |  2 +
- .../storage/PlayerWaypointTracker.java        | 93 +++++++++++++++++++
- .../packet/PlayerLocationPacketTest.java      | 66 +++++++++++++
- .../storage/PlayerWaypointTrackerTest.java    | 64 +++++++++++++
- 7 files changed, 262 insertions(+)
+ .../api/model/LocatorBarSnapshot.java         |  74 ++++++++++
+ .../api/model/LocatorBarWaypoint.java         |  22 +++
+ .../viabedrock/protocol/BedrockProtocol.java  |   1 +
+ .../protocol/ClientboundBedrockPackets.java   |   2 +-
+ .../bedrock/generated/MinecraftPacketIds.java |   1 +
+ .../protocol/model/LocatorBarState.java       |  71 ++++++++++
+ .../protocol/model/LocatorBarUpdate.java      |  27 ++++
+ .../protocol/packet/HudPackets.java           |   1 +
+ .../protocol/packet/JoinPackets.java          |   1 +
+ .../protocol/packet/MultiStatePackets.java    |   5 +
+ .../protocol/packet/OtherPlayerPackets.java   |  39 ++++++
+ .../protocol/packet/WorldPackets.java         |   2 +
+ .../storage/PlayerWaypointTracker.java        | 131 ++++++++++++++++++
+ .../protocol/types/BedrockTypes.java          |   1 +
+ .../protocol/types/model/LocatorBarType.java  |  85 ++++++++++++
+ .../api/model/LocatorBarSnapshotTest.java     |  50 +++++++
+ .../protocol/model/LocatorBarStateTest.java   |  85 ++++++++++++
+ .../packet/PlayerLocationPacketTest.java      |  66 +++++++++
+ .../storage/PlayerWaypointTrackerTest.java    |  64 +++++++++
+ .../types/model/LocatorBarTypeTest.java       |  90 ++++++++++++
+ 20 files changed, 817 insertions(+), 1 deletion(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/LocatorBarSnapshot.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/LocatorBarWaypoint.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/LocatorBarState.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/LocatorBarUpdate.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTracker.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/types/model/LocatorBarType.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/LocatorBarSnapshotTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/LocatorBarStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerLocationPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTrackerTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/model/LocatorBarTypeTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/LocatorBarSnapshot.java b/src/main/java/net/raphimc/viabedrock/api/model/LocatorBarSnapshot.java
+new file mode 100644
+index 000000000..84d6fca33
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/LocatorBarSnapshot.java
+@@ -0,0 +1,74 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint.IconSize;
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint.WorldPosition;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++import java.util.Collections;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.UUID;
++
++public record LocatorBarSnapshot(Map<UUID, LocatorBarWaypoint> waypoints) {
++
++    public static final String CHANNEL = "viabedrock:locator_bar_v1";
++    public static final Type<LocatorBarSnapshot> TYPE = new Type<>(LocatorBarSnapshot.class) {
++        @Override
++        public LocatorBarSnapshot read(final ByteBuf buffer) {
++            final int count = Types.VAR_INT.readPrimitive(buffer);
++            if (count < 0 || count > buffer.readableBytes() / 33) {
++                throw new IllegalArgumentException("Locator snapshot exceeds the payload boundary");
++            }
++            final Map<UUID, LocatorBarWaypoint> waypoints = new LinkedHashMap<>();
++            for (int i = 0; i < count; i++) {
++                final UUID group = Types.UUID.read(buffer);
++                final boolean visible = buffer.readBoolean();
++                final WorldPosition position = buffer.readBoolean() ? new WorldPosition(new Position3f(buffer.readFloat(), buffer.readFloat(), buffer.readFloat()), Types.VAR_INT.readPrimitive(buffer)) : null;
++                final String texture = Types.STRING.read(buffer);
++                final IconSize size = new IconSize(buffer.readFloat(), buffer.readFloat());
++                final int color = buffer.readInt();
++                final boolean authority = buffer.readBoolean();
++                final Long actor = buffer.readBoolean() ? buffer.readLong() : null;
++                waypoints.put(group, new LocatorBarWaypoint(visible, position, texture, size, color, authority, actor));
++            }
++            return new LocatorBarSnapshot(waypoints);
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final LocatorBarSnapshot snapshot) {
++            Types.VAR_INT.writePrimitive(buffer, snapshot.waypoints.size());
++            for (var entry : snapshot.waypoints.entrySet()) {
++                Types.UUID.write(buffer, entry.getKey());
++                final LocatorBarWaypoint waypoint = entry.getValue();
++                buffer.writeBoolean(waypoint.visible());
++                buffer.writeBoolean(waypoint.position() != null);
++                if (waypoint.position() != null) {
++                    final Position3f position = waypoint.position().position();
++                    buffer.writeFloat(position.x()).writeFloat(position.y()).writeFloat(position.z());
++                    Types.VAR_INT.writePrimitive(buffer, waypoint.position().dimension());
++                }
++                Types.STRING.write(buffer, waypoint.texture());
++                buffer.writeFloat(waypoint.size().width()).writeFloat(waypoint.size().height());
++                buffer.writeInt(waypoint.color());
++                buffer.writeBoolean(waypoint.clientPositionAuthority());
++                buffer.writeBoolean(waypoint.actorUniqueId() != null);
++                if (waypoint.actorUniqueId() != null) {
++                    buffer.writeLong(waypoint.actorUniqueId());
++                }
++            }
++        }
++    };
++
++    public LocatorBarSnapshot {
++        waypoints = Collections.unmodifiableMap(new LinkedHashMap<>(waypoints));
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/LocatorBarWaypoint.java b/src/main/java/net/raphimc/viabedrock/api/model/LocatorBarWaypoint.java
+new file mode 100644
+index 000000000..ce06b15bb
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/LocatorBarWaypoint.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++public record LocatorBarWaypoint(boolean visible, WorldPosition position, String texture, IconSize size, int color,
++                                 boolean clientPositionAuthority, Long actorUniqueId) {
++
++    public static final LocatorBarWaypoint EMPTY = new LocatorBarWaypoint(false, null, "", IconSize.ZERO, -1, false, null);
++
++    public record WorldPosition(Position3f position, int dimension) {
++    }
++
++    public record IconSize(float width, float height) {
++        public static final IconSize ZERO = new IconSize(0F, 0F);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index 6e12a597d..2cd6622a9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -34,6 +173,148 @@ index 6e12a597d..2cd6622a9 100644
          user.put(new ScoreboardTracker());
          user.put(new InventoryTracker(user));
          user.put(new BreakingTracker(user));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java
+index 609785cc6..6d2c123e1 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java
+@@ -184,6 +184,7 @@ public enum ClientboundBedrockPackets implements ClientboundPacketType {
+     PLAYER_VIDEO_CAPTURE(MinecraftPacketIds.PlayerVideoCapturePacket.getValue()),
+     PLAYER_UPDATE_ENTITY_OVERRIDES(MinecraftPacketIds.PlayerUpdateEntityOverridesPacket.getValue()),
+     PLAYER_LOCATION(MinecraftPacketIds.PlayerLocation.getValue()),
++    LOCATOR_BAR(MinecraftPacketIds.LocatorBarPacket.getValue()),
+     CAMERA_SPLINE(MinecraftPacketIds.CameraSplinePacket.getValue()),
+     SYNC_WORLD_CLOCKS(MinecraftPacketIds.SyncWorldClocks.getValue()),
+     VOXEL_SHAPES(MinecraftPacketIds.VoxelShapesPacket.getValue()),
+@@ -201,7 +202,6 @@ public enum ClientboundBedrockPackets implements ClientboundPacketType {
+     // TEXTURE_SHIFT(MinecraftPacketIds.ClientboundTextureShiftPacket.getValue()),
+     // CAMERA_SPLINE(MinecraftPacketIds.CameraSpline.getValue()),
+     // CAMERA_AIM_ASSIST_ACTOR_PRIORITY(MinecraftPacketIds.CameraAimAssistActorPriority.getValue()),
+-    // LOCATOR_BAR(MinecraftPacketIds.LocatorBarPacket.getValue()),
+     // ATTRIBUTE_LAYER_SYNC(MinecraftPacketIds.ClientboundAttributeLayerSyncPacket.getValue()),
+     // SERVER_STORE_INFO(MinecraftPacketIds.ServerStoreInfo.getValue()),
+     // SERVER_PRESENCE_INFO(MinecraftPacketIds.ServerPresenceInfo.getValue());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/MinecraftPacketIds.java b/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/MinecraftPacketIds.java
+index 8ad52855f..43bd02513 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/MinecraftPacketIds.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/MinecraftPacketIds.java
+@@ -218,6 +218,7 @@ public enum MinecraftPacketIds {
+     PlayerLocation(326),
+     VoxelShapesPacket(337),
+     CameraSplinePacket(338),
++    LocatorBarPacket(341),
+     SyncWorldClocks(344),
+     SendPartyDestinationCookie(349),
+     PartyDestinationCookieResponse(350),
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/LocatorBarState.java b/src/main/java/net/raphimc/viabedrock/protocol/model/LocatorBarState.java
+new file mode 100644
+index 000000000..7578127f5
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/LocatorBarState.java
+@@ -0,0 +1,71 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint;
++
++import java.util.Collections;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.UUID;
++
++public final class LocatorBarState {
++
++    private final Map<UUID, LocatorBarWaypoint> waypoints = new LinkedHashMap<>();
++
++    public Map<UUID, LocatorBarWaypoint> waypoints() {
++        return Collections.unmodifiableMap(this.waypoints);
++    }
++
++    public boolean apply(final LocatorBarUpdate update) {
++        final LocatorBarWaypoint previous = this.waypoints.get(update.group());
++        switch (update.action()) {
++            case LocatorBarUpdate.ADD -> {
++                if (previous != null) {
++                    return false;
++                }
++                this.waypoints.put(update.group(), merge(LocatorBarWaypoint.EMPTY, update, update.actorUniqueId()));
++                return true;
++            }
++            case LocatorBarUpdate.REMOVE -> {
++                return this.waypoints.remove(update.group()) != null;
++            }
++            case LocatorBarUpdate.UPDATE -> {
++                if (previous == null) {
++                    return false;
++                }
++                final LocatorBarWaypoint next = merge(previous, update, previous.actorUniqueId());
++                if (next.equals(previous)) {
++                    return false;
++                }
++                this.waypoints.put(update.group(), next);
++                return true;
++            }
++            default -> {
++                return false;
++            }
++        }
++    }
++
++    public void clear() {
++        this.waypoints.clear();
++    }
++
++    private static LocatorBarWaypoint merge(final LocatorBarWaypoint previous, final LocatorBarUpdate update, final Long actorId) {
++        final int flags = update.flags();
++        // Native position, size and boolean updates require values; absent dirty texture/color reset.
++        return new LocatorBarWaypoint(
++            (flags & LocatorBarUpdate.VISIBILITY) != 0 && update.visible() != null ? update.visible() : previous.visible(),
++            (flags & LocatorBarUpdate.POSITION) != 0 && update.position() != null ? update.position() : previous.position(),
++            (flags & LocatorBarUpdate.TEXTURE) != 0 ? update.texture() == null ? "" : update.texture() : previous.texture(),
++            (flags & LocatorBarUpdate.ICON_SIZE) != 0 && update.size() != null ? update.size() : previous.size(),
++            (flags & LocatorBarUpdate.COLOR) != 0 ? update.color() == null ? -1 : update.color() : previous.color(),
++            (flags & LocatorBarUpdate.CLIENT_POSITION_AUTHORITY) != 0 && update.clientPositionAuthority() != null ? update.clientPositionAuthority() : previous.clientPositionAuthority(),
++            actorId
++        );
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/LocatorBarUpdate.java b/src/main/java/net/raphimc/viabedrock/protocol/model/LocatorBarUpdate.java
+new file mode 100644
+index 000000000..52b621c85
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/LocatorBarUpdate.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint.IconSize;
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint.WorldPosition;
++
++import java.util.UUID;
++
++public record LocatorBarUpdate(UUID group, int flags, Boolean visible, WorldPosition position, String texture,
++                               IconSize size, Integer color, Boolean clientPositionAuthority, Long actorUniqueId, int action) {
++
++    public static final int POSITION = 1;
++    public static final int VISIBILITY = 2;
++    public static final int TEXTURE = 4;
++    public static final int ICON_SIZE = 8;
++    public static final int COLOR = 16;
++    public static final int CLIENT_POSITION_AUTHORITY = 32;
++    public static final int NONE = 0;
++    public static final int ADD = 1;
++    public static final int REMOVE = 2;
++    public static final int UPDATE = 3;
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
 index 07b8856c9..0f5050c33 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
@@ -46,8 +327,50 @@ index 07b8856c9..0f5050c33 100644
                              removeNames.add(entry.value());
                              final Pair<ScoreboardObjective, ScoreboardEntry> scoreboardEntry = scoreboardTracker.getEntryForPlayer(entry.key());
                              if (scoreboardEntry != null) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index 6e99cdeb0..18168ef15 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -570,6 +570,7 @@ public final class JoinPackets {
+         joinGame.write(Types.BOOLEAN, false); // online mode
+         joinGame.write(Types.BOOLEAN, false); // enforces secure chat
+         joinGame.send(BedrockProtocol.class);
++        user.get(PlayerWaypointTracker.class).markJoined();
+ 
+         clientPlayer.createTeam();
+         clientPlayer.sendInitialEntityData();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index 88b9ea570..41c7532f8 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -28,6 +28,7 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets
+ import com.viaversion.viaversion.util.Key;
+ import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
+ import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.LocatorBarSnapshot;
+ import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+@@ -40,6 +41,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.MinecraftPac
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationSeverity;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationType;
+ import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import net.raphimc.viabedrock.protocol.storage.PlayerWaypointTracker;
+ import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
+ import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+@@ -132,6 +134,9 @@ public final class MultiStatePackets {
+         if (channel.equals("minecraft:register")) {
+             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
+             wrapper.user().get(ChannelStorage.class).addChannels(channels);
++            if (channels.contains(LocatorBarSnapshot.CHANNEL) && wrapper.user().has(PlayerWaypointTracker.class)) {
++                wrapper.user().get(PlayerWaypointTracker.class).sendSnapshot();
++            }
+ 
+             if (channels.contains(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
+                 ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
-index 931d0cbbd..5409f3035 100644
+index 931d0cbbd..a20ced888 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
 @@ -38,6 +38,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -67,10 +390,14 @@ index 931d0cbbd..5409f3035 100644
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  
  import java.util.UUID;
-@@ -59,6 +62,24 @@ import java.util.logging.Level;
+@@ -59,6 +62,28 @@ import java.util.logging.Level;
  public final class OtherPlayerPackets {
  
      public static void register(final BedrockProtocol protocol) {
++        protocol.registerClientbound(ClientboundBedrockPackets.LOCATOR_BAR, null, wrapper -> {
++            wrapper.cancel();
++            wrapper.user().get(PlayerWaypointTracker.class).applyLocatorUpdates(wrapper.read(BedrockTypes.LOCATOR_BAR));
++        });
 +        protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_LOCATION, null, wrapper -> {
 +            wrapper.cancel();
 +            final PlayerLocation location = readPlayerLocation(wrapper);
@@ -92,7 +419,7 @@ index 931d0cbbd..5409f3035 100644
          protocol.registerClientbound(ClientboundBedrockPackets.ADD_PLAYER, ClientboundPackets26_3.ADD_ENTITY, wrapper -> {
              final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
              final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
-@@ -205,7 +226,21 @@ public final class OtherPlayerPackets {
+@@ -205,7 +230,21 @@ public final class OtherPlayerPackets {
          });
      }
  
@@ -129,10 +456,10 @@ index 3a98a6995..617b1b5af 100644
              final ClientPlayerEntity clientPlayer = oldEntityTracker.getClientPlayer();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTracker.java
 new file mode 100644
-index 000000000..9bf7bbbc0
+index 000000000..90740f06a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTracker.java
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,131 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -156,9 +483,13 @@ index 000000000..9bf7bbbc0
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.minecraft.BlockPosition;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
 +import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.model.LocatorBarSnapshot;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.model.LocatorBarState;
++import net.raphimc.viabedrock.protocol.model.LocatorBarUpdate;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
 +
 +import java.util.HashMap;
@@ -174,9 +505,43 @@ index 000000000..9bf7bbbc0
 +    private static final int VEC3I = 1;
 +
 +    private final Map<UUID, BlockPosition> positions = new HashMap<>();
++    private final LocatorBarState locator = new LocatorBarState();
++    private boolean joined;
++    private boolean locatorReceived;
 +
 +    public PlayerWaypointTracker(final UserConnection user) {
 +        super(user);
++    }
++
++    public void applyLocatorUpdates(final LocatorBarUpdate[] updates) {
++        boolean changed = !this.locatorReceived;
++        this.locatorReceived = true;
++        for (LocatorBarUpdate update : updates) {
++            changed |= this.locator.apply(update);
++        }
++        if (changed) {
++            this.sendSnapshot();
++        }
++    }
++
++    public LocatorBarSnapshot snapshot() {
++        return new LocatorBarSnapshot(this.locator.waypoints());
++    }
++
++    public void markJoined() {
++        this.joined = true;
++        this.sendSnapshot();
++    }
++
++    public void sendSnapshot() {
++        if (!this.joined || !this.locatorReceived || this.user().getProtocolInfo().getServerState() != State.PLAY
++                || !this.user().get(ChannelStorage.class).hasChannel(LocatorBarSnapshot.CHANNEL)) {
++            return;
++        }
++        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++        packet.write(Types.STRING, LocatorBarSnapshot.CHANNEL);
++        packet.write(LocatorBarSnapshot.TYPE, this.snapshot());
++        packet.send(BedrockProtocol.class);
 +    }
 +
 +    public void update(final UUID uuid, final Position3f position) {
@@ -223,6 +588,256 @@ index 000000000..9bf7bbbc0
 +            wrapper.write(Types.VAR_INT, position.y());
 +            wrapper.write(Types.VAR_INT, position.z());
 +        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/BedrockTypes.java b/src/main/java/net/raphimc/viabedrock/protocol/types/BedrockTypes.java
+index 35ae27a64..e5981e97a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/BedrockTypes.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/BedrockTypes.java
+@@ -73,6 +73,7 @@ public final class BedrockTypes {
+     public static final Type<Tag> TAG_LE = new TagLeType();
+     public static final Type<Tag> COMPOUND_TAG_VALUE = new TagValueType(Tag_Type.Compound);
+     public static final Type<BlockPosition> BLOCK_POSITION = new BlockPositionType();
++    public static final Type<LocatorBarUpdate[]> LOCATOR_BAR = new LocatorBarType();
+     public static final Type<Position3f> POSITION_3F = new Position3fType();
+     public static final Type<Position3f> OPTIONAL_POSITION_3F = new OptionalType<>(POSITION_3F);
+     public static final Type<Position2f> POSITION_2F = new Position2fType();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/model/LocatorBarType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/model/LocatorBarType.java
+new file mode 100644
+index 000000000..0285634b6
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/model/LocatorBarType.java
+@@ -0,0 +1,85 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.types.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.model.LocatorBarUpdate;
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint.IconSize;
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint.WorldPosition;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++public final class LocatorBarType extends Type<LocatorBarUpdate[]> {
++
++    public LocatorBarType() {
++        super(LocatorBarUpdate[].class);
++    }
++
++    @Override
++    public LocatorBarUpdate[] read(final ByteBuf buffer) {
++        final int count = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(buffer);
++        // UUID, flags, seven optional-presence bytes and action are mandatory for each entry.
++        if (count < 0 || count > buffer.readableBytes() / 28) {
++            throw new IllegalArgumentException("Locator entries exceed the packet boundary");
++        }
++        final LocatorBarUpdate[] updates = new LocatorBarUpdate[count];
++        for (int i = 0; i < count; i++) {
++            final var group = BedrockTypes.UUID.read(buffer);
++            final int flags = buffer.readIntLE();
++            final Boolean visible = buffer.readBoolean() ? buffer.readBoolean() : null;
++            final WorldPosition position = buffer.readBoolean()
++                ? new WorldPosition(BedrockTypes.POSITION_3F.read(buffer), BedrockTypes.VAR_INT.readPrimitive(buffer)) : null;
++            final String texture = buffer.readBoolean() ? BedrockTypes.STRING.read(buffer) : null;
++            final IconSize size = buffer.readBoolean() ? new IconSize(buffer.readFloatLE(), buffer.readFloatLE()) : null;
++            final Integer color = buffer.readBoolean() ? buffer.readIntLE() : null;
++            final Boolean authority = buffer.readBoolean() ? buffer.readBoolean() : null;
++            final Long actorId = buffer.readBoolean() ? BedrockTypes.VAR_LONG.readPrimitive(buffer) : null;
++            updates[i] = new LocatorBarUpdate(group, flags, visible, position, texture, size, color, authority, actorId, buffer.readUnsignedByte());
++        }
++        return updates;
++    }
++
++    @Override
++    public void write(final ByteBuf buffer, final LocatorBarUpdate[] updates) {
++        BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, updates.length);
++        for (LocatorBarUpdate update : updates) {
++            BedrockTypes.UUID.write(buffer, update.group());
++            buffer.writeIntLE(update.flags());
++            buffer.writeBoolean(update.visible() != null);
++            if (update.visible() != null) {
++                buffer.writeBoolean(update.visible());
++            }
++            buffer.writeBoolean(update.position() != null);
++            if (update.position() != null) {
++                BedrockTypes.POSITION_3F.write(buffer, update.position().position());
++                BedrockTypes.VAR_INT.writePrimitive(buffer, update.position().dimension());
++            }
++            buffer.writeBoolean(update.texture() != null);
++            if (update.texture() != null) {
++                BedrockTypes.STRING.write(buffer, update.texture());
++            }
++            buffer.writeBoolean(update.size() != null);
++            if (update.size() != null) {
++                buffer.writeFloatLE(update.size().width());
++                buffer.writeFloatLE(update.size().height());
++            }
++            buffer.writeBoolean(update.color() != null);
++            if (update.color() != null) {
++                buffer.writeIntLE(update.color());
++            }
++            buffer.writeBoolean(update.clientPositionAuthority() != null);
++            if (update.clientPositionAuthority() != null) {
++                buffer.writeBoolean(update.clientPositionAuthority());
++            }
++            buffer.writeBoolean(update.actorUniqueId() != null);
++            if (update.actorUniqueId() != null) {
++                BedrockTypes.VAR_LONG.writePrimitive(buffer, update.actorUniqueId());
++            }
++            buffer.writeByte(update.action());
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/LocatorBarSnapshotTest.java b/src/test/java/net/raphimc/viabedrock/api/model/LocatorBarSnapshotTest.java
+new file mode 100644
+index 000000000..9bdffe67f
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/LocatorBarSnapshotTest.java
+@@ -0,0 +1,50 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint.IconSize;
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint.WorldPosition;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class LocatorBarSnapshotTest {
++
++    @Test
++    void transportsOrderedGroupStateWithoutSharingMutableStorage() throws Exception {
++        final UUID first = UUID.randomUUID();
++        final UUID second = UUID.randomUUID();
++        final Map<UUID, LocatorBarWaypoint> groups = new LinkedHashMap<>();
++        groups.put(first, new LocatorBarWaypoint(true, new WorldPosition(new Position3f(-90F, 121.62F, 74F), 2),
++            "textures/ui/locator_bar_dot_0", new IconSize(2F, 0.5F), 0xFF00FF00, true, Long.MIN_VALUE));
++        groups.put(second, LocatorBarWaypoint.EMPTY);
++        final LocatorBarSnapshot snapshot = new LocatorBarSnapshot(groups);
++        groups.clear();
++        assertEquals(2, snapshot.waypoints().size());
++        assertThrows(UnsupportedOperationException.class, () -> snapshot.waypoints().clear());
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            LocatorBarSnapshot.TYPE.write(buffer, snapshot);
++            final LocatorBarSnapshot decoded = LocatorBarSnapshot.TYPE.read(buffer);
++            assertEquals(snapshot, decoded);
++            assertEquals(java.util.List.of(first, second), java.util.List.copyOf(decoded.waypoints().keySet()));
++            assertEquals(0, buffer.readableBytes());
++            LocatorBarSnapshot.TYPE.write(buffer, new LocatorBarSnapshot(Map.of()));
++            assertTrue(LocatorBarSnapshot.TYPE.read(buffer).waypoints().isEmpty());
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/LocatorBarStateTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/LocatorBarStateTest.java
+new file mode 100644
+index 000000000..48697579a
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/LocatorBarStateTest.java
+@@ -0,0 +1,85 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint.IconSize;
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint.WorldPosition;
++import org.junit.jupiter.api.Test;
++
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class LocatorBarStateTest {
++
++    private static final UUID GROUP = UUID.randomUUID();
++    private static final WorldPosition POSITION = new WorldPosition(new Position3f(-90F, 121.62F, 74F), 0);
++    private static final IconSize SIZE = new IconSize(1F, 1F);
++
++    @Test
++    void followsNativeMaskAndOmittedFieldRules() {
++        final LocatorBarState state = new LocatorBarState();
++        state.apply(full(LocatorBarUpdate.ADD));
++        assertTrue(state.apply(update(16, null, null, null, null, 0xFF00FF00, null, null)));
++        assertEquals(0xFF00FF00, state.waypoints().get(GROUP).color());
++        assertEquals(POSITION, state.waypoints().get(GROUP).position());
++        assertFalse(state.apply(update(0, null, null, null, null, 0xFF0000FF, null, null)));
++        assertFalse(state.apply(update(9, null, null, null, null, null, null, null)));
++        assertTrue(state.apply(update(32, null, null, null, null, null, true, null)));
++        assertEquals(SIZE, state.waypoints().get(GROUP).size());
++        assertTrue(state.apply(update(54, null, null, null, null, null, null, null)));
++        final var reset = state.waypoints().get(GROUP);
++        assertTrue(reset.visible());
++        assertTrue(reset.texture().isEmpty());
++        assertEquals(-1, reset.color());
++        assertTrue(reset.clientPositionAuthority());
++        assertEquals(POSITION, reset.position());
++        assertEquals(SIZE, reset.size());
++    }
++
++    @Test
++    void handlesDuplicateAddUnknownUpdateAndRemoveWithoutRebindingActors() {
++        final LocatorBarState state = new LocatorBarState();
++        assertFalse(state.apply(full(LocatorBarUpdate.UPDATE)));
++        assertTrue(state.apply(full(LocatorBarUpdate.ADD)));
++        final var initial = state.waypoints().get(GROUP);
++        assertFalse(state.apply(full(LocatorBarUpdate.ADD)));
++        assertFalse(state.apply(update(0, null, null, null, null, null, null, 42L)));
++        assertEquals(initial, state.waypoints().get(GROUP));
++        assertEquals(-287762808818L, initial.actorUniqueId());
++        assertFalse(state.apply(full(LocatorBarUpdate.NONE)));
++        assertTrue(state.apply(full(LocatorBarUpdate.REMOVE)));
++        assertFalse(state.apply(full(LocatorBarUpdate.REMOVE)));
++        assertFalse(state.apply(full(LocatorBarUpdate.UPDATE)));
++        assertTrue(state.waypoints().isEmpty());
++    }
++
++    @Test
++    void addUsesFlagsAndInitialZeroSize() {
++        final LocatorBarState state = new LocatorBarState();
++        state.apply(new LocatorBarUpdate(GROUP, 0, true, POSITION, "ignored", SIZE, 0xFF00FF00, true, 42L, LocatorBarUpdate.ADD));
++        final var value = state.waypoints().get(GROUP);
++        assertFalse(value.visible());
++        assertNull(value.position());
++        assertTrue(value.texture().isEmpty());
++        assertEquals(IconSize.ZERO, value.size());
++        assertEquals(-1, value.color());
++        assertFalse(value.clientPositionAuthority());
++        assertEquals(42L, value.actorUniqueId());
++        state.clear();
++        assertTrue(state.waypoints().isEmpty());
++    }
++
++    private static LocatorBarUpdate full(final int action) {
++        return new LocatorBarUpdate(GROUP, 63, true, POSITION, "textures/ui/locator_bar_dot_0", SIZE, 0xFFFF0000, false, -287762808818L, action);
++    }
++
++    private static LocatorBarUpdate update(final int flags, final Boolean visible, final WorldPosition position, final String texture,
++                                           final IconSize size, final Integer color, final Boolean authority, final Long actorId) {
++        return new LocatorBarUpdate(GROUP, flags, visible, position, texture, size, color, authority, actorId, LocatorBarUpdate.UPDATE);
 +    }
 +
 +}
@@ -368,5 +983,101 @@ index 000000000..f86ae586b
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/model/LocatorBarTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/model/LocatorBarTypeTest.java
+new file mode 100644
+index 000000000..f41776263
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/model/LocatorBarTypeTest.java
+@@ -0,0 +1,90 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.types.model;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.LocatorBarUpdate;
++import net.raphimc.viabedrock.protocol.model.LocatorBarState;
++import org.junit.jupiter.api.Test;
++
++import java.util.HexFormat;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class LocatorBarTypeTest {
++
++    // Controlled native 1.26.51.1/protocol 2193 fixture, including a signed actor unique ID.
++    private static final byte[] ADD = HexFormat.of().parseHex("01000000000000001001000000000000003f0000000101010000b4c2713df3420000944200011d74657874757265732f75692f6c6f6361746f725f6261725f646f745f30010000803f0000803f010000ffff010101e3ffffffdf1001");
++    private static final byte[] UPDATE = HexFormat.of().parseHex("010000000000000010010000000000000010000000000000000100ff00ff000003");
++
++    @Test
++    void decodesWireEntriesAndPreservesEveryOptionalOnRoundTrip() {
++        final LocatorBarType type = new LocatorBarType();
++        final ByteBuf input = Unpooled.wrappedBuffer(ADD);
++        final ByteBuf output = Unpooled.buffer();
++        try {
++            final LocatorBarUpdate[] updates = type.read(input);
++            assertEquals(0, input.readableBytes());
++            assertEquals(1, updates.length);
++            final var update = updates[0];
++            assertEquals(63, update.flags());
++            assertEquals(1, update.action());
++            assertEquals(-90F, update.position().position().x());
++            assertEquals(0, update.position().dimension());
++            assertEquals(0xFFFF0000, update.color());
++            assertEquals(-287762808818L, update.actorUniqueId());
++            assertTrue(update.visible());
++            assertTrue(update.clientPositionAuthority());
++            type.write(output, updates);
++            final byte[] encoded = new byte[output.readableBytes()];
++            output.readBytes(encoded);
++            assertArrayEquals(ADD, encoded);
++        } finally {
++            input.release();
++            output.release();
++        }
++    }
++
++    @Test
++    void partialWireUpdateChangesOnlyTheFlaggedField() {
++        final LocatorBarType type = new LocatorBarType();
++        final ByteBuf add = Unpooled.wrappedBuffer(ADD);
++        final ByteBuf update = Unpooled.wrappedBuffer(UPDATE);
++        try {
++            final LocatorBarState state = new LocatorBarState();
++            final var first = type.read(add)[0];
++            state.apply(first);
++            final var previous = state.waypoints().get(first.group());
++            final var second = type.read(update)[0];
++            state.apply(second);
++            final var current = state.waypoints().get(first.group());
++            assertEquals(0xFF00FF00, current.color());
++            assertEquals(previous.position(), current.position());
++            assertEquals(previous.size(), current.size());
++            assertEquals(previous.actorUniqueId(), current.actorUniqueId());
++            assertEquals(0, update.readableBytes());
++        } finally {
++            add.release();
++            update.release();
++        }
++    }
++
++    @Test
++    void rejectsEntryCountsOutsideThePayloadAndTruncatedOptionals() {
++        final LocatorBarType type = new LocatorBarType();
++        final ByteBuf count = Unpooled.wrappedBuffer(new byte[]{2});
++        final ByteBuf truncated = Unpooled.wrappedBuffer(java.util.Arrays.copyOf(ADD, ADD.length - 3));
++        try {
++            assertThrows(IllegalArgumentException.class, () -> type.read(count));
++            assertThrows(IndexOutOfBoundsException.class, () -> type.read(truncated));
++        } finally {
++            count.release();
++            truncated.release();
++        }
++    }
++
++}
 -- 
-2.55.0
+2.56.0
