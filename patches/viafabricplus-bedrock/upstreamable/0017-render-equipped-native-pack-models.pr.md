@@ -53,3 +53,9 @@ All four actor and costume cube regressions pass. The complete add-on stack repl
 Equipment inherits the licensed target library below accepted server packs. Resolve declared legacy equipment geometry through cross-file parents and accepted parent overrides. Preserve native item owner bindings and replacement conditions. The loaded library supplies armor models, textures, materials, controllers and offset animations.
 
 Tests cover owner binding, server replacement and inherited texture dimensions. A private bundled-resource probe selects the player iron chestplate and resolves its geometry, alpha-test material and animation. Explicit bone bindings and unsupported material families retain the existing fallback. Exact visible alignment on the reported custom-size skin remains pending.
+
+## Equipment preparation
+
+Equipment storage now prepares off the render thread. It keeps referenced models and textures, attachables, materials and animation controllers. Legacy parents resolve against the complete inherited library before unused models are omitted. Ordinary equipment remains available while preparation runs.
+
+The saved CubeCraft pack retains 107 attachables and 24 equipped models, compared with 1,005 models before this change. Three local equipment preparation samples drop from about 2.8 to 3.8 seconds to 306 to 358 ms. These measurements exclude network downloads and complete client startup. Existing tests cover server overrides, owner selection and legacy inheritance across files.

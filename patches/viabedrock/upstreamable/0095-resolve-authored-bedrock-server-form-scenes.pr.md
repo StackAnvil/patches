@@ -275,3 +275,11 @@ This probe verifies resolution and action identities, but does not establish liv
 
 The final 99-patch core replay and build pass 1,027 tests: 997 passed and 30 optional skips.
 Main, test, and tool Checkstyle pass with no failures or errors.
+
+## HUD title factories and lazy UI preparation
+
+Accepted HUD definitions now resolve title factories before unrelated HUD collections. Native `insert_back` and `insert_front` modifications retain authored ancestors and inherited controls. Clients that advertise `viabedrock:native_hud_title` receive the resolved scene and title lifetime. Other clients retain Java title packets. Subtitle updates preserve the title clock; clear and reset remain distinct.
+
+The saved CubeCraft 0.0.55 pack for Bedrock 1.26.51.1, protocol 2193, supplies the title marker, subtitle image binding, top banner and alpha/wait chain. A private production-resolver check produces the clean caption, its 30-by-30 icon and normalized texture identities. It does not establish native screenshot parity. Targeted tests cover inserted factories beside unrelated grids, timing chains, title ordering and message bounds.
+
+Actor-only storage now creates its shared JSON UI program on first UI access. This avoids decoding UI textures in each equipment or actor storage. On the saved pack, actor storage falls from 1.7 to 2.0 seconds to 80 to 91 ms. These are local preparation measurements, not total join-time guarantees. The complete core build passes 1,066 tests: 1,036 passed and 30 skipped. All Checkstyle tasks pass.

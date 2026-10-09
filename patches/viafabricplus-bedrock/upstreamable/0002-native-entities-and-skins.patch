@@ -1,4 +1,4 @@
-From cc339505d0b49cc5ac1765e3464b54c2c38e41e5 Mon Sep 17 00:00:00 2001
+From 1108003199c3e08033ebdc80ce586c18d0bf2035 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -392,6 +392,8 @@ emissive shader weights lighting by alpha and radiance by inverse alpha;
 Java transparency cannot represent that mask. Preserve UV transforms,
 culling, upload generations and resource lifetimes for both passes.
 The mask test checks every alpha/channel pair and radiance reconstruction.
+
+Resolve native appearances in PlayerSkinRenderCache for inline player sprites and skull lookups, as well as the existing player-info path. Chat Heads 1.3.2-26.3 creates resolved PlayerSprite objects, whose glyph suppliers use this cache directly. Recheck retained suppliers against installed Bedrock appearances so late skin packets and replacements remain visible, preserve Java fallback for unknown identities, and bound the extra cache by weak profile keys. This bridges the public vanilla sprite API without changing Java UUIDs or depending on Chat Heads internals.
 ---
  build.gradle.kts                              |   6 +
  .../bedrock/ViaFabricPlusBedrock.java         |  17 ++
@@ -411,6 +413,7 @@ The mask test checks every alpha/channel pair and radiance reconstruction.
  .../render/MixinEntityRenderDispatcher.java   |  93 ++++++
  .../render/MixinMinecraftSkinLifecycle.java   |  41 +++
  .../features/render/MixinPlayerInfoSkin.java  |  24 ++
+ .../render/MixinPlayerSkinRenderCache.java    |  55 ++++
  .../render/MixinPlayerSkinWidget.java         |  28 ++
  .../render/MixinPlayerTabOverlay.java         |  22 ++
  .../render/BedrockAcceptedResources.java      |  53 ++++
@@ -437,7 +440,7 @@ The mask test checks every alpha/channel pair and radiance reconstruction.
  .../shaders/core/bedrock_actor.fsh            |  46 +++
  .../shaders/core/bedrock_actor.vsh            |  47 +++
  .../viafabricplus-bedrock.accesswidener       |   6 +
- .../viafabricplus-bedrock.mixins.json         |  16 ++
+ .../viafabricplus-bedrock.mixins.json         |  17 ++
  .../render/BedrockAcceptedResourcesTest.java  | 118 ++++++++
  .../BedrockActorMaterialDefinitionsTest.java  | 165 +++++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 ++++
@@ -452,7 +455,7 @@ The mask test checks every alpha/channel pair and radiance reconstruction.
  .../render/BedrockRidingAnchorsTest.java      | 130 +++++++++
  .../render/BedrockShaderPipelinesTest.java    |  49 ++++
  .../render/CustomEntityRenderStoreTest.java   |  62 ++++
- 59 files changed, 3736 insertions(+), 1 deletion(-)
+ 60 files changed, 3792 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockDynamicTexture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisPipelines.java
@@ -469,6 +472,7 @@ The mask test checks every alpha/channel pair and radiance reconstruction.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftSkinLifecycle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPlayerInfoSkin.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPlayerSkinRenderCache.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPlayerSkinWidget.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPlayerTabOverlay.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
@@ -1263,6 +1267,67 @@ index 0000000..da70a15
 +    private void nativeProfileSkin(final CallbackInfoReturnable<PlayerSkin> result) {
 +        final PlayerInfo player = (PlayerInfo) (Object) this;
 +        result.setReturnValue(BedrockPlayerSkins.skin(player.getProfile().id(), result.getReturnValue()));
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPlayerSkinRenderCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPlayerSkinRenderCache.java
+new file mode 100644
+index 0000000..fbaaf6e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPlayerSkinRenderCache.java
+@@ -0,0 +1,55 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
++import java.util.Map;
++import java.util.WeakHashMap;
++import java.util.function.Supplier;
++import net.minecraft.client.renderer.PlayerSkinRenderCache;
++import net.minecraft.world.item.component.ResolvableProfile;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Unique;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++/** Inline player sprites and skulls use the same live native appearance as the tab list. */
++@Mixin(PlayerSkinRenderCache.class)
++public abstract class MixinPlayerSkinRenderCache {
++    @Unique private final Map<ResolvableProfile, PlayerSkinRenderCache.RenderInfo> nativeHeads = new WeakHashMap<>();
++
++    @WrapMethod(method = "createLookup")
++    private Supplier<PlayerSkinRenderCache.RenderInfo> nativeLookup(final ResolvableProfile profile,
++            final Operation<Supplier<PlayerSkinRenderCache.RenderInfo>> original) {
++        final var fallback = original.call(profile);
++        // Glyphs keep their supplier. Resolve again so later skin packets and resource reloads remain visible.
++        return () -> this.nativeHead(profile, fallback.get());
++    }
++
++    @Inject(method = "getOrDefault", at = @At("RETURN"), cancellable = true)
++    private void nativeDefault(final ResolvableProfile profile,
++            final CallbackInfoReturnable<PlayerSkinRenderCache.RenderInfo> result) {
++        result.setReturnValue(this.nativeHead(profile, result.getReturnValue()));
++    }
++
++    @Unique
++    private PlayerSkinRenderCache.RenderInfo nativeHead(final ResolvableProfile profile,
++                                                        final PlayerSkinRenderCache.RenderInfo fallback) {
++        final var skin = BedrockPlayerSkins.skin(profile.partialProfile().id(), fallback.playerSkin());
++        if (skin == fallback.playerSkin()) {
++            this.nativeHeads.remove(profile);
++            return fallback;
++        }
++        final var cached = this.nativeHeads.get(profile);
++        if (cached != null && cached.playerSkin().equals(skin)) return cached;
++        final var installed = ((PlayerSkinRenderCache) (Object) this).new RenderInfo(profile.partialProfile(), skin, profile.skinPatch());
++        this.nativeHeads.put(profile, installed);
++        return installed;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPlayerSkinWidget.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPlayerSkinWidget.java
@@ -3319,7 +3384,7 @@ index 35145bc..f42de8f 100644
 +accessible field net/minecraft/client/renderer/RenderPipelines ENTITY_NO_LIGHTMAP_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 +accessible field net/minecraft/client/renderer/RenderPipelines EYES_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 17da109..77e6b74 100644
+index 17da109..2f5037d 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
 @@ -5,6 +5,7 @@
@@ -3330,12 +3395,13 @@ index 17da109..77e6b74 100644
      "jjwt.MixinClasses",
      "jjwt.MixinDefaultJwtParserBuilder",
      "core.access.MixinChunkTracker",
-@@ -45,6 +46,21 @@
+@@ -45,6 +46,22 @@
      "features.misc.MixinClientSuggestionProvider",
      "features.misc.MixinInventoryScreen",
      "features.misc.MixinMinecraft",
 +    "features.render.MixinAbstractClientPlayer",
 +    "features.render.MixinPlayerInfoSkin",
++    "features.render.MixinPlayerSkinRenderCache",
 +    "features.render.MixinPlayerTabOverlay",
 +    "features.render.MixinBedrockActorPipelines",
 +    "features.render.MixinBedrockActorRenderType",

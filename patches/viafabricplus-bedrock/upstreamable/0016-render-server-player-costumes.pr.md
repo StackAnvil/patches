@@ -126,3 +126,7 @@ First-person controller selection now reuses each declared rule's compiled bone 
 The owning Character Creator patch contains the shared pattern type and actor-path cube regressions. Candidate rendering on Vulkan and Iris remains a separate runtime gate.
 
 The complete stack replays, and the full add-on build passes 616 tests with 117 optional skips. No failures or errors occur. The focused tests retain actor selection equality and intentional hides. Actual candidate rendering remains pending.
+
+## Reuse parsed built-in models
+
+Server overlays reuse immutable parsed built-in model declarations and parse only accepted layers. Higher packs still replace model identifiers, and callers receive copies from model lookup. Existing library tests cover pack order, partial overlays, texture precedence and independent identifiers.

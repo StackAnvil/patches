@@ -218,3 +218,9 @@ The repeated-control test also clicks the retained middle widget and checks its 
 A later click on the same closing screen produces no second response.
 The full add-on build passes 751 tests: 632 passed and 119 optional skips, with no failures or errors.
 The final JAR's UI and actor bundles pass checksum and entry verification against the approved local assets.
+
+## HUD title rendering
+
+The shared UI renderer now displays core-resolved HUD title factories with authored images, captions, size and anchors. Alpha animations follow fade, wait and fade-out chains. Subtitle updates retain the original title clock. Late updates cannot revive an expired title, and disconnects invalidate queued work and release resources. Ordinary titles remain available for scenes the core cannot resolve.
+
+Targeted tests sample the alpha chain before, during and after each phase, including replacement scene nodes on the same clock. The complete addon suite passes 799 tests: 679 passed and 120 skipped. All four full-stack builds and bundle checks pass.

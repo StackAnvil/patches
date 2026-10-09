@@ -1,4 +1,4 @@
-From 5a6005f905aa1dbc64cea32abc6f223e0d4244a2 Mon Sep 17 00:00:00 2001
+From 4fc4ae2e8230832d6b3d0d70fcb669245155e7fa Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 18:26:58 +0200
 Subject: [PATCH] feat(attachables): render equipped native pack models
@@ -67,10 +67,12 @@ Tests cover native owner bindings, replacement conditions and cross-file
 inheritance with an accepted parent override. The bundled iron chestplate
 resolves its geometry, alpha-test material and native animation in a private
 resource probe. Full visible armor parity still needs the reported skin.
+
+Prepare native equipment asynchronously and retain ordinary equipment until its storage is ready. Collect the geometries and textures referenced by attachables, resolve legacy parents against the complete inherited library, then omit unrelated actor models and UI assets from equipment storage. This preserves cross-file inheritance and server override order while avoiding a render-thread parse of the whole licensed library. On the saved CubeCraft pack, equipment storage retains 24 relevant geometries instead of 1,005.
 ---
  .../appearance/BedrockActorAnimation.java     |  10 +
  .../BedrockAttachableSelection.java           |  51 +++
- .../appearance/BedrockEquipmentResources.java |  90 +++++
+ .../appearance/BedrockEquipmentResources.java | 119 +++++++
  .../render/MixinAvatarAnimationRenderer.java  |  18 +-
  .../render/MixinAvatarAnimationState.java     |  11 +-
  .../bedrock/render/BedrockActorResources.java |   2 +
@@ -88,7 +90,7 @@ resource probe. Full visible armor parity still needs the reported skin.
  .../render/BedrockCostumeVisibilityTest.java  |  45 +++
  .../render/BedrockEquippedAttachableTest.java |  98 ++++++
  .../render/BedrockPlayerModelTest.java        |  58 ++++
- 20 files changed, 1205 insertions(+), 4 deletions(-)
+ 20 files changed, 1234 insertions(+), 4 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java
@@ -188,10 +190,10 @@ index 0000000..a66cd4c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java
 new file mode 100644
-index 0000000..123d475
+index 0000000..7a6e254
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,119 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -209,23 +211,37 @@ index 0000000..123d475
 +import java.util.LinkedHashMap;
 +import java.util.HashSet;
 +import java.util.Set;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.CompletionException;
 +import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +
 +/** Native equipment inherits the bundled target library below accepted server overrides. */
 +public final class BedrockEquipmentResources {
-+    private static ResourcePackStorage source, equipment;
++    private static ResourcePackStorage source;
++    private static CompletableFuture<ResourcePackStorage> equipment;
++    private static boolean failed;
 +
 +    private BedrockEquipmentResources() {}
 +
-+    public static ResourcePackStorage get(final ResourcePackStorage accepted) throws IOException {
++    public static synchronized ResourcePackStorage get(final ResourcePackStorage accepted) throws IOException {
 +        if (accepted == null) return null;
 +        if (source != accepted) {
-+            equipment = merge(BedrockBuiltinAssets.load().library(),
-+                    NativeActorLibrary.resources(accepted.getPackStackBottomToTop(), accepted::isServerPack));
 +            source = accepted;
++            failed = false;
++            equipment = CompletableFuture.supplyAsync(() -> {
++                try {
++                    return merge(BedrockBuiltinAssets.load().library(),
++                            NativeActorLibrary.resources(accepted.getPackStackBottomToTop(), accepted::isServerPack));
++                } catch (IOException invalid) { throw new CompletionException(invalid); }
++            });
 +        }
-+        return equipment;
++        if (failed) return null;
++        try { return equipment.getNow(null); }
++        catch (CompletionException invalid) {
++            failed = true;
++            throw new IOException("Could not prepare native equipment", invalid.getCause());
++        }
 +    }
 +
 +    static ResourcePackStorage merge(final BedrockResourceLibrary builtin,
@@ -236,35 +252,49 @@ index 0000000..123d475
 +        final BedrockResourceLibrary library = BedrockResourceLibrary.withServerPacks(builtin,
 +                accepted.stream().map(NativeActorLibrary.Layer::resources).toList());
 +        final Set<String> equippedModels = new HashSet<>();
++        final Set<String> equippedTextures = new HashSet<>();
 +        for (final var layer : layers) {
 +            for (final var entry : layer.resources().entrySet()) {
 +                if (!entry.getKey().startsWith("attachables/") || !entry.getKey().endsWith(".json")) continue;
 +                final JsonObject attachable = JsonParser.parseString(new String(entry.getValue(),
 +                        StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("minecraft:attachable");
 +                if (attachable == null) continue;
++                final JsonObject textures = attachable.getAsJsonObject("description").getAsJsonObject("textures");
++                if (textures != null) textures.entrySet().forEach(texture -> equippedTextures.add(texture.getValue().getAsString()));
 +                final JsonObject geometries = attachable.getAsJsonObject("description").getAsJsonObject("geometry");
 +                if (geometries != null) geometries.entrySet().forEach(entryModel -> equippedModels.add(entryModel.getValue().getAsString()));
 +            }
 +        }
 +        final List<NativeActorLibrary.Layer> resolved = new ArrayList<>();
 +        for (final var layer : layers) {
-+            final var resources = new LinkedHashMap<>(layer.resources());
++            final var resources = new LinkedHashMap<String, byte[]>();
++            layer.resources().forEach((path, bytes) -> {
++                if (path.equals("manifest.json") || path.startsWith("attachables/") || path.startsWith("animations/")
++                        || path.startsWith("animation_controllers/") || path.startsWith("render_controllers/")
++                        || path.startsWith("materials/") || path.startsWith("textures/") && path.length() > 4
++                        && equippedTextures.contains(path.substring(0, path.length() - 4))) resources.put(path, bytes);
++            });
 +            for (final var entry : layer.resources().entrySet()) {
 +                if (!entry.getKey().startsWith("models/") || !entry.getKey().endsWith(".json")) continue;
 +                final JsonObject document = JsonParser.parseString(
 +                        new String(entry.getValue(), StandardCharsets.UTF_8)).getAsJsonObject();
-+                if (document.has("minecraft:geometry") || document.keySet().stream()
-+                        .noneMatch(name -> name.startsWith("geometry.") && name.contains(":"))) continue;
-+                // Equipment needs only declared models; their parents resolve against the complete library.
 +                final JsonArray geometries = new JsonArray();
-+                for (final var definition : document.entrySet()) {
-+                    if (!definition.getKey().startsWith("geometry.")
-+                            || !equippedModels.contains(definition.getKey().split(":", -1)[0])) continue;
-+                    final JsonObject selected = new JsonObject();
-+                    if (document.has("format_version")) selected.add("format_version", document.get("format_version"));
-+                    selected.add(definition.getKey(), definition.getValue());
-+                    geometries.add(BedrockLegacyGeometry.read(selected,
-+                            definition.getKey().split(":", -1)[0], library::model));
++                if (document.has("minecraft:geometry")) {
++                    for (final var definition : document.getAsJsonArray("minecraft:geometry")) {
++                        final String identifier = definition.getAsJsonObject().getAsJsonObject("description").get("identifier").getAsString();
++                        if (equippedModels.contains(identifier)) geometries.add(definition.deepCopy());
++                    }
++                } else {
++                    // Resolve selected legacy models against the complete inherited library, then discard unused parents.
++                    for (final var definition : document.entrySet()) {
++                        if (!definition.getKey().startsWith("geometry.")
++                                || !equippedModels.contains(definition.getKey().split(":", -1)[0])) continue;
++                        final JsonObject selected = new JsonObject();
++                        if (document.has("format_version")) selected.add("format_version", document.get("format_version"));
++                        selected.add(definition.getKey(), definition.getValue());
++                        geometries.add(BedrockLegacyGeometry.read(selected,
++                                definition.getKey().split(":", -1)[0], library::model));
++                    }
 +                }
 +                if (geometries.isEmpty()) continue;
 +                final JsonObject normalized = new JsonObject();
@@ -277,9 +307,10 @@ index 0000000..123d475
 +        return ResourcePackStorage.nativeActors(resolved);
 +    }
 +
-+    public static void clear() {
++    public static synchronized void clear() {
 +        source = null;
 +        equipment = null;
++        failed = false;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java

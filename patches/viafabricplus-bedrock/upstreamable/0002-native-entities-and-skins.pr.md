@@ -272,3 +272,9 @@ Installed native skin textures now come from `PlayerInfo.getSkin`, which also su
 With Iris active, native emissive masks use an opaque lit pass and additive emitted radiance. The target 1.26.51.1 shader weights lighting by source alpha and emission by inverse alpha. Preserve per-pixel weights, UV transforms, culling and texture upload lifetimes. The exhaustive mask regression checks all alpha/channel pairs and several lighting levels.
 
 The private CubeCraft replay reaches playable spawn with Complementary Reimagined r5.9.3 and passes the rendering audit. Native skins install unchanged and active models resolve. This does not establish parity for every shader pack, Chat Heads configuration or reported glowing entity.
+
+## Inline player sprites
+
+Native appearances now participate in `PlayerSkinRenderCache` lookups. Retained glyph suppliers see later Bedrock skin updates, while unknown identities keep the Java fallback. Weak profile keys bound the additional cache. This also covers the direct cache lookup used by skull rendering.
+
+[Chat Heads 1.3.2-26.3](https://github.com/dzwdz/chat_heads/blob/1.3.2-26.3/common/src/main/java/dzwdz/chat_heads/ComponentProcessor.java) constructs resolved `PlayerSprite` text objects. Java 26.3 renders those glyphs through this cache instead of the player-info skin hook. The bridge uses that vanilla API and does not alter Java UUIDs or depend on the third-party mod. Custom geometry still uses Java's flat head sprite UV convention in chat.
