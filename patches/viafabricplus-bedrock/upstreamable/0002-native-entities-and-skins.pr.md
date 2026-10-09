@@ -278,3 +278,20 @@ The private CubeCraft replay reaches playable spawn with Complementary Reimagine
 Native appearances now participate in `PlayerSkinRenderCache` lookups. Retained glyph suppliers see later Bedrock skin updates, while unknown identities keep the Java fallback. Weak profile keys bound the additional cache. This also covers the direct cache lookup used by skull rendering.
 
 [Chat Heads 1.3.2-26.3](https://github.com/dzwdz/chat_heads/blob/1.3.2-26.3/common/src/main/java/dzwdz/chat_heads/ComponentProcessor.java) constructs resolved `PlayerSprite` text objects. Java 26.3 renders those glyphs through this cache instead of the player-info skin hook. The bridge uses that vanilla API and does not alter Java UUIDs or depend on the third-party mod. Custom geometry still uses Java's flat head sprite UV convention in chat.
+
+
+## Legacy skin heads
+
+Java 26.3 player glyphs sample face and hat UVs against a square atlas.
+A native 64×32 skin therefore samples the wrong rows when supplied directly.
+The head cache now uses a separate square texture for legacy skins.
+The original image remains intact for native body geometry.
+Skin replacement and disconnect release the additional texture with the appearance.
+
+Pixel checks cover face and hat regions at three resolutions, transparent padding, and unchanged square or custom atlas images.
+A private client fixture installs a synthetic 64×32 skin through the native appearance path.
+All 49 retained glyph lookups match their current head texture, including the synthetic skin.
+The fixture reaches playable spawn and loads its pack.
+Its general world-rendering audit does not apply because it injects an extra skin and omits world chunks.
+The reported skin still needs a visual comparison with stock Chat Heads.
+The add-on build passes 681 tests, with 120 skipped.
