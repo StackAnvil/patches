@@ -1,4 +1,4 @@
-From c48262dc19a1b39aaba2b86828eeb1dfc99532cf Mon Sep 17 00:00:00 2001
+From d6b3bc20f287f2e73dfe5c2280e8eaa01006595a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:56:10 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -258,6 +258,16 @@ The portable UI codec and scope stay in the upstream UI patch. This
 backend, packet hooks and request-engine integration tests remain here
 with the inventory translation tracked by ViaBedrock PR #276. Legacy
 backend rejection must never block ordinary Java clicks.
+
+Do not request a full inventory mismatch refresh for acknowledged ordinary
+craft results without NBT. Their advertised item identity is already
+complete and ItemStackResponse supplies the final count and network ID.
+CubeCraft PoF on protocol 2193 acknowledges a plank craft but does not
+supply the four complete snapshots required by our unconditional refresh;
+the client then times out, holds cursor placement, and disconnects.
+Retain the refresh for tagged or unknown identities, including generated
+map UUIDs and enchantments. Tests cover ordinary cursor and inventory
+results while existing map identity and snapshot correlation tests remain.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   65 +-
@@ -301,7 +311,7 @@ backend rejection must never block ordinary Java clicks.
  .../protocol/rewriter/ItemRewriter.java       |  251 ++-
  .../protocol/rewriter/ItemStackSizes.java     |   59 +
  .../rewriter/item/BundleItemRewriter.java     |   58 +-
- .../storage/CraftedItemSynchronization.java   |  113 ++
+ .../storage/CraftedItemSynchronization.java   |  119 ++
  .../protocol/storage/CraftingDataTracker.java |  206 +++
  .../storage/InventoryRequestRecovery.java     |   80 +
  .../storage/InventoryRequestStorage.java      |  105 ++
@@ -329,7 +339,7 @@ backend rejection must never block ordinary Java clicks.
  .../rewriter/item/BundleItemRewriterTest.java |  279 ++++
  .../storage/BundleHolderPacketTest.java       |  448 ++++++
  .../storage/BundleInventoryActionTest.java    |  504 ++++++
- .../CraftedItemSynchronizationTest.java       |  225 +++
+ .../CraftedItemSynchronizationTest.java       |  243 +++
  .../InventoryContainerGenerationTest.java     |  118 ++
  .../storage/InventoryRequestRecoveryTest.java |   68 +
  .../InventoryRequestTrackerQueueTest.java     |  136 ++
@@ -338,7 +348,7 @@ backend rejection must never block ordinary Java clicks.
  .../NativeAutoPlacementRecoveryTest.java      |  116 ++
  .../NativeContainerActionBackendTest.java     |   95 ++
  .../storage/StonecutterRecipePacketTest.java  |   53 +
- 79 files changed, 12791 insertions(+), 774 deletions(-)
+ 79 files changed, 12815 insertions(+), 774 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionBackend.java
@@ -5483,7 +5493,7 @@ index c51ffd409..bcefe0aea 100644
          wrapper.write(Types.BOOLEAN, false); // override limiter
          wrapper.write(Types.BOOLEAN, false); // always show
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
-index 6ac70a2a3..8bdc139fd 100644
+index 221ba305f..7ac03f092 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 @@ -32,16 +32,18 @@ import com.viaversion.viaversion.protocols.base.ClientboundLoginPackets;
@@ -5600,7 +5610,7 @@ index 6ac70a2a3..8bdc139fd 100644
      }
  
      @Override
-@@ -182,6 +194,8 @@ public class BedrockProtocol
+@@ -183,6 +195,8 @@ public class BedrockProtocol
          user.put(new ScoreboardTracker());
          user.put(new InventoryTracker(user));
          user.put(new NpcDialogueStorage());
@@ -5609,7 +5619,7 @@ index 6ac70a2a3..8bdc139fd 100644
          user.put(new BreakingTracker(user));
  
          user.put(new InventoryTransactionRewriter(user));
-@@ -195,13 +209,23 @@ public class BedrockProtocol
+@@ -196,13 +210,23 @@ public class BedrockProtocol
      }
  
      @Override
@@ -5636,7 +5646,7 @@ index 6ac70a2a3..8bdc139fd 100644
                  throw CancelException.generate();
              }
              final CustomBlockPackStorage customBlocks =
-@@ -225,14 +249,22 @@ public class BedrockProtocol
+@@ -226,14 +250,22 @@ public class BedrockProtocol
                      && BEFORE_PLAY_STATE_WHITELIST.contains(
                              packet)) { // Bedrock client can skip the login state
                  ViaBedrock.getPlatform().getLogger().warning("Skipping LOGIN state");
@@ -5662,7 +5672,7 @@ index 6ac70a2a3..8bdc139fd 100644
                  throw CancelException.generate();
              }
          }
-@@ -254,18 +286,26 @@ public class BedrockProtocol
+@@ -255,18 +287,26 @@ public class BedrockProtocol
          kickForIllegalState(user, reason, null);
      }
  
@@ -9573,10 +9583,10 @@ index 2b7212e91..0b4f77dbb 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronization.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronization.java
 new file mode 100644
-index 000000000..db6adae81
+index 000000000..b6c804ec4
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronization.java
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,119 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -9645,6 +9655,12 @@ index 000000000..db6adae81
 +                continue;
 +            }
 +            final int slot = target.slotFromRequest(requestSlot);
++            final BedrockItem acknowledged = target.getItem(slot);
++            // Ordinary recipe results have complete identity already. A successful response
++            // supplies their final count and network ID; a mismatch refresh is unnecessary.
++            if (!acknowledged.isEmpty() && (acknowledged.tag() == null || acknowledged.tag().isEmpty())) {
++                continue;
++            }
 +            for (final var containerInfo : response.containers()) {
 +                for (final var slotInfo : containerInfo.slots()) {
 +                    final int responseSlot = Byte.toUnsignedInt(slotInfo.slot());
@@ -15008,10 +15024,10 @@ index 000000000..c473eebaa
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronizationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronizationTest.java
 new file mode 100644
-index 000000000..3d6e5700d
+index 000000000..88b8e9a49
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronizationTest.java
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,243 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -15161,6 +15177,24 @@ index 000000000..3d6e5700d
 +        inventory.setItem(9, map(31, 1, 2));
 +        synchronization.observe(inventory, false, 9);
 +        assertTrue(synchronization.isComplete());
++    }
++
++    @Test
++    void acknowledgedOrdinaryResultsCanBePlacedWithoutFullInventorySnapshots() {
++        final Fixture fixture = new Fixture();
++        for (final Container target : List.of(fixture.inventory.getHudContainer(), fixture.inventory.getInventoryContainer())) {
++            final int slot = target == fixture.inventory.getHudContainer() ? 0 : 9;
++            final BedrockItem result = new BedrockItem(5);
++            result.setAmount(4);
++            result.setNetId(30);
++            target.setItem(slot, result);
++            final var destination = target.requestSlotInfo(slot, 0);
++            final var request = fixture.request(List.of(take(destination)));
++            assertFalse(fixture.requests.synchronizeCraftedItems(request, response(destination, 30, 4)));
++            assertFalse(fixture.requests.hasPending());
++            result.setTag(new CompoundTag());
++            assertFalse(fixture.requests.synchronizeCraftedItems(request, response(destination, 30, 4)));
++        }
 +    }
 +
 +    @Test

@@ -1,4 +1,4 @@
-From 62132439a93eec7a2e7c44b2ebe55595500faa87 Mon Sep 17 00:00:00 2001
+From 715a1f04f3f1fa02360c5f1c2430bc1e77297bc0 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:27:08 +0200
 Subject: [PATCH] feat(entities): translate Bedrock metadata and properties
@@ -138,6 +138,19 @@ Discord no-hit evidence identifies the missing metadata path, not a verified
 post-fix result. Native picker radius, inside tests, scheduler ordering and
 live post-fix clicks remain explicit verification limits. This does not
 change physical collision metadata or claim complete native reach parity.
+
+Translate the Bedrock crystal beam clear sentinel (0,0,0) to an absent Java
+beam target. A literal zero position creates a long beam toward the world
+origin even when the crystal has no target. Preserve actual positions,
+including targets directly above the origin. A metadata regression covers
+setting, clearing, and retargeting the same crystal.
+
+Geyser's EnderCrystalEntity.setBlockTarget maps Java's absent beam to
+Vector3i.ZERO; native Bedrock 1.26.51.1 bundled crystal resources animate
+three nested cubes without a camera-facing expression. Java 26.3's crystal
+renderer draws a beam whenever its optional target is present. This fixes
+the translation and retains the ordinary crystal animation.
+Reference: https://github.com/GeyserMC/Geyser/blob/master/core/src/main/java/org/geysermc/geyser/entity/type/EnderCrystalEntity.java
 ---
  .../api/model/NativeActorHitboxes.java        |  91 +++
  .../api/model/NativeActorPickingMessage.java  | 111 +++
@@ -153,7 +166,7 @@ change physical collision metadata or claim complete native reach parity.
  .../protocol/packet/JoinPackets.java          |   2 +-
  .../protocol/packet/MultiStatePackets.java    |   6 +
  .../protocol/packet/OtherPlayerPackets.java   |   5 +-
- .../rewriter/EntityMetadataRewriter.java      | 650 ++++++++++++++++--
+ .../rewriter/EntityMetadataRewriter.java      | 653 ++++++++++++++++--
  .../storage/EntityPropertyTracker.java        |  61 ++
  .../protocol/storage/EntityTracker.java       |  75 ++
  .../storage/InteractionHitboxProxies.java     | 171 +++++
@@ -166,10 +179,10 @@ change physical collision metadata or claim complete native reach parity.
  .../model/entity/EntityPropertyListTest.java  |  92 +++
  .../ArmorStandMarkerMetadataTest.java         | 177 +++++
  .../rewriter/EntityBodyVisibilityTest.java    | 253 +++++++
- .../rewriter/EntityMetadataRewriterTest.java  | 270 ++++++++
+ .../rewriter/EntityMetadataRewriterTest.java  | 294 ++++++++
  .../rewriter/EntityNameFormattingTest.java    | 256 +++++++
  .../storage/InteractionHitboxProxiesTest.java | 251 +++++++
- 30 files changed, 3138 insertions(+), 71 deletions(-)
+ 30 files changed, 3165 insertions(+), 71 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityProperty.java
@@ -665,7 +678,7 @@ index 82b9eb731..0dcbfcaca 100644
      protected boolean translateAttribute(final EntityAttribute attribute, final PacketWrapper javaAttributes, final AtomicInteger attributeCount, final List<EntityData> javaEntityData) {
          return switch (attribute.name()) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
-index ddb78ab60..6ac70a2a3 100644
+index b6bc8edb9..221ba305f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 @@ -83,6 +83,7 @@ public class BedrockProtocol
@@ -676,7 +689,7 @@ index ddb78ab60..6ac70a2a3 100644
          ClientboundBedrockPackets.START_GAME
      );
  
-@@ -185,6 +186,7 @@ public class BedrockProtocol
+@@ -186,6 +187,7 @@ public class BedrockProtocol
  
          user.put(new InventoryTransactionRewriter(user));
          user.put(new MapTracker(user));
@@ -1076,7 +1089,7 @@ index 04eb4f2e1..55811996e 100644
                  entityTracker.applyEntityLink(link);
              }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-index 8a71196b8..33d397202 100644
+index 8a71196b8..a0a1a3705 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 @@ -17,56 +17,89 @@
@@ -1463,14 +1476,17 @@ index 8a71196b8..33d397202 100644
              case INV -> {
                  if (entity.javaType().is(EntityTypes26_3.WITHER)) {
                      final int invulnerabilityTicks = readNumber(entityData).intValue();
-@@ -593,6 +703,31 @@ public final class EntityMetadataRewriter {
+@@ -593,6 +703,34 @@ public final class EntityMetadataRewriter {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for unsupported entity " + entity.type() + " with non-zero value " + targetId);
                  }
              }
 +            case BLOCK_TARGET -> {
 +                if (entity.javaType().is(EntityTypes26_3.END_CRYSTAL)) {
 +                    if (entityData.getValue() instanceof BlockPosition blockPosition) {
-+                        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BEAM_TARGET), VersionedTypes.V26_3.entityDataTypes().optionalBlockPositionType, blockPosition));
++                        // Bedrock uses the zero position to clear a crystal beam target.
++                        final BlockPosition target = blockPosition.x() == 0 && blockPosition.y() == 0 && blockPosition.z() == 0
++                                ? null : blockPosition;
++                        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BEAM_TARGET), VersionedTypes.V26_3.entityDataTypes().optionalBlockPositionType, target));
 +                    }
 +                } else {
 +                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received BLOCK_TARGET for non-END_CRYSTAL entity " + entity.type());
@@ -1495,7 +1511,7 @@ index 8a71196b8..33d397202 100644
              case AGENT, BALLOON_ANCHOR -> {
              } // Education edition only, ignore
              default -> {
-@@ -603,6 +738,401 @@ public final class EntityMetadataRewriter {
+@@ -603,6 +741,401 @@ public final class EntityMetadataRewriter {
          return true;
      }
  
@@ -1897,7 +1913,7 @@ index 8a71196b8..33d397202 100644
      private static Number readNumber(final EntityData data) {
          if (data.dataType() == null || data.getValue() == null) {
              throw new IllegalArgumentException("EntityData " + data.id() + " has null data type or value");
-@@ -617,6 +1147,20 @@ public final class EntityMetadataRewriter {
+@@ -617,6 +1150,20 @@ public final class EntityMetadataRewriter {
          };
      }
  
@@ -3314,13 +3330,14 @@ index 000000000..670144802
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
 new file mode 100644
-index 000000000..f8296b96b
+index 000000000..f479b49a5
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,294 @@
 +package net.raphimc.viabedrock.protocol.rewriter;
 +
 +import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
 +import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 +import com.viaversion.nbt.tag.ByteArrayTag;
 +import com.viaversion.nbt.tag.CompoundTag;
@@ -3356,6 +3373,29 @@ index 000000000..f8296b96b
 +import static org.junit.jupiter.api.Assertions.fail;
 +
 +class EntityMetadataRewriterTest {
++
++    @Test
++    void crystalBeamCanBeSetClearedAndRetargetedWithoutPointingAtTheOrigin() throws Exception {
++        final var field = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("javaEntityDataFields");
++        field.setAccessible(true);
++        final Object previous = field.get(BedrockProtocol.MAPPINGS);
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
++        try {
++            field.set(BedrockProtocol.MAPPINGS, Map.of(EntityTypes26_3.END_CRYSTAL, List.of(EntityDataFields.BEAM_TARGET)));
++            final Entity crystal = new Entity(user, 1, 1, "minecraft:ender_crystal", 1, null, EntityTypes26_3.END_CRYSTAL);
++            for (final BlockPosition target : List.of(new BlockPosition(5, 70, -2), new BlockPosition(0, 0, 0), new BlockPosition(0, 64, 0))) {
++                final List<EntityData> translated = new ArrayList<>();
++                EntityMetadataRewriter.rewrite(user, crystal, ActorDataIds.BLOCK_TARGET,
++                        new EntityData(ActorDataIds.BLOCK_TARGET.getValue(), EntityDataTypesBedrock.BLOCK_POSITION, target), translated);
++                assertEquals(1, translated.size());
++                assertEquals(VersionedTypes.V26_3.entityDataTypes().optionalBlockPositionType, translated.getFirst().dataType());
++                assertEquals(target.y() == 0 ? null : target, translated.getFirst().getValue());
++            }
++        } finally {
++            field.set(BedrockProtocol.MAPPINGS, previous);
++        }
++    }
 +
 +    @Test
 +    void convertsRocketUserDataThroughTheSharedItemPathWithoutMutatingMetadata() {
