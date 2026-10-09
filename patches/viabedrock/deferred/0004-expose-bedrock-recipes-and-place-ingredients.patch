@@ -1,4 +1,4 @@
-From 2ab190eef84b8c1832c32198488226790d9e16ce Mon Sep 17 00:00:00 2001
+From 520776af4ca49e7bd2ee05c31eb91376345f7a7e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 21:09:29 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -31,35 +31,71 @@ selecting the advertised recipe. Block runtime-state validation remains
 independent of item metadata. The wire-to-ingredient regression reproduces
 8 becoming 0 before this change and matches a shifted player-grid ingredient
 after it. Preserve the existing server-assigned recipe IDs and request path.
+
+Expose protocol 2193 single-input furnace, blast-furnace and smoker recipes
+in their own Java recipe-book categories, with station-specific stable
+display IDs. Route recipe selection to ordinary Place actions on the
+correct ingredient provider. Cooking and fuel/output updates remain server
+owned. Combine compatible inventory stacks, preserve input variants, clear
+mismatched input into existing stacks where possible, and plan atomically
+before recording both inventories for acknowledgment or rejection recovery.
+Use negative client request references when an action revisits a slot
+changed earlier in the same request; never invent a server stack identity.
+Reject recipes belonging to a different station.
+
+Evidence: the pinned 1.26.51.1 protocol 2193 recipe catalog advertises cooking
+recipes as tagged ShapelessRecipe entries. The matching 1.26.51-beta.1
+protocol metadata documents client request IDs in ItemStackNetIdVariant.
+Java 26.3 FurnaceRecipeDisplay.STREAM_CODEC has input, fuel, result, station,
+VarInt duration and float experience, and recipe display registry ID 2.
+CraftingData carries neither time nor XP, so those Java display-only fields
+stay neutral. They do not replace Bedrock ContainerSetData, native fuel
+rules, or cooking simulation. The add-on's native cooking screens and
+recipe controls still need implementation and native/route verification.
+
+Geyser InventoryTranslator at dd10af11b5d8f8bcc396dde0f2751534aa3f4ad7
+checks ordinary transfer identities against server inventory and accepts
+negative request references. Targeted tests cover typed/direct recipe
+encoding, category/unlock routing, partial stack aggregation, capacity,
+variant selection, stale identities, provider mappings and rejected requests.
 ---
- .../model/container/CraftingOutputPlan.java   |  97 +++++
- .../model/container/CraftingPlacement.java    | 226 ++++++++++
- .../block/CraftingTableContainer.java         |  92 +++--
+ .../model/container/CraftingOutputPlan.java   |  97 ++++
+ .../model/container/CraftingPlacement.java    | 229 +++++++++
+ .../container/FurnaceRecipePlacement.java     | 194 ++++++++
+ .../block/CraftingTableContainer.java         |  92 ++--
+ .../container/block/FurnaceContainer.java     |  57 +++
  .../model/container/player/HudContainer.java  |   3 +
- .../container/player/InventoryContainer.java  | 196 ++++++++-
+ .../container/player/InventoryContainer.java  | 196 +++++++-
  .../protocol/model/recipe/ItemDescriptor.java |  13 +-
  .../protocol/model/recipe/MolangTagQuery.java |  64 +++
- .../protocol/packet/InventoryPackets.java     |  58 +++
+ .../protocol/packet/InventoryPackets.java     |  63 +++
  .../protocol/storage/CraftingDataStorage.java |   3 +-
- .../protocol/storage/CraftingDataTracker.java | 390 +++++++++++++++---
- .../storage/InventoryRequestTracker.java      |   2 +
+ .../protocol/storage/CraftingDataTracker.java | 455 +++++++++++++++---
+ .../storage/InventoryRequestTracker.java      |   6 +
  .../protocol/types/item/BedrockItemType.java  |   2 +-
  .../item/NetworkItemStackDescriptorType.java  |   2 +-
  .../types/recipe/CraftingDataReader.java      |  22 +-
  .../container/CraftingOutputPlanTest.java     |  84 ++++
- .../container/CraftingPlacementTest.java      | 161 ++++++++
- .../player/InventoryContainerTest.java        | 131 ++++++
- .../model/recipe/MolangTagQueryTest.java      |  53 +++
- .../storage/CraftingDataTrackerTest.java      | 221 ++++++++++
- 19 files changed, 1716 insertions(+), 104 deletions(-)
+ .../container/CraftingPlacementTest.java      | 161 +++++++
+ .../container/FurnaceRecipePlacementTest.java | 271 +++++++++++
+ .../player/InventoryContainerTest.java        | 131 +++++
+ .../model/recipe/MolangTagQueryTest.java      |  53 ++
+ .../storage/CookingRecipeBookTest.java        | 118 +++++
+ .../storage/CraftingDataTrackerTest.java      | 236 +++++++++
+ .../storage/FurnaceRecipeRequestTest.java     | 126 +++++
+ 24 files changed, 2574 insertions(+), 104 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CraftingPlacement.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQuery.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlanTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/CraftingPlacementTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQueryTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CookingRecipeBookTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java b/src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java
 new file mode 100644
@@ -166,10 +202,10 @@ index 000000000..bb7f4a7e8
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/CraftingPlacement.java b/src/main/java/net/raphimc/viabedrock/api/model/container/CraftingPlacement.java
 new file mode 100644
-index 000000000..fe3cb1771
+index 000000000..e6c5b5c28
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/CraftingPlacement.java
-@@ -0,0 +1,226 @@
+@@ -0,0 +1,229 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -205,6 +241,9 @@ index 000000000..fe3cb1771
 +            final int firstGridSlot, final Container grid, final InventoryContainer inventory,
 +            final boolean maxItems, final ToIntFunction<BedrockItem> maxStackSize,
 +            final BiPredicate<ItemDescriptor, BedrockItem> matches) {
++        if (!"crafting_table".equals(recipe.recipe().getRecipeTag())) {
++            return null;
++        }
 +        final List<Ingredient> ingredients = ingredients(recipe, gridWidth, firstGridSlot);
 +        if (ingredients == null || ingredients.isEmpty()) {
 +            return null;
@@ -396,8 +435,208 @@ index 000000000..fe3cb1771
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java b/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
+new file mode 100644
+index 000000000..668c87af5
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
+@@ -0,0 +1,194 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container;
++
++import net.raphimc.viabedrock.api.model.container.block.FurnaceContainer;
++import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestSlotInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
++import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
++import net.raphimc.viabedrock.protocol.storage.CraftingDataStorage;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.function.BiPredicate;
++import java.util.function.ToIntFunction;
++
++/** Plans ingredient transfers only. Cooking, fuel consumption and output remain server owned. */
++public final class FurnaceRecipePlacement {
++
++    private FurnaceRecipePlacement() { }
++
++    public static Plan plan(final CraftingDataStorage data, final FurnaceContainer furnace,
++            final InventoryContainer inventory, final boolean maxItems,
++            final ToIntFunction<BedrockItem> maximum, final BiPredicate<ItemDescriptor, BedrockItem> matches) {
++        if (!furnace.acceptsRecipe(data) || inventory.size() != 36) {
++            return null;
++        }
++        final ItemDescriptor ingredient = ((ShapelessRecipe) data.recipe()).getIngredients().get(0);
++        if (ingredient.amount() < 1 || ingredient.amount() > 255) {
++            return null;
++        }
++        final BedrockItem[] available = Arrays.stream(inventory.getItems())
++                .map(BedrockItem::copy).toArray(BedrockItem[]::new);
++        BedrockItem input = furnace.getItem(0).copy();
++        if (!input.isEmpty() && !hasServerId(input)) {
++            return null;
++        }
++        final List<ItemStackRequestAction.PlaceAction> actions = new ArrayList<>();
++        final Map<Integer, BedrockItem> updates = new HashMap<>();
++        if (!input.isEmpty() && !matches.test(ingredient, input)) {
++            // Clear into compatible stacks before using empty slots. Plan everything before mutation.
++            final int limit = Math.min(255, maximum.applyAsInt(input));
++            if (limit < 1) {
++                return null;
++            }
++            for (final boolean merge : new boolean[]{true, false}) {
++                for (int slot = 0; slot < available.length && !input.isEmpty(); slot++) {
++                    final BedrockItem destination = available[slot];
++                    if (!inventory.canPlaceItem(slot, input) || (merge
++                            ? destination.isEmpty() || !hasServerId(destination) || destination.isDifferent(input)
++                            : !destination.isEmpty())) {
++                        continue;
++                    }
++                    final int count = Math.min(input.amount(), limit - destination.amount());
++                    if (count < 1) {
++                        continue;
++                    }
++                    actions.add(new ItemStackRequestAction.PlaceAction(count,
++                            furnace.requestSlotInfo(0, input.netId()),
++                            inventory.requestSlotInfo(slot, destination.isEmpty() ? 0 : destination.netId())));
++                    final BedrockItem moved = destination.isEmpty() ? input.copy() : destination.copy();
++                    moved.setAmount(destination.amount() + count);
++                    available[slot] = moved;
++                    updates.put(slot, moved);
++                    input = remainder(input, count);
++                }
++            }
++            if (!input.isEmpty()) {
++                return null;
++            }
++        }
++        final List<BedrockItem> candidates = input.isEmpty() ? Arrays.asList(available) : List.of(input);
++        BedrockItem selected = null;
++        int target = 0;
++        for (final BedrockItem candidate : candidates) {
++            if (candidate.isEmpty() || !hasServerId(candidate) || !matches.test(ingredient, candidate)
++                    || !furnace.canPlaceItem(0, candidate)) {
++                continue;
++            }
++            final int limit = Math.min(255, maximum.applyAsInt(candidate));
++            int total = input.amount();
++            for (final BedrockItem item : available) {
++                if (!item.isEmpty() && hasServerId(item) && !item.isDifferent(candidate)
++                        && matches.test(ingredient, item) && furnace.canPlaceItem(0, item)) {
++                    total += item.amount();
++                }
++            }
++            final int amount = Math.min(limit / ingredient.amount(), maxItems
++                    ? total / ingredient.amount() : input.amount() / ingredient.amount() + 1) * ingredient.amount();
++            if (amount < ingredient.amount() || total < amount || amount < input.amount()) {
++                continue;
++            }
++            if (selected == null || amount > target) {
++                selected = candidate;
++                target = amount;
++            }
++            if (!maxItems) {
++                break;
++            }
++        }
++        if (selected == null) {
++            return null;
++        }
++        for (int slot = 0; slot < available.length && input.amount() < target; slot++) {
++            final BedrockItem source = available[slot];
++            if (source.isEmpty() || !hasServerId(source) || source.isDifferent(selected)
++                    || !matches.test(ingredient, source) || !furnace.canPlaceItem(0, source)) {
++                continue;
++            }
++            final int count = Math.min(source.amount(), target - input.amount());
++            actions.add(new ItemStackRequestAction.PlaceAction(count,
++                    inventory.requestSlotInfo(slot, source.netId()),
++                    furnace.requestSlotInfo(0, input.isEmpty() ? 0 : input.netId())));
++            final BedrockItem moved = input.isEmpty() ? source.copy() : input.copy();
++            moved.setAmount(input.amount() + count);
++            input = moved;
++            available[slot] = remainder(source, count);
++            updates.put(slot, available[slot]);
++        }
++        return input.amount() == target ? new Plan(actions, input, updates) : null;
++    }
++
++    private static boolean hasServerId(final BedrockItem item) {
++        return item.netId() != null && item.netId() > 0;
++    }
++
++    private static BedrockItem remainder(final BedrockItem item, final int count) {
++        if (item.amount() == count) {
++            return BedrockItem.empty();
++        }
++        final BedrockItem remaining = item.copy();
++        remaining.setAmount(item.amount() - count);
++        return remaining;
++    }
++
++    public static final class Plan {
++
++        private final List<ItemStackRequestAction.PlaceAction> actions;
++        private final BedrockItem input;
++        private final Map<Integer, BedrockItem> inventoryUpdates;
++
++        private Plan(final List<ItemStackRequestAction.PlaceAction> actions,
++                final BedrockItem input, final Map<Integer, BedrockItem> updates) {
++            this.actions = List.copyOf(actions);
++            this.input = input.copy();
++            this.inventoryUpdates = Map.copyOf(updates);
++        }
++
++        public boolean hasTransfers() {
++            return !this.actions.isEmpty();
++        }
++
++        public List<ItemStackRequestAction> actions(final int requestId) {
++            if (requestId >= 0 || (requestId & 1) == 0) {
++                throw new IllegalArgumentException("Expected a negative odd client request ID");
++            }
++            final Set<SlotKey> changed = new HashSet<>();
++            final List<ItemStackRequestAction> result = new ArrayList<>(this.actions.size());
++            for (final ItemStackRequestAction.PlaceAction action : this.actions) {
++                final SlotKey source = new SlotKey(action.source().container(), action.source().slot());
++                final SlotKey destination = new SlotKey(action.destination().container(), action.destination().slot());
++                result.add(new ItemStackRequestAction.PlaceAction(action.count(),
++                        changed.contains(source) ? requestSlot(action.source(), requestId) : action.source(),
++                        changed.contains(destination) ? requestSlot(action.destination(), requestId) : action.destination()));
++                changed.add(source);
++                changed.add(destination);
++            }
++            return List.copyOf(result);
++        }
++
++        private static ItemStackRequestSlotInfo requestSlot(final ItemStackRequestSlotInfo slot, final int requestId) {
++            return new ItemStackRequestSlotInfo(slot.container(), slot.slot(), requestId);
++        }
++
++        public void apply(final FurnaceContainer furnace, final InventoryContainer inventory) {
++            furnace.setItem(0, this.input.copy());
++            this.inventoryUpdates.forEach((slot, item) -> inventory.setItem(slot, item.copy()));
++        }
++    }
++
++    private record SlotKey(FullContainerName container, byte slot) { }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
-index fec81fe6c..4feb7b0ad 100644
+index fec81fe6c..85d9ca352 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
 @@ -22,6 +22,8 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -527,7 +766,7 @@ index fec81fe6c..4feb7b0ad 100644
 +            final boolean maxItems) {
 +        final InventoryTracker inventory = this.user.get(InventoryTracker.class);
 +        final InventoryRequestTracker requests = this.user.get(InventoryRequestTracker.class);
-+        if (requests.hasPending()) {
++        if (!requests.canStartRecipePlacement()) {
 +            return false;
 +        }
 +        final InventoryContainer player = inventory.getInventoryContainer();
@@ -572,6 +811,86 @@ index fec81fe6c..4feb7b0ad 100644
 -    }
 -
  }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
+index 09fb14352..dee6d28a8 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
+@@ -22,11 +22,24 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
+ import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
+ 
+ import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.api.model.container.FurnaceRecipePlacement;
++import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.storage.CraftingDataStorage;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestStorage;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
++import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
+ import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
+ import net.raphimc.viabedrock.protocol.model.FullContainerName;
+ 
++import java.util.List;
++
+ public class FurnaceContainer extends Container {
+ 
+     public FurnaceContainer(
+@@ -51,6 +64,50 @@ public class FurnaceContainer extends Container {
+         super(user, containerId, type, title, position, 3, validBlockTags);
+     }
+ 
++    public boolean acceptsRecipe(final CraftingDataStorage data) {
++        if (data == null || !(data.recipe() instanceof ShapelessRecipe recipe)
++                || recipe.getIngredients().size() != 1 || recipe.getResults().isEmpty()) {
++            return false;
++        }
++        final String tag = switch (this.type()) {
++            case FURNACE -> "furnace";
++            case BLAST_FURNACE -> "blast_furnace";
++            case SMOKER -> "smoker";
++            default -> throw new IllegalStateException("Not a cooking container");
++        };
++        return tag.equals(recipe.getRecipeTag());
++    }
++
++    public boolean handleRecipePlacement(final CraftingDataStorage data, final boolean maxItems) {
++        final InventoryTracker inventory = this.user.get(InventoryTracker.class);
++        final InventoryRequestTracker requests = this.user.get(InventoryRequestTracker.class);
++        if (inventory.getCurrentContainer() != this || inventory.getPendingCloseContainer() != null
++                || !requests.canStartRecipePlacement()
++                || !inventory.getHudContainer().getItem(0).isEmpty()) {
++            return false;
++        }
++        final InventoryContainer player = inventory.getInventoryContainer();
++        final var items = this.user.get(ItemRewriter.class);
++        final var plan = FurnaceRecipePlacement.plan(data, this, player, maxItems,
++                items::maxStackSize, (descriptor, item) -> descriptor.matchesItem(this.user, item));
++        if (plan == null) {
++            return false;
++        }
++        if (!plan.hasTransfers()) {
++            return true;
++        }
++        final int requestId = requests.nextRequestId();
++        final ItemStackRequestInfo request = new ItemStackRequestInfo(requestId,
++                plan.actions(requestId), List.of(), TextProcessingEventOrigin.unknown);
++        requests.addRequest(new InventoryRequestStorage(request, 0,
++                inventory.getHudContainer().copy(), List.of(this.copy(), player.copy())));
++        plan.apply(this, player);
++        PacketFactory.sendJavaContainerSetContent(this.user, this);
++        PacketFactory.sendJavaContainerSetContent(this.user, player);
++        PacketFactory.sendBedrockInventoryRequest(this.user, new ItemStackRequestInfo[]{request});
++        return true;
++    }
++
+     @Override
+     public FullContainerName getFullContainerName(final int slot) {
+         return switch (slot) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/player/HudContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/player/HudContainer.java
 index 4e784b7df..638c832b4 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/player/HudContainer.java
@@ -587,7 +906,7 @@ index 4e784b7df..638c832b4 100644
              return slot - 27;
          } else {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
-index b5ae97d51..d845a667f 100644
+index b5ae97d51..e77c2a2a2 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
 @@ -26,23 +26,40 @@ import com.viaversion.viaversion.api.type.Types;
@@ -705,7 +1024,7 @@ index b5ae97d51..d845a667f 100644
 +    public boolean handleRecipePlacement(final CraftingDataStorage recipe,
 +            final boolean maxItems) {
 +        final InventoryRequestTracker requests = this.user.get(InventoryRequestTracker.class);
-+        if (requests.hasPending()) {
++        if (!requests.canStartRecipePlacement()) {
 +            return false;
 +        }
 +        final HudContainer hud = this.user.get(InventoryTracker.class).getHudContainer();
@@ -932,10 +1251,10 @@ index 000000000..974a58739
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index 15e693202..a01065992 100644
+index d60a3568c..51971f44b 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-@@ -505,6 +505,9 @@ public final class InventoryPackets {
+@@ -503,6 +503,9 @@ public final class InventoryPackets {
                          container.markServerUpdate();
                          wrapper.user().get(InventoryRequestTracker.class)
                                  .handleAuthoritativeContent(container);
@@ -945,7 +1264,7 @@ index 15e693202..a01065992 100644
                          PacketFactory.writeJavaContainerSetContent(wrapper, container);
                          PacketFactory.sendJavaCursorForHudUpdate(wrapper.user(), container);
                      } else {
-@@ -535,6 +538,12 @@ public final class InventoryPackets {
+@@ -533,6 +536,12 @@ public final class InventoryPackets {
                          container.markServerUpdate();
                          wrapper.user().get(InventoryRequestTracker.class)
                                  .handleAuthoritativeSlot(container, slot);
@@ -958,7 +1277,7 @@ index 15e693202..a01065992 100644
                          final boolean bundleOnCursor = container instanceof BundleContainer bundle
                                  && bundle.javaHoldingContainer() == inventoryTracker.getHudContainer()
                                  && bundle.javaSlot(slot) == 0;
-@@ -623,6 +632,24 @@ public final class InventoryPackets {
+@@ -621,6 +630,24 @@ public final class InventoryPackets {
                              wrapper.user().get(CraftingDataTracker.class);
                      final CraftingDataReader.Data data = CraftingDataReader.read(wrapper);
                      tracker.updateCraftingDataList(data.recipes(), data.clearRecipes());
@@ -983,7 +1302,7 @@ index 15e693202..a01065992 100644
                      tracker.sendJavaUpdateRecipes(wrapper.user());
                  });
          protocol.registerClientbound(
-@@ -851,6 +878,37 @@ public final class InventoryPackets {
+@@ -849,6 +876,42 @@ public final class InventoryPackets {
                          PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
                      }
                  });
@@ -998,13 +1317,18 @@ index 15e693202..a01065992 100644
 +                    final InventoryTracker inventory = wrapper.user().get(InventoryTracker.class);
 +                    final Container container = inventory.getContainerServerbound((byte) containerId);
 +                    if (container instanceof CraftingTableContainer
-+                            || container instanceof InventoryContainer) {
++                            || container instanceof InventoryContainer || container instanceof FurnaceContainer) {
 +                        final CraftingDataTracker recipes =
 +                                wrapper.user().get(CraftingDataTracker.class);
 +                        final CraftingDataStorage recipe = recipes.getDisplayedRecipe(displayId);
-+                        final boolean placed = recipe != null && (container instanceof CraftingTableContainer
-+                                ? ((CraftingTableContainer) container).handleRecipePlacement(recipe, maxItems)
-+                                : ((InventoryContainer) container).handleRecipePlacement(recipe, maxItems));
++                        final boolean compatible = recipe != null && (container instanceof FurnaceContainer furnace
++                                ? furnace.acceptsRecipe(recipe) : "crafting_table".equals(recipe.recipe().getRecipeTag()));
++                        final boolean placed = compatible && switch (container) {
++                            case CraftingTableContainer table -> table.handleRecipePlacement(recipe, maxItems);
++                            case FurnaceContainer furnace -> furnace.handleRecipePlacement(recipe, maxItems);
++                            case InventoryContainer player -> player.handleRecipePlacement(recipe, maxItems);
++                            default -> false;
++                        };
 +                        if (placed) {
 +                            return;
 +                        }
@@ -1013,7 +1337,7 @@ index 15e693202..a01065992 100644
 +                            PacketFactory.sendJavaContainerSetContent(
 +                                    wrapper.user(), inventory.getInventoryContainer());
 +                        }
-+                        if (recipe != null) {
++                        if (compatible) {
 +                            recipes.sendJavaGhostRecipe(wrapper.user(), containerId, displayId);
 +                        }
 +                    }
@@ -1036,7 +1360,7 @@ index 4506fe070..2b1c6b934 100644
      @Override
      public @NonNull String toString() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
-index 73165b006..3dfad0a2c 100644
+index 73165b006..e2d3f6555 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 @@ -19,17 +19,32 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
@@ -1052,6 +1376,7 @@ index 73165b006..3dfad0a2c 100644
  import java.util.ArrayList;
 +import java.util.Arrays;
 +import java.util.HashMap;
++import java.util.EnumMap;
 +import java.util.HashSet;
  import java.util.List;
 +import java.util.Map;
@@ -1059,11 +1384,10 @@ index 73165b006..3dfad0a2c 100644
 +import java.util.UUID;
 +import java.util.function.BiPredicate;
 +import java.util.function.Predicate;
++import java.util.function.ToIntFunction;
  
  public final class CraftingDataTracker extends StoredObject {
  
-+    private static final int JAVA_CRAFTING_MISC_CATEGORY = 3;
-+
      private List<CraftingDataStorage> recipes = List.of();
 +    private final Map<RecipeKey, Integer> displayIds = new HashMap<>();
 +    private final Set<String> unlockedRecipeIds = new HashSet<>();
@@ -1116,7 +1440,7 @@ index 73165b006..3dfad0a2c 100644
 +
 +    int displayIdFor(final CraftingDataStorage data) {
 +        final RecipeKey key = new RecipeKey(data.type(),
-+                data.recipe().getRecipeId(), data.recipe().getUniqueId());
++                data.recipe().getRecipeId(), data.recipe().getUniqueId(), data.recipe().getRecipeTag());
 +        return this.displayIds.computeIfAbsent(key, ignored -> this.nextDisplayId++);
 +    }
 +
@@ -1335,14 +1659,14 @@ index 73165b006..3dfad0a2c 100644
              }
              final ItemDescriptor descriptor = recipe.getIngredients().get(0);
 -            if (!(descriptor instanceof ItemDescriptor.ItemNameDescriptor ingredient)) {
+-                continue;
+-            }
+-            final Integer bedrockId = rewriter.getItems().get(ingredient.fullName());
+-            if (bedrockId == null) {
 +            final HolderSet inputs = this.javaIngredient(rewriter, descriptor);
 +            if (inputs == null || inputs.ids().length == 0) {
                  continue;
              }
--            final Integer bedrockId = rewriter.getItems().get(ingredient.fullName());
--            if (bedrockId == null) {
--                continue;
--            }
 -            final Item javaInput = rewriter.javaItem(new BedrockItem(bedrockId));
              final Item javaOutput = rewriter.javaItem(recipe.getResults().get(0));
 -            if (javaInput.isEmpty() || javaOutput.isEmpty()) {
@@ -1356,7 +1680,7 @@ index 73165b006..3dfad0a2c 100644
          }
  
          final PacketWrapper packet =
-@@ -192,6 +300,165 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -192,6 +300,200 @@ public final class CraftingDataTracker extends StoredObject {
                      BedrockProtocol.MAPPINGS.getJavaSlotDisplayId("minecraft:item_stack"), entry.output());
          }
          packet.send(BedrockProtocol.class);
@@ -1364,28 +1688,73 @@ index 73165b006..3dfad0a2c 100644
 +    }
 +
 +    private void sendJavaRecipeBook(final UserConnection user, final ItemRewriter rewriter) {
-+        final Integer craftingTableId = rewriter.getItems().get("minecraft:crafting_table");
-+        if (craftingTableId == null) {
-+            return;
++        final List<RecipeDisplay> displays = this.recipeBookDisplays(rewriter);
++        final Map<Integer, RecipeDisplay> current = new HashMap<>();
++        for (final RecipeDisplay display : displays) {
++            final int displayId = this.displayIdFor(display.data());
++            current.put(displayId, display);
 +        }
-+        final int javaCraftingTableId = rewriter.javaItem(new BedrockItem(craftingTableId)).identifier();
++        this.displayedRecipes = Map.copyOf(current);
++
++        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.RECIPE_BOOK_ADD, user);
++        packet.write(Types.VAR_INT, current.size());
++        for (final Map.Entry<Integer, RecipeDisplay> entry : current.entrySet()) {
++            final RecipeDisplay display = entry.getValue();
++            packet.write(Types.VAR_INT, entry.getKey());
++            this.writeRecipeDisplay(packet, display);
++            packet.write(Types.OPTIONAL_VAR_INT, null);
++            packet.write(Types.VAR_INT, display.station().category());
++            packet.write(Types.BOOLEAN, true);
++            packet.write(Types.VAR_INT, (int) display.ingredients().stream()
++                    .filter(holder -> holder.ids().length > 0).count());
++            for (final HolderSet ingredient : display.ingredients()) {
++                if (ingredient.ids().length > 0) {
++                    packet.write(Types.HOLDER_SET, ingredient);
++                }
++            }
++            packet.write(Types.BYTE, (byte) 0);
++        }
++        packet.write(Types.BOOLEAN, true); // Replace the previous recipe book
++        packet.send(BedrockProtocol.class);
++    }
++
++    List<RecipeDisplay> recipeBookDisplays(final ItemRewriter rewriter) {
++        final Map<RecipeBookStation, Integer> stationItems = new EnumMap<>(RecipeBookStation.class);
++        for (final RecipeBookStation station : RecipeBookStation.values()) {
++            final Integer stationId = rewriter.getItems().get("minecraft:" + station.tag());
++            if (stationId != null) {
++                final Item javaStation = rewriter.javaItem(new BedrockItem(stationId));
++                if (!javaStation.isEmpty()) {
++                    stationItems.put(station, javaStation.identifier());
++                }
++            }
++        }
 +        final List<RecipeDisplay> displays = new ArrayList<>();
 +        for (final CraftingDataStorage data : this.recipes) {
-+            if (!"crafting_table".equals(data.recipe().getRecipeTag())
-+                    || !this.isRecipeUnlocked(data)) {
++            final RecipeBookStation station = RecipeBookStation.fromTag(data.recipe().getRecipeTag());
++            if (station == null || !this.isRecipeUnlocked(data)) {
++                continue;
++            }
++            final Integer javaStationId = stationItems.get(station);
++            if (javaStationId == null) {
 +                continue;
 +            }
 +            final List<ItemDescriptor> ingredients;
 +            final BedrockItem output;
 +            final int width;
 +            final int height;
-+            if (data.recipe() instanceof ShapedRecipe shaped) {
++            if (station == RecipeBookStation.CRAFTING_TABLE && data.recipe() instanceof ShapedRecipe shaped) {
++                if (shaped.getResults().isEmpty()) {
++                    continue;
++                }
 +                width = shaped.getPattern()[0].length;
 +                height = shaped.getPattern().length;
 +                ingredients = Arrays.stream(shaped.getPattern()).flatMap(Arrays::stream).toList();
 +                output = shaped.getResults().get(0);
 +            } else if (data.recipe() instanceof ShapelessRecipe shapeless) {
-+                if (shapeless.getIngredients().size() > 9) {
++                if (shapeless.getResults().isEmpty() || shapeless.getIngredients().isEmpty()
++                        || (station == RecipeBookStation.CRAFTING_TABLE
++                            ? shapeless.getIngredients().size() > 9 : shapeless.getIngredients().size() != 1)) {
 +                    continue;
 +                }
 +                width = 0;
@@ -1402,7 +1771,7 @@ index 73165b006..3dfad0a2c 100644
 +            boolean representable = true;
 +            for (final ItemDescriptor ingredient : ingredients) {
 +                final HolderSet holder = this.javaIngredient(rewriter, ingredient);
-+                if (holder == null) {
++                if (holder == null || (station != RecipeBookStation.CRAFTING_TABLE && holder.ids().length == 0)) {
 +                    representable = false;
 +                    break;
 +                }
@@ -1410,54 +1779,43 @@ index 73165b006..3dfad0a2c 100644
 +            }
 +            if (representable) {
 +                displays.add(new RecipeDisplay(data, width, height, holders,
-+                        rewriter.javaItem(output), javaCraftingTableId));
++                        rewriter.javaItem(output), station, javaStationId));
 +            }
 +        }
-+        final Map<Integer, RecipeDisplay> current = new HashMap<>();
-+        for (final RecipeDisplay display : displays) {
-+            final int displayId = this.displayIdFor(display.data());
-+            current.put(displayId, display);
-+        }
-+        this.displayedRecipes = Map.copyOf(current);
-+
-+        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.RECIPE_BOOK_ADD, user);
-+        packet.write(Types.VAR_INT, current.size());
-+        for (final Map.Entry<Integer, RecipeDisplay> entry : current.entrySet()) {
-+            final RecipeDisplay display = entry.getValue();
-+            packet.write(Types.VAR_INT, entry.getKey());
-+            this.writeRecipeDisplay(packet, display);
-+            packet.write(Types.OPTIONAL_VAR_INT, null);
-+            packet.write(Types.VAR_INT, JAVA_CRAFTING_MISC_CATEGORY);
-+            packet.write(Types.BOOLEAN, true);
-+            packet.write(Types.VAR_INT, (int) display.ingredients().stream()
-+                    .filter(holder -> holder.ids().length > 0).count());
-+            for (final HolderSet ingredient : display.ingredients()) {
-+                if (ingredient.ids().length > 0) {
-+                    packet.write(Types.HOLDER_SET, ingredient);
-+                }
-+            }
-+            packet.write(Types.BYTE, (byte) 0);
-+        }
-+        packet.write(Types.BOOLEAN, true); // Replace the previous recipe book
-+        packet.send(BedrockProtocol.class);
++        return List.copyOf(displays);
 +    }
 +
 +    private void writeRecipeDisplay(final PacketWrapper packet, final RecipeDisplay display) {
-+        packet.write(Types.VAR_INT, display.width() == 0 ? 0 : 1);
-+        if (display.width() != 0) {
-+            packet.write(Types.VAR_INT, display.width());
-+            packet.write(Types.VAR_INT, display.height());
++        writeRecipeDisplay(packet, display, BedrockProtocol.MAPPINGS::getJavaSlotDisplayId);
++    }
++
++    static void writeRecipeDisplay(final PacketWrapper packet, final RecipeDisplay display,
++            final ToIntFunction<String> slotDisplayId) {
++        final boolean cooking = display.station() != RecipeBookStation.CRAFTING_TABLE;
++        packet.write(Types.VAR_INT, cooking ? 2 : display.width() == 0 ? 0 : 1);
++        if (!cooking) {
++            if (display.width() != 0) {
++                packet.write(Types.VAR_INT, display.width());
++                packet.write(Types.VAR_INT, display.height());
++            }
++            packet.write(Types.VAR_INT, display.ingredients().size());
 +        }
-+        packet.write(Types.VAR_INT, display.ingredients().size());
 +        for (final HolderSet ingredient : display.ingredients()) {
-+            this.writeIngredientDisplay(packet, ingredient);
++            writeIngredientDisplay(packet, ingredient, slotDisplayId);
 +        }
-+        packet.write(Types.VAR_INT,
-+                BedrockProtocol.MAPPINGS.getJavaSlotDisplayId("minecraft:item_stack"));
++        if (cooking) {
++            packet.write(Types.VAR_INT, slotDisplayId.applyAsInt("minecraft:any_fuel"));
++        }
++        packet.write(Types.VAR_INT, slotDisplayId.applyAsInt("minecraft:item_stack"));
 +        packet.write(VersionedTypes.V26_3.itemTemplate, display.output());
-+        packet.write(Types.VAR_INT,
-+                BedrockProtocol.MAPPINGS.getJavaSlotDisplayId("minecraft:item"));
++        packet.write(Types.VAR_INT, slotDisplayId.applyAsInt("minecraft:item"));
 +        packet.write(Types.VAR_INT, display.craftingStationId());
++        if (cooking) {
++            // CraftingData does not transmit cooking time or experience. These Java display
++            // fields do not drive cooking: ContainerSetData and the server own that state.
++            packet.write(Types.VAR_INT, 0);
++            packet.write(Types.FLOAT, 0F);
++        }
 +    }
 +
 +    static short javaDisplayAuxValue(final int auxValue) {
@@ -1505,40 +1863,82 @@ index 73165b006..3dfad0a2c 100644
 +        return ids.length == 0 ? null : HolderSet.of(ids);
 +    }
 +
-+    private void writeIngredientDisplay(final PacketWrapper packet, final HolderSet ingredient) {
++    private static void writeIngredientDisplay(final PacketWrapper packet, final HolderSet ingredient,
++            final ToIntFunction<String> slotDisplayId) {
 +        final int[] ids = ingredient.ids();
 +        if (ids.length == 0) {
 +            packet.write(Types.VAR_INT,
-+                    BedrockProtocol.MAPPINGS.getJavaSlotDisplayId("minecraft:empty"));
++                    slotDisplayId.applyAsInt("minecraft:empty"));
 +        } else if (ids.length == 1) {
 +            packet.write(Types.VAR_INT,
-+                    BedrockProtocol.MAPPINGS.getJavaSlotDisplayId("minecraft:item"));
++                    slotDisplayId.applyAsInt("minecraft:item"));
 +            packet.write(Types.VAR_INT, ids[0]);
 +        } else {
 +            packet.write(Types.VAR_INT,
-+                    BedrockProtocol.MAPPINGS.getJavaSlotDisplayId("minecraft:tag"));
++                    slotDisplayId.applyAsInt("minecraft:tag"));
 +            packet.write(Types.HOLDER_SET, ingredient);
 +        }
      }
  
      static void writeStonecutterRecipe(final PacketWrapper packet, final int inputId,
-@@ -203,4 +470,11 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -203,4 +505,41 @@ public final class CraftingDataTracker extends StoredObject {
  
      private record StonecutterEntry(int inputId, Item output) { }
  
-+    private record RecipeDisplay(CraftingDataStorage data, int width, int height,
-+            List<HolderSet> ingredients, Item output, int craftingStationId) { }
++    record RecipeDisplay(CraftingDataStorage data, int width, int height,
++            List<HolderSet> ingredients, Item output, RecipeBookStation station, int craftingStationId) { }
 +
-+    private record RecipeKey(RecipeType type, UUID id, String name) { }
++    enum RecipeBookStation {
++        CRAFTING_TABLE("crafting_table", 3), FURNACE("furnace", 6),
++        BLAST_FURNACE("blast_furnace", 8), SMOKER("smoker", 9);
++
++        private final String tag;
++        private final int category;
++
++        RecipeBookStation(final String tag, final int category) {
++            this.tag = tag;
++            this.category = category;
++        }
++
++        String tag() {
++            return this.tag;
++        }
++
++        int category() {
++            return this.category;
++        }
++
++        static RecipeBookStation fromTag(final String tag) {
++            for (final RecipeBookStation station : values()) {
++                if (station.tag.equals(tag)) {
++                    return station;
++                }
++            }
++            return null;
++        }
++    }
++
++    private record RecipeKey(RecipeType type, UUID id, String name, String tag) { }
 +
 +    public record RecipeMatch(CraftingDataStorage data, int[] amounts) { }
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
-index 11ce9ee64..01e1a5fef 100644
+index 11ce9ee64..33c865c9a 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
-@@ -284,6 +284,7 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -95,6 +95,10 @@ public class InventoryRequestTracker extends StoredObject {
+         return !this.requests.isEmpty() || this.craftedItemSynchronization != null;
+     }
+ 
++    public boolean canStartRecipePlacement() {
++        return !this.hasPending() && !this.recovery.isActive() && !this.isWaitingForInventoryOpen();
++    }
++
+     public boolean isPredictingClick() {
+         return this.predictingClick;
+     }
+@@ -284,6 +288,7 @@ public class InventoryRequestTracker extends StoredObject {
              this.requests.clear();
              this.craftedItemSynchronization = null;
              this.resetRecovery();
@@ -1546,7 +1946,7 @@ index 11ce9ee64..01e1a5fef 100644
              PacketFactory.sendJavaContainerSetContent(this.user(), tracker.getInventoryContainer());
          }
      }
-@@ -328,6 +329,7 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -328,6 +333,7 @@ public class InventoryRequestTracker extends StoredObject {
              }
          }
  
@@ -1913,6 +2313,283 @@ index 000000000..bb3b16e1d
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java
+new file mode 100644
+index 000000000..db4d761b2
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java
+@@ -0,0 +1,271 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.model.container.block.BlastFurnaceContainer;
++import net.raphimc.viabedrock.api.model.container.block.FurnaceContainer;
++import net.raphimc.viabedrock.api.model.container.block.SmokerContainer;
++import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptorType;
++import net.raphimc.viabedrock.protocol.model.recipe.RecipeType;
++import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
++import net.raphimc.viabedrock.protocol.storage.CraftingDataStorage;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Proxy;
++import java.util.Arrays;
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class FurnaceRecipePlacementTest {
++
++    @Test
++    void placementUsesEachStationsInputProviderAndLeavesCookingSlotsUntouched() {
++        final UserConnection user = user();
++        final FurnaceContainer[] furnaces = {
++            new FurnaceContainer(user, (byte) 5, null, null),
++            new BlastFurnaceContainer(user, (byte) 6, null, null),
++            new SmokerContainer(user, (byte) 7, null, null)
++        };
++        final String[] tags = {"furnace", "blast_furnace", "smoker"};
++        final ContainerEnumName[] providers = {
++            ContainerEnumName.FurnaceIngredientContainer,
++            ContainerEnumName.BlastFurnaceIngredientContainer, ContainerEnumName.SmokerIngredientContainer
++        };
++        for (int variant = 0; variant < furnaces.length; variant++) {
++            final FurnaceContainer furnace = furnaces[variant];
++            final InventoryContainer inventory = inventory(user);
++            inventory.setItem(0, item(2, 4, 21));
++            furnace.setItem(1, item(3, 20, 22));
++            furnace.setItem(2, item(4, 6, 23));
++            final FurnaceRecipePlacement.Plan plan = plan(recipe(tags[variant], 2, 1), furnace, inventory, false, 64);
++            assertNotNull(plan);
++            assertTrue(furnace.getItem(0).isEmpty());
++            assertEquals(4, inventory.getItem(0).amount());
++            final var action = assertInstanceOf(ItemStackRequestAction.PlaceAction.class, plan.actions(-3).get(0));
++            assertEquals(1, action.count());
++            assertEquals(21, action.source().stackNetworkId());
++            assertEquals(0, action.destination().stackNetworkId());
++            assertEquals(providers[variant], action.destination().container().name());
++            plan.apply(furnace, inventory);
++            assertEquals(1, furnace.getItem(0).amount());
++            assertEquals(3, inventory.getItem(0).amount());
++            assertEquals(item(3, 20, 22), furnace.getItem(1));
++            assertEquals(item(4, 6, 23), furnace.getItem(2));
++            assertNull(plan(recipe(tags[(variant + 1) % tags.length], 2, 1), furnace, inventory, false, 64));
++        }
++    }
++
++    @Test
++    void bulkPlacementCombinesPartialStacksAndReferencesTheChangedInputByRequestId() {
++        final UserConnection user = user();
++        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        final InventoryContainer inventory = inventory(user);
++        inventory.setItem(0, item(2, 3, 11));
++        inventory.setItem(9, item(2, 20, 12));
++        inventory.setItem(10, item(2, 60, 13));
++        final var plan = plan(recipe("furnace", 2, 1), furnace, inventory, true, 64);
++        assertNotNull(plan);
++        final var actions = plan.actions(-7);
++        assertEquals(3, actions.size());
++        assertEquals(List.of(3, 20, 41), actions.stream()
++                .map(action -> ((ItemStackRequestAction.PlaceAction) action).count()).toList());
++        assertEquals(0, ((ItemStackRequestAction.PlaceAction) actions.get(0)).destination().stackNetworkId());
++        assertEquals(-7, ((ItemStackRequestAction.PlaceAction) actions.get(1)).destination().stackNetworkId());
++        assertEquals(-7, ((ItemStackRequestAction.PlaceAction) actions.get(2)).destination().stackNetworkId());
++        plan.apply(furnace, inventory);
++        assertEquals(64, furnace.getItem(0).amount());
++        assertTrue(inventory.getItem(0).isEmpty());
++        assertTrue(inventory.getItem(9).isEmpty());
++        assertEquals(19, inventory.getItem(10).amount());
++        assertEquals(13, inventory.getItem(10).netId());
++        assertThrows(IllegalArgumentException.class, () -> plan.actions(3));
++        assertThrows(IllegalArgumentException.class, () -> plan.actions(-4));
++    }
++
++    @Test
++    void existingInputIncrementsByRecipeCountAndBulkHonorsTheStackLimit() {
++        final UserConnection user = user();
++        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        final InventoryContainer inventory = inventory(user);
++        furnace.setItem(0, item(2, 5, 11));
++        inventory.setItem(0, item(2, 64, 12));
++        final var recipe = recipe("furnace", 2, 2);
++        final var single = plan(recipe, furnace, inventory, false, 16);
++        assertNotNull(single);
++        single.apply(furnace, inventory);
++        assertEquals(6, furnace.getItem(0).amount());
++        assertEquals(63, inventory.getItem(0).amount());
++        final var bulk = plan(recipe, furnace, inventory, true, 16);
++        assertNotNull(bulk);
++        bulk.apply(furnace, inventory);
++        assertEquals(16, furnace.getItem(0).amount());
++        assertEquals(53, inventory.getItem(0).amount());
++        assertFalse(plan(recipe, furnace, inventory, true, 16).hasTransfers());
++    }
++
++    @Test
++    void mismatchedInputCanMergeIntoFullInventoryBeforePlacement() {
++        final UserConnection user = user();
++        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        final InventoryContainer inventory = inventory(user);
++        for (int slot = 0; slot < inventory.size(); slot++) {
++            inventory.setItem(slot, item(9, 64, 100 + slot));
++        }
++        inventory.setItem(9, item(9, 60, 109));
++        inventory.setItem(0, item(2, 3, 100));
++        furnace.setItem(0, item(9, 4, 17));
++        final var plan = plan(recipe("furnace", 2, 1), furnace, inventory, false, 64);
++        assertNotNull(plan);
++        assertEquals(4, furnace.getItem(0).amount());
++        final var actions = plan.actions(-3);
++        final var clear = (ItemStackRequestAction.PlaceAction) actions.get(0);
++        assertEquals(109, clear.destination().stackNetworkId());
++        assertEquals(4, clear.count());
++        final var fill = (ItemStackRequestAction.PlaceAction) actions.get(1);
++        assertEquals(-3, fill.destination().stackNetworkId());
++        plan.apply(furnace, inventory);
++        assertEquals(64, inventory.getItem(9).amount());
++        assertEquals(2, inventory.getItem(0).amount());
++        assertEquals(item(2, 1, 100), furnace.getItem(0));
++    }
++
++    @Test
++    void failedClearOrMissingIngredientsNeverMutatesEitherInventory() {
++        final UserConnection user = user();
++        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        final InventoryContainer inventory = inventory(user);
++        for (int slot = 0; slot < inventory.size(); slot++) {
++            inventory.setItem(slot, item(9, 64, 100 + slot));
++        }
++        furnace.setItem(0, item(3, 4, 17));
++        final BedrockItem[] previous = Arrays.stream(inventory.getItems()).map(BedrockItem::copy).toArray(BedrockItem[]::new);
++        assertNull(plan(recipe("furnace", 2, 1), furnace, inventory, false, 64));
++        assertArrayEquals(previous, inventory.getItems());
++        assertEquals(item(3, 4, 17), furnace.getItem(0));
++        inventory.setItem(0, BedrockItem.empty());
++        assertNull(plan(recipe("furnace", 2, 1), furnace, inventory, false, 64));
++        assertTrue(inventory.getItem(0).isEmpty());
++        assertEquals(item(3, 4, 17), furnace.getItem(0));
++    }
++
++    @Test
++    void broadIngredientSelectsUsableVariantAndBulkChoosesTheLargerStack() {
++        final UserConnection user = user();
++        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        final InventoryContainer inventory = inventory(user);
++        inventory.setItem(0, item(1, 1, 11));
++        inventory.setItem(1, item(2, 64, 12));
++        final var single = plan(recipe("furnace", 0, 2), furnace, inventory, false, 64);
++        assertNotNull(single);
++        single.apply(furnace, inventory);
++        assertEquals(2, furnace.getItem(0).identifier());
++        assertEquals(2, furnace.getItem(0).amount());
++        furnace.setItem(0, BedrockItem.empty());
++        final var bulk = plan(recipe("furnace", 0, 1), furnace, inventory, true, 64);
++        bulk.apply(furnace, inventory);
++        assertEquals(2, furnace.getItem(0).identifier());
++        assertEquals(62, furnace.getItem(0).amount());
++        assertEquals(1, inventory.getItem(0).amount());
++    }
++
++    @Test
++    void variantsWithDifferentDataOrNbtCannotBeCombined() {
++        final UserConnection user = user();
++        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        final InventoryContainer inventory = inventory(user);
++        inventory.setItem(0, item(2, 1, 11));
++        final BedrockItem different = item(2, 1, 12);
++        different.setData((short) 1);
++        inventory.setItem(1, different);
++        assertNull(plan(recipe("furnace", 2, 2), furnace, inventory, false, 64));
++        different.setData((short) 0);
++        final CompoundTag tag = new CompoundTag();
++        tag.putInt("Damage", 1);
++        different.setTag(tag);
++        assertNull(plan(recipe("furnace", 2, 2), furnace, inventory, false, 64));
++        inventory.getItem(0).setTag(tag.copy());
++        final var plan = plan(recipe("furnace", 2, 2), furnace, inventory, false, 64);
++        assertNotNull(plan);
++        plan.apply(furnace, inventory);
++        tag.putInt("Damage", 2);
++        assertEquals(1, furnace.getItem(0).tag().getInt("Damage"));
++    }
++
++    @Test
++    void nonemptyStacksRequireKnownPositiveServerIds() {
++        final UserConnection user = user();
++        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        final InventoryContainer inventory = inventory(user);
++        for (final Integer id : Arrays.asList(null, 0, -3)) {
++            final BedrockItem unknown = item(2, 8, 11);
++            unknown.setNetId(id);
++            inventory.setItem(0, unknown);
++            assertNull(plan(recipe("furnace", 2, 1), furnace, inventory, false, 64));
++            furnace.setItem(0, unknown);
++            inventory.setItem(0, item(2, 8, 12));
++            assertNull(plan(recipe("furnace", 2, 1), furnace, inventory, false, 64));
++            furnace.setItem(0, BedrockItem.empty());
++        }
++    }
++
++    private static FurnaceRecipePlacement.Plan plan(final CraftingDataStorage recipe,
++            final FurnaceContainer furnace, final InventoryContainer inventory, final boolean max, final int limit) {
++        return FurnaceRecipePlacement.plan(recipe, furnace, inventory, max, item -> limit,
++                (descriptor, item) -> descriptor.matchesItem(null, item));
++    }
++
++    private static CraftingDataStorage recipe(final String tag, final int input, final int amount) {
++        return new CraftingDataStorage(RecipeType.SHAPELESS, 7,
++                new ShapelessRecipe("cooking", UUID.randomUUID(), tag, 0,
++                        List.of(new TestDescriptor(input, amount)), List.of(new BedrockItem(4))), true);
++    }
++
++    private static BedrockItem item(final int id, final int amount, final int netId) {
++        final BedrockItem item = new BedrockItem(id, (short) 0, (byte) amount);
++        item.setNetId(netId);
++        return item;
++    }
++
++    private static InventoryContainer inventory(final UserConnection user) {
++        return new InventoryContainer(user) {
++            @Override
++            protected void onSlotChanged(final int slot, final BedrockItem previous, final BedrockItem current) {
++            }
++        };
++    }
++
++    private static UserConnection user() {
++        return (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
++    }
++
++    private record TestDescriptor(int id, int amount) implements ItemDescriptor {
++        @Override
++        public ItemDescriptorType getType() {
++            return ItemDescriptorType.ITEM_NAME;
++        }
++
++        @Override
++        public boolean matchesItem(final UserConnection user, final BedrockItem item) {
++            return !item.isEmpty() && (this.id == 0 || this.id == item.identifier());
++        }
++
++        @Override
++        public ItemDescriptor withAmount(final int amount) {
++            return new TestDescriptor(this.id, amount);
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainerTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainerTest.java
 new file mode 100644
 index 000000000..fbc7a40e4
@@ -2109,12 +2786,136 @@ index 000000000..284e08781
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CookingRecipeBookTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CookingRecipeBookTest.java
+new file mode 100644
+index 000000000..573cf6145
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CookingRecipeBookTest.java
+@@ -0,0 +1,118 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.google.common.collect.HashBiMap;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.HolderSet;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
++import net.raphimc.viabedrock.protocol.model.recipe.RecipeType;
++import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class CookingRecipeBookTest {
++
++    @Test
++    void catalogUsesStationItemsUnlocksAndSingleInputRecipes() throws ClassNotFoundException {
++        Class.forName(StructuredDataKey.class.getName());
++        final UserConnection user = mock(UserConnection.class);
++        final ItemRewriter items = mock(ItemRewriter.class);
++        when(items.getItems()).thenReturn(HashBiMap.create(Map.of(
++                "minecraft:furnace", 11, "minecraft:blast_furnace", 12, "minecraft:smoker", 13,
++                "minecraft:input", 2)));
++        when(items.javaItem(any(BedrockItem.class))).thenAnswer(call -> {
++            final BedrockItem item = call.getArgument(0);
++            return item.isEmpty() ? StructuredItem.empty() : new StructuredItem(item.identifier() + 100, item.amount());
++        });
++        final CraftingDataTracker tracker = new CraftingDataTracker(user);
++        final var input = new ItemDescriptor.ItemNameDescriptor("minecraft:input", 0);
++        final var locked = recipe("locked", "furnace", List.of(input), false);
++        tracker.updateCraftingDataList(List.of(
++                recipe("furnace", "furnace", List.of(input), true),
++                recipe("blast", "blast_furnace", List.of(input), true),
++                recipe("smoker", "smoker", List.of(input), true), locked,
++                recipe("multiple", "furnace", List.of(input, input), true),
++                recipe("unsupported", "campfire", List.of(input), true)), true);
++        final var displays = tracker.recipeBookDisplays(items);
++        assertEquals(List.of(111, 112, 113), displays.stream()
++                .map(CraftingDataTracker.RecipeDisplay::craftingStationId).toList());
++        assertEquals(List.of(6, 8, 9), displays.stream().map(display -> display.station().category()).toList());
++        assertTrue(displays.stream().allMatch(display -> display.ingredients().size() == 1
++                && display.ingredients().get(0).ids()[0] == 102));
++        tracker.updateUnlockedRecipes(2, List.of(locked.recipe().getUniqueId()));
++        assertEquals(4, tracker.recipeBookDisplays(items).size());
++        tracker.updateUnlockedRecipes(3, List.of(locked.recipe().getUniqueId()));
++        assertEquals(3, tracker.recipeBookDisplays(items).size());
++    }
++
++    @Test
++    void furnaceDisplayHasTheTargetCodecFieldOrderForTypedAndDirectConnections() throws ClassNotFoundException {
++        Class.forName(StructuredDataKey.class.getName());
++        final var packet = new PacketWrapperImpl(0, null, null);
++        final var output = new StructuredItem(320, 2, new StructuredDataContainer());
++        final var display = new CraftingDataTracker.RecipeDisplay(null, 0, 0,
++                List.of(HolderSet.of(new int[]{319})), output,
++                CraftingDataTracker.RecipeBookStation.SMOKER, 321);
++        // Use deliberately non-default registry IDs so the codec cannot assume slot display order.
++        final var slotDisplayIds = Map.of("minecraft:item", 93,
++                "minecraft:any_fuel", 92, "minecraft:item_stack", 94);
++        CraftingDataTracker.writeRecipeDisplay(packet, display, slotDisplayIds::get);
++        packet.resetReader();
++        assertEquals(2, packet.passthrough(Types.VAR_INT)); // furnace recipe display
++        assertEquals(93, packet.passthrough(Types.VAR_INT)); // input slot display
++        assertEquals(319, packet.passthrough(Types.VAR_INT));
++        assertEquals(92, packet.passthrough(Types.VAR_INT)); // any fuel, no payload
++        assertEquals(94, packet.passthrough(Types.VAR_INT));
++        assertSame(output, packet.passthrough(VersionedTypes.V26_3.itemTemplate));
++        assertEquals(93, packet.passthrough(Types.VAR_INT));
++        assertEquals(321, packet.passthrough(Types.VAR_INT));
++        assertEquals(0, packet.passthrough(Types.VAR_INT)); // no timing in Bedrock CraftingData
++        assertEquals(0F, packet.passthrough(Types.FLOAT));
++        final var buffer = Unpooled.buffer();
++        try {
++            packet.writeToBuffer(buffer);
++            assertEquals(0, Types.VAR_INT.readPrimitive(buffer));
++            assertEquals(2, Types.VAR_INT.readPrimitive(buffer));
++            assertEquals(93, Types.VAR_INT.readPrimitive(buffer));
++            assertEquals(319, Types.VAR_INT.readPrimitive(buffer));
++            assertEquals(92, Types.VAR_INT.readPrimitive(buffer));
++            assertEquals(94, Types.VAR_INT.readPrimitive(buffer));
++            final var decoded = VersionedTypes.V26_3.itemTemplate.read(buffer);
++            assertEquals(output.identifier(), decoded.identifier());
++            assertEquals(output.amount(), decoded.amount());
++            assertEquals(93, Types.VAR_INT.readPrimitive(buffer));
++            assertEquals(321, Types.VAR_INT.readPrimitive(buffer));
++            assertEquals(0, Types.VAR_INT.readPrimitive(buffer));
++            assertEquals(0F, Types.FLOAT.readPrimitive(buffer));
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    private static CraftingDataStorage recipe(final String name, final String tag,
++            final List<ItemDescriptor> inputs, final boolean unlocked) {
++        return new CraftingDataStorage(RecipeType.SHAPELESS, 7,
++                new ShapelessRecipe(name, UUID.randomUUID(), tag, 0, inputs, List.of(new BedrockItem(3))), unlocked);
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java
 new file mode 100644
-index 000000000..be0e11f6a
+index 000000000..2804cd773
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,236 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2279,6 +3080,21 @@ index 000000000..be0e11f6a
 +    }
 +
 +    @Test
++    void recipeDisplayIdentityIncludesTheCookingStation() {
++        final CraftingDataTracker tracker = new CraftingDataTracker(user());
++        final UUID id = UUID.randomUUID();
++        final var furnace = new CraftingDataStorage(RecipeType.SHAPELESS, 7,
++                new ShapelessRecipe("cooking", id, "furnace", 0,
++                        List.of(new TestDescriptor(1, 1)), List.of(new BedrockItem(2))), true);
++        final var smoker = new CraftingDataStorage(RecipeType.SHAPELESS, 8,
++                new ShapelessRecipe("cooking", id, "smoker", 0,
++                        List.of(new TestDescriptor(1, 1)), List.of(new BedrockItem(2))), true);
++        assertNotEquals(tracker.displayIdFor(furnace), tracker.displayIdFor(smoker));
++        assertEquals(tracker.displayIdFor(furnace), tracker.displayIdFor(
++                new CraftingDataStorage(furnace.type(), 9, furnace.recipe(), true)));
++    }
++
++    @Test
 +    void unlockUpdatesAddRemoveAndReplaceRecipeAvailability() {
 +        final CraftingDataTracker tracker = new CraftingDataTracker(user());
 +        final CraftingDataStorage locked = recipe("locked", UUID.randomUUID(), 1, false);
@@ -2333,6 +3149,138 @@ index 000000000..be0e11f6a
 +        public ItemDescriptor withAmount(final int amount) {
 +            return new TestDescriptor(this.id, amount);
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
+new file mode 100644
+index 000000000..686cd6c65
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
+@@ -0,0 +1,126 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.google.common.collect.HashBiMap;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.model.container.block.FurnaceContainer;
++import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseContainerInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseSlotInfo;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackNetResult;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
++import net.raphimc.viabedrock.protocol.model.recipe.RecipeType;
++import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Proxy;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class FurnaceRecipeRequestTest {
++
++    @Test
++    void placementWaitsForAcknowledgmentAndRejectionRestoresBothInventories() {
++        final Map<Class<?>, Object> storage = new HashMap<>();
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class},
++                (proxy, method, args) -> method.getName().equals("get") ? storage.get(args[0]) : null);
++        final InventoryTracker inventory = new InventoryTracker(user);
++        final InventoryRequestTracker requests = new InventoryRequestTracker(user);
++        final ItemRewriter items = mock(ItemRewriter.class);
++        when(items.maxStackSize(any())).thenReturn(64);
++        when(items.getItems()).thenReturn(HashBiMap.create(Map.of("test:input", 2)));
++        storage.put(InventoryTracker.class, inventory);
++        storage.put(InventoryRequestTracker.class, requests);
++        storage.put(ItemRewriter.class, items);
++        requests.setPredictingClick(true);
++        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        inventory.setCurrentContainer(furnace);
++        furnace.setItem(0, item(3, 2, 17));
++        furnace.setItem(1, item(5, 4, 18));
++        furnace.setItem(2, item(6, 1, 19));
++        final InventoryContainer player = inventory.getInventoryContainer();
++        player.setItem(0, item(2, 8, 20));
++        final CraftingDataStorage recipe = recipe();
++        final ItemStackRequestInfo[] sent = new ItemStackRequestInfo[1];
++        try (var packets = mockStatic(PacketFactory.class)) {
++            packets.when(() -> PacketFactory.sendBedrockInventoryRequest(eq(user), any())).thenAnswer(call -> {
++                sent[0] = ((ItemStackRequestInfo[]) call.getArgument(1))[0];
++                requests.getRequest(sent[0].requestId()).capturePrediction(inventory);
++                return null;
++            });
++            assertTrue(requests.beginInventoryOpen());
++            assertFalse(furnace.handleRecipePlacement(recipe, true));
++            requests.handleInventoryOpen(player);
++            assertTrue(furnace.handleRecipePlacement(recipe, true));
++            assertEquals(8, furnace.getItem(0).amount());
++            assertTrue(player.getItem(0).isEmpty());
++            assertEquals(2, player.getItem(1).amount());
++            assertFalse(furnace.handleRecipePlacement(recipe, false));
++            final InventoryRequestStorage pending = requests.getRequest(sent[0].requestId());
++            assertEquals(2, pending.prevContainers().size());
++            assertEquals(3, pending.prevContainers().get(0).getItem(0).identifier());
++            assertEquals(2, pending.predictedItem(furnace, 0).identifier());
++            requests.restoreRejectedRequest(pending);
++            requests.removeRequest(sent[0].requestId());
++            assertEquals(item(3, 2, 17), furnace.getItem(0));
++            assertEquals(item(2, 8, 20), player.getItem(0));
++            assertTrue(player.getItem(1).isEmpty());
++            assertEquals(item(5, 4, 18), furnace.getItem(1));
++            assertEquals(item(6, 1, 19), furnace.getItem(2));
++            inventory.getHudContainer().setItem(0, item(3, 1, 23));
++            assertFalse(furnace.handleRecipePlacement(recipe, false));
++            inventory.getHudContainer().setItem(0, BedrockItem.empty());
++            assertTrue(furnace.handleRecipePlacement(recipe, false));
++            final InventoryRequestStorage accepted = requests.getRequest(sent[0].requestId());
++            requests.applySuccessfulResponse(new ItemStackResponseInfo(ItemStackNetResult.Success,
++                    sent[0].requestId(), List.of(
++                        new ItemStackResponseContainerInfo(furnace.getFullContainerName(0),
++                                List.of(new ItemStackResponseSlotInfo((byte) 0, (byte) 0, (byte) 1,
++                                        90, "", null, 0))),
++                        new ItemStackResponseContainerInfo(player.getFullContainerName(0),
++                                List.of(new ItemStackResponseSlotInfo((byte) 0, (byte) 0, (byte) 7,
++                                        91, "", null, 0))))), accepted);
++            requests.removeRequest(sent[0].requestId());
++            assertEquals(90, furnace.getItem(0).netId());
++            assertEquals(91, player.getItem(0).netId());
++            assertTrue(furnace.handleRecipePlacement(recipe, false));
++            final var transfer = (ItemStackRequestAction.PlaceAction) sent[0].actions().get(0);
++            assertEquals(91, transfer.source().stackNetworkId());
++            assertEquals(90, transfer.destination().stackNetworkId());
++            assertEquals(1, transfer.count());
++            inventory.setCurrentContainerClosed(false);
++            assertFalse(furnace.handleRecipePlacement(recipe, false));
++            packets.verify(() -> PacketFactory.sendBedrockInventoryRequest(eq(user), any()), times(3));
++        }
++    }
++
++    private static CraftingDataStorage recipe() {
++        return new CraftingDataStorage(RecipeType.SHAPELESS, 7,
++                new ShapelessRecipe("cooking", UUID.randomUUID(), "furnace", 0,
++                        List.of(new ItemDescriptor.ItemNameDescriptor("test:input", 0)),
++                        List.of(new BedrockItem(4))), true);
++    }
++
++    private static BedrockItem item(final int id, final int amount, final int netId) {
++        final BedrockItem item = new BedrockItem(id, (short) 0, (byte) amount);
++        item.setNetId(netId);
++        return item;
 +    }
 +
 +}
