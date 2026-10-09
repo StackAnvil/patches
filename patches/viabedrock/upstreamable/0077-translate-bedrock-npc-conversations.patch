@@ -1,4 +1,4 @@
-From 52e72954a1d11643d5479d313a6a7341daf0f108 Mon Sep 17 00:00:00 2001
+From e16d4a3d9c7d8bcef2587da46db7c00027bdcd82 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 22:10:18 +0200
 Subject: [PATCH] feat(dialogue): translate Bedrock NPC conversations into Java
@@ -24,18 +24,36 @@ conversation records indexed selection, closing the original scene, then
 opening the replacement even when its action list contains only a button.
 Acknowledge every accepted scene instead of deriving entry requests from
 the presence of command entries.
+
+Native Bedrock 1.26.51.1 (build 51061372, protocol 2193) sends an
+empty scene, name, dialogue and action JSON on ordinary NPC interaction.
+Use the tracked actor's NAME_RAW_TEXT (112), NAME (4), INTERACT_TEXT
+(100) and ACTIONS (41) when those unnamed packet fields are absent.
+The matching BDS reference renders the raw display name over NAME and
+literal newlines, selects the original metadata action index, and sends
+opening, indexed selection and closing requests with an empty scene.
+Keep named scene values authoritative even when empty, and do not merge
+an explicit empty action array with stored actions. Read current metadata
+on each open and retain stale response rejection across replacements.
+
+Keep no-button conversations valid for clients without the add-on by
+using a notice dialog with the same exit response. Java's multi-action
+dialog codec rejects an empty action list; the native add-on scene path
+remains independent of this compatibility presentation.
 ---
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../protocol/packet/InventoryPackets.java     |   5 +-
- .../protocol/packet/NpcDialoguePackets.java   | 164 ++++++++++++++++
+ .../protocol/packet/NpcDialoguePackets.java   | 186 ++++++++++++++++++
  .../protocol/storage/EntityTracker.java       |   4 +
  .../protocol/storage/InventoryTracker.java    |   4 +-
  .../protocol/storage/NpcDialogueStorage.java  |  92 +++++++++
- .../packet/NpcDialoguePacketTest.java         | 176 ++++++++++++++++++
+ .../packet/NpcActorDialoguePacketTest.java    | 159 +++++++++++++++
+ .../packet/NpcDialoguePacketTest.java         | 176 +++++++++++++++++
  .../storage/NpcDialogueStorageTest.java       |  69 +++++++
- 8 files changed, 514 insertions(+), 2 deletions(-)
+ 9 files changed, 695 insertions(+), 2 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NpcActorDialoguePacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorageTest.java
 
@@ -84,10 +102,10 @@ index e238ed6a4..fb8b236b5 100644
                  wrapper.cancel();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java
 new file mode 100644
-index 000000000..6be3ce90d
+index 000000000..f24543843
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,186 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -108,6 +126,7 @@ index 000000000..6be3ce90d
 +import com.viaversion.viaversion.libs.mcstructs.dialog.action.StaticAction;
 +import com.viaversion.viaversion.libs.mcstructs.dialog.body.PlainMessageBody;
 +import com.viaversion.viaversion.libs.mcstructs.dialog.impl.MultiActionDialog;
++import com.viaversion.viaversion.libs.mcstructs.dialog.impl.NoticeDialog;
 +import com.viaversion.viaversion.libs.mcstructs.dialog.serializer.DialogSerializer;
 +import com.viaversion.viaversion.libs.mcstructs.text.events.click.ClickEvent;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
@@ -118,6 +137,7 @@ index 000000000..6be3ce90d
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 +import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.NpcDialogueActionType;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.NpcRequestPacketPayload_RequestType;
 +import net.raphimc.viabedrock.protocol.storage.EntityTracker;
@@ -136,10 +156,10 @@ index 000000000..6be3ce90d
 +        protocol.registerClientbound(ClientboundBedrockPackets.NPC_DIALOGUE, ClientboundPackets26_3.SHOW_DIALOG, wrapper -> {
 +            final long uniqueId = wrapper.read(BedrockTypes.LONG_LE);
 +            final NpcDialogueActionType action = NpcDialogueActionType.getByValue(wrapper.read(BedrockTypes.VAR_INT));
-+            final String dialogue = wrapper.read(BedrockTypes.STRING);
++            final String packetDialogue = wrapper.read(BedrockTypes.STRING);
 +            final String scene = wrapper.read(BedrockTypes.STRING);
-+            final String name = wrapper.read(BedrockTypes.STRING);
-+            final String actions = wrapper.read(BedrockTypes.STRING);
++            final String packetName = wrapper.read(BedrockTypes.STRING);
++            final String packetActions = wrapper.read(BedrockTypes.STRING);
 +            final NpcDialogueStorage storage = wrapper.user().get(NpcDialogueStorage.class);
 +            if (action == NpcDialogueActionType.Close) {
 +                if (storage.close(uniqueId)) {
@@ -159,6 +179,9 @@ index 000000000..6be3ce90d
 +                wrapper.cancel();
 +                return;
 +            }
++            final String name = content(entity, scene, packetName, ActorDataIds.NAME_RAW_TEXT, ActorDataIds.NAME);
++            final String dialogue = content(entity, scene, packetDialogue, ActorDataIds.INTERACT_TEXT);
++            final String actions = content(entity, scene, packetActions, ActorDataIds.ACTIONS);
 +            final NpcDialogueStorage.Session session;
 +            try {
 +                session = storage.open(uniqueId, entity.runtimeId(), scene, actions);
@@ -192,12 +215,29 @@ index 000000000..6be3ce90d
 +                    }
 +                }
 +            }
++            final var presentation = dialog.getActions().isEmpty()
++                    ? new NoticeDialog(dialog.getTitle(), true, false, AfterAction.WAIT_FOR_RESPONSE,
++                            dialog.getBody(), dialog.getInputs(), dialog.getExitAction()) : dialog;
 +            wrapper.write(Types.TRUSTED_COMPOUND_TAG_HOLDER, Holder.of((CompoundTag) DialogSerializer.V1_21_6
-+                    .getDirectCodec().serialize(NbtConverter_v1_21_5.INSTANCE, dialog).get()));
++                    .getDirectCodec().serialize(NbtConverter_v1_21_5.INSTANCE, presentation).get()));
 +            // Native clients acknowledge every scene, even without on-open commands.
 +            sendRequest(wrapper, new NpcDialogueStorage.Request(entity.runtimeId(),
 +                    NpcRequestPacketPayload_RequestType.ExecuteOpeningCommands, 0, scene));
 +        });
++    }
++
++    private static String content(final Entity entity, final String scene, final String packetValue, final ActorDataIds... metadataIds) {
++        // An ordinary interaction references the actor's content. Named scenes own even empty values.
++        if (!scene.isEmpty() || !packetValue.isEmpty()) {
++            return packetValue;
++        }
++        for (final ActorDataIds id : metadataIds) {
++            final var data = entity.entityData().get(id);
++            if (data != null && data.value() instanceof String value) {
++                return value;
++            }
++        }
++        return packetValue;
 +    }
 +
 +    public static boolean handleResponse(final PacketWrapper wrapper, final String id, final CompoundTag payload) {
@@ -377,6 +417,171 @@ index 000000000..421a296ba
 +    }
 +
 +    public record Request(long runtimeId, NpcRequestPacketPayload_RequestType type, int actionIndex, String scene) {
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NpcActorDialoguePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NpcActorDialoguePacketTest.java
+new file mode 100644
+index 000000000..4318b8bc2
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NpcActorDialoguePacketTest.java
+@@ -0,0 +1,159 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import com.viaversion.viaversion.api.protocol.ProtocolPipeline;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.libs.mcstructs.converter.impl.v1_21_5.NbtConverter_v1_21_5;
++import com.viaversion.viaversion.libs.mcstructs.dialog.Dialog;
++import com.viaversion.viaversion.libs.mcstructs.dialog.body.PlainMessageBody;
++import com.viaversion.viaversion.libs.mcstructs.dialog.impl.MultiActionDialog;
++import com.viaversion.viaversion.libs.mcstructs.dialog.impl.NoticeDialog;
++import com.viaversion.viaversion.libs.mcstructs.dialog.serializer.DialogSerializer;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import io.netty.channel.embedded.EmbeddedChannel;
++import java.lang.reflect.InvocationHandler;
++import java.lang.reflect.Proxy;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.storage.NpcDialogueStorage;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NpcActorDialoguePacketTest {
++
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void resolvesActorContentOnlyForAnUnnamedInteractionAndReadsCurrentMetadata(final boolean rawName) throws Exception {
++        try (Fixture fixture = new Fixture()) {
++            final var actor = fixture.actor;
++            actor.entityData().put(ActorDataIds.NAME, new EntityData(4, EntityDataTypesBedrock.STRING, "Actor name"));
++            // A wrong metadata type is not text. The valid name tag remains available.
++            actor.entityData().put(ActorDataIds.NAME_RAW_TEXT, new EntityData(112,
++                    rawName ? EntityDataTypesBedrock.STRING : EntityDataTypesBedrock.INT, rawName ? "Display name" : 42));
++            actor.entityData().put(ActorDataIds.INTERACT_TEXT,
++                    new EntityData(100, EntityDataTypesBedrock.STRING, "First\nSecond"));
++            actor.entityData().put(ActorDataIds.ACTIONS, new EntityData(41, EntityDataTypesBedrock.STRING,
++                    "[{\"mode\":2,\"type\":1},{\"mode\":0,\"type\":1,\"button_name\":\"Choose\"}]"));
++
++            final var conversation = fixture.open("", "", "", "");
++            assertEquals(rawName ? "Display name" : "Actor name", conversation.getTitle().asUnformattedString());
++            assertEquals(List.of("First", "Second"), conversation.getBody().stream()
++                    .map(body -> ((PlainMessageBody) body).getContents().asUnformattedString()).toList());
++            assertEquals(1, fixture.storage.current().buttons().getFirst().index());
++            assertEquals(1, ((MultiActionDialog) conversation).getActions().size());
++            final String oldIdentity = fixture.storage.current().responseIdentifier();
++
++            // A named empty scene must clear the UI, rather than exposing the actor's previous content.
++            final var empty = fixture.open("empty_scene", "", "", "[]");
++            assertEquals("", empty.getTitle().asUnformattedString());
++            assertInstanceOf(NoticeDialog.class, empty);
++            assertTrue(fixture.storage.current().buttons().isEmpty());
++            assertTrue(fixture.storage.respond(oldIdentity, 1).isEmpty());
++
++            // Explicit interaction data and an explicit empty action array also override stored metadata.
++            final var explicit = fixture.open("", "Packet name", "Packet text", "[]");
++            assertEquals("Packet name", explicit.getTitle().asUnformattedString());
++            assertEquals("Packet text", ((PlainMessageBody) explicit.getBody().getFirst()).getContents().asUnformattedString());
++            assertTrue(fixture.storage.current().buttons().isEmpty());
++
++            actor.entityData().put(ActorDataIds.INTERACT_TEXT, new EntityData(100, EntityDataTypesBedrock.STRING, "Updated"));
++            actor.entityData().put(ActorDataIds.ACTIONS, new EntityData(41, EntityDataTypesBedrock.INT, 0));
++            final var updated = fixture.open("", "", "", "");
++            assertEquals("Updated", ((PlainMessageBody) updated.getBody().getFirst()).getContents().asUnformattedString());
++            assertTrue(fixture.storage.current().buttons().isEmpty());
++        }
++    }
++
++    private static final class Fixture extends BedrockProtocol implements AutoCloseable {
++        private final Map<Class<?>, Object> storages = new HashMap<>();
++        private final EmbeddedChannel channel = new EmbeddedChannel();
++        private final NpcDialogueStorage storage = new NpcDialogueStorage();
++        private final UserConnection user;
++        private final Entity actor;
++
++        private Fixture() {
++            final ProtocolPipeline pipeline = stub(ProtocolPipeline.class, (proxy, method, args) -> List.of());
++            final ProtocolInfo info = stub(ProtocolInfo.class, (proxy, method, args) -> switch (method.getName()) {
++                case "getPipeline" -> pipeline;
++                case "getServerState" -> State.PLAY;
++                default -> throw new UnsupportedOperationException(method.getName());
++            });
++            this.user = stub(UserConnection.class, (proxy, method, args) -> switch (method.getName()) {
++                case "get" -> this.storages.get(args[0]);
++                case "getChannel" -> this.channel;
++                case "getProtocolInfo" -> info;
++                case "sendRawPacketToServer" -> {
++                    ((ByteBuf) args[0]).release();
++                    yield null;
++                }
++                default -> throw new UnsupportedOperationException(method.getName());
++            });
++            final var entities = new EntityTracker(this.user);
++            this.storages.put(EntityTracker.class, entities);
++            this.storages.put(NpcDialogueStorage.class, this.storage);
++            this.storages.put(InventoryTracker.class, new InventoryTracker(this.user));
++            this.storages.put(ResourcePackStorage.class, new ResourcePackStorage(List.of()));
++            this.actor = entities.addEntity(new Entity(this.user, -287762808818L, 1067, "minecraft:npc", 300,
++                    UUID.randomUUID(), EntityTypes26_3.MANNEQUIN), false);
++            NpcDialoguePackets.register(this);
++        }
++
++        private Dialog open(final String scene, final String name, final String text, final String actions) throws Exception {
++            final ByteBuf input = Unpooled.buffer();
++            try {
++                BedrockTypes.LONG_LE.write(input, this.actor.uniqueId());
++                BedrockTypes.VAR_INT.write(input, 0);
++                BedrockTypes.STRING.write(input, text);
++                BedrockTypes.STRING.write(input, scene);
++                BedrockTypes.STRING.write(input, name);
++                BedrockTypes.STRING.write(input, actions);
++                final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.NPC_DIALOGUE, input, this.user);
++                final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++                mapping.applyType(packet);
++                mapping.handler().handle(packet);
++                assertFalse(packet.isCancelled());
++                assertEquals(0, input.readableBytes());
++                return DialogSerializer.V1_21_6.getDirectCodec().deserialize(NbtConverter_v1_21_5.INSTANCE,
++                        packet.get(Types.TRUSTED_COMPOUND_TAG_HOLDER, 0).value()).get();
++            } finally {
++                input.release();
++            }
++        }
++
++        @Override
++        public void close() {
++            this.channel.finishAndReleaseAll();
++        }
++
++        private static <T> T stub(final Class<T> type, final InvocationHandler handler) {
++            return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, handler));
++        }
++
 +    }
 +
 +}
