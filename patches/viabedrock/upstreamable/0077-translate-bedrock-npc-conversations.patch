@@ -1,4 +1,4 @@
-From e16d4a3d9c7d8bcef2587da46db7c00027bdcd82 Mon Sep 17 00:00:00 2001
+From 144891fdab23e2a0a527a72f9e0dea53f4969d78 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 22:10:18 +0200
 Subject: [PATCH] feat(dialogue): translate Bedrock NPC conversations into Java
@@ -40,17 +40,29 @@ Keep no-button conversations valid for clients without the add-on by
 using a notice dialog with the same exit response. Java's multi-action
 dialog codec rejects an empty action list; the native add-on scene path
 remains independent of this compatibility presentation.
+
+Retain a separately authorized editor session and type the NPC request
+data field. Pinned native build 51061372/protocol 2193 sends SetName (3),
+SetSkin (4), SetInteractText (5), and whole-list SetActions (0) with an
+empty scene name, even when a named dialogue opened the editor. Keep
+student selections and command execution separate from editing, preserve
+LF text, validate action modes and bounds, and reject stale editor IDs.
+The native creative operator editor does not execute student exit actions.
+
+Validate command wire text separately from editable text: native action
+serialization appends a terminal LF. Permit that terminator after 1,024
+editable characters without accepting oversized command or URL content.
 ---
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../protocol/packet/InventoryPackets.java     |   5 +-
- .../protocol/packet/NpcDialoguePackets.java   | 186 ++++++++++++++++++
+ .../protocol/packet/NpcDialoguePackets.java   | 186 +++++++++++++
  .../protocol/storage/EntityTracker.java       |   4 +
  .../protocol/storage/InventoryTracker.java    |   4 +-
- .../protocol/storage/NpcDialogueStorage.java  |  92 +++++++++
- .../packet/NpcActorDialoguePacketTest.java    | 159 +++++++++++++++
- .../packet/NpcDialoguePacketTest.java         | 176 +++++++++++++++++
- .../storage/NpcDialogueStorageTest.java       |  69 +++++++
- 9 files changed, 695 insertions(+), 2 deletions(-)
+ .../protocol/storage/NpcDialogueStorage.java  | 204 +++++++++++++++
+ .../packet/NpcActorDialoguePacketTest.java    | 159 +++++++++++
+ .../packet/NpcDialoguePacketTest.java         | 197 ++++++++++++++
+ .../storage/NpcDialogueStorageTest.java       | 247 ++++++++++++++++++
+ 9 files changed, 1006 insertions(+), 2 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NpcActorDialoguePacketTest.java
@@ -102,7 +114,7 @@ index e238ed6a4..fb8b236b5 100644
                  wrapper.cancel();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java
 new file mode 100644
-index 000000000..f24543843
+index 000000000..521161d5b
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java
 @@ -0,0 +1,186 @@
@@ -277,7 +289,7 @@ index 000000000..f24543843
 +    public static void writeRequest(final PacketWrapper wrapper, final NpcDialogueStorage.Request request) {
 +        wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, request.runtimeId());
 +        wrapper.write(Types.UNSIGNED_BYTE, (short) request.type().getValue());
-+        wrapper.write(BedrockTypes.STRING, "");
++        wrapper.write(BedrockTypes.STRING, request.data());
 +        wrapper.write(Types.UNSIGNED_BYTE, (short) request.actionIndex());
 +        wrapper.write(BedrockTypes.STRING, request.scene());
 +    }
@@ -324,10 +336,10 @@ index 5f13d7616..8fa38f207 100644
      public InventoryContainer getInventoryContainer() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java
 new file mode 100644
-index 000000000..421a296ba
+index 000000000..6f6e97cfd
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,204 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -339,19 +351,34 @@ index 000000000..421a296ba
 +import com.viaversion.viaversion.libs.gson.JsonArray;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import com.viaversion.viaversion.libs.gson.JsonParser;
++
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.NpcRequestPacketPayload_RequestType;
 +
++import java.net.URI;
 +import java.util.ArrayList;
 +import java.util.List;
-+import java.net.URI;
 +
 +public final class NpcDialogueStorage implements StorableObject {
 +
 +    private Session current;
 +    private long sequence;
 +
-+    public Session open(final long uniqueId, final long runtimeId, final String scene, final String actionJson) {
-+        final JsonArray actions = JsonParser.parseString(actionJson.isBlank() ? "[]" : actionJson).getAsJsonArray();
++    public Session open(
++            final long uniqueId,
++            final long runtimeId,
++            final String scene,
++            final String actionJson) {
++        return this.open(uniqueId, runtimeId, scene, actionJson, false);
++    }
++
++    public Session open(
++            final long uniqueId,
++            final long runtimeId,
++            final String scene,
++            final String actionJson,
++            final boolean editor) {
++        final JsonArray actions =
++                JsonParser.parseString(actionJson.isBlank() ? "[]" : actionJson).getAsJsonArray();
 +        if (actions.size() > 256) {
 +            throw new IllegalArgumentException("NPC dialogue has more than 256 actions");
 +        }
@@ -360,20 +387,27 @@ index 000000000..421a296ba
 +            final JsonObject action = actions.get(index).getAsJsonObject();
 +            final int mode = action.get("mode").getAsInt();
 +            final int type = action.get("type").getAsInt();
-+            if (mode == 0 && (type == 0 || type == 1)) {
++            if (!editor && mode == 0 && (type == 0 || type == 1)) {
 +                final String url = type == 0 ? action.get("text").getAsString().trim() : null;
 +                if (url != null) {
 +                    final URI uri = URI.create(url);
-+                    if (uri.getHost() == null || !("https".equalsIgnoreCase(uri.getScheme())
-+                            || "http".equalsIgnoreCase(uri.getScheme()))) {
++                    if (uri.getHost() == null
++                            || !("https".equalsIgnoreCase(uri.getScheme())
++                                    || "http".equalsIgnoreCase(uri.getScheme()))) {
 +                        throw new IllegalArgumentException("Invalid NPC link action");
 +                    }
 +                }
 +                buttons.add(new Button(index, action.get("button_name").getAsString(), url));
 +            }
 +        }
-+        return this.current = new Session(uniqueId, runtimeId, scene, "viabedrock:npc/" + ++this.sequence,
-+                List.copyOf(buttons));
++        return this.current =
++                new Session(
++                        uniqueId,
++                        runtimeId,
++                        scene,
++                        "viabedrock:npc/" + ++this.sequence,
++                        List.copyOf(buttons),
++                        editor);
 +    }
 +
 +    public Session current() {
@@ -393,30 +427,120 @@ index 000000000..421a296ba
 +        if (session == null || !session.responseIdentifier().equals(identifier)) {
 +            return List.of();
 +        }
-+        if (buttonIndex != null && session.buttons().stream().noneMatch(button ->
-+                button.index() == buttonIndex && button.url() == null)) {
++        if (session.editor()
++                || buttonIndex != null
++                        && session.buttons().stream()
++                                .noneMatch(
++                                        button ->
++                                                button.index() == buttonIndex
++                                                        && button.url() == null)) {
 +            return List.of();
 +        }
 +        this.current = null;
 +        final List<Request> requests = new ArrayList<>(2);
 +        if (buttonIndex != null) {
-+            requests.add(new Request(session.runtimeId(), NpcRequestPacketPayload_RequestType.ExecuteAction,
-+                    buttonIndex, session.scene()));
++            requests.add(
++                    new Request(
++                            session.runtimeId(),
++                            NpcRequestPacketPayload_RequestType.ExecuteAction,
++                            buttonIndex,
++                            session.scene()));
 +        }
 +        // Closing a dialogue is a protocol interaction even when it has no exit commands.
-+        requests.add(new Request(session.runtimeId(), NpcRequestPacketPayload_RequestType.ExecuteClosingCommands,
-+                0, session.scene()));
++        requests.add(
++                new Request(
++                        session.runtimeId(),
++                        NpcRequestPacketPayload_RequestType.ExecuteClosingCommands,
++                        0,
++                        session.scene()));
 +        return List.copyOf(requests);
++    }
++
++    /**
++     * Editor requests remain bound to the actor and authority established when its screen opened.
++     */
++    public Request edit(
++            final String identifier,
++            final NpcRequestPacketPayload_RequestType type,
++            final String data,
++            final int actionIndex) {
++        final Session session = this.current;
++        if (session == null
++                || !session.editor()
++                || !session.responseIdentifier().equals(identifier)) {
++            return null;
++        }
++        final int limit =
++            switch (type) {
++                case SetName -> 128;
++                case SetInteractText -> 1000;
++                case SetActions -> 1024 * 1024;
++                case SetSkin -> 0;
++                default -> -1;
++            };
++        if (limit < 0
++                || data.length() > limit
++                || actionIndex < 0
++                || actionIndex > 255
++                || type != NpcRequestPacketPayload_RequestType.SetSkin && actionIndex != 0) {
++            return null;
++        }
++        if (type == NpcRequestPacketPayload_RequestType.SetActions) {
++            final JsonArray actions;
++            try {
++                actions = JsonParser.parseString(data).getAsJsonArray();
++                if (actions.size() > 256) {
++                    return null;
++                }
++                for (final var entry : actions) {
++                    final JsonObject action = entry.getAsJsonObject();
++                    final int mode = action.get("mode").getAsBigDecimal().intValueExact();
++                    final int kind = action.get("type").getAsBigDecimal().intValueExact();
++                    final String text = action.get("text").getAsString();
++                    // Command serialization adds a terminal LF outside the editable text limit.
++                    final int textLimit = kind == 1 && text.endsWith("\n") ? 1025 : 1024;
++                    if (mode < 0
++                            || mode > 2
++                            || kind < 0
++                            || kind > 1
++                            || action.get("button_name").getAsString().length() > 128
++                            || text.length() > textLimit) {
++                        return null;
++                    }
++                }
++            } catch (final RuntimeException invalid) {
++                return null;
++            }
++        }
++        // Editing is actor-scoped even when a named scene caused the editor to open.
++        return new Request(session.runtimeId(), type, actionIndex, "", data);
 +    }
 +
 +    public record Button(int index, String name, String url) {
 +    }
 +
-+    public record Session(long uniqueId, long runtimeId, String scene, String responseIdentifier,
-+                          List<Button> buttons) {
++    public record Session(
++            long uniqueId,
++            long runtimeId,
++            String scene,
++            String responseIdentifier,
++            List<Button> buttons,
++            boolean editor) {
 +    }
 +
-+    public record Request(long runtimeId, NpcRequestPacketPayload_RequestType type, int actionIndex, String scene) {
++    public record Request(
++            long runtimeId,
++            NpcRequestPacketPayload_RequestType type,
++            int actionIndex,
++            String scene,
++            String data) {
++        public Request(
++                final long runtimeId,
++                final NpcRequestPacketPayload_RequestType type,
++                final int actionIndex,
++                final String scene) {
++            this(runtimeId, type, actionIndex, scene, "");
++        }
 +    }
 +
 +}
@@ -587,10 +711,10 @@ index 000000000..4318b8bc2
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePacketTest.java
 new file mode 100644
-index 000000000..e82d1c016
+index 000000000..b130e7e9e
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePacketTest.java
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,197 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -741,6 +865,27 @@ index 000000000..e82d1c016
 +        }
 +    }
 +
++    @Test
++    void sendsEditorTextInTheNpcRequestDataField() throws Exception {
++        final var request = new NpcDialogueStorage.Request(1067,
++                NpcRequestPacketPayload_RequestType.SetInteractText, 0, "", "first\nsecond");
++        final PacketWrapper packet = new PacketWrapperImpl(ServerboundBedrockPackets.NPC_REQUEST, null, null);
++        NpcDialoguePackets.writeRequest(packet, request);
++        final ByteBuf wire = Unpooled.buffer();
++        try {
++            packet.writeToBuffer(wire);
++            Types.VAR_INT.read(wire);
++            assertEquals(request.runtimeId(), BedrockTypes.UNSIGNED_VAR_LONG.read(wire));
++            assertEquals(request.type().getValue(), Types.UNSIGNED_BYTE.read(wire).intValue());
++            assertEquals(request.data(), BedrockTypes.STRING.read(wire));
++            assertEquals(0, Types.UNSIGNED_BYTE.read(wire).intValue());
++            assertEquals("", BedrockTypes.STRING.read(wire));
++            assertEquals(0, wire.readableBytes());
++        } finally {
++            wire.release();
++        }
++    }
++
 +    private static ByteBuf dialogue(final long uniqueId, final int action, final String buttons) throws Exception {
 +        final ByteBuf input = Unpooled.buffer();
 +        BedrockTypes.LONG_LE.write(input, uniqueId);
@@ -769,10 +914,10 @@ index 000000000..e82d1c016
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorageTest.java
 new file mode 100644
-index 000000000..40addf1c0
+index 000000000..feba5fc02
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorageTest.java
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,247 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -780,31 +925,45 @@ index 000000000..40addf1c0
 + */
 +package net.raphimc.viabedrock.protocol.storage;
 +
++import static org.junit.jupiter.api.Assertions.*;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.NpcRequestPacketPayload_RequestType;
++
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.List;
-+
-+import static org.junit.jupiter.api.Assertions.*;
 +
 +class NpcDialogueStorageTest {
 +
 +    @Test
 +    void preservesServerIndicesAndOrdersButtonThenClosingRequests() {
 +        final NpcDialogueStorage storage = new NpcDialogueStorage();
-+        final var session = storage.open(-21474836474L, 0x10000003DL, "probe_scene", """
-+                [{"button_name":"","type":1,"mode":2},
-+                 {"button_name":"First","type":1,"mode":0},
-+                 {"button_name":"","type":1,"mode":1},
-+                 {"button_name":"Next","type":1,"mode":0}]
-+                """);
-+        assertEquals(List.of(1, 3), session.buttons().stream().map(NpcDialogueStorage.Button::index).toList());
++        final var session =
++                storage.open(
++                        -21474836474L,
++                        0x10000003DL,
++                        "probe_scene",
++                        """
++                        [{"button_name":"","type":1,"mode":2},
++                         {"button_name":"First","type":1,"mode":0},
++                         {"button_name":"","type":1,"mode":1},
++                         {"button_name":"Next","type":1,"mode":0}]
++                        """);
++        assertEquals(
++                List.of(1, 3),
++                session.buttons().stream().map(NpcDialogueStorage.Button::index).toList());
 +        assertTrue(storage.respond(session.responseIdentifier(), 2).isEmpty());
 +        assertSame(session, storage.current());
 +
 +        final var requests = storage.respond(session.responseIdentifier(), 3);
-+        assertEquals(List.of(NpcRequestPacketPayload_RequestType.ExecuteAction,
-+                NpcRequestPacketPayload_RequestType.ExecuteClosingCommands), requests.stream().map(NpcDialogueStorage.Request::type).toList());
++        assertEquals(
++                List.of(
++                        NpcRequestPacketPayload_RequestType.ExecuteAction,
++                        NpcRequestPacketPayload_RequestType.ExecuteClosingCommands),
++                requests.stream().map(NpcDialogueStorage.Request::type).toList());
 +        assertEquals(3, requests.get(0).actionIndex());
 +        assertEquals(session.runtimeId(), requests.get(0).runtimeId());
 +        assertEquals(session.scene(), requests.get(requests.size() - 1).scene());
@@ -822,7 +981,8 @@ index 000000000..40addf1c0
 +        assertSame(next, storage.current());
 +        final var close = storage.respond(next.responseIdentifier(), null);
 +        assertEquals(1, close.size());
-+        assertEquals(NpcRequestPacketPayload_RequestType.ExecuteClosingCommands, close.get(0).type());
++        assertEquals(
++                NpcRequestPacketPayload_RequestType.ExecuteClosingCommands, close.get(0).type());
 +        assertEquals(next.scene(), close.get(0).scene());
 +        assertNull(storage.current());
 +    }
@@ -830,15 +990,178 @@ index 000000000..40addf1c0
 +    @Test
 +    void linkActionsCannotBeForgedIntoCommandRequests() {
 +        final NpcDialogueStorage storage = new NpcDialogueStorage();
-+        final var session = storage.open(1, 2, "", """
-+                [{"button_name":"Help","type":0,"mode":0,"text":"https://example.com/help"}]
-+                """);
++        final var session =
++                storage.open(
++                        1,
++                        2,
++                        "",
++                        """
++                        [{"button_name":"Help","type":0,"mode":0,"text":"https://example.com/help"}]
++                        """);
 +        assertTrue(storage.respond(session.responseIdentifier(), 0).isEmpty());
 +        assertSame(session, storage.current());
-+        assertThrows(IllegalArgumentException.class, () -> storage.open(1, 2, "", """
-+                [{"button_name":"Invalid","type":0,"mode":0,"text":"file:///tmp/example"}]
-+                """));
++        assertThrows(
++                IllegalArgumentException.class,
++                () ->
++                        storage.open(
++                                1,
++                                2,
++                                "",
++                                """
++                                [{"button_name":"Invalid","type":0,"mode":0,"text":"file:///tmp/example"}]
++                                """));
 +        assertSame(session, storage.current());
++    }
++
++    @Test
++    void editorRequestsPreserveTypedDataWithoutExecutingConversationCommands() {
++        final var storage = new NpcDialogueStorage();
++        final var student = storage.open(1, 2, "named", "[]");
++        assertNull(
++                storage.edit(
++                        student.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetName,
++                        "new name",
++                        0));
++        final var editor = storage.open(1, 2, "named", "[]", true);
++        assertTrue(storage.respond(editor.responseIdentifier(), null).isEmpty());
++        assertSame(editor, storage.current());
++        final var text =
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetInteractText,
++                        "first\nsecond",
++                        0);
++        assertEquals("first\nsecond", text.data());
++        assertEquals("", text.scene());
++        assertEquals(2, text.runtimeId());
++        assertEquals(
++                255,
++                storage.edit(
++                                editor.responseIdentifier(),
++                                NpcRequestPacketPayload_RequestType.SetSkin,
++                                "",
++                                255)
++                        .actionIndex());
++        assertNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetSkin,
++                        "",
++                        256));
++        assertNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.ExecuteAction,
++                        "",
++                        0));
++        assertNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetName,
++                        "x".repeat(129),
++                        0));
++        assertNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetInteractText,
++                        "x".repeat(1001),
++                        0));
++        storage.open(1, 2, "replacement", "[]", true);
++        assertNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetName,
++                        "stale",
++                        0));
++    }
++
++    @Test
++    void editorActionsAreBoundedAndKeepUnknownAuthoredData() {
++        final var storage = new NpcDialogueStorage();
++        final var editor = storage.open(1, 2, "", "[]", true);
++        final String json =
++                "[{\"type\":1,\"mode\":2,\"text\":\"say first\\n"
++                    + "say second\\n"
++                    + "\",\"button_name\":\"\",\"custom\":{\"flag\":true}}]";
++        assertEquals(
++                json,
++                storage.edit(
++                                editor.responseIdentifier(),
++                                NpcRequestPacketPayload_RequestType.SetActions,
++                                json,
++                                0)
++                        .data());
++        assertNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetActions,
++                        "not json",
++                        0));
++        assertNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetActions,
++                        json.replace("\"mode\":2", "\"mode\":3"),
++                        0));
++        assertNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetActions,
++                        json.replace("\"mode\":2", "\"mode\":1.5"),
++                        0));
++        assertNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetActions,
++                        "["
++                                + String.join(
++                                        ",",
++                                        java.util.Collections.nCopies(
++                                                257, json.substring(1, json.length() - 1)))
++                                + "]",
++                        0));
++    }
++
++    @Test
++    void serializedCommandTerminatorDoesNotReduceTheEditableTextLimit() {
++        final var storage = new NpcDialogueStorage();
++        final var editor = storage.open(1, 2, "", "[]", true);
++        final var action = new JsonObject();
++        action.addProperty("type", 1);
++        action.addProperty("mode", 1);
++        action.addProperty("button_name", "");
++        action.addProperty("text", "x".repeat(1024) + "\n");
++        final var actions = new JsonArray();
++        actions.add(action);
++        assertNotNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetActions,
++                        actions.toString(),
++                        0));
++        action.addProperty("text", "x".repeat(1025));
++        assertNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetActions,
++                        actions.toString(),
++                        0));
++        action.addProperty("text", "x".repeat(1025) + "\n");
++        assertNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetActions,
++                        actions.toString(),
++                        0));
++        action.addProperty("type", 0);
++        action.addProperty("text", "x".repeat(1024) + "\n");
++        assertNull(
++                storage.edit(
++                        editor.responseIdentifier(),
++                        NpcRequestPacketPayload_RequestType.SetActions,
++                        actions.toString(),
++                        0));
 +    }
 +
 +}
