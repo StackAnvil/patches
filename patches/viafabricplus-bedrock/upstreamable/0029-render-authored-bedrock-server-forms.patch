@@ -1,4 +1,4 @@
-From adcb24c1fd06abf37c20104c8b129e0345251001 Mon Sep 17 00:00:00 2001
+From 069f38a27aec873ed4bd4d8237f88528a1509543 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:45:47 +0200
 Subject: [PATCH] feat(ui): render authored Bedrock forms and containers
@@ -24,7 +24,7 @@ inactive factory templates from consuming title and category-list space.
 
 Render native left/top/right/bottom image borders and signed undersized
 regions with metadata-scaled float UVs through the normal Java GUI path.
-The bounded layout solver and polynomial alpha easing still need wider
+The bounded layout solver and alpha lifecycle still need wider
 native comparison. Native GPU winding, font metrics, size/UV/color tracks
 and named next-animation chains remain explicit parity boundaries.
 
@@ -318,6 +318,23 @@ regressions cover sequential and independent tracks, null delay bindings,
 the destruction boundary, sibling isolation, persistent clocks and cleanup.
 General animation events, loops, full HUD scaling, resource reloads,
 font/GPU comparisons and synchronized opacity preferences remain open.
+
+Use the shared native easing evaluator for all JSON UI alpha curves. The
+pinned 1.26.51.1/build 51061372 constructor selects the same 32 functions
+as camera easing. Its alpha updater clamps progress, retains interpolation
+overshoot and uses linear for an unknown selector. Preserve the native
+exponential endpoint instead of forcing exact zero.
+
+All 3,552 samples executed through the original alpha updater match the
+production Track evaluator within 1.2e-7. Focused regressions cover all
+curves, opacity clamping, overshoot and unknown selectors; full add-on tests
+pass. General animation types, events, loops and remaining GUI families
+still require implementation and native comparison.
+
+Direct and ViaProxy replay screenshots retain the fading caption, expiry
+and replacement without an easing fallback. Missing actor-rendering checks
+still fail in the recorded scene. Native screenshot timing and complete
+visible curve comparison remain unverified.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |  13 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -379,7 +396,7 @@ font/GPU comparisons and synchronized opacity preferences remain open.
  .../screen/ui/NativeUiActorCamera.java        |  60 ++
  .../screen/ui/NativeUiActorPortraits.java     | 222 ++++
  .../screen/ui/NativeUiAnimationLifecycle.java | 103 ++
- .../bedrock/screen/ui/NativeUiAnimations.java | 108 ++
+ .../bedrock/screen/ui/NativeUiAnimations.java |  95 ++
  .../bedrock/screen/ui/NativeUiController.java |  37 +
  .../bedrock/screen/ui/NativeUiFont.java       |  47 +
  .../bedrock/screen/ui/NativeUiGraphics.java   |  47 +
@@ -423,7 +440,7 @@ font/GPU comparisons and synchronized opacity preferences remain open.
  .../screen/ui/NativeUiActorCameraTest.java    | 102 ++
  .../screen/ui/NativeUiActorPortraitsTest.java | 164 +++
  .../ui/NativeUiAnimationLifecycleTest.java    |  48 +
- .../screen/ui/NativeUiAnimationsTest.java     |  82 ++
+ .../screen/ui/NativeUiAnimationsTest.java     | 123 +++
  .../bedrock/screen/ui/NativeUiFontTest.java   | 133 +++
  .../screen/ui/NativeUiImageCacheTest.java     | 142 +++
  .../screen/ui/NativeUiImageRegionsTest.java   | 202 ++++
@@ -434,7 +451,7 @@ font/GPU comparisons and synchronized opacity preferences remain open.
  .../bedrock/screen/ui/NativeUiSliderTest.java | 120 +++
  .../bedrock/screen/ui/NativeUiTextTest.java   |  56 ++
  .../screen/ui/NativeUiViewportTest.java       |  55 +
- 115 files changed, 11638 insertions(+), 24 deletions(-)
+ 115 files changed, 11666 insertions(+), 24 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -5213,10 +5230,10 @@ index 0000000..4df06e7
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java
 new file mode 100644
-index 0000000..61bb3ad
+index 0000000..3a762e4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,95 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5229,6 +5246,7 @@ index 0000000..61bb3ad
 +import java.util.IdentityHashMap;
 +import java.util.List;
 +import java.util.Map;
++import net.raphimc.viabedrock.api.model.CameraEase;
 +
 +/** Plays resolved authored alpha tracks, restarting a visual branch when it becomes active again. */
 +public final class NativeUiAnimations {
@@ -5307,22 +5325,8 @@ index 0000000..61bb3ad
 +    }
 +
 +    private static float ease(final String easing, final float progress) {
-+        if (easing.equals("linear")) return progress;
-+        if (easing.equals("in_expo")) return progress == 0 ? 0 : (float) Math.pow(2, 10 * progress - 10);
-+        final int power = easing.endsWith("quad") ? 2 : easing.endsWith("cubic") ? 3
-+            : easing.endsWith("quart") ? 4 : easing.endsWith("quint") ? 5 : 0;
-+        if (power == 0) throw new IllegalArgumentException("Unsupported native UI animation easing");
-+        if (easing.startsWith("in_out_")) return progress < .5F ? power(2 * progress, power) / 2
-+            : 1 - power(2 * (1 - progress), power) / 2;
-+        if (easing.startsWith("out_")) return 1 - power(1 - progress, power);
-+        if (easing.startsWith("in_")) return power(progress, power);
-+        throw new IllegalArgumentException("Unsupported native UI animation easing");
-+    }
-+
-+    private static float power(final float value, final int exponent) {
-+        float result = 1;
-+        for (int i = 0; i < exponent; i++) result *= value;
-+        return result;
++        // The pinned JSON UI animation selector uses the same function table as camera easing.
++        return CameraEase.fromName(easing).factor(progress);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiController.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiController.java
@@ -10854,10 +10858,10 @@ index 0000000..764b409
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationsTest.java
 new file mode 100644
-index 0000000..4de278e
+index 0000000..4d8b55d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationsTest.java
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,123 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -10915,10 +10919,10 @@ index 0000000..4de278e
 +    }
 +
 +    @Test
-+    void followsNativeExponentialActionbarFadeWithExactEndpoints() {
++    void followsNativeExponentialActionbarFadeAtClampedProgress() {
 +        final var animation = new NativeUiAnimations.Track(1, 0, 3, 0, "in_expo");
-+        assertEquals(1, animation.value(-1));
-+        assertEquals(1, animation.value(0));
++        assertEquals(.9990234375F, animation.value(-1));
++        assertEquals(.9990234375F, animation.value(0));
 +        assertEquals(.96875F, animation.value(1.5));
 +        assertEquals(.5F, animation.value(2.7), .00001F);
 +        assertEquals(0, animation.value(3));
@@ -10929,6 +10933,47 @@ index 0000000..4de278e
 +            org.junit.jupiter.api.Assertions.assertTrue(current <= previous);
 +            previous = current;
 +        }
++    }
++
++    @Test
++    void samplesNativeCurvesThroughTheHudTimeline() {
++        final String[] easing = {
++            "linear", "spring", "in_quad", "out_quad", "in_out_quad", "in_cubic", "out_cubic", "in_out_cubic",
++            "in_quart", "out_quart", "in_out_quart", "in_quint", "out_quint", "in_out_quint", "in_sine", "out_sine",
++            "in_out_sine", "in_expo", "out_expo", "in_out_expo", "in_circ", "out_circ", "in_out_circ",
++            "in_bounce", "out_bounce", "in_out_bounce", "in_back", "out_back", "in_out_back",
++            "in_elastic", "out_elastic", "in_out_elastic"
++        };
++        // Samples from the pinned native alpha updater, including the native sine lookup table.
++        final float[] quarter = {
++            .25F, .663298726F, .0625F, .4375F, .125F, .015625F, .578125F, .0625F,
++            .00390625F, .68359375F, .03125F, .0009765625F, .7626953125F, .015625F,
++            .0761204958F, .382683456F, .146446615F, .00552427163F, .823223293F, .015625F,
++            .0317541361F, .661437809F, .0669873059F, .02734375F, .47265625F, .1171875F,
++            -.0641365647F, .817409694F, -.0996818393F, -.00552427163F, .911616504F, -.0078133652F
++        };
++        final var animations = new NativeUiAnimations();
++        for (int i = 0; i < easing.length; i++) {
++            final var properties = new JsonObject();
++            final var tracks = new JsonArray();
++            final var alpha = track("alpha", 1, 0, 1);
++            alpha.addProperty("easing", easing[i]);
++            tracks.add(alpha);
++            properties.add("animation_tracks", tracks);
++            final var node = new NativeUiScene.Node("", "image", properties, List.of(), Integer.MIN_VALUE);
++            assertEquals(Math.clamp(quarter[i], 0, 1), animations.opacityAt(node, 250_000_000).current(), .000001F);
++            assertEquals(quarter[i], new NativeUiAnimations.Track(0, 1, 1, 0, easing[i]).value(.25), .000001F);
++        }
++    }
++
++    @Test
++    void preservesNativeOvershootAndUsesLinearForUnknownSelectors() {
++        final var overshoot = new NativeUiAnimations.Track(0, 1, 1, 0, "out_back");
++        org.junit.jupiter.api.Assertions.assertTrue(overshoot.value(.75) > 1);
++        final var ordinary = new NativeUiAnimations.Track(.1F, .8F, 2, 1, "linear");
++        final var unknown = new NativeUiAnimations.Track(.1F, .8F, 2, 1, "unknown_easing");
++        for (final double elapsed : new double[] {0, 1, 1.5, 2, 3, 4})
++            assertEquals(ordinary.value(elapsed), unknown.value(elapsed));
 +    }
 +
 +    private static JsonObject track(final String type, final float duration, final float from, final float to) {
