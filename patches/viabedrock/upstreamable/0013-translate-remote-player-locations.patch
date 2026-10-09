@@ -1,4 +1,4 @@
-From 63df1bd3ca10006664510fc6870380d26a40f560 Mon Sep 17 00:00:00 2001
+From 1c57558f5183b9bb1ef6a501f8aae6841954ac97 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:36:04 +0200
 Subject: [PATCH] feat(hud): preserve native Bedrock locator updates
@@ -19,28 +19,36 @@ avoid copying mismatched constants from independent codecs.
 Test signed actor IDs, wire boundaries, field merging, group lifecycle
 and immutable snapshot round trips. Native rendering and route validation
 remain separate work; decoding alone does not establish HUD parity.
+
+Native 1.26.51.1 build 51061372 stores smoothing state per group object.
+A protocol 2193 Remove followed by Add for the same UUID, including in
+one packet, destroys that state. Color-tagged native captures distinguish
+a smoothed Update from an immediate replacement. Publish the intermediate
+removal snapshot before reusing an ID so client integrations can reset
+interpolation; coalesce ordinary updates and preserve unrelated groups.
+Test removal/replacement ordering, snapshot immutability and no-op batches.
 ---
  .../api/model/LocatorBarSnapshot.java         |  74 ++++++++++
  .../api/model/LocatorBarWaypoint.java         |  22 +++
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/ClientboundBedrockPackets.java   |   2 +-
  .../bedrock/generated/MinecraftPacketIds.java |   1 +
- .../protocol/model/LocatorBarState.java       |  71 ++++++++++
+ .../protocol/model/LocatorBarState.java       |  99 +++++++++++++
  .../protocol/model/LocatorBarUpdate.java      |  27 ++++
  .../protocol/packet/HudPackets.java           |   1 +
  .../protocol/packet/JoinPackets.java          |   1 +
  .../protocol/packet/MultiStatePackets.java    |   5 +
  .../protocol/packet/OtherPlayerPackets.java   |  39 ++++++
  .../protocol/packet/WorldPackets.java         |   2 +
- .../storage/PlayerWaypointTracker.java        | 131 ++++++++++++++++++
+ .../storage/PlayerWaypointTracker.java        | 132 ++++++++++++++++++
  .../protocol/types/BedrockTypes.java          |   1 +
- .../protocol/types/model/LocatorBarType.java  |  85 ++++++++++++
+ .../protocol/types/model/LocatorBarType.java  |  85 +++++++++++
  .../api/model/LocatorBarSnapshotTest.java     |  50 +++++++
- .../protocol/model/LocatorBarStateTest.java   |  85 ++++++++++++
+ .../protocol/model/LocatorBarStateTest.java   | 127 +++++++++++++++++
  .../packet/PlayerLocationPacketTest.java      |  66 +++++++++
  .../storage/PlayerWaypointTrackerTest.java    |  64 +++++++++
  .../types/model/LocatorBarTypeTest.java       |  90 ++++++++++++
- 20 files changed, 817 insertions(+), 1 deletion(-)
+ 20 files changed, 888 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/LocatorBarSnapshot.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/LocatorBarWaypoint.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/LocatorBarState.java
@@ -207,10 +215,10 @@ index 8ad52855f..43bd02513 100644
      PartyDestinationCookieResponse(350),
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/LocatorBarState.java b/src/main/java/net/raphimc/viabedrock/protocol/model/LocatorBarState.java
 new file mode 100644
-index 000000000..7578127f5
+index 000000000..c1e47c54d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/LocatorBarState.java
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,99 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -218,12 +226,15 @@ index 000000000..7578127f5
 + */
 +package net.raphimc.viabedrock.protocol.model;
 +
++import net.raphimc.viabedrock.api.model.LocatorBarSnapshot;
 +import net.raphimc.viabedrock.api.model.LocatorBarWaypoint;
 +
 +import java.util.Collections;
++import java.util.HashSet;
 +import java.util.LinkedHashMap;
 +import java.util.Map;
 +import java.util.UUID;
++import java.util.function.Consumer;
 +
 +public final class LocatorBarState {
 +
@@ -231,6 +242,31 @@ index 000000000..7578127f5
 +
 +    public Map<UUID, LocatorBarWaypoint> waypoints() {
 +        return Collections.unmodifiableMap(this.waypoints);
++    }
++
++    public boolean apply(final LocatorBarUpdate[] updates, final Consumer<LocatorBarSnapshot> observer) {
++        final var removed = new HashSet<UUID>();
++        boolean changed = false;
++        boolean pending = false;
++        for (final LocatorBarUpdate update : updates) {
++            if (update.action() == LocatorBarUpdate.ADD && removed.contains(update.group())) {
++                // Native removal destroys the group's visual interpolation state, even within one packet.
++                observer.accept(new LocatorBarSnapshot(this.waypoints));
++                removed.clear();
++                pending = false;
++            }
++            if (this.apply(update)) {
++                changed = true;
++                pending = true;
++                if (update.action() == LocatorBarUpdate.REMOVE) {
++                    removed.add(update.group());
++                }
++            }
++        }
++        if (pending) {
++            observer.accept(new LocatorBarSnapshot(this.waypoints));
++        }
++        return changed;
 +    }
 +
 +    public boolean apply(final LocatorBarUpdate update) {
@@ -456,10 +492,10 @@ index 3a98a6995..617b1b5af 100644
              final ClientPlayerEntity clientPlayer = oldEntityTracker.getClientPlayer();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTracker.java
 new file mode 100644
-index 000000000..90740f06a
+index 000000000..1165583e4
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTracker.java
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,132 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -514,12 +550,9 @@ index 000000000..90740f06a
 +    }
 +
 +    public void applyLocatorUpdates(final LocatorBarUpdate[] updates) {
-+        boolean changed = !this.locatorReceived;
++        final boolean first = !this.locatorReceived;
 +        this.locatorReceived = true;
-+        for (LocatorBarUpdate update : updates) {
-+            changed |= this.locator.apply(update);
-+        }
-+        if (changed) {
++        if (!this.locator.apply(updates, this::sendSnapshot) && first) {
 +            this.sendSnapshot();
 +        }
 +    }
@@ -534,13 +567,17 @@ index 000000000..90740f06a
 +    }
 +
 +    public void sendSnapshot() {
++        this.sendSnapshot(this.snapshot());
++    }
++
++    private void sendSnapshot(final LocatorBarSnapshot snapshot) {
 +        if (!this.joined || !this.locatorReceived || this.user().getProtocolInfo().getServerState() != State.PLAY
 +                || !this.user().get(ChannelStorage.class).hasChannel(LocatorBarSnapshot.CHANNEL)) {
 +            return;
 +        }
 +        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
 +        packet.write(Types.STRING, LocatorBarSnapshot.CHANNEL);
-+        packet.write(LocatorBarSnapshot.TYPE, this.snapshot());
++        packet.write(LocatorBarSnapshot.TYPE, snapshot);
 +        packet.send(BedrockProtocol.class);
 +    }
 +
@@ -752,10 +789,10 @@ index 000000000..9bdffe67f
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/LocatorBarStateTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/LocatorBarStateTest.java
 new file mode 100644
-index 000000000..48697579a
+index 000000000..5f050bd69
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/LocatorBarStateTest.java
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,127 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -763,10 +800,12 @@ index 000000000..48697579a
 + */
 +package net.raphimc.viabedrock.protocol.model;
 +
++import net.raphimc.viabedrock.api.model.LocatorBarSnapshot;
 +import net.raphimc.viabedrock.api.model.LocatorBarWaypoint.IconSize;
 +import net.raphimc.viabedrock.api.model.LocatorBarWaypoint.WorldPosition;
 +import org.junit.jupiter.api.Test;
 +
++import java.util.ArrayList;
 +import java.util.UUID;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -829,6 +868,46 @@ index 000000000..48697579a
 +        assertEquals(42L, value.actorUniqueId());
 +        state.clear();
 +        assertTrue(state.waypoints().isEmpty());
++    }
++
++    @Test
++    void publishesRemovalBeforeReusingTheGroupWithinOnePacket() {
++        final LocatorBarState state = new LocatorBarState();
++        state.apply(full(LocatorBarUpdate.ADD));
++        final UUID other = UUID.randomUUID();
++        final LocatorBarUpdate otherAdd = new LocatorBarUpdate(other, 63, true, POSITION, "", SIZE, -1, false, 7L, LocatorBarUpdate.ADD);
++        state.apply(otherAdd);
++        final var snapshots = new ArrayList<LocatorBarSnapshot>();
++        assertTrue(state.apply(new LocatorBarUpdate[]{
++            full(LocatorBarUpdate.REMOVE), full(LocatorBarUpdate.ADD),
++            update(16, null, null, null, null, 0xFF00FF00, null, null)
++        }, snapshots::add));
++        assertEquals(2, snapshots.size());
++        assertFalse(snapshots.getFirst().waypoints().containsKey(GROUP));
++        assertEquals(state.waypoints().get(other), snapshots.getFirst().waypoints().get(other));
++        assertEquals(state.waypoints(), snapshots.getLast().waypoints());
++        assertEquals(0xFF00FF00, snapshots.getLast().waypoints().get(GROUP).color());
++    }
++
++    @Test
++    void coalescesRemovalsUntilTheNextReplacementAndIgnoresNoOps() {
++        final LocatorBarState state = new LocatorBarState();
++        final UUID other = UUID.randomUUID();
++        final LocatorBarUpdate otherAdd = new LocatorBarUpdate(other, 63, true, POSITION, "", SIZE, -1, false, 7L, LocatorBarUpdate.ADD);
++        final LocatorBarUpdate otherRemove = new LocatorBarUpdate(other, 0, null, null, null, null, null, null, null, LocatorBarUpdate.REMOVE);
++        state.apply(full(LocatorBarUpdate.ADD));
++        state.apply(otherAdd);
++        final var snapshots = new ArrayList<LocatorBarSnapshot>();
++        assertTrue(state.apply(new LocatorBarUpdate[]{
++            full(LocatorBarUpdate.REMOVE), otherRemove,
++            full(LocatorBarUpdate.ADD), otherAdd
++        }, snapshots::add));
++        assertEquals(2, snapshots.size());
++        assertTrue(snapshots.getFirst().waypoints().isEmpty());
++        assertEquals(state.waypoints(), snapshots.getLast().waypoints());
++        snapshots.clear();
++        assertFalse(state.apply(new LocatorBarUpdate[]{full(LocatorBarUpdate.ADD), full(LocatorBarUpdate.NONE)}, snapshots::add));
++        assertTrue(snapshots.isEmpty());
 +    }
 +
 +    private static LocatorBarUpdate full(final int action) {
