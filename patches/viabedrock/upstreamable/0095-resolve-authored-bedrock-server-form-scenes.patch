@@ -1,4 +1,4 @@
-From f13328b326adab970209e03fdd8e2be76330643a Mon Sep 17 00:00:00 2001
+From 073f8c4322613e0d61396cc5c33c631ea49aaeb2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:42:36 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -277,6 +277,16 @@ verify HUD lifecycle only. Full core tests and Checkstyle pass, with targeted
 codec, payload and separate old/new capability checks using pinned UI assets.
 General animation events, loops, full HUD scaling, resource reload comparison
 and synchronized client opacity preferences remain unfinished parity work.
+
+Transport resolved animation graphs with stable indices, namespace-relative
+successors and shared cyclic references. The pinned 1.26.51.1 UI assets
+contain looping alpha/wait chains; flattening them rejects valid controls
+and loses their event lifecycle. Bound distinct tracks rather than chain
+length, and keep optional missing references local to their branch.
+
+Targeted UI resolution tests cover shared roots and cycles. Native build
+51061372 animation-manager execution confirms successor reuse and same-frame
+carry. Other visual animation types remain an add-on parity requirement.
 ---
  build.gradle                                  |   11 +
  .../api/model/NativeContainerAction.java      |   93 ++
@@ -288,11 +298,11 @@ and synchronized client opacity preferences remain unfinished parity work.
  .../api/model/NativeNpcDialogueMessage.java   |   60 +
  .../http/ConvertedResourcePackCache.java      |    4 +-
  .../api/resourcepack/ui/ContainerUi.java      |  408 ++++++
- .../api/resourcepack/ui/FormBindings.java     |  285 +++++
+ .../api/resourcepack/ui/FormBindings.java     |  285 ++++
  .../api/resourcepack/ui/HudActionbarUi.java   |   20 +
  .../api/resourcepack/ui/HudFactoryUi.java     |  127 ++
  .../api/resourcepack/ui/HudTitleUi.java       |   28 +
- .../api/resourcepack/ui/JsonUiProgram.java    | 1137 +++++++++++++++++
+ .../api/resourcepack/ui/JsonUiProgram.java    | 1153 +++++++++++++++++
  .../api/resourcepack/ui/NpcDialogueUi.java    |  311 +++++
  .../resourcepack/ui/NpcEditorBindings.java    |  324 +++++
  .../api/resourcepack/ui/NpcEditorState.java   |  322 +++++
@@ -330,7 +340,7 @@ and synchronized client opacity preferences remain unfinished parity work.
  .../resourcepack/ui/NpcEditorStateTest.java   |  209 +++
  .../ui/ServerCustomFormUiTest.java            |  146 +++
  .../ui/ServerFormUiSliderStateTest.java       |  126 ++
- .../api/resourcepack/ui/ServerFormUiTest.java |  291 +++++
+ .../api/resourcepack/ui/ServerFormUiTest.java |  310 +++++
  .../api/resourcepack/ui/UiExpressionTest.java |   56 +
  .../api/resourcepack/ui/UiFontsTest.java      |  187 +++
  .../api/resourcepack/ui/UiTexturesTest.java   |  175 +++
@@ -339,7 +349,7 @@ and synchronized client opacity preferences remain unfinished parity work.
  .../protocol/packet/NativeHudPacketTest.java  |  160 +++
  .../packet/NpcDialoguePacketTest.java         |  301 ++++-
  .../storage/NativeContainerUiStateTest.java   |   57 +
- 61 files changed, 9195 insertions(+), 302 deletions(-)
+ 61 files changed, 9230 insertions(+), 302 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerStatus.java
@@ -1911,10 +1921,10 @@ index 000000000..4f11b0d3f
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 000000000..ec66a1439
+index 000000000..2fb7453a3
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,1137 @@
+@@ -0,0 +1,1153 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2720,66 +2730,36 @@ index 000000000..ec66a1439
 +                    throw new IllegalArgumentException("Unsupported UI texture path");
 +                }
 +            }
++            final JsonArray animationRoots = new JsonArray();
++            final JsonArray animationTracks = new JsonArray();
++            final Map<String, Integer> animationIndices = new LinkedHashMap<>();
 +            if (node.has("alpha") && node.get("alpha").isJsonPrimitive()
 +                    && node.get("alpha").getAsJsonPrimitive().isString() && node.get("alpha").getAsString().startsWith("@")) {
-+                final JsonArray sequence = new JsonArray();
-+                String next = node.get("alpha").getAsString();
-+                final Set<String> active = new HashSet<>();
-+                while (!next.isEmpty()) {
-+                    String animationName = next.replaceFirst("^@", "");
-+                    if (!animationName.contains(".")) {
-+                        animationName = UiExpression.text(values.get("$__namespace")) + "." + animationName;
-+                    }
-+                    if (!active.add(animationName) || active.size() > 16) {
-+                        throw new IllegalArgumentException("Recursive UI alpha animation");
-+                    }
-+                    final var animation = JsonUiProgram.this.template(animationName, new HashSet<>(), this.requiredDefinitions);
-+                    if (animation == null) {
-+                        throw new MissingControlException(animationName);
-+                    }
-+                    final Map<String, JsonElement> animated = new HashMap<>(values);
-+                    declarations(animation, animated);
-+                    final JsonObject track = new JsonObject();
-+                    for (final var entry : animation.entrySet()) {
-+                        if (!entry.getKey().startsWith("$")) {
-+                            track.add(entry.getKey(), resolveValue(entry.getValue(), animated, 0));
-+                        }
-+                    }
-+                    sequence.add(track);
-+                    next = string(track, "next");
-+                }
-+                node.add("alpha_sequence", sequence);
++                animationRoots.add(this.animation(node.get("alpha").getAsString(), values, animationTracks, animationIndices));
 +                node.addProperty("alpha", 1);
 +            }
 +            if (node.has("anims") && node.get("anims").isJsonArray()) {
-+                final JsonArray tracks = new JsonArray();
 +                for (final JsonElement animationReference : node.getAsJsonArray("anims")) {
-+                    if (!animationReference.isJsonPrimitive() || !animationReference.getAsJsonPrimitive().isString() || tracks.size() >= 16) {
++                    if (!animationReference.isJsonPrimitive() || !animationReference.getAsJsonPrimitive().isString()) {
 +                        throw new IllegalArgumentException("Unsupported UI animation reference");
 +                    }
-+                    final String animationName = animationReference.getAsString().replaceFirst("^@", "");
-+                    final JsonObject animation;
++                    final int trackCount = animationTracks.size();
 +                    try {
-+                        animation = JsonUiProgram.this.template(animationName, new HashSet<>(), this.requiredDefinitions);
++                        animationRoots.add(this.animation(animationReference.getAsString(), values, animationTracks, animationIndices));
 +                    } catch (final MissingControlException missing) {
-+                        this.missingTemplates.add(missing.getMessage());
-+                        continue;
-+                    }
-+                    if (animation == null) {
-+                        this.missingTemplates.add(animationName);
-+                        continue;
-+                    }
-+                    final Map<String, JsonElement> animated = new HashMap<>(values);
-+                    declarations(animation, animated);
-+                    final JsonObject track = new JsonObject();
-+                    for (final Map.Entry<String, JsonElement> entry : animation.entrySet()) {
-+                        if (!entry.getKey().startsWith("$")) {
-+                            track.add(entry.getKey(), resolveValue(entry.getValue(), animated, 0));
++                        while (animationTracks.size() > trackCount) {
++                            animationTracks.remove(animationTracks.size() - 1);
 +                        }
++                        animationIndices.values().removeIf(index -> index >= trackCount);
++                        this.missingTemplates.add(missing.getMessage());
 +                    }
-+                    tracks.add(track);
 +                }
-+                node.add("animation_tracks", tracks);
++            }
++            if (!animationRoots.isEmpty()) {
++                final JsonObject program = new JsonObject();
++                program.add("roots", animationRoots);
++                program.add("tracks", animationTracks);
++                node.add("animation_program", program);
 +            }
 +            final String textProperty = "label".equals(string(node, "type")) ? "text"
 +                    : "custom".equals(string(node, "type")) && "hover_text_renderer".equals(string(node, "renderer")) ? "hover_text" : "";
@@ -2824,6 +2804,52 @@ index 000000000..ec66a1439
 +            }
 +            node.add("children", children);
 +            return node;
++        }
++
++        private int animation(final String reference, final Map<String, JsonElement> values,
++                              final JsonArray tracks, final Map<String, Integer> indices) {
++            String next = animationName(reference, UiExpression.text(values.get("$__namespace")));
++            final int root = indices.getOrDefault(next, tracks.size());
++            JsonObject previous = null;
++            while (!next.isEmpty()) {
++                final Integer existing = indices.get(next);
++                if (existing != null) {
++                    if (previous != null) {
++                        previous.addProperty("next_index", existing);
++                    }
++                    break;
++                }
++                if (tracks.size() >= 256) {
++                    throw new IllegalArgumentException("UI animation graph exceeds track limit");
++                }
++                final JsonObject definition = JsonUiProgram.this.template(next, new HashSet<>(), this.requiredDefinitions);
++                if (definition == null) {
++                    throw new MissingControlException(next);
++                }
++                final Map<String, JsonElement> animated = new HashMap<>(values);
++                declarations(definition, animated);
++                final JsonObject track = new JsonObject();
++                for (final var entry : definition.entrySet()) {
++                    if (!entry.getKey().startsWith("$")) {
++                        track.add(entry.getKey(), resolveValue(entry.getValue(), animated, 0));
++                    }
++                }
++                final int index = tracks.size();
++                indices.put(next, index);
++                if (previous != null) {
++                    previous.addProperty("next_index", index);
++                }
++                tracks.add(track);
++                final String successor = string(track, "next");
++                next = successor.isEmpty() ? "" : animationName(successor, next.substring(0, next.indexOf('.')));
++                previous = track;
++            }
++            return root;
++        }
++
++        private static String animationName(final String reference, final String namespace) {
++            final String name = reference.startsWith("@") ? reference.substring(1) : reference;
++            return name.contains(".") ? name : namespace + "." + name;
 +        }
 +
 +        private JsonObject expandChild(final String reference, final JsonObject overrides,
@@ -7562,7 +7588,7 @@ index 000000000..58a1f1216
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudActionbarUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudActionbarUiTest.java
 new file mode 100644
-index 000000000..c0db0fae0
+index 000000000..2aee20b88
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudActionbarUiTest.java
 @@ -0,0 +1,108 @@
@@ -7602,8 +7628,8 @@ index 000000000..c0db0fae0
 +        final var nodes = new ArrayList<JsonObject>();
 +        collect(scene.getAsJsonObject("root"), nodes);
 +        assertEquals(List.of(text), nodes.stream().filter(n -> n.has("text")).map(n -> n.get("text").getAsString()).toList());
-+        final var animations = nodes.stream().filter(n -> n.has("alpha_sequence"))
-+                .flatMap(n -> n.getAsJsonArray("alpha_sequence").asList().stream()).map(n -> n.getAsJsonObject()).toList();
++        final var animations = nodes.stream().filter(n -> n.has("animation_program"))
++                .flatMap(n -> n.getAsJsonObject("animation_program").getAsJsonArray("tracks").asList().stream()).map(n -> n.getAsJsonObject()).toList();
 +        assertEquals(2, animations.size());
 +        for (final var animation : animations) {
 +            assertEquals(3, animation.get("duration").getAsDouble());
@@ -7676,7 +7702,7 @@ index 000000000..c0db0fae0
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudTitleUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudTitleUiTest.java
 new file mode 100644
-index 000000000..53e05c506
+index 000000000..36633fc97
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudTitleUiTest.java
 @@ -0,0 +1,176 @@
@@ -7719,7 +7745,7 @@ index 000000000..53e05c506
 +        assertEquals(2, controls.size());
 +        assertEquals(30, controls.get(0).getAsJsonObject().getAsJsonArray("size").get(0).getAsInt());
 +        assertEquals(title, controls.get(1).getAsJsonObject().get("text").getAsString());
-+        final var tracks = controls.get(1).getAsJsonObject().getAsJsonArray("alpha_sequence");
++        final var tracks = controls.get(1).getAsJsonObject().getAsJsonObject("animation_program").getAsJsonArray("tracks");
 +        assertEquals(3, tracks.size());
 +        assertEquals(.5, tracks.get(0).getAsJsonObject().get("duration").getAsDouble());
 +        assertEquals(3.5, tracks.get(1).getAsJsonObject().get("duration").getAsDouble());
@@ -7749,8 +7775,8 @@ index 000000000..53e05c506
 +    }
 +
 +    private static void assertResolvedAnimationNumbers(final JsonObject node) {
-+        if (node.has("alpha_sequence")) {
-+            for (final var value : node.getAsJsonArray("alpha_sequence")) {
++        if (node.has("animation_program")) {
++            for (final var value : node.getAsJsonObject("animation_program").getAsJsonArray("tracks")) {
 +                final var track = value.getAsJsonObject();
 +                for (final String property : List.of("duration", "from", "to")) {
 +                    if (track.has(property)) {
@@ -7833,7 +7859,7 @@ index 000000000..53e05c506
 +        return JsonParser.parseString(message.scene()).getAsJsonObject()
 +                .getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject()
 +                .getAsJsonArray("children").get(0).getAsJsonObject()
-+                .getAsJsonArray("children").get(1).getAsJsonObject().getAsJsonArray("alpha_sequence");
++                .getAsJsonArray("children").get(1).getAsJsonObject().getAsJsonObject("animation_program").getAsJsonArray("tracks");
 +    }
 +
 +    private static JsonUiProgram program() {
@@ -8744,10 +8770,10 @@ index 000000000..362380ae1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
 new file mode 100644
-index 000000000..0d46deab7
+index 000000000..c3b9e6ac0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
-@@ -0,0 +1,291 @@
+@@ -0,0 +1,310 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -8890,9 +8916,28 @@ index 000000000..0d46deab7
 +        assertNotNull(scene);
 +        assertEquals(Map.of(0, "One"), ServerFormUi.presentation(scene).buttons());
 +        final var button = scene.getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject().getAsJsonArray("children").get(0).getAsJsonObject();
-+        final var track = button.getAsJsonArray("animation_tracks").get(0).getAsJsonObject();
++        final var track = button.getAsJsonObject("animation_program").getAsJsonArray("tracks").get(0).getAsJsonObject();
 +        assertEquals(0.16F, track.get("duration").getAsFloat());
 +        assertEquals(1, track.get("to").getAsInt());
++    }
++
++    @Test
++    void resolvesRelativeAnimationSuccessorsAndCyclesWithoutDuplicatingTracks() {
++        final String animated = UI.replace("\"base_button\":{", """
++                "fade":{"anim_type":"alpha","from":1,"to":0,"duration":1,"next":"@hold"},
++                "hold":{"anim_type":"wait","duration":2,"next":"@server_form.fade"},
++                "base_button":{"alpha":"@fade","anims":["@hold"],
++                """);
++        final var scene = new ServerFormUi(List.of(definitions(animated))).resolve(form("tile:One"));
++        assertNotNull(scene);
++        final var button = scene.getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject()
++                .getAsJsonArray("children").get(0).getAsJsonObject();
++        final var program = button.getAsJsonObject("animation_program");
++        assertEquals(2, program.getAsJsonArray("tracks").size());
++        assertEquals(0, program.getAsJsonArray("roots").get(0).getAsInt());
++        assertEquals(1, program.getAsJsonArray("roots").get(1).getAsInt());
++        assertEquals(1, program.getAsJsonArray("tracks").get(0).getAsJsonObject().get("next_index").getAsInt());
++        assertEquals(0, program.getAsJsonArray("tracks").get(1).getAsJsonObject().get("next_index").getAsInt());
 +    }
 +
 +    @Test
