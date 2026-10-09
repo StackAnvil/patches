@@ -52,12 +52,15 @@ Actual client menu rendering, resource reloads and Iris routes must be checked w
 
 The image sizing change passes all 27 layout tests. Seven native default, explicit, hidden and min/max sizing controls and four opt-in aspect controls establish the pinned build's behavior. All five captured Settings step sliders pass CPU layout at two viewports using the actual program and PNG dimensions. Live GPU rendering remains pending for this change.
 
-## Native chest presentation
+## Native storage presentation
 
 The renderer also imports the core's native container program through a separate negotiated payload.
 It binds the actual connection, menu object, menu ID and increasing presentation sequence.
-The existing ChestMenu owns slots, carried stacks, state revisions and every inventory action.
-Unsupported presentation keeps the complete ordinary container screen.
+The actual chest, shulker, hopper or dispenser menu owns slots, carried stacks, state revisions and every inventory action.
+Version-3 presentation retains all eight core storage variants.
+Tests cover each bundled scene's visible-control validation, actual menu identity and pickup, quick-move and drag dispatch.
+Native visual and direct/ViaProxy transaction comparisons remain unverified.
+Failed presentation restores the original ordinary screen; this remains an unresolved parity defect for a supported scene.
 
 Shared UI classes now own bounded scene parsing, layout, images, text, font factors, scroll geometry and visual states.
 Modal forms retain their own response model and custom input state.

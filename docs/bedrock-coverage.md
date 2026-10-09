@@ -167,6 +167,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 | U3 | Texture animations, toasts, credits, store requests, and inventory preferences | Incomplete | Implement target packet behavior and verify native presentation. |
 | U4 | Dynamic JSON UI and widgets | Incomplete | Core resolves authored server-form templates, bounded expressions, collections, bindings, images, and original response indices. The add-on renders supported grids, scrolling, textures and alpha animations. Complete controller bindings, font metrics, other animation properties, and native comparisons on both routes. |
 | U5 | NPC conversations, portraits, links, and editing | Incomplete | Core Java conversations exist. Native portraits, editing, link captures, and UI comparisons remain. |
+| U6 | Every native storage and workstation UI family | Incomplete | Native scenes now cover three-row and six-row chests, ender chests, shulker boxes, barrels, hoppers, dispensers and droppers. Tests cover bundled controls, slot geometry, capability negotiation and click dispatch. Native visual and direct/ViaProxy transaction comparisons remain unverified. Complete the remaining workstation, player inventory and data-driven container implementations. |
 
 The [HUD core patch](../patches/viabedrock/upstreamable/0081-retain-server-hud-visibility.pr.md) handles packet 308 instead of discarding it.
 Target BDS captures establish all thirteen IDs, signed enum encoding, and explicit all-element resets.
