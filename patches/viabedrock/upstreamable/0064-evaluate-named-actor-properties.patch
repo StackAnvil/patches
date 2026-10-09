@@ -1,4 +1,4 @@
-From e82bb15618935761ed58de83858817c9a3fd3c4d Mon Sep 17 00:00:00 2001
+From 6d23adfaf1735912c24410abc48cb41e31eb6a60 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -271,17 +271,32 @@ colliding runtime/unique IDs, stale lifetimes, cleanup, and actual register/
 unregister packet handling through codec upgrade, downgrade and rejoin.
 Native executable exports remain private; actor renderer, GPU output and
 unbound non-player native class admission are separate requirements.
+
+Negotiate physical actor dimensions separately from picking proxies. Preserve
+raw FLOAT metadata53/54, immutable lifetimes and local UUID aliases without
+changing actor_state_v2/v3 bytes. Publish dimension-only sparse updates after
+the ordered actor snapshot and replay them when the capability registers.
+Retire dimensions on replacement, collision, removal and disconnect.
+
+Pinned Bedrock1.26.51.1/protocol2193 NPC portrait145543ce0 fits against the
+physical actor AABB, independently of interactive hitboxes. A live native
+capture supplies width/depth .6, height2.1, inverse GUI scale .125 and the
+portrait transform. Scale applies to base collision dimensions; collapsed
+physical boxes clamp to .005. Preserve absent or invalid raw values rather
+than substituting Java mannequin dimensions. Native camera/GPU comparisons
+and conversation/controller parity remain separate work.
 ---
  build.gradle                                  |   4 +-
  .../main/groovy/viabedrock.checkstyle.gradle  |   8 +-
  gradle.properties                             |   2 +-
+ .../api/model/NativeActorBoundsMessage.java   |  75 ++++
  .../api/model/NativeActorMessage.java         | 192 ++++++++++
- .../api/model/NativeActorStates.java          | 105 ++++++
+ .../api/model/NativeActorStates.java          | 121 +++++++
  .../api/model/NativeCustomEntityMessage.java  | 142 ++++++++
  .../api/model/NativeHandItemState.java        |  29 ++
  .../api/model/NativeShieldBlockingState.java  |  45 +++
  .../api/model/entity/CustomEntity.java        | 112 +++++-
- .../viabedrock/api/model/entity/Entity.java   |  89 +++++
+ .../viabedrock/api/model/entity/Entity.java   | 111 ++++++
  .../viabedrock/api/util/BedrockSineTable.java |  81 +++++
  .../api/util/BedrockTrigonometry.java         |  29 ++
  .../api/util/MoLangControlFlow.java           | 256 +++++++++++++
@@ -289,13 +304,14 @@ unbound non-player native class admission are separate requirements.
  .../viabedrock/api/util/MoLangMath.java       | 248 +++++++++++++
  .../viabedrock/api/util/MoLangParser.java     | 314 ++++++++++++++++
  .../protocol/packet/JoinPackets.java          |   2 +
- .../protocol/packet/MultiStatePackets.java    |  19 +
+ .../protocol/packet/MultiStatePackets.java    |  21 ++
  .../protocol/packet/WorldPackets.java         |   1 +
  .../protocol/storage/ChannelStorage.java      |   4 +
  .../protocol/storage/EntityTracker.java       |  25 ++
  .../META-INF/licenses/bedrock-sine-table.txt  |  26 ++
  .../META-INF/licenses/mochafloats.txt         |  24 ++
- .../api/model/NativeActorEntityTest.java      |  60 ++++
+ .../model/NativeActorBoundsMessageTest.java   |  82 +++++
+ .../api/model/NativeActorEntityTest.java      |  81 +++++
  .../api/model/NativeActorMessageTest.java     | 166 +++++++++
  .../api/model/NativeActorStatesTest.java      | 162 +++++++++
  .../model/NativeCustomEntityMessageTest.java  | 159 ++++++++
@@ -307,7 +323,8 @@ unbound non-player native class admission are separate requirements.
  .../api/util/BedrockTrigonometryTest.java     |  93 +++++
  .../viabedrock/api/util/MoLangEngineTest.java | 338 ++++++++++++++++++
  .../viabedrock/api/util/MoLangMathTest.java   | 115 ++++++
- 35 files changed, 3313 insertions(+), 56 deletions(-)
+ 37 files changed, 3531 insertions(+), 56 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessage.java
@@ -320,6 +337,7 @@ unbound non-player native class admission are separate requirements.
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java
  create mode 100644 src/main/resources/META-INF/licenses/bedrock-sine-table.txt
  create mode 100644 src/main/resources/META-INF/licenses/mochafloats.txt
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorEntityTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorMessageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorStatesTest.java
@@ -392,6 +410,87 @@ index 44cfd6474..ea5f4da2d 100644
  maven_group=net.raphimc
  maven_name=ViaBedrock
  maven_version=0.0.31-StackAnvil
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessage.java
+new file mode 100644
+index 000000000..17de51b85
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessage.java
+@@ -0,0 +1,75 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import java.util.Objects;
++import java.util.UUID;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++/** Physical actor dimensions, independent of interactive picking boxes and Java entity dimensions. */
++public record NativeActorBoundsMessage(UUID uuid, UUID lifetime, boolean localPlayer, Float width, Float height) {
++
++    public static final String CHANNEL = "viabedrock:actor_bounds";
++    public static final int MAX_PAYLOAD_BYTES = 64;
++    public static final Type<NativeActorBoundsMessage> TYPE = new Type<>(NativeActorBoundsMessage.class) {
++        @Override
++        public NativeActorBoundsMessage read(final ByteBuf buffer) {
++            if (buffer.readableBytes() > MAX_PAYLOAD_BYTES || Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported native actor bounds");
++            }
++            final var message = new NativeActorBoundsMessage(Types.UUID.read(buffer), Types.UUID.read(buffer), buffer.readBoolean(),
++                    readDimension(buffer), readDimension(buffer));
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Trailing native actor bounds data");
++            }
++            return message;
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final NativeActorBoundsMessage message) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.UUID.write(buffer, message.uuid);
++            Types.UUID.write(buffer, message.lifetime);
++            buffer.writeBoolean(message.localPlayer);
++            writeDimension(buffer, message.width);
++            writeDimension(buffer, message.height);
++        }
++
++        private static Float readDimension(final ByteBuf buffer) {
++            return buffer.readBoolean() ? buffer.readFloat() : null;
++        }
++
++        private static void writeDimension(final ByteBuf buffer, final Float value) {
++            buffer.writeBoolean(value != null);
++            if (value != null) {
++                buffer.writeFloat(value);
++            }
++        }
++    };
++
++    public NativeActorBoundsMessage {
++        Objects.requireNonNull(uuid);
++        Objects.requireNonNull(lifetime);
++    }
++
++    /** Retain raw metadata in transport; only physical bounds apply scale and the native collapsed-box clamp. */
++    public static float scaledDimension(final Float base, final float scale) {
++        if (base == null || !Float.isFinite(base) || base < 0 || !Float.isFinite(scale) || scale < 0) {
++            throw new IllegalArgumentException("Native actor dimension is unavailable");
++        }
++        final float value = base * scale;
++        if (!Float.isFinite(value) || value >= 1E9F) {
++            throw new IllegalArgumentException("Invalid native actor dimension");
++        }
++        return Math.max(.005F, value);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
 new file mode 100644
 index 000000000..aae65e06e
@@ -592,10 +691,10 @@ index 000000000..aae65e06e
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
 new file mode 100644
-index 000000000..23f2a275e
+index 000000000..a2d046b83
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,121 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -616,6 +715,7 @@ index 000000000..23f2a275e
 +    private final Map<Long, UUID> runtimeIds = new HashMap<>();
 +    private final Map<Long, UUID> uniqueIds = new HashMap<>();
 +    private final Map<UUID, NativeShieldBlockingState> blocking = new HashMap<>();
++    private final Map<UUID, NativeActorBoundsMessage> bounds = new HashMap<>();
 +    private long tick;
 +
 +    public void apply(final NativeActorMessage message, final UUID localPlayer) {
@@ -629,6 +729,7 @@ index 000000000..23f2a275e
 +                }
 +                if (!previous.lifetime().equals(snapshot.lifetime()) || previous.localPlayer() != snapshot.localPlayer()) {
 +                    this.blocking.remove(uuid);
++                    this.bounds.remove(uuid);
 +                }
 +            }
 +            if ("minecraft:player".equals(snapshot.identifier())) {
@@ -663,6 +764,19 @@ index 000000000..23f2a275e
 +            }
 +        }
 +        this.blocking.remove(uuid);
++        this.bounds.remove(uuid);
++    }
++
++    public void apply(final NativeActorBoundsMessage message, final UUID localPlayer) {
++        final UUID uuid = message.localPlayer() ? java.util.Objects.requireNonNull(localPlayer) : message.uuid();
++        final var actor = this.actors.get(uuid);
++        if (actor != null && actor.lifetime().equals(message.lifetime()) && actor.localPlayer() == message.localPlayer()) {
++            this.bounds.put(uuid, message);
++        }
++    }
++
++    public NativeActorBoundsMessage bounds(final UUID uuid) {
++        return this.bounds.get(uuid);
 +    }
 +
 +    /** Resolve the local Java UUID, which can differ from the transmitted player UUID. */
@@ -697,6 +811,7 @@ index 000000000..23f2a275e
 +        this.runtimeIds.clear();
 +        this.uniqueIds.clear();
 +        this.blocking.clear();
++        this.bounds.clear();
 +        this.tick = 0;
 +    }
 +
@@ -1192,32 +1307,34 @@ index 6aea129ad..1431bc51d 100644
  
      private class ItemDisplayEntity extends Entity {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 0cee5d86a..2e8f0805c 100644
+index 0cee5d86a..f10313d66 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-@@ -21,6 +21,10 @@ import com.viaversion.viaversion.api.connection.UserConnection;
+@@ -21,6 +21,11 @@ import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
  import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
  import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 +import com.viaversion.viaversion.api.protocol.packet.State;
 +import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.api.model.NativeActorBoundsMessage;
 +import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 +import net.raphimc.viabedrock.protocol.storage.EntityTracker;
  import com.viaversion.viaversion.api.type.Types;
  import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
-@@ -61,6 +65,10 @@ public class Entity {
+@@ -61,6 +66,11 @@ public class Entity {
      protected Position3f rotation = Position3f.ZERO;
      protected boolean onGround;
      protected final Map<ActorDataIds, EntityData> entityData = new EnumMap<>(ActorDataIds.class);
 +    private final UUID nativeLifetime = UUID.randomUUID();
 +    private NativeActorMessage.Snapshot publishedNativeState;
++    private NativeActorBoundsMessage publishedNativeBounds;
 +    private String publishedNativeChannel;
 +    private final Map<String, Object> entityProperties = new HashMap<>();
      protected String name;
      protected int age;
      protected boolean hasBossBar;
-@@ -79,11 +87,35 @@ public class Entity {
+@@ -79,11 +89,35 @@ public class Entity {
          this.javaType = javaType;
      }
  
@@ -1253,7 +1370,7 @@ index 0cee5d86a..2e8f0805c 100644
          if (this.hasBossBar) {
              this.hasBossBar = false;
              final PacketWrapper bossEvent = PacketWrapper.create(ClientboundPackets26_3.BOSS_EVENT, this.user);
-@@ -289,6 +321,63 @@ public class Entity {
+@@ -289,6 +323,83 @@ public class Entity {
      }
  
      protected void onEntityDataChanged() {
@@ -1287,6 +1404,26 @@ index 0cee5d86a..2e8f0805c 100644
 +            this.publishedNativeState = snapshot;
 +            this.publishedNativeChannel = this.nativeActorChannel();
 +        }
++        if (this.user.get(ChannelStorage.class).hasChannel(NativeActorBoundsMessage.CHANNEL)) {
++            final var bounds = this.nativeActorBounds();
++            if (force || !bounds.equals(this.publishedNativeBounds)) {
++                final PacketWrapper payload = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user);
++                payload.write(Types.STRING, NativeActorBoundsMessage.CHANNEL);
++                payload.write(NativeActorBoundsMessage.TYPE, bounds);
++                payload.send(BedrockProtocol.class);
++                this.publishedNativeBounds = bounds;
++            }
++        }
++    }
++
++    public final NativeActorBoundsMessage nativeActorBounds() {
++        return new NativeActorBoundsMessage(this.javaUuid(), this.nativeLifetime, this instanceof ClientPlayerEntity,
++                this.nativeDimension(ActorDataIds.RESERVED_053), this.nativeDimension(ActorDataIds.RESERVED_054));
++    }
++
++    private Float nativeDimension(final ActorDataIds id) {
++        final var data = this.entityData.get(id);
++        return data != null && data.dataType() == EntityDataTypesBedrock.FLOAT && data.value() instanceof Float value ? value : null;
 +    }
 +
 +    private boolean nativeStateAvailable() {
@@ -2451,19 +2588,20 @@ index 0885ea827..9cdaded9b 100644
          clientPlayer.createTeam();
          clientPlayer.sendInitialEntityData();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index cbd0153c3..81f97fbdd 100644
+index cbd0153c3..7fbf46afd 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-@@ -29,6 +29,8 @@ import com.viaversion.viaversion.util.Key;
+@@ -29,6 +29,9 @@ import com.viaversion.viaversion.util.Key;
  import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
  import net.raphimc.viabedrock.ViaBedrock;
  import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
 +import net.raphimc.viabedrock.api.model.NativeCustomEntityMessage;
 +import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.api.model.NativeActorBoundsMessage;
  import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
  import net.raphimc.viabedrock.api.util.PacketFactory;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
-@@ -42,6 +44,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolat
+@@ -42,6 +45,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolat
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationType;
  import net.raphimc.viabedrock.protocol.storage.NativeSkinStorage;
  import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
@@ -2471,7 +2609,7 @@ index cbd0153c3..81f97fbdd 100644
  import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
  import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
  import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
-@@ -132,10 +135,26 @@ public final class MultiStatePackets {
+@@ -132,10 +136,27 @@ public final class MultiStatePackets {
      public static final PacketHandler CUSTOM_PAYLOAD_HANDLER = wrapper -> {
          wrapper.cancel();
          final String channel = Key.namespaced(wrapper.read(Types.STRING)); // channel
@@ -2488,7 +2626,8 @@ index cbd0153c3..81f97fbdd 100644
              final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
              wrapper.user().get(ChannelStorage.class).addChannels(channels);
              wrapper.user().get(NativeSkinStorage.class).flush();
-+            if ((channels.contains(NativeActorMessage.CHANNEL) || channels.contains(NativeActorMessage.CURRENT_CHANNEL)) && wrapper.user().has(EntityTracker.class)) {
++            if ((channels.contains(NativeActorMessage.CHANNEL) || channels.contains(NativeActorMessage.CURRENT_CHANNEL)
++                    || channels.contains(NativeActorBoundsMessage.CHANNEL)) && wrapper.user().has(EntityTracker.class)) {
 +                wrapper.user().get(EntityTracker.class).sendNativeActorSnapshots();
 +            }
 +            if (channels.contains(NativeCustomEntityMessage.CHANNEL)
@@ -2638,12 +2777,100 @@ index 000000000..5e869f6bf
 +OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 +SOFTWARE.
 \ No newline at end of file
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessageTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessageTest.java
+new file mode 100644
+index 000000000..46619f012
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessageTest.java
+@@ -0,0 +1,82 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import io.netty.buffer.Unpooled;
++import java.util.Map;
++import java.util.Set;
++import java.util.UUID;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeActorBoundsMessageTest {
++
++    @Test
++    void retainsIndependentDimensionsAndRejectsInvalidFraming() {
++        final var buffer = Unpooled.buffer();
++        try {
++            for (Float width : new Float[]{null, 0F, .6F, Float.NaN}) {
++                final var message = new NativeActorBoundsMessage(UUID.randomUUID(), UUID.randomUUID(), true, width, 2.1F);
++                buffer.clear();
++                NativeActorBoundsMessage.TYPE.write(buffer, message);
++                assertEquals(message, NativeActorBoundsMessage.TYPE.read(buffer));
++                buffer.readerIndex(0).writeByte(0);
++                assertThrows(IllegalArgumentException.class, () -> NativeActorBoundsMessage.TYPE.read(buffer));
++                buffer.clear();
++                NativeActorBoundsMessage.TYPE.write(buffer, message);
++                buffer.writerIndex(buffer.writerIndex() - 1);
++                assertThrows(IndexOutOfBoundsException.class, () -> NativeActorBoundsMessage.TYPE.read(buffer));
++            }
++            buffer.clear().writeZero(NativeActorBoundsMessage.MAX_PAYLOAD_BYTES + 1);
++            assertThrows(IllegalArgumentException.class, () -> NativeActorBoundsMessage.TYPE.read(buffer));
++            buffer.clear();
++            NativeActorBoundsMessage.TYPE.write(buffer, new NativeActorBoundsMessage(UUID.randomUUID(), UUID.randomUUID(), false, null, null));
++            buffer.setByte(0, 2);
++            assertThrows(IllegalArgumentException.class, () -> NativeActorBoundsMessage.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++        assertEquals(1.2F, NativeActorBoundsMessage.scaledDimension(.6F, 2));
++        assertEquals(.005F, NativeActorBoundsMessage.scaledDimension(0F, 0));
++        for (Float value : new Float[]{null, -1F, Float.NaN, Float.POSITIVE_INFINITY, Float.MAX_VALUE}) {
++            assertThrows(IllegalArgumentException.class, () -> NativeActorBoundsMessage.scaledDimension(value, 2));
++        }
++    }
++
++    @Test
++    void scopesBoundsToActorLifetimeAndLocalIdentity() {
++        final var actors = new NativeActorStates();
++        final UUID nativeId = UUID.randomUUID();
++        final UUID localId = UUID.randomUUID();
++        final UUID first = UUID.randomUUID();
++        final UUID second = UUID.randomUUID();
++        final var bounds = new NativeActorBoundsMessage(nativeId, first, true, .6F, 2.1F);
++        actors.apply(bounds, localId);
++        assertNull(actors.bounds(localId));
++        actors.apply(actor(nativeId, first), localId);
++        actors.apply(bounds, localId);
++        assertSame(bounds, actors.bounds(localId));
++        actors.apply(actor(nativeId, second), localId);
++        assertNull(actors.bounds(localId));
++        actors.apply(bounds, localId);
++        assertNull(actors.bounds(localId));
++        final var replacement = new NativeActorBoundsMessage(nativeId, second, true, 1F, null);
++        actors.apply(replacement, localId);
++        actors.apply(new NativeActorMessage.Remove(nativeId, first, true), localId);
++        assertSame(replacement, actors.bounds(localId));
++        actors.apply(new NativeActorMessage.Remove(nativeId, second, true), localId);
++        assertNull(actors.bounds(localId));
++        actors.apply(actor(nativeId, second), localId);
++        actors.apply(replacement, localId);
++        actors.clear();
++        assertNull(actors.bounds(localId));
++    }
++
++    private static NativeActorMessage.Snapshot actor(final UUID uuid, final UUID lifetime) {
++        return new NativeActorMessage.Snapshot(uuid, lifetime, true, 10, "minecraft:npc", "", 1, Set.of(), 0, 0, null, Map.of(), -10L);
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeActorEntityTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorEntityTest.java
 new file mode 100644
-index 000000000..c398d9fb7
+index 000000000..9d94093b0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorEntityTest.java
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,81 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2665,6 +2892,27 @@ index 000000000..c398d9fb7
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class NativeActorEntityTest {
++
++    @Test
++    void retainsPhysicalDimensionsSeparatelyFromScaleAndSparseActorInputs() {
++        final Entity actor = new Entity(null, 1, 2, "minecraft:npc", 3, UUID.randomUUID(), EntityTypes26_3.INTERACTION);
++        assertNull(actor.nativeActorBounds().width());
++        assertNull(actor.nativeActorBounds().height());
++        actor.entityData().put(ActorDataIds.RESERVED_053, new EntityData(53, EntityDataTypesBedrock.FLOAT, .6F));
++        actor.entityData().put(ActorDataIds.RESERVED_054, new EntityData(54, EntityDataTypesBedrock.FLOAT, 2.1F));
++        final var before = actor.nativeActorBounds();
++        actor.entityData().put(ActorDataIds.RESERVED_054, new EntityData(54, EntityDataTypesBedrock.FLOAT, 3F));
++        actor.entityData().put(ActorDataIds.RESERVED_038, new EntityData(38, EntityDataTypesBedrock.FLOAT, 2F));
++        final var after = actor.nativeActorBounds();
++        assertEquals(.6F, after.width());
++        assertEquals(2.1F, before.height());
++        assertEquals(3F, after.height());
++        assertEquals(actor.nativeActorSnapshot().lifetime(), after.lifetime());
++        assertEquals(6F, NativeActorBoundsMessage.scaledDimension(after.height(), actor.nativeActorSnapshot().scale()));
++        actor.entityData().put(ActorDataIds.RESERVED_053, new EntityData(53, EntityDataTypesBedrock.INT, 1));
++        assertNull(actor.nativeActorBounds().width());
++        assertNotEquals(before.lifetime(), new Entity(null, 1, 2, "minecraft:npc", 3, actor.javaUuid(), EntityTypes26_3.INTERACTION).nativeActorBounds().lifetime());
++    }
 +
 +    @Test
 +    void snapshotsSparseRetainedInputsAndKeepsTheActorLifetimeStable() {
