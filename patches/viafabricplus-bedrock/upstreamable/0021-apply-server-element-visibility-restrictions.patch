@@ -1,4 +1,4 @@
-From 39a7a9613b28f58bb8b15791d069df39f002bc25 Mon Sep 17 00:00:00 2001
+From 4482266c40f6a89eb16e8da69d4d00500fb69e72 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 3 Oct 2026 21:09:11 +0200
 Subject: [PATCH] feat(hud): apply server element visibility restrictions
@@ -8,39 +8,81 @@ Apply the core's versioned HUD snapshot through direct connections and ViaProxy.
 Clear restrictions on world exit before another connection can render. Core owns packet decoding, cumulative restrictions, reset semantics, and late-registration snapshots. The client integration is necessary because Java has no standard packet for per-element HUD visibility.
 
 Paper doll, touch-control, and control-hint restrictions remain retained by core. Java does not currently render those Bedrock HUD elements, so these hooks do not add substitutes or hide inventory tooltips.
+
+Render the core locator-group snapshot with accepted Bedrock textures,
+ARGB tint, actor binding, and distance-dependent position smoothing.
+Keep invisible groups distinct from an empty stream, preserve default
+Java waypoint behavior until a native snapshot arrives, and reject queued
+payloads from a disconnected session.
+
+Native reference: Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Controlled captures and native draw routine 0x148dc8e60 establish the
+182-by-5 bar, strict 60-degree bearing range, size*5+2 icon extent,
+FOV-dependent height arrows, fixed arrow geometry, overlap order, and
+20-to-2 smoothing rates. Zero and negative size values remain valid.
+Native resource initialization is at 0x148dcb400. Assets and captures stay
+private; production resolves textures through accepted resource packs.
+
+This implements the default native locator renderer. Full resource-pack
+HUD definition overrides, legacy player-location presentation, and the
+remaining native comparison matrix are still incomplete.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |  5 +
- .../bedrock/hud/BedrockHudVisibility.java     | 35 +++++++
- .../bedrock/hud/HudVisibilityPayload.java     | 26 +++++
- .../render/MixinBedrockHudVisibility.java     | 95 +++++++++++++++++++
- .../render/MixinMinecraftHudVisibility.java   | 24 +++++
- .../viafabricplus-bedrock.mixins.json         |  4 +-
- 6 files changed, 188 insertions(+), 1 deletion(-)
+ .../bedrock/ViaFabricPlusBedrock.java         |  11 ++
+ .../bedrock/hud/BedrockHudVisibility.java     |  35 +++++
+ .../bedrock/hud/BedrockLocatorBar.java        | 121 ++++++++++++++++++
+ .../bedrock/hud/HudVisibilityPayload.java     |  26 ++++
+ .../bedrock/hud/LocatorBarImages.java         |  96 ++++++++++++++
+ .../bedrock/hud/LocatorBarMotion.java         |  44 +++++++
+ .../bedrock/hud/LocatorBarPayload.java        |  24 ++++
+ .../bedrock/hud/LocatorBarProjection.java     |  35 +++++
+ .../bedrock/hud/LocatorBarSession.java        |  33 +++++
+ .../render/MixinBedrockHudVisibility.java     | 119 +++++++++++++++++
+ .../render/MixinMinecraftHudVisibility.java   |  26 ++++
+ .../viafabricplus-bedrock.mixins.json         |   4 +-
+ .../bedrock/hud/LocatorBarMotionTest.java     |  42 ++++++
+ .../bedrock/hud/LocatorBarProjectionTest.java |  50 ++++++++
+ .../bedrock/hud/LocatorBarSessionTest.java    |  24 ++++
+ 15 files changed, 689 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockHudVisibility.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockLocatorBar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/HudVisibilityPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImages.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotion.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjection.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarSession.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHudVisibility.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftHudVisibility.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotionTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjectionTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarSessionTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 6fb9cc5..e1d6988 100644
+index 6fb9cc5..a6e44c2 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -47,6 +47,8 @@ import com.viaversion.viafabricplus.bedrock.inventory.BedrockCartographyContext;
+@@ -47,6 +47,10 @@ import com.viaversion.viafabricplus.bedrock.inventory.BedrockCartographyContext;
  import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
  import com.viaversion.viafabricplus.bedrock.input.InputPermissionsPayload;
 +import com.viaversion.viafabricplus.bedrock.hud.HudVisibilityPayload;
 +import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
++import com.viaversion.viafabricplus.bedrock.hud.BedrockLocatorBar;
++import com.viaversion.viafabricplus.bedrock.hud.LocatorBarPayload;
  import com.viaversion.viafabricplus.bedrock.input.RawInputPayload;
  import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
  import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusSkinProvider;
-@@ -124,6 +126,9 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -124,6 +128,13 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          PayloadTypeRegistry.clientboundPlay().register(CartographyPayload.TYPE, CartographyPayload.CODEC);
          ClientPlayNetworking.registerGlobalReceiver(CartographyPayload.TYPE,
              (payload, context) -> BedrockCartographyContext.accept(payload.state()));
 +        PayloadTypeRegistry.clientboundPlay().register(HudVisibilityPayload.TYPE, HudVisibilityPayload.CODEC);
 +        ClientPlayNetworking.registerGlobalReceiver(HudVisibilityPayload.TYPE,
 +            (payload, context) -> BedrockHudVisibility.accept(payload.state()));
++        PayloadTypeRegistry.clientboundPlay().register(LocatorBarPayload.TYPE, LocatorBarPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++            ClientPlayNetworking.registerReceiver(LocatorBarPayload.TYPE,
++                (payload, context) -> BedrockLocatorBar.accept(listener.getConnection(), payload.snapshot())));
          this.settings = new BedrockSettings();
          this.account = new BedrockAccount(ViaFabricPlus.api().path().resolve("bedrock.json"));
          this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
@@ -85,6 +127,133 @@ index 0000000..116ec5c
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockLocatorBar.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockLocatorBar.java
+new file mode 100644
+index 0000000..4925f87
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockLocatorBar.java
+@@ -0,0 +1,121 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.hud;
++
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
++import java.util.ArrayList;
++import java.util.Comparator;
++import net.minecraft.client.DeltaTracker;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.network.Connection;
++import net.minecraft.util.Util;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.LocatorBarSnapshot;
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint;
++
++/** Retains native groups and uses the current camera and interpolated actor positions. */
++public final class BedrockLocatorBar {
++    private static final LocatorBarSession SESSION = new LocatorBarSession();
++    private static final LocatorBarImages IMAGES = new LocatorBarImages();
++    private static final LocatorBarMotion MOTION = new LocatorBarMotion();
++    private static final int WIDTH = 182;
++    private static final int HEIGHT = 5;
++    private static final long ANIMATION_START = Util.getNanos();
++    private static long previousFrame;
++
++    private BedrockLocatorBar() {}
++
++    public static void accept(final Connection connection, final LocatorBarSnapshot snapshot) {
++        final long generation = SESSION.generation();
++        Minecraft.getInstance().execute(() -> {
++            final var listener = Minecraft.getInstance().getConnection();
++            if (connection.isConnected() && listener != null && listener.getConnection() == connection) {
++                SESSION.accept(generation, snapshot);
++                MOTION.retain(snapshot.waypoints().keySet());
++            }
++        });
++    }
++
++    public static boolean active() {
++        return SESSION.snapshot() != null;
++    }
++
++    public static boolean hasWaypoints(final boolean javaWaypoints) {
++        return active() ? !SESSION.snapshot().waypoints().isEmpty() : javaWaypoints;
++    }
++
++    public static void background(final GuiGraphicsExtractor graphics) {
++        IMAGES.background(graphics, graphics.guiWidth() / 2F - WIDTH / 2F, graphics.guiHeight() - 30, WIDTH, HEIGHT);
++    }
++
++    public static void icons(final GuiGraphicsExtractor graphics, final DeltaTracker delta) {
++        final var snapshot = SESSION.snapshot();
++        final var minecraft = Minecraft.getInstance();
++        if (snapshot == null || minecraft.level == null || minecraft.player == null) return;
++        final var camera = minecraft.gameRenderer.mainCamera();
++        if (!camera.isInitialized()) return;
++        final Vec3 observer = minecraft.player.getEyePosition(delta.getGameTimeDeltaPartialTick(!minecraft.player.isRemoved()));
++        final long now = Util.getNanos();
++        final float elapsed = previousFrame == 0 ? 0 : (now - previousFrame) / 1_000_000_000F;
++        previousFrame = now;
++        final float arrowOffset = (now - ANIMATION_START) / 1_000_000_000F % 0.7F > 0.45F ? 1.5F : 0.5F;
++        final var icons = new ArrayList<Icon>();
++        for (final var entry : snapshot.waypoints().entrySet()) {
++            final Vec3 target = position(entry.getValue(), delta);
++            final Vec3 position = MOTION.advance(entry.getKey(), target, observer, elapsed);
++            if (position != null) icons.add(new Icon(entry.getValue(), position, target.distanceToSqr(observer)));
++        }
++        icons.sort(Comparator.comparingDouble(Icon::distanceSquared).reversed());
++        for (final Icon icon : icons) {
++            final LocatorBarWaypoint waypoint = icon.waypoint();
++            if (!waypoint.visible() || waypoint.texture().isEmpty()
++                    || !Float.isFinite(waypoint.size().width()) || !Float.isFinite(waypoint.size().height())) continue;
++            final Vec3 target = icon.position();
++            final float width = LocatorBarProjection.iconExtent(waypoint.size().width());
++            final float height = LocatorBarProjection.iconExtent(waypoint.size().height());
++            if (!Float.isFinite(width) || !Float.isFinite(height)) continue;
++            final var projection = LocatorBarProjection.project(target.x - observer.x, target.y - observer.y,
++                    target.z - observer.z, camera.yRot(), camera.xRot(), WIDTH, HEIGHT, width, camera.getFov());
++            if (projection == null) continue;
++            final float x = graphics.guiWidth() / 2F + projection.offset();
++            final float y = graphics.guiHeight() - 27.5F;
++            final var image = IMAGES.image(waypoint.texture());
++            if (image == null) continue;
++            image.draw(graphics, x - width / 2, y - height / 2, width, height, waypoint.color());
++            if (projection.arrow() != 0) {
++                final var arrow = IMAGES.image(projection.arrow() > 0
++                        ? "textures/ui/locator_arrow_up" : "textures/ui/locator_arrow_down");
++                if (arrow != null) {
++                    final float top = y + (projection.arrow() > 0 ? -HEIGHT - arrowOffset : HEIGHT + arrowOffset)
++                            - (HEIGHT - 1) / 2F;
++                    arrow.draw(graphics, x - (HEIGHT + 2) / 2F, top, HEIGHT + 2, HEIGHT - 1, -1);
++                }
++            }
++        }
++    }
++
++    private static Vec3 position(final LocatorBarWaypoint waypoint, final DeltaTracker delta) {
++        final var minecraft = Minecraft.getInstance();
++        if (waypoint.clientPositionAuthority() && waypoint.actorUniqueId() != null) {
++            final var uuid = BedrockActorState.uuidByUniqueId(waypoint.actorUniqueId());
++            final var entity = uuid == null ? null : minecraft.level.getEntity(uuid);
++            if (entity != null) return entity.getPosition(delta.getGameTimeDeltaPartialTick(!entity.isRemoved()));
++        }
++        if (waypoint.position() == null) return null;
++        final var position = waypoint.position().position();
++        return new Vec3(position.x(), position.y(), position.z());
++    }
++
++    public static void clear() {
++        SESSION.clear();
++        IMAGES.clear();
++        MOTION.clear();
++        previousFrame = 0;
++    }
++
++    private record Icon(LocatorBarWaypoint waypoint, Vec3 position, double distanceSquared) {}
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/HudVisibilityPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/HudVisibilityPayload.java
 new file mode 100644
 index 0000000..7f8ad36
@@ -117,12 +286,274 @@ index 0000000..7f8ad36
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImages.java
+new file mode 100644
+index 0000000..543f74b
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImages.java
+@@ -0,0 +1,96 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.hud;
++
++import com.mojang.blaze3d.platform.NativeImage;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import java.io.IOException;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.renderer.RenderPipelines;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.resourcepack.ui.JsonUiProgram;
++
++/** Uses accepted converted pack resources, including native defaults and server texture overrides. */
++final class LocatorBarImages {
++    private final Map<Identifier, Image> images = new LinkedHashMap<>(16, 0.75F, true);
++    private final Map<Identifier, Object> failures = new LinkedHashMap<>();
++
++    Image image(final String texture) {
++        final Identifier id;
++        try {
++            id = Identifier.parse(JsonUiProgram.textureId(texture));
++        } catch (final IllegalArgumentException invalid) {
++            return null;
++        }
++        final var resource = Minecraft.getInstance().getResourceManager().getResource(id).orElse(null);
++        if (resource == null) return null;
++        final var cached = this.images.get(id);
++        if (cached != null && cached.source() == resource.source()) return cached;
++        if (this.failures.get(id) == resource.source()) return null;
++        try (final var input = resource.open(); final NativeImage pixels = NativeImage.read(input)) {
++            if (pixels.getWidth() > 4096 || pixels.getHeight() > 4096) throw new IOException("Locator texture exceeds size limits");
++            final var image = new Image(id, pixels.getWidth(), pixels.getHeight(), resource.source());
++            this.images.put(id, image);
++            if (this.images.size() > 256) this.images.remove(this.images.keySet().iterator().next());
++            this.failures.remove(id);
++            return image;
++        } catch (final IOException | RuntimeException failure) {
++            this.failures.put(id, resource.source());
++            if (this.failures.size() > 256) this.failures.remove(this.failures.keySet().iterator().next());
++            ViaFabricPlusBedrock.impl().logger().warn("Could not load native locator texture {}", id, failure);
++            return null;
++        }
++    }
++
++    void background(final GuiGraphicsExtractor graphics, final float x, final float y, final float width, final float height) {
++        final var image = this.image("textures/ui/locator_bg");
++        if (image == null) return;
++        // The pinned native locator background uses [5, 1, 5, 1] nine-slice borders.
++        final float borderX = Math.min(5, Math.min(width / 2, image.width() / 2F));
++        final float borderY = Math.min(1, Math.min(height / 2, image.height() / 2F));
++        final float[] targetX = {x, x + borderX, x + width - borderX, x + width};
++        final float[] targetY = {y, y + borderY, y + height - borderY, y + height};
++        final float[] sourceX = {0, borderX, image.width() - borderX, image.width()};
++        final float[] sourceY = {0, borderY, image.height() - borderY, image.height()};
++        for (int row = 0; row < 3; row++) for (int column = 0; column < 3; column++) {
++            image.region(graphics, targetX[column], targetY[row], targetX[column + 1] - targetX[column],
++                    targetY[row + 1] - targetY[row], sourceX[column], sourceY[row],
++                    sourceX[column + 1] - sourceX[column], sourceY[row + 1] - sourceY[row], -1);
++        }
++    }
++
++    void clear() {
++        this.images.clear();
++        this.failures.clear();
++    }
++
++    record Image(Identifier id, int width, int height, Object source) {
++        void draw(final GuiGraphicsExtractor graphics, final float x, final float y,
++                  final float width, final float height, final int color) {
++            this.region(graphics, x, y, width, height, 0, 0, this.width, this.height, color);
++        }
++
++        void region(final GuiGraphicsExtractor graphics, final float x, final float y,
++                    final float width, final float height, final float u, final float v,
++                    final float sourceWidth, final float sourceHeight, final int color) {
++            if (!Float.isFinite(width) || !Float.isFinite(height) || width == 0 || height == 0
++                    || sourceWidth <= 0 || sourceHeight <= 0) return;
++            graphics.pose().pushMatrix();
++            try {
++                graphics.pose().translate(x, y);
++                graphics.pose().scale(width / sourceWidth, height / sourceHeight);
++                graphics.blit(RenderPipelines.GUI_TEXTURED, this.id, 0, 0, u, v,
++                        (int) sourceWidth, (int) sourceHeight, (int) sourceWidth, (int) sourceHeight,
++                        this.width, this.height, color);
++            } finally {
++                graphics.pose().popMatrix();
++            }
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotion.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotion.java
+new file mode 100644
+index 0000000..3520568
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotion.java
+@@ -0,0 +1,44 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.hud;
++
++import java.util.HashMap;
++import java.util.Map;
++import java.util.Set;
++import java.util.UUID;
++import net.minecraft.world.phys.Vec3;
++
++/** Visual interpolation never changes the authoritative waypoint target. */
++final class LocatorBarMotion {
++    private final Map<UUID, Vec3> positions = new HashMap<>();
++
++    Vec3 advance(final UUID id, final Vec3 target, final Vec3 observer, final float elapsedSeconds) {
++        if (target == null || !Double.isFinite(target.x) || !Double.isFinite(target.y) || !Double.isFinite(target.z)) {
++            this.positions.remove(id);
++            return null;
++        }
++        final Vec3 previous = this.positions.get(id);
++        final Vec3 position;
++        if (previous == null) {
++            position = target;
++        } else {
++            final double distance = Math.clamp((target.distanceToSqr(observer) - 256) / 3840, 0, 1);
++            final double rate = 20 - 18 * distance;
++            final double fraction = 1 - Math.exp(-rate * Math.max(0, elapsedSeconds));
++            position = previous.lerp(target, fraction);
++        }
++        this.positions.put(id, position);
++        return position;
++    }
++
++    void retain(final Set<UUID> ids) {
++        this.positions.keySet().retainAll(ids);
++    }
++
++    void clear() {
++        this.positions.clear();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarPayload.java
+new file mode 100644
+index 0000000..c2dc2b5
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.hud;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.LocatorBarSnapshot;
++
++public record LocatorBarPayload(LocatorBarSnapshot snapshot) implements CustomPacketPayload {
++    public static final Type<LocatorBarPayload> TYPE = new Type<>(Identifier.parse(LocatorBarSnapshot.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, LocatorBarPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> LocatorBarSnapshot.TYPE.write(buffer, payload.snapshot),
++            buffer -> new LocatorBarPayload(LocatorBarSnapshot.TYPE.read(buffer)));
++
++    @Override
++    public Type<LocatorBarPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjection.java
+new file mode 100644
+index 0000000..f676404
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjection.java
+@@ -0,0 +1,35 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.hud;
++
++/** Native horizontal bearing and vertical camera angle, independent of GUI scale. */
++final class LocatorBarProjection {
++    private LocatorBarProjection() {}
++
++    static float iconExtent(final float size) {
++        // Native 1.26.51.1 sizes the quad independently of the source texture.
++        return size * 5 + 2;
++    }
++
++    static Placement project(final double dx, final double dy, final double dz,
++                             final float yaw, final float pitch, final float width,
++                             final float barHeight, final float iconWidth, final float verticalFov) {
++        if (!Double.isFinite(dx) || !Double.isFinite(dy) || !Double.isFinite(dz)
++                || !Float.isFinite(yaw) || !Float.isFinite(pitch) || !Float.isFinite(width)
++                || !Float.isFinite(barHeight) || !Float.isFinite(iconWidth)
++                || !Float.isFinite(verticalFov) || verticalFov <= 0 || verticalFov >= 180) return null;
++        final float limit = (float) Math.toRadians(60);
++        final float bearing = (float) Math.atan2(-dx, dz) - (float) Math.toRadians(yaw);
++        final float angle = (float) Math.IEEEremainder(bearing, Math.PI * 2);
++        if (Math.abs(angle) >= limit) return null;
++        final double elevation = Math.atan2(dy, Math.hypot(dx, dz)) + Math.toRadians(pitch);
++        final double threshold = Math.toRadians(verticalFov) * 0.5 * 0.85;
++        final int arrow = elevation >= threshold ? 1 : elevation <= -threshold ? -1 : 0;
++        return new Placement(angle / limit * (width - barHeight - iconWidth - 2) / 2, arrow);
++    }
++
++    record Placement(float offset, int arrow) {}
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarSession.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarSession.java
+new file mode 100644
+index 0000000..cecb8bb
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarSession.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.hud;
++
++import net.raphimc.viabedrock.api.model.LocatorBarSnapshot;
++
++/** A queued snapshot belongs to one connection generation, including same-object reconnects. */
++final class LocatorBarSession {
++    private volatile long generation;
++    private LocatorBarSnapshot snapshot;
++
++    long generation() {
++        return this.generation;
++    }
++
++    boolean accept(final long receivedGeneration, final LocatorBarSnapshot snapshot) {
++        if (receivedGeneration != this.generation) return false;
++        this.snapshot = snapshot;
++        return true;
++    }
++
++    LocatorBarSnapshot snapshot() {
++        return this.snapshot;
++    }
++
++    void clear() {
++        this.generation++;
++        this.snapshot = null;
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHudVisibility.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHudVisibility.java
 new file mode 100644
-index 0000000..9be65dc
+index 0000000..0d5a690
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHudVisibility.java
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,119 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -131,13 +562,16 @@ index 0000000..9be65dc
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
 +
 +import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
++import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 +import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
++import com.viaversion.viafabricplus.bedrock.hud.BedrockLocatorBar;
 +import net.minecraft.client.DeltaTracker;
 +import net.minecraft.client.gui.Font;
 +import net.minecraft.client.gui.GuiGraphicsExtractor;
 +import net.minecraft.client.gui.Hud;
 +import net.minecraft.client.gui.components.spectator.SpectatorGui;
 +import net.minecraft.client.gui.contextualbar.ContextualBar;
++import net.minecraft.client.gui.contextualbar.LocatorBar;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HudElement;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.injection.At;
@@ -192,11 +626,32 @@ index 0000000..9be65dc
 +        if (BedrockHudVisibility.hidden(HudElement.ItemText)) ci.cancel();
 +    }
 +
-+    @WrapWithCondition(method = "extractHotbarAndDecorations", at = {
-+            @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/contextualbar/ContextualBar;extractBackground(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/DeltaTracker;)V"),
-+            @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/contextualbar/ContextualBar;extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/DeltaTracker;)V")})
++    @ModifyExpressionValue(method = "nextContextualInfoState", at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/client/waypoints/ClientWaypointManager;hasWaypoints()Z"))
++    private boolean nativeLocatorGroups(final boolean original) {
++        return BedrockLocatorBar.hasWaypoints(original);
++    }
++
++    @WrapWithCondition(method = "extractHotbarAndDecorations", at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/client/gui/contextualbar/ContextualBar;extractBackground(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/DeltaTracker;)V"))
++    private boolean showProgressBackground(final ContextualBar bar, final GuiGraphicsExtractor graphics, final DeltaTracker delta) {
++        if (BedrockHudVisibility.hidden(HudElement.ProgressBar)) return false;
++        if (bar instanceof LocatorBar && BedrockLocatorBar.active()) {
++            BedrockLocatorBar.background(graphics);
++            return false;
++        }
++        return true;
++    }
++
++    @WrapWithCondition(method = "extractHotbarAndDecorations", at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/client/gui/contextualbar/ContextualBar;extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/DeltaTracker;)V"))
 +    private boolean showProgress(final ContextualBar bar, final GuiGraphicsExtractor graphics, final DeltaTracker delta) {
-+        return !BedrockHudVisibility.hidden(HudElement.ProgressBar);
++        if (BedrockHudVisibility.hidden(HudElement.ProgressBar)) return false;
++        if (bar instanceof LocatorBar && BedrockLocatorBar.active()) {
++            BedrockLocatorBar.icons(graphics, delta);
++            return false;
++        }
++        return true;
 +    }
 +
 +    @WrapWithCondition(method = "extractHotbarAndDecorations", at = @At(value = "INVOKE",
@@ -220,10 +675,10 @@ index 0000000..9be65dc
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftHudVisibility.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftHudVisibility.java
 new file mode 100644
-index 0000000..9f4d7b5
+index 0000000..7262fda
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftHudVisibility.java
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,26 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -232,6 +687,7 @@ index 0000000..9f4d7b5
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
 +
 +import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
++import com.viaversion.viafabricplus.bedrock.hud.BedrockLocatorBar;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.gui.screens.Screen;
 +import org.spongepowered.asm.mixin.Mixin;
@@ -245,14 +701,15 @@ index 0000000..9f4d7b5
 +    @Inject(method = "disconnect(Lnet/minecraft/client/gui/screens/Screen;ZZ)V", at = @At("HEAD"))
 +    private void clearHud(final Screen screen, final boolean transferring, final boolean skipSaving, final CallbackInfo ci) {
 +        BedrockHudVisibility.clear();
++        BedrockLocatorBar.clear();
 +    }
 +
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 2342a65..4c0f1c4 100644
+index e782551..750469d 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -129,7 +129,9 @@
+@@ -133,7 +133,9 @@
      "features.sound.MixinBedrockSoundEngine",
      "features.particle.MixinBedrockParticleEngine",
      "features.particle.MixinBedrockParticlePipelines",
@@ -263,5 +720,139 @@ index 2342a65..4c0f1c4 100644
    ],
    "injectors": {
      "defaultRequire": 1
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotionTest.java
+new file mode 100644
+index 0000000..48152ab
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotionTest.java
+@@ -0,0 +1,42 @@
++package com.viaversion.viafabricplus.bedrock.hud;
++
++import java.util.Set;
++import java.util.UUID;
++import net.minecraft.world.phys.Vec3;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class LocatorBarMotionTest {
++    @Test
++    void smoothingUsesElapsedTimeAndNativeDistanceRates() {
++        final UUID id = UUID.randomUUID();
++        final var thirtyFrames = new LocatorBarMotion();
++        final var sixtyFrames = new LocatorBarMotion();
++        thirtyFrames.advance(id, Vec3.ZERO, Vec3.ZERO, 0);
++        sixtyFrames.advance(id, Vec3.ZERO, Vec3.ZERO, 0);
++        final Vec3 target = new Vec3(100, 0, 0);
++        Vec3 a = Vec3.ZERO;
++        Vec3 b = Vec3.ZERO;
++        for (int frame = 0; frame < 30; frame++) a = thirtyFrames.advance(id, target, Vec3.ZERO, 1F / 30);
++        for (int frame = 0; frame < 60; frame++) b = sixtyFrames.advance(id, target, Vec3.ZERO, 1F / 60);
++        assertEquals(86.4664717, a.x, 0.00001);
++        assertEquals(a.x, b.x, 0.00001);
++        final var nearby = new LocatorBarMotion();
++        nearby.advance(id, Vec3.ZERO, Vec3.ZERO, 0);
++        assertEquals(8.64664717, nearby.advance(id, new Vec3(10, 0, 0), Vec3.ZERO, 0.1F).x, 0.00001);
++    }
++
++    @Test
++    void removalAndInvalidPositionsResetInterpolation() {
++        final UUID id = UUID.randomUUID();
++        final var motion = new LocatorBarMotion();
++        final Vec3 target = new Vec3(30, 10, 20);
++        motion.advance(id, Vec3.ZERO, Vec3.ZERO, 0);
++        motion.retain(Set.of());
++        assertEquals(target, motion.advance(id, target, Vec3.ZERO, 0));
++        assertNull(motion.advance(id, new Vec3(Double.NaN, 0, 0), Vec3.ZERO, 0.1F));
++        assertEquals(Vec3.ZERO, motion.advance(id, Vec3.ZERO, Vec3.ZERO, 0));
++        motion.clear();
++        assertEquals(target, motion.advance(id, target, Vec3.ZERO, 0));
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjectionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjectionTest.java
+new file mode 100644
+index 0000000..d0425f9
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjectionTest.java
+@@ -0,0 +1,50 @@
++package com.viaversion.viafabricplus.bedrock.hud;
++
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class LocatorBarProjectionTest {
++    @Test
++    void iconExtentPreservesNativeZeroAndReversedQuads() {
++        assertEquals(4.5F, LocatorBarProjection.iconExtent(0.5F));
++        assertEquals(7F, LocatorBarProjection.iconExtent(1));
++        assertEquals(12F, LocatorBarProjection.iconExtent(2));
++        assertEquals(17F, LocatorBarProjection.iconExtent(3));
++        assertEquals(2F, LocatorBarProjection.iconExtent(0));
++        assertEquals(1F, LocatorBarProjection.iconExtent(-0.2F));
++        assertEquals(0F, LocatorBarProjection.iconExtent(-0.4F));
++        assertEquals(-3F, LocatorBarProjection.iconExtent(-1));
++    }
++
++    @Test
++    void headingWrapAndRangeFollowTheNativeBar() {
++        final double sine = Math.sin(Math.toRadians(30)) * 40;
++        final double cosine = Math.cos(Math.toRadians(30)) * 40;
++        assertEquals(42F, LocatorBarProjection.project(-sine, 0, cosine, 0, 0, 182, 5, 7, 70).offset(), 0.0001F);
++        assertEquals(-42F, LocatorBarProjection.project(sine, 0, cosine, 360, 0, 182, 5, 7, 70).offset(), 0.0001F);
++        assertEquals(0F, LocatorBarProjection.project(0, 0, -40, 180, 0, 182, 5, 7, 70).offset(), 0.0001F);
++        assertNull(LocatorBarProjection.project(-40, 0, 0, 0, 0, 182, 5, 7, 70));
++        assertNull(LocatorBarProjection.project(0, 0, -40, 0, 0, 182, 5, 7, 70));
++        assertNull(LocatorBarProjection.project(Double.NaN, 0, 40, 0, 0, 182, 5, 7, 70));
++    }
++
++    @Test
++    void iconWidthAndCameraFovChangeTheNativeProjection() {
++        final double sine = Math.sin(Math.toRadians(30)) * 40;
++        final double cosine = Math.cos(Math.toRadians(30)) * 40;
++        assertEquals(40.75F, LocatorBarProjection.project(-sine, 0, cosine, 0, 0, 182, 5, 12, 70).offset(), 0.0001F);
++        assertEquals(1, LocatorBarProjection.project(0, 22, 40, 0, 0, 182, 5, 7, 60).arrow());
++        assertEquals(0, LocatorBarProjection.project(0, 22, 40, 0, 0, 182, 5, 7, 90).arrow());
++        assertNull(LocatorBarProjection.project(0, 0, 40, 60, 0, 182, 5, 7, 70));
++    }
++
++    @Test
++    void heightDirectionAccountsForCameraPitchAndHorizontalDistance() {
++        assertEquals(0, LocatorBarProjection.project(0, 10, 40, 0, 0, 182, 5, 7, 70).arrow());
++        assertEquals(1, LocatorBarProjection.project(0, 40, 40, 0, 0, 182, 5, 7, 70).arrow());
++        assertEquals(-1, LocatorBarProjection.project(0, -40, 40, 0, 0, 182, 5, 7, 70).arrow());
++        assertEquals(0, LocatorBarProjection.project(0, 40, 40, 0, -45, 182, 5, 7, 70).arrow());
++        assertEquals(1, LocatorBarProjection.project(0, 0, 40, 0, 45, 182, 5, 7, 70).arrow());
++        assertEquals(0, LocatorBarProjection.project(0, 10, 80, 0, 0, 182, 5, 7, 70).arrow());
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarSessionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarSessionTest.java
+new file mode 100644
+index 0000000..f90d989
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarSessionTest.java
+@@ -0,0 +1,24 @@
++package com.viaversion.viafabricplus.bedrock.hud;
++
++import java.util.Map;
++import java.util.UUID;
++import net.raphimc.viabedrock.api.model.LocatorBarSnapshot;
++import net.raphimc.viabedrock.api.model.LocatorBarWaypoint;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class LocatorBarSessionTest {
++    @Test
++    void queuedSnapshotCannotRestoreStateAfterDisconnect() {
++        final var state = new LocatorBarSession();
++        final long beforeExit = state.generation();
++        final var populated = new LocatorBarSnapshot(Map.of(UUID.randomUUID(), LocatorBarWaypoint.EMPTY));
++        assertTrue(state.accept(beforeExit, populated));
++        state.clear();
++        assertFalse(state.accept(beforeExit, populated));
++        assertNull(state.snapshot());
++        final var empty = new LocatorBarSnapshot(Map.of());
++        assertTrue(state.accept(state.generation(), empty));
++        assertSame(empty, state.snapshot());
++    }
++}
 -- 
-2.55.0
+2.56.0
