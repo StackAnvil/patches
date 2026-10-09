@@ -1,4 +1,4 @@
-From e2748ce72cd2cf2b69843e8cad96650dd50b9f88 Mon Sep 17 00:00:00 2001
+From f18f2a1870db15689e62b965d4e18839de2a1973 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 21:09:29 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -21,6 +21,16 @@ Keep each recipe result's per-craft amount separate from the batch count.
 Verified against Geyser 2.11.3 source at
 https://github.com/GeyserMC/Geyser/blob/63a4e2b79b12f0d138777d5fd80176a112b4bd72/core/src/main/java/org/geysermc/geyser/translator/inventory/InventoryTranslator.java
 and focused request-order tests.
+
+Keep transmitted block item metadata in both the recipe/result item codec
+and the network stack descriptor. Native Bedrock 1.26.51.1 build 51061372,
+protocol 2193, on CubeCraft Pillars of Fortune sends stripped oak wood
+(runtime item ID -819) with aux 8; its appended plank recipe also requires
+aux 8. Resetting that field to zero prevents the player-grid matcher from
+selecting the advertised recipe. Block runtime-state validation remains
+independent of item metadata. The wire-to-ingredient regression reproduces
+8 becoming 0 before this change and matches a shifted player-grid ingredient
+after it. Preserve the existing server-assigned recipe IDs and request path.
 ---
  .../model/container/CraftingOutputPlan.java   |  97 +++++
  .../model/container/CraftingPlacement.java    | 226 ++++++++++
@@ -33,13 +43,15 @@ and focused request-order tests.
  .../protocol/storage/CraftingDataStorage.java |   3 +-
  .../protocol/storage/CraftingDataTracker.java | 390 +++++++++++++++---
  .../storage/InventoryRequestTracker.java      |   2 +
+ .../protocol/types/item/BedrockItemType.java  |   2 +-
+ .../item/NetworkItemStackDescriptorType.java  |   2 +-
  .../types/recipe/CraftingDataReader.java      |  22 +-
  .../container/CraftingOutputPlanTest.java     |  84 ++++
  .../container/CraftingPlacementTest.java      | 161 ++++++++
  .../player/InventoryContainerTest.java        | 131 ++++++
  .../model/recipe/MolangTagQueryTest.java      |  53 +++
- .../storage/CraftingDataTrackerTest.java      | 163 ++++++++
- 17 files changed, 1656 insertions(+), 102 deletions(-)
+ .../storage/CraftingDataTrackerTest.java      | 221 ++++++++++
+ 19 files changed, 1716 insertions(+), 104 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CraftingPlacement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQuery.java
@@ -1542,6 +1554,32 @@ index 11ce9ee64..01e1a5fef 100644
          if (response.result() == ItemStackNetResult.Success) {
              this.drainQueuedInteractions();
          }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
+index 64fcb078f..52b6c1cd8 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
+@@ -56,7 +56,7 @@ public class BedrockItemType extends Type<BedrockItem> {
+ 
+         final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(item.identifier());
+         if (validBlockStates != null) { // Block item
+-            item.setData(0);
++            // Recipes can require the transmitted aux value even for a distinct block item ID.
+             if (!validBlockStates.contains(item.blockRuntimeId())) {
+                 item.setBlockRuntimeId(validBlockStates.firstInt());
+             }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java
+index 416621e91..156e572bf 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java
+@@ -52,7 +52,7 @@ public class NetworkItemStackDescriptorType extends Type<BedrockItem> {
+ 
+         final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(item.identifier());
+         if (validBlockStates != null) { // Block item
+-            item.setData(0);
++            // Recipes can require the transmitted aux value even for a distinct block item ID.
+             if (!validBlockStates.contains(item.blockRuntimeId())) {
+                 item.setBlockRuntimeId(validBlockStates.firstInt());
+             }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReader.java b/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReader.java
 index 535f52d1c..d69d7c3e6 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReader.java
@@ -2073,10 +2111,10 @@ index 000000000..284e08781
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java
 new file mode 100644
-index 000000000..8d19ab892
+index 000000000..be0e11f6a
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,221 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2088,20 +2126,27 @@ index 000000000..8d19ab892
 + */
 +package net.raphimc.viabedrock.protocol.storage;
 +
++import com.google.common.collect.HashBiMap;
 +import com.viaversion.viaversion.api.connection.UserConnection;
-+
++import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
++import com.viaversion.viaversion.libs.fastutil.ints.IntSortedSet;
++import com.viaversion.viaversion.libs.fastutil.ints.IntSortedSets;
++import io.netty.buffer.Unpooled;
++import java.lang.reflect.Proxy;
++import java.util.List;
++import java.util.UUID;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptorType;
++import net.raphimc.viabedrock.protocol.model.recipe.RecipeType;
 +import net.raphimc.viabedrock.protocol.model.recipe.ShapedRecipe;
 +import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
-+import net.raphimc.viabedrock.protocol.model.recipe.RecipeType;
-+
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import net.raphimc.viabedrock.protocol.types.item.BedrockItemType;
++import net.raphimc.viabedrock.protocol.types.item.NetworkItemStackDescriptorType;
 +import org.junit.jupiter.api.Test;
-+
-+import java.util.List;
-+import java.util.UUID;
-+import java.lang.reflect.Proxy;
++import org.mockito.Mockito;
 +
 +import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 +import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -2111,6 +2156,57 @@ index 000000000..8d19ab892
 +import static org.junit.jupiter.api.Assertions.assertTrue;
 +
 +class CraftingDataTrackerTest {
++
++    @Test
++    void blockItemWireMetadataMatchesPlayerGridIngredients() {
++        // Native protocol 2193 PoF sends stripped oak wood with aux 8 and requires aux 8 for planks.
++        final int itemId = -819;
++        final var states = new Int2ObjectOpenHashMap<IntSortedSet>();
++        states.put(itemId, IntSortedSets.singleton(123));
++        final var user = Mockito.mock(UserConnection.class);
++        final var rewriter = Mockito.mock(ItemRewriter.class);
++        final var names = HashBiMap.<String, Integer>create();
++        names.put("minecraft:stripped_oak_wood", itemId);
++        Mockito.when(user.get(ItemRewriter.class)).thenReturn(rewriter);
++        Mockito.when(rewriter.getItems()).thenReturn(names);
++        final var ingredient = new ItemDescriptor.ItemNameDescriptor("minecraft:stripped_oak_wood", 8);
++        for (final var codec : List.of(
++                new BedrockItemType(0, states, false),
++                new NetworkItemStackDescriptorType(0, states, true))) {
++            final var wire = Unpooled.buffer();
++            try {
++                if (codec instanceof BedrockItemType) {
++                    BedrockTypes.VAR_INT.write(wire, itemId);
++                } else {
++                    wire.writeShortLE(itemId);
++                }
++                wire.writeShortLE(1);
++                BedrockTypes.UNSIGNED_VAR_INT.write(wire, 8);
++                if (codec instanceof NetworkItemStackDescriptorType) {
++                    wire.writeBoolean(false);
++                }
++                if (codec instanceof BedrockItemType) {
++                    BedrockTypes.VAR_INT.write(wire, 123);
++                } else {
++                    BedrockTypes.UNSIGNED_VAR_INT.write(wire, 123);
++                }
++                BedrockTypes.UNSIGNED_VAR_INT.write(wire, 2);
++                wire.writeShortLE(0);
++                final BedrockItem decoded = codec.read(wire);
++                assertEquals(8, decoded.data());
++                assertEquals(123, decoded.blockRuntimeId());
++                final BedrockItem[] grid = BedrockItem.emptyArray(4);
++                grid[2] = decoded;
++                assertArrayEquals(new int[]{0, 0, 1, 0}, CraftingDataTracker.matchShapeless(
++                        List.of(ingredient), grid, (descriptor, item) -> descriptor.matchesItem(user, item)));
++                decoded.setData(0);
++                assertNull(CraftingDataTracker.matchShapeless(List.of(ingredient), grid,
++                        (descriptor, item) -> descriptor.matchesItem(user, item)));
++            } finally {
++                wire.release();
++            }
++        }
++    }
 +
 +    @Test
 +    void overlappingShapelessDescriptorsFindValidAssignment() {
