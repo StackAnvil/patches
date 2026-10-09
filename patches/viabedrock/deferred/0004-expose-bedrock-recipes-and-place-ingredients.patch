@@ -1,4 +1,4 @@
-From 53bf69175bf7174c1b47402786ed6dffb997280f Mon Sep 17 00:00:00 2001
+From bf339cab8b39bdae67925a0cc563850934ce7c38 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 21:09:29 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -69,7 +69,18 @@ byte family, signed compressed tab, boolean filter and signed compressed
 layout. Java 26.3 RecipeBookSettings orders crafting, furnace, blast
 furnace and smoker boolean pairs. This projection is a compatibility
 path; native screen controls and route comparisons remain incomplete.
+
+Transport the retained native furnace options through a separately
+negotiated protocol-2193 payload in both directions. Replay all retained
+families after registration or entering play, echo Java/server changes,
+and advertise the return channel for Fabric clients on direct and ViaProxy
+connections. Withdraw the capability after client unregistration. Preserve
+unknown native enum values without forcing them into Java book state.
+Decode bounded native envelopes before dispatch so malformed input cannot
+mutate preferences or become a server edit. Native furnace scene controls
+and native/direct/ViaProxy behavior comparisons remain incomplete.
 ---
+ .../api/model/NativeFurnaceOptions.java       |  44 ++
  .../model/container/CraftingOutputPlan.java   |  97 ++++
  .../model/container/CraftingPlacement.java    | 229 +++++++++
  .../container/FurnaceRecipePlacement.java     | 194 ++++++++
@@ -82,27 +93,32 @@ path; native screen controls and route comparisons remain incomplete.
  .../protocol/model/FurnaceOptions.java        |  17 +
  .../protocol/model/recipe/ItemDescriptor.java |  13 +-
  .../protocol/model/recipe/MolangTagQuery.java |  64 +++
- .../protocol/packet/InventoryPackets.java     |  94 ++++
+ .../protocol/packet/InventoryPackets.java     | 110 +++++
+ .../protocol/packet/JoinPackets.java          |   1 +
+ .../protocol/packet/MultiStatePackets.java    |  22 +
  .../protocol/storage/CraftingDataStorage.java |   3 +-
  .../protocol/storage/CraftingDataTracker.java | 455 +++++++++++++++---
- .../storage/FurnaceOptionsStorage.java        |  92 ++++
+ .../storage/FurnaceOptionsStorage.java        | 139 ++++++
  .../storage/InventoryRequestTracker.java      |   6 +
  .../protocol/types/BedrockTypes.java          |   1 +
  .../protocol/types/item/BedrockItemType.java  |   2 +-
  .../item/NetworkItemStackDescriptorType.java  |   2 +-
  .../types/model/FurnaceOptionsType.java       |  34 ++
  .../types/recipe/CraftingDataReader.java      |  22 +-
+ .../api/model/NativeFurnaceOptionsTest.java   |  57 +++
  .../container/CraftingOutputPlanTest.java     |  84 ++++
  .../container/CraftingPlacementTest.java      | 161 +++++++
  .../container/FurnaceRecipePlacementTest.java | 271 +++++++++++
  .../player/InventoryContainerTest.java        | 131 +++++
  .../model/recipe/MolangTagQueryTest.java      |  53 ++
- .../packet/FurnaceOptionsPacketTest.java      | 150 ++++++
+ .../packet/FurnaceOptionsPacketTest.java      | 156 ++++++
+ .../NativeFurnaceOptionsPacketTest.java       | 214 ++++++++
  .../storage/CookingRecipeBookTest.java        | 118 +++++
  .../storage/CraftingDataTrackerTest.java      | 236 +++++++++
  .../storage/FurnaceRecipeRequestTest.java     | 126 +++++
  .../types/model/FurnaceOptionsTypeTest.java   |  75 +++
- 32 files changed, 2976 insertions(+), 104 deletions(-)
+ 37 files changed, 3383 insertions(+), 104 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CraftingPlacement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
@@ -110,17 +126,69 @@ path; native screen controls and route comparisons remain incomplete.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQuery.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/FurnaceOptionsStorage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/types/model/FurnaceOptionsType.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlanTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/CraftingPlacementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQueryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/FurnaceOptionsPacketTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NativeFurnaceOptionsPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CookingRecipeBookTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/model/FurnaceOptionsTypeTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
+new file mode 100644
+index 000000000..712ddc8a3
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
+@@ -0,0 +1,44 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.FurnaceOptions;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++/** Negotiated native preferences, independent of Java recipe-book state and connection route. */
++public final class NativeFurnaceOptions {
++
++    public static final String CHANNEL = "viabedrock:furnace_options";
++    public static final Type<FurnaceOptions> TYPE = new Type<>(FurnaceOptions.class) {
++
++        @Override
++        public FurnaceOptions read(final ByteBuf buffer) {
++            if (buffer.readableBytes() > 32 || Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported native furnace preferences");
++            }
++            final FurnaceOptions options = BedrockTypes.FURNACE_OPTIONS.read(buffer);
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Trailing native furnace preferences");
++            }
++            return options;
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final FurnaceOptions value) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            BedrockTypes.FURNACE_OPTIONS.write(buffer, value);
++        }
++    };
++
++    private NativeFurnaceOptions() { }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java b/src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java
 new file mode 100644
 index 000000000..bb7f4a7e8
@@ -1322,10 +1390,18 @@ index 000000000..974a58739
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index d60a3568c..69a7518b2 100644
+index d60a3568c..fcdc0ebfa 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-@@ -121,6 +121,29 @@ public final class InventoryPackets {
+@@ -91,6 +91,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.FurnaceOptions;
+ import net.raphimc.viabedrock.protocol.model.ItemCooldown;
+ import net.raphimc.viabedrock.protocol.model.FullContainerName;
+ import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
+@@ -121,6 +122,44 @@ public final class InventoryPackets {
              "This is not actually a button, but has to be one because dialogs don't support adding"
                  + " text only elements. Clicking it has the same effect as closing the dialog.";
  
@@ -1337,6 +1413,7 @@ index d60a3568c..69a7518b2 100644
 +        } else {
 +            wrapper.cancel();
 +        }
++        FurnaceOptionsStorage.sendNativeUpdate(wrapper.user(), options);
 +    }
 +
 +    static void handleJavaRecipeBookSettings(final PacketWrapper wrapper) {
@@ -1349,13 +1426,27 @@ index d60a3568c..69a7518b2 100644
 +            wrapper.cancel();
 +        } else {
 +            wrapper.write(BedrockTypes.FURNACE_OPTIONS, options);
++            FurnaceOptionsStorage.sendNativeUpdate(wrapper.user(), options);
 +        }
++    }
++
++    static void handleNativeFurnaceOptions(final UserConnection user, final FurnaceOptions options) {
++        final var packet = PacketWrapper.create(ServerboundBedrockPackets.SET_PLAYER_FURNACE_OPTIONS, user);
++        packet.write(BedrockTypes.FURNACE_OPTIONS, options);
++        packet.sendToServer(BedrockProtocol.class);
++        final var preferences = user.get(FurnaceOptionsStorage.class);
++        if (preferences.apply(options)) {
++            final var javaSettings = PacketWrapper.create(ClientboundPackets26_3.RECIPE_BOOK_SETTINGS, user);
++            preferences.writeJavaSettings(javaSettings);
++            javaSettings.send(BedrockProtocol.class);
++        }
++        FurnaceOptionsStorage.sendNativeUpdate(user, options);
 +    }
 +
      static void handleContainerClose(final PacketWrapper wrapper) {
          final ContainerType containerType =
                  ContainerType.getByValue(
-@@ -503,6 +526,9 @@ public final class InventoryPackets {
+@@ -503,6 +542,9 @@ public final class InventoryPackets {
                          container.markServerUpdate();
                          wrapper.user().get(InventoryRequestTracker.class)
                                  .handleAuthoritativeContent(container);
@@ -1365,7 +1456,7 @@ index d60a3568c..69a7518b2 100644
                          PacketFactory.writeJavaContainerSetContent(wrapper, container);
                          PacketFactory.sendJavaCursorForHudUpdate(wrapper.user(), container);
                      } else {
-@@ -533,6 +559,12 @@ public final class InventoryPackets {
+@@ -533,6 +575,12 @@ public final class InventoryPackets {
                          container.markServerUpdate();
                          wrapper.user().get(InventoryRequestTracker.class)
                                  .handleAuthoritativeSlot(container, slot);
@@ -1378,7 +1469,7 @@ index d60a3568c..69a7518b2 100644
                          final boolean bundleOnCursor = container instanceof BundleContainer bundle
                                  && bundle.javaHoldingContainer() == inventoryTracker.getHudContainer()
                                  && bundle.javaSlot(slot) == 0;
-@@ -612,6 +644,10 @@ public final class InventoryPackets {
+@@ -612,6 +660,10 @@ public final class InventoryPackets {
                          inventoryTracker.removeDynamicContainer(containerName);
                      }
                  });
@@ -1389,7 +1480,7 @@ index d60a3568c..69a7518b2 100644
          protocol.registerClientbound(
                  ClientboundBedrockPackets.CRAFTING_DATA,
                  null,
-@@ -621,6 +657,24 @@ public final class InventoryPackets {
+@@ -621,6 +673,24 @@ public final class InventoryPackets {
                              wrapper.user().get(CraftingDataTracker.class);
                      final CraftingDataReader.Data data = CraftingDataReader.read(wrapper);
                      tracker.updateCraftingDataList(data.recipes(), data.clearRecipes());
@@ -1414,7 +1505,7 @@ index d60a3568c..69a7518b2 100644
                      tracker.sendJavaUpdateRecipes(wrapper.user());
                  });
          protocol.registerClientbound(
-@@ -849,6 +903,46 @@ public final class InventoryPackets {
+@@ -849,6 +919,46 @@ public final class InventoryPackets {
                          PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
                      }
                  });
@@ -1461,6 +1552,72 @@ index d60a3568c..69a7518b2 100644
          protocol.registerServerbound(
                  ServerboundPackets26_3.CONTAINER_BUTTON_CLICK,
                  null,
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index 7ea1ae6b9..2cd500506 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -592,6 +592,7 @@ public final class JoinPackets {
+         user.get(EntityTracker.class).sendNativeCustomEntitySnapshot();
+         user.get(PlayerInputStorage.class).markJoined();
+         user.get(PlayerInputStorage.class).sendSnapshot();
++        user.get(net.raphimc.viabedrock.protocol.storage.FurnaceOptionsStorage.class).sendNativeSnapshot(user);
+         HudPackets.sendNativeRoot(user);
+         user.get(HudVisibilityStorage.class).markJoined();
+         user.get(HudVisibilityStorage.class).sendSnapshot();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index 0c864a0d3..1c4eca14d 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -19,6 +19,8 @@ package net.raphimc.viabedrock.protocol.packet;
+ 
+ import net.raphimc.viabedrock.protocol.storage.NativeContainerUiState;
+ import net.raphimc.viabedrock.api.model.NativeContainerAction;
++import net.raphimc.viabedrock.api.model.NativeFurnaceOptions;
++import net.raphimc.viabedrock.protocol.storage.FurnaceOptionsStorage;
+ import net.raphimc.viabedrock.api.model.NativeContainerStatus;
+ import net.raphimc.viabedrock.api.model.NativeContainerMessage;
+ import com.viaversion.viaversion.api.protocol.packet.State;
+@@ -169,6 +171,20 @@ public final class MultiStatePackets {
+             }
+             return;
+         }
++        if (channel.equals(NativeFurnaceOptions.CHANNEL)) {
++            if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY
++                    && wrapper.user().get(ChannelStorage.class).hasChannel(channel)) {
++                final var input = io.netty.buffer.Unpooled.wrappedBuffer(wrapper.read(Types.REMAINING_BYTES));
++                try {
++                    InventoryPackets.handleNativeFurnaceOptions(wrapper.user(), NativeFurnaceOptions.TYPE.read(input));
++                } catch (final IllegalArgumentException | IndexOutOfBoundsException malformed) {
++                    // Invalid preferences never mutate native state or reach the Bedrock server.
++                } finally {
++                    input.release();
++                }
++            }
++            return;
++        }
+         if (channel.equals(NativeContainerMessage.CURRENT_CHANNEL)) {
+             if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY
+                     && wrapper.user().get(ChannelStorage.class).hasChannel(channel)
+@@ -193,6 +209,9 @@ public final class MultiStatePackets {
+         if (channel.equals("minecraft:unregister")) {
+             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
+             wrapper.user().get(ChannelStorage.class).removeChannels(channels);
++            if (channels.contains(NativeFurnaceOptions.CHANNEL)) {
++                FurnaceOptionsStorage.sendNativeCapability(wrapper.user(), false);
++            }
+             if (channels.contains(PlayerInputPermissions.CHANNEL) && wrapper.user().has(PlayerInputStorage.class)) {
+                 wrapper.user().get(PlayerInputStorage.class).withdrawRawInput();
+             }
+@@ -251,6 +270,9 @@ public final class MultiStatePackets {
+         if (channel.equals("minecraft:register")) {
+             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
+             wrapper.user().get(ChannelStorage.class).addChannels(channels);
++            if (channels.contains(NativeFurnaceOptions.CHANNEL) && wrapper.user().has(FurnaceOptionsStorage.class)) {
++                wrapper.user().get(FurnaceOptionsStorage.class).sendNativeSnapshot(wrapper.user());
++            }
+             WorldPackets.sendNativeCommandCapability(wrapper.user());
+             if (channels.contains(LocatorBarSnapshot.CHANNEL) && wrapper.user().has(PlayerWaypointTracker.class)) {
+                 wrapper.user().get(PlayerWaypointTracker.class).sendSnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataStorage.java
 index 4506fe070..2b1c6b934 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataStorage.java
@@ -2041,10 +2198,10 @@ index 73165b006..e2d3f6555 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/FurnaceOptionsStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/FurnaceOptionsStorage.java
 new file mode 100644
-index 000000000..238207174
+index 000000000..c3e30f8ae
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/FurnaceOptionsStorage.java
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,139 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2053,14 +2210,22 @@ index 000000000..238207174
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.viaversion.viaversion.api.connection.StorableObject;
++import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 +import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.model.NativeFurnaceOptions;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.FurnaceLayout;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.FurnaceLeftTabIndex;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SetPlayerFurnaceOptionsPacketPayload_FurnaceType;
 +import net.raphimc.viabedrock.protocol.model.FurnaceOptions;
 +
++import java.nio.charset.StandardCharsets;
++import java.util.Comparator;
 +import java.util.HashMap;
++import java.util.List;
 +import java.util.Map;
 +
 +/** Connection-local native options and the separate Java recipe-book projection. */
@@ -2074,6 +2239,45 @@ index 000000000..238207174
 +
 +    public FurnaceOptions options(final int furnaceType) {
 +        return this.options.get(furnaceType);
++    }
++
++    public List<FurnaceOptions> snapshot() {
++        return this.options.values().stream().sorted(Comparator.comparingInt(FurnaceOptions::furnaceType)).toList();
++    }
++
++    public void sendNativeSnapshot(final UserConnection user) {
++        if (!canSend(user)) {
++            return;
++        }
++        sendNativeCapability(user, true);
++        for (final FurnaceOptions value : this.snapshot()) {
++            sendNativeUpdate(user, value);
++        }
++    }
++
++    public static void sendNativeCapability(final UserConnection user, final boolean registered) {
++        if (user.getProtocolInfo().getClientState() != State.PLAY) {
++            return;
++        }
++        final var packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user);
++        packet.write(Types.STRING, registered ? "minecraft:register" : "minecraft:unregister");
++        packet.write(Types.REMAINING_BYTES, NativeFurnaceOptions.CHANNEL.getBytes(StandardCharsets.UTF_8));
++        packet.send(BedrockProtocol.class);
++    }
++
++    private static boolean canSend(final UserConnection user) {
++        return user.getProtocolInfo().getClientState() == State.PLAY
++                && user.get(ChannelStorage.class).hasChannel(NativeFurnaceOptions.CHANNEL);
++    }
++
++    public static void sendNativeUpdate(final UserConnection user, final FurnaceOptions value) {
++        if (!canSend(user)) {
++            return;
++        }
++        final var packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user);
++        packet.write(Types.STRING, NativeFurnaceOptions.CHANNEL);
++        packet.write(NativeFurnaceOptions.TYPE, value);
++        packet.send(BedrockProtocol.class);
 +    }
 +
 +    public boolean apply(final FurnaceOptions value) {
@@ -2322,6 +2526,69 @@ index 535f52d1c..d69d7c3e6 100644
      }
  
      private CraftingDataReader() { }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptionsTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptionsTest.java
+new file mode 100644
+index 000000000..71312816c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptionsTest.java
+@@ -0,0 +1,57 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.FurnaceOptions;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeFurnaceOptionsTest {
++
++    @Test
++    void envelopePreservesTheEntireNativeNumericDomainAndRejectsUnsupportedOrTruncatedData() {
++        for (final var value : new FurnaceOptions[]{new FurnaceOptions(0, 0, false, 0), new FurnaceOptions(1, 4, true, 2),
++            new FurnaceOptions(255, Integer.MIN_VALUE, true, Integer.MAX_VALUE)}) {
++            final var buffer = Unpooled.buffer();
++            try {
++                NativeFurnaceOptions.TYPE.write(buffer, value);
++                final byte[] bytes = new byte[buffer.readableBytes()];
++                buffer.getBytes(0, bytes);
++                assertEquals(value, NativeFurnaceOptions.TYPE.read(buffer));
++                assertFalse(buffer.isReadable());
++                for (int size = 0; size < bytes.length; size++) {
++                    final var truncated = Unpooled.wrappedBuffer(bytes, 0, size);
++                    try {
++                        assertThrows(RuntimeException.class, () -> NativeFurnaceOptions.TYPE.read(truncated));
++                    } finally {
++                        truncated.release();
++                    }
++                }
++                buffer.clear();
++                NativeFurnaceOptions.TYPE.write(buffer, value);
++                buffer.writeByte(0);
++                assertThrows(IllegalArgumentException.class, () -> NativeFurnaceOptions.TYPE.read(buffer));
++                buffer.clear();
++                Types.VAR_INT.writePrimitive(buffer, 2);
++                Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++                assertThrows(IllegalArgumentException.class, () -> NativeFurnaceOptions.TYPE.read(buffer));
++                buffer.clear();
++                Types.VAR_INT.writePrimitive(buffer, 1);
++                Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION + 1);
++                assertThrows(IllegalArgumentException.class, () -> NativeFurnaceOptions.TYPE.read(buffer));
++                buffer.clear().writeZero(33);
++                assertThrows(IllegalArgumentException.class, () -> NativeFurnaceOptions.TYPE.read(buffer));
++            } finally {
++                buffer.release();
++            }
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlanTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlanTest.java
 new file mode 100644
 index 000000000..544fbd37b
@@ -3054,10 +3321,10 @@ index 000000000..284e08781
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/FurnaceOptionsPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/FurnaceOptionsPacketTest.java
 new file mode 100644
-index 000000000..a2dcff6a5
+index 000000000..7e4f64796
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/FurnaceOptionsPacketTest.java
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,156 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3067,6 +3334,8 @@ index 000000000..a2dcff6a5
 +
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 +import com.viaversion.viaversion.api.protocol.remapper.PacketHandler;
 +import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
@@ -3188,6 +3457,10 @@ index 000000000..a2dcff6a5
 +
 +        private Fixture() {
 +            when(this.user.get(FurnaceOptionsStorage.class)).thenReturn(this.preferences);
++            when(this.user.get(ChannelStorage.class)).thenReturn(new ChannelStorage());
++            final var info = mock(com.viaversion.viaversion.api.connection.ProtocolInfo.class);
++            when(this.user.getProtocolInfo()).thenReturn(info);
++            when(info.getClientState()).thenReturn(State.PLAY);
 +        }
 +
 +        private PacketWrapper nativePacket(final FurnaceOptions options) {
@@ -3204,6 +3477,226 @@ index 000000000..a2dcff6a5
 +            packet.write(Types.BOOLEAN, filtering);
 +            packet.resetReader();
 +            return packet;
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeFurnaceOptionsPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeFurnaceOptionsPacketTest.java
+new file mode 100644
+index 000000000..b5e34ba4c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeFurnaceOptionsPacketTest.java
+@@ -0,0 +1,214 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketType;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.NativeFurnaceOptions;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.FurnaceOptions;
++import net.raphimc.viabedrock.protocol.storage.*;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.mockito.MockedStatic;
++
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class NativeFurnaceOptionsPacketTest {
++
++    @Test
++    void lateNegotiationSendsRetainedFamiliesAndWithdrawalStopsBothDirections() throws Exception {
++        try (var fixture = new Fixture()) {
++            final var first = new FurnaceOptions(1, 4, true, 2);
++            final var other = new FurnaceOptions(3, 1, false, 1);
++            fixture.preferences.apply(other);
++            fixture.preferences.apply(first);
++            fixture.preferences.sendNativeSnapshot(fixture.user);
++            assertTrue(fixture.sent.isEmpty());
++            fixture.channels("minecraft:register");
++            assertEquals(List.of(first, other), fixture.nativeUpdates());
++            final var capability = fixture.sent.stream().filter(packet -> packet.getPacketType() == ClientboundPackets26_3.CUSTOM_PAYLOAD
++                    && packet.get(Types.STRING, 0).equals("minecraft:register")
++                    && new String(packet.get(Types.REMAINING_BYTES, 0), StandardCharsets.UTF_8).equals(NativeFurnaceOptions.CHANNEL)).count();
++            assertEquals(1, capability);
++            fixture.sent.clear();
++            fixture.channels("minecraft:unregister");
++            assertFalse(fixture.channels.hasChannel(NativeFurnaceOptions.CHANNEL));
++            fixture.preferences.sendNativeSnapshot(fixture.user);
++            fixture.nativeInput(new FurnaceOptions(2, 2, true, 2));
++            assertNull(fixture.preferences.options(2));
++            assertTrue(fixture.nativeUpdates().isEmpty());
++            assertEquals(List.of(first, other), fixture.preferences.snapshot());
++            fixture.channels("minecraft:register");
++            assertEquals(List.of(first, other), fixture.nativeUpdates());
++        }
++    }
++
++    @Test
++    void nativeChangesForwardAllFieldsAndSynchronizeJavaWithoutResettingOtherBooks() throws Exception {
++        try (var fixture = new Fixture()) {
++            fixture.channels.addChannels(List.of(NativeFurnaceOptions.CHANNEL));
++            fixture.preferences.changeJavaBook(0, true, true);
++            fixture.preferences.apply(new FurnaceOptions(3, 1, true, 1));
++            final var change = new FurnaceOptions(2, 3, false, 2);
++            fixture.nativeInput(change);
++            assertEquals(change, fixture.preferences.options(2));
++            final var outbound = fixture.sent.stream().filter(packet -> packet.getPacketType() == ServerboundBedrockPackets.SET_PLAYER_FURNACE_OPTIONS).toList();
++            assertEquals(1, outbound.size());
++            assertEquals(change, outbound.getFirst().get(BedrockTypes.FURNACE_OPTIONS, 0));
++            final var javaSettings = fixture.sent.stream().filter(packet -> packet.getPacketType() == ClientboundPackets26_3.RECIPE_BOOK_SETTINGS).findFirst().orElseThrow();
++            final boolean[] settings = new boolean[8];
++            for (int index = 0; index < settings.length; index++) {
++                settings[index] = javaSettings.get(Types.BOOLEAN, index);
++            }
++            assertArrayEquals(new boolean[]{true, true, false, false, true, false, false, true}, settings);
++            assertEquals(List.of(change), fixture.nativeUpdates());
++            fixture.sent.clear();
++            final var unknown = new FurnaceOptions(255, Integer.MIN_VALUE, true, Integer.MAX_VALUE);
++            fixture.nativeInput(unknown);
++            assertEquals(unknown, fixture.preferences.options(255));
++            assertEquals(List.of(unknown), fixture.nativeUpdates());
++            assertEquals(2, fixture.sent.size());
++        }
++    }
++
++    @Test
++    void nativeStateTracksServerAndJavaChangesWithoutLosingOpaqueValuesOrTabChoices() {
++        try (var fixture = new Fixture()) {
++            fixture.channels.addChannels(List.of(NativeFurnaceOptions.CHANNEL));
++            final var initial = new FurnaceOptions(1, 4, true, 2);
++            final var server = new PacketWrapperImpl(ClientboundPackets26_3.RECIPE_BOOK_SETTINGS, null, fixture.user);
++            server.write(BedrockTypes.FURNACE_OPTIONS, initial);
++            server.resetReader();
++            InventoryPackets.handleFurnaceOptions(server);
++            assertEquals(List.of(initial), fixture.nativeUpdates());
++            final var client = new PacketWrapperImpl(ServerboundBedrockPackets.SET_PLAYER_FURNACE_OPTIONS, null, fixture.user);
++            client.write(Types.VAR_INT, 1);
++            client.write(Types.BOOLEAN, false);
++            client.write(Types.BOOLEAN, false);
++            client.resetReader();
++            InventoryPackets.handleJavaRecipeBookSettings(client);
++            final var changed = new FurnaceOptions(1, 4, false, 1);
++            assertEquals(List.of(initial, changed), fixture.nativeUpdates());
++            assertEquals(changed, client.get(BedrockTypes.FURNACE_OPTIONS, 0));
++            final var opaque = new FurnaceOptions(255, -8, true, -4);
++            final var unknown = new PacketWrapperImpl(ClientboundPackets26_3.RECIPE_BOOK_SETTINGS, null, fixture.user);
++            unknown.write(BedrockTypes.FURNACE_OPTIONS, opaque);
++            unknown.resetReader();
++            InventoryPackets.handleFurnaceOptions(unknown);
++            assertTrue(unknown.isCancelled());
++            assertEquals(List.of(initial, changed, opaque), fixture.nativeUpdates());
++        }
++    }
++
++    @Test
++    void configurationAndMalformedEnvelopesNeverMutatePreferencesOrForwardRequests() throws Exception {
++        try (var fixture = new Fixture()) {
++            fixture.channels.addChannels(List.of(NativeFurnaceOptions.CHANNEL));
++            when(fixture.info.getClientState()).thenReturn(State.CONFIGURATION);
++            fixture.preferences.sendNativeSnapshot(fixture.user);
++            fixture.nativeInput(new FurnaceOptions(1, 2, true, 2));
++            assertTrue(fixture.sent.isEmpty());
++            assertTrue(fixture.preferences.snapshot().isEmpty());
++            when(fixture.info.getClientState()).thenReturn(State.PLAY);
++            final var buffer = Unpooled.buffer();
++            try {
++                Types.STRING.write(buffer, NativeFurnaceOptions.CHANNEL);
++                NativeFurnaceOptions.TYPE.write(buffer, new FurnaceOptions(1, 2, true, 2));
++                buffer.writeByte(0);
++                final var packet = new PacketWrapperImpl(ClientboundPackets26_3.CUSTOM_PAYLOAD, buffer, fixture.user);
++                MultiStatePackets.CUSTOM_PAYLOAD_HANDLER.handle(packet);
++                assertTrue(packet.isCancelled());
++                assertTrue(fixture.sent.isEmpty());
++                assertTrue(fixture.preferences.snapshot().isEmpty());
++            } finally {
++                buffer.release();
++            }
++        }
++    }
++
++    private static final class Fixture implements AutoCloseable {
++        private final UserConnection user = mock(UserConnection.class);
++        private final ProtocolInfo info = mock(ProtocolInfo.class);
++        private final ChannelStorage channels = new ChannelStorage();
++        private final FurnaceOptionsStorage preferences = new FurnaceOptionsStorage();
++        private final List<PacketWrapper> sent = new ArrayList<>();
++        private final MockedStatic<PacketWrapper> factory = mockStatic(PacketWrapper.class);
++
++        private Fixture() {
++            when(this.user.getProtocolInfo()).thenReturn(this.info);
++            when(this.info.getClientState()).thenReturn(State.PLAY);
++            when(this.user.get(ChannelStorage.class)).thenReturn(this.channels);
++            when(this.user.get(FurnaceOptionsStorage.class)).thenReturn(this.preferences);
++            when(this.user.has(FurnaceOptionsStorage.class)).thenReturn(true);
++            when(this.user.get(NativeSkinStorage.class)).thenReturn(mock(NativeSkinStorage.class));
++            when(this.user.get(PlayerInputStorage.class)).thenReturn(mock(PlayerInputStorage.class));
++            when(this.user.get(HudVisibilityStorage.class)).thenReturn(mock(HudVisibilityStorage.class));
++            when(this.user.get(CameraEffectsStorage.class)).thenReturn(mock(CameraEffectsStorage.class));
++            this.factory.when(() -> PacketWrapper.create(any(PacketType.class), eq(this.user))).thenAnswer(call -> {
++                final var packet = spy(new PacketWrapperImpl(call.getArgument(0, PacketType.class), null, this.user));
++                doAnswer(send -> {
++                    this.sent.add(packet);
++                    return null;
++                }).when(packet).send(BedrockProtocol.class);
++                doAnswer(send -> {
++                    this.sent.add(packet);
++                    return null;
++                }).when(packet).sendToServer(BedrockProtocol.class);
++                return packet;
++            });
++        }
++
++        private List<FurnaceOptions> nativeUpdates() {
++            return this.sent.stream().filter(packet -> packet.getPacketType() == ClientboundPackets26_3.CUSTOM_PAYLOAD
++                    && packet.get(Types.STRING, 0).equals(NativeFurnaceOptions.CHANNEL))
++                    .map(packet -> packet.get(NativeFurnaceOptions.TYPE, 0)).toList();
++        }
++
++        private void nativeInput(final FurnaceOptions value) throws Exception {
++            final var buffer = Unpooled.buffer();
++            try {
++                Types.STRING.write(buffer, NativeFurnaceOptions.CHANNEL);
++                NativeFurnaceOptions.TYPE.write(buffer, value);
++                final var packet = new PacketWrapperImpl(ClientboundPackets26_3.CUSTOM_PAYLOAD, buffer, this.user);
++                MultiStatePackets.CUSTOM_PAYLOAD_HANDLER.handle(packet);
++                assertTrue(packet.isCancelled());
++            } finally {
++                buffer.release();
++            }
++        }
++
++        private void channels(final String operation) throws Exception {
++            final var buffer = Unpooled.buffer();
++            try {
++                Types.STRING.write(buffer, operation);
++                buffer.writeBytes(NativeFurnaceOptions.CHANNEL.getBytes(StandardCharsets.UTF_8));
++                MultiStatePackets.CUSTOM_PAYLOAD_HANDLER.handle(new PacketWrapperImpl(ClientboundPackets26_3.CUSTOM_PAYLOAD, buffer, this.user));
++            } finally {
++                buffer.release();
++            }
++        }
++
++        @Override
++        public void close() {
++            this.factory.close();
 +        }
 +    }
 +
