@@ -1,4 +1,4 @@
-From cecbcf5a346266247ea241f9ff47bb40c611906b Mon Sep 17 00:00:00 2001
+From 681df5385623f07eca8a54492d7c48dbf51ef223 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:42:36 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -319,6 +319,20 @@ and color without duplicating an explicitly listed track. Preserve the
 original animation graph and source-pixel endpoints for the native add-on.
 The pinned UI bundle contains 34 flip_book tracks and one UV track; many
 flipbooks enter through a control UV property rather than its anims list.
+
+Resolve Aseprite texture sidecars into atlas dimensions and complete frame
+sequences before transporting authored UI programs. Preserve native image
+metadata precedence over ordinary base-size and nine-slice properties.
+The target requires meta.image and numeric atlas/frame fields, ignores trim
+and rotation flags, and discards the whole sequence after an invalid frame.
+Missing or empty frames retain the authored atlas dimensions.
+
+Pinned Bedrock 1.26.51.1 build 51061372 metadata loader 140406370, executed
+without instruction changes, establishes thirteen valid and invalid parser
+cases. Production output matches every case. Targeted tests also verify
+program export/replay, ignored flags and malformed metadata. This supplies
+the add-on animation path without a local game installation or extra asset
+fetches. Complete UI-family and direct/proxy visual verification remains.
 ---
  build.gradle                                  |   11 +
  .../api/model/NativeContainerAction.java      |   93 ++
@@ -335,11 +349,12 @@ flipbooks enter through a control UV property rather than its anims list.
  .../api/resourcepack/ui/HudFactoryUi.java     |  127 ++
  .../api/resourcepack/ui/HudRootUi.java        |   35 +
  .../api/resourcepack/ui/HudTitleUi.java       |   28 +
- .../api/resourcepack/ui/JsonUiProgram.java    | 1306 +++++++++++++++++
+ .../api/resourcepack/ui/JsonUiProgram.java    | 1311 +++++++++++++++++
  .../api/resourcepack/ui/NpcDialogueUi.java    |  311 ++++
  .../resourcepack/ui/NpcEditorBindings.java    |  324 ++++
  .../api/resourcepack/ui/NpcEditorState.java   |  322 ++++
  .../api/resourcepack/ui/ServerFormUi.java     |  253 ++++
+ .../resourcepack/ui/UiAsepriteMetadata.java   |   95 ++
  .../api/resourcepack/ui/UiBindings.java       |   40 +
  .../api/resourcepack/ui/UiExpression.java     |  304 ++++
  .../api/resourcepack/ui/UiFonts.java          |  241 +++
@@ -377,6 +392,7 @@ flipbooks enter through a control UV property rather than its anims list.
  .../ui/ServerCustomFormUiTest.java            |  146 ++
  .../ui/ServerFormUiSliderStateTest.java       |  126 ++
  .../api/resourcepack/ui/ServerFormUiTest.java |  335 +++++
+ .../ui/UiAsepriteMetadataTest.java            |  112 ++
  .../api/resourcepack/ui/UiExpressionTest.java |   56 +
  .../api/resourcepack/ui/UiFontsTest.java      |  187 +++
  .../api/resourcepack/ui/UiTexturesTest.java   |  175 +++
@@ -385,7 +401,7 @@ flipbooks enter through a control UV property rather than its anims list.
  .../protocol/packet/NativeHudPacketTest.java  |  160 ++
  .../packet/NpcDialoguePacketTest.java         |  301 +++-
  .../storage/NativeContainerUiStateTest.java   |   57 +
- 65 files changed, 9565 insertions(+), 318 deletions(-)
+ 67 files changed, 9777 insertions(+), 318 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerStatus.java
@@ -404,6 +420,7 @@ flipbooks enter through a control UV property rather than its anims list.
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/NpcEditorBindings.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/NpcEditorState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiAsepriteMetadata.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBindings.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpression.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFonts.java
@@ -429,6 +446,7 @@ flipbooks enter through a control UV property rather than its anims list.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerCustomFormUiTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiSliderStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiAsepriteMetadataTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpressionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFontsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
@@ -2001,10 +2019,10 @@ index 000000000..4f11b0d3f
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 000000000..deb98d0ab
+index 000000000..375426710
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,1306 @@
+@@ -0,0 +1,1311 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2942,9 +2960,14 @@ index 000000000..deb98d0ab
 +                    if (metadata != null) {
 +                        final JsonElement parsed = JsonParser.parseString(new String(metadata, StandardCharsets.UTF_8));
 +                        if (parsed.isJsonObject()) {
-+                            for (final String property : List.of("nineslice_size", "base_size")) {
-+                                if (parsed.getAsJsonObject().has(property)) {
-+                                    node.add(property, parsed.getAsJsonObject().get(property));
++                            final JsonObject properties = parsed.getAsJsonObject();
++                            if (properties.has("meta") && !properties.get("meta").isJsonNull()) {
++                                node.add("aseprite", UiAsepriteMetadata.resolve(properties));
++                            } else {
++                                for (final String property : List.of("nineslice_size", "base_size")) {
++                                    if (properties.has(property)) {
++                                        node.add(property, properties.get(property));
++                                    }
 +                                }
 +                            }
 +                        }
@@ -4543,6 +4566,107 @@ index 000000000..d2ec92159
 +    }
 +
 +    public record Presentation(String title, String content, Map<Integer, String> buttons) { }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiAsepriteMetadata.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiAsepriteMetadata.java
+new file mode 100644
+index 000000000..9c8d204ff
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiAsepriteMetadata.java
+@@ -0,0 +1,95 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++
++/** Extracts the atlas fields consumed by the target native image metadata loader. */
++final class UiAsepriteMetadata {
++
++    private UiAsepriteMetadata() {
++    }
++
++    static JsonObject resolve(final JsonObject texture) {
++        final JsonObject empty = metadata(0, 0, new JsonArray());
++        try {
++            final JsonObject meta = object(texture.get("meta"));
++            final JsonElement image = meta.get("image");
++            if (image == null || !image.isJsonPrimitive() || !image.getAsJsonPrimitive().isString()) {
++                return empty;
++            }
++            final JsonObject size = object(meta.get("size"));
++            final float width = number(size.get("w"));
++            final float height = number(size.get("h"));
++            final JsonArray frames = new JsonArray();
++            final JsonElement sequence = texture.get("frames");
++            if (sequence != null && !sequence.isJsonNull()) {
++                if (!sequence.isJsonArray()) {
++                    return empty;
++                }
++                for (final JsonElement value : sequence.getAsJsonArray()) {
++                    final JsonObject frame = object(value);
++                    final JsonObject origin = object(frame.get("frame"));
++                    final int x = integer(origin.get("x"));
++                    final int y = integer(origin.get("y"));
++                    final int duration = integer(frame.get("duration"));
++                    if (x < 0 || y < 0 || duration <= 0) {
++                        return empty;
++                    }
++                    final JsonArray entry = new JsonArray();
++                    entry.add(x);
++                    entry.add(y);
++                    entry.add(duration);
++                    frames.add(entry);
++                }
++            }
++            return metadata(width, height, frames);
++        } catch (final IllegalArgumentException | IllegalStateException malformed) {
++            // Native loading discards the whole sequence when one required frame field is invalid.
++            return empty;
++        }
++    }
++
++    private static JsonObject metadata(final float width, final float height, final JsonArray frames) {
++        final JsonArray size = new JsonArray();
++        size.add(width);
++        size.add(height);
++        final JsonObject result = new JsonObject();
++        result.add("size", size);
++        result.add("frames", frames);
++        return result;
++    }
++
++    private static JsonObject object(final JsonElement value) {
++        if (value == null || !value.isJsonObject()) {
++            throw new IllegalArgumentException("Invalid native atlas object");
++        }
++        return value.getAsJsonObject();
++    }
++
++    private static float number(final JsonElement value) {
++        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
++            throw new IllegalArgumentException("Invalid native atlas number");
++        }
++        final float result = value.getAsFloat();
++        if (!Float.isFinite(result)) {
++            throw new IllegalArgumentException("Non-finite native atlas number");
++        }
++        return result;
++    }
++
++    private static int integer(final JsonElement value) {
++        number(value);
++        final double result = value.getAsDouble();
++        if (result < Integer.MIN_VALUE || result > Integer.MAX_VALUE) {
++            throw new IllegalArgumentException("Native atlas integer exceeds range");
++        }
++        return (int) result;
++    }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBindings.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBindings.java
@@ -9526,6 +9650,124 @@ index 000000000..38d126c00
 +        assertEquals(160, tooltip.get("hover_text_max_width").getAsInt());
 +        assertFalse(tooltip.has("action"));
 +        assertEquals(java.util.Set.of(0), ServerFormUi.presentation(scene).buttons().keySet());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiAsepriteMetadataTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiAsepriteMetadataTest.java
+new file mode 100644
+index 000000000..f191690a6
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiAsepriteMetadataTest.java
+@@ -0,0 +1,112 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.Map;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class UiAsepriteMetadataTest {
++
++    @Test
++    void retainsNativeOriginsDurationsAndAtlasDimensionsThroughProgramTransport() {
++        final String path = "textures/tips/example";
++        final var metadata = metadata();
++        metadata.addProperty("base_size", 999);
++        metadata.addProperty("nineslice_size", 7);
++        final var program = new JsonUiProgram(List.of(Map.of(path + ".json", metadata.toString().getBytes(StandardCharsets.UTF_8),
++                "ui/server_form.json", """
++                        {"namespace":"server_form","frames":{"anim_type":"aseprite_flip_book"},
++                         "main_screen_content":{"type":"panel","controls":[
++                          {"image":{"type":"image","texture":"textures/tips/example","uv":"@server_form.frames","uv_size":[74,64]}},
++                          {"button":{"type":"button","collection_name":"form_buttons","collection_index":0,"$pressed_button_name":"button.form_button_click"}}]}}
++                        """.getBytes(StandardCharsets.UTF_8))));
++        final var form = JsonParser.parseString("{\"type\":\"form\",\"title\":\"\",\"elements\":[{\"type\":\"button\",\"text\":\"\"}]}").getAsJsonObject();
++        final var scene = new ServerFormUi(program).resolve(form);
++        assertNotNull(scene);
++        final var transported = ServerFormUi.fromProgram(program.export(java.util.Set.of("server_form.main_screen_content", "server_form.frames"), form)).resolve(form);
++        assertEquals(scene, transported);
++        final var root = scene.getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals(UiAsepriteMetadata.resolve(metadata), root.getAsJsonObject("aseprite"));
++        assertFalse(root.has("base_size"));
++        assertFalse(root.has("nineslice_size"));
++        final var parsed = root.getAsJsonObject("aseprite");
++        assertEquals(222, parsed.getAsJsonArray("size").get(0).getAsFloat());
++        assertEquals(2, parsed.getAsJsonArray("frames").size());
++        assertEquals(84, parsed.getAsJsonArray("frames").get(1).getAsJsonArray().get(0).getAsInt());
++        assertEquals(200, parsed.getAsJsonArray("frames").get(1).getAsJsonArray().get(2).getAsInt());
++    }
++
++    @Test
++    void rejectsAnEntireSequenceRatherThanKeepingPartialFrames() {
++        for (int field = 0; field < 3; field++) {
++            final var input = metadata();
++            final var frame = input.getAsJsonArray("frames").get(1).getAsJsonObject();
++            if (field == 0) {
++                frame.addProperty("duration", 0);
++            } else {
++                frame.getAsJsonObject("frame").addProperty(field == 1 ? "x" : "y", -1);
++            }
++            final var parsed = UiAsepriteMetadata.resolve(input);
++            assertEquals(0, parsed.getAsJsonArray("size").get(0).getAsFloat());
++            assertTrue(parsed.getAsJsonArray("frames").isEmpty());
++        }
++        for (final var malformed : List.of(JsonParser.parseString("{}"), JsonParser.parseString("1"), JsonParser.parseString("null"))) {
++            final var input = metadata();
++            input.add("meta", malformed);
++            assertTrue(UiAsepriteMetadata.resolve(input).getAsJsonArray("frames").isEmpty());
++        }
++        final var input = metadata();
++        input.getAsJsonObject("meta").remove("image");
++        assertTrue(UiAsepriteMetadata.resolve(input).getAsJsonArray("frames").isEmpty());
++    }
++
++    @Test
++    void emptySequencesRetainDimensionsAndFlagsDoNotChangeNativeOrigins() {
++        final var input = metadata();
++        final var frame = input.getAsJsonArray("frames").get(0).getAsJsonObject();
++        final var expected = UiAsepriteMetadata.resolve(input);
++        frame.addProperty("rotated", true);
++        frame.addProperty("trimmed", true);
++        frame.add("spriteSourceSize", JsonParser.parseString("{\"x\":123,\"y\":456}"));
++        frame.getAsJsonObject("frame").addProperty("w", 17);
++        frame.getAsJsonObject("frame").addProperty("h", 19);
++        assertEquals(expected, UiAsepriteMetadata.resolve(input));
++        input.remove("frames");
++        final var parsed = UiAsepriteMetadata.resolve(input);
++        assertEquals(222, parsed.getAsJsonArray("size").get(0).getAsFloat());
++        assertTrue(parsed.getAsJsonArray("frames").isEmpty());
++    }
++
++    private static JsonObject metadata() {
++        final var metadata = new JsonObject();
++        final var meta = new JsonObject();
++        meta.addProperty("image", "example.png");
++        final var size = new JsonObject();
++        size.addProperty("w", 222);
++        size.addProperty("h", 64);
++        meta.add("size", size);
++        metadata.add("meta", meta);
++        final var frames = new JsonArray();
++        for (int index = 0; index < 2; index++) {
++            final var frame = new JsonObject();
++            final var origin = new JsonObject();
++            origin.addProperty("x", 10 + 74 * index);
++            origin.addProperty("y", 0);
++            frame.add("frame", origin);
++            frame.addProperty("duration", index == 0 ? 500 : 200);
++            frames.add(frame);
++        }
++        metadata.add("frames", frames);
++        return metadata;
 +    }
 +
 +}
