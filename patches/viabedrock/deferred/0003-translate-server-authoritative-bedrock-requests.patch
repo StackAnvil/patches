@@ -1,4 +1,4 @@
-From 863b55ccd60c8fee44fedb6ff56ee139b7f51f0f Mon Sep 17 00:00:00 2001
+From a06c8327dddcd0e88a584adbedbe3c89e46188a2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:56:10 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -285,10 +285,24 @@ Preserve each physical storage variant's default title and localize native
 labels independently of raw authored title conditions. The licensed pinned
 1.26.51.1 language asset defines container.barrel, container.shulkerbox and
 container.enderchest; custom names retain their original localization policy.
+
+Retain ContainerSetData properties on their genuine container before
+narrowing them for Java compatibility. The Mojang 1.26.51-beta.1 schema
+for protocol 2193 encodes both property ID and value as signed compressed
+int32 fields. Preserve unknown IDs, full values and absent versus zero
+without assigning uncertain furnace properties a new meaning.
+
+Keep property revisions separate from item revisions. Rejected item
+requests restore item snapshots without rolling back newer server
+progress, and reopening a reused window ID starts with fresh properties.
+Packet-handler tests cover signed boundaries, Java projection, unknown
+properties and closing; snapshot and rejection tests cover independent
+state. Native cooking scenes and direct/ViaProxy native comparisons
+remain incomplete; this state retention does not establish UI parity.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   65 +-
- .../api/model/container/Container.java        | 1045 +++++++++++-
+ .../api/model/container/Container.java        | 1072 +++++++++++-
  .../model/container/ContainerOpenContext.java |   19 +
  .../api/model/container/HorseContainer.java   |  239 +++
  .../NativeContainerActionBackend.java         |  142 ++
@@ -322,7 +336,7 @@ container.enderchest; custom names retain their original localization policy.
  .../generated/bedrock/CustomBlockTags.java    |    5 +-
  .../protocol/packet/ClientPlayerPackets.java  |   60 +-
  .../protocol/packet/InteractionPackets.java   |   49 +-
- .../protocol/packet/InventoryPackets.java     | 1469 +++++++++++++----
+ .../protocol/packet/InventoryPackets.java     | 1472 +++++++++++++----
  .../protocol/packet/MultiStatePackets.java    |   32 +
  .../protocol/packet/WorldPackets.java         |   12 +
  .../protocol/rewriter/ItemRewriter.java       |  247 ++-
@@ -337,7 +351,7 @@ container.enderchest; custom names retain their original localization policy.
  .../protocol/types/item/BedrockItemType.java  |   12 +-
  .../data/bedrock/item_stack_sizes.json        |  267 +++
  .../viabedrock/data/custom/block_tags.json    |   16 +-
- .../api/model/container/ContainerTest.java    |  179 ++
+ .../api/model/container/ContainerTest.java    |  198 +++
  .../model/container/HorseContainerTest.java   |  187 +++
  .../NativeContainerActionSessionTest.java     |  115 ++
  .../NativeContainerAutoPlacementTest.java     |  139 ++
@@ -348,6 +362,7 @@ container.enderchest; custom names retain their original localization policy.
  .../api/util/ContainerContentPacketTest.java  |   95 ++
  .../packet/BundleSelectionPacketTest.java     |  225 +++
  .../packet/ClientPlayerPacketsTest.java       |   30 +
+ .../packet/ContainerDataPacketTest.java       |  119 ++
  .../packet/ContainerLifecyclePacketTest.java  |  395 +++++
  .../protocol/packet/DropTransactionTest.java  |   46 +
  .../packet/HotbarSelectionPacketTest.java     |  155 ++
@@ -364,10 +379,10 @@ container.enderchest; custom names retain their original localization policy.
  .../InventoryRequestTrackerQueueTest.java     |  136 ++
  .../storage/InventoryRequestTrackerTest.java  |  385 +++++
  .../storage/InventoryTrackerTest.java         |  124 ++
- .../NativeAutoPlacementRecoveryTest.java      |  116 ++
+ .../NativeAutoPlacementRecoveryTest.java      |  120 ++
  .../NativeContainerActionBackendTest.java     |   95 ++
  .../storage/StonecutterRecipePacketTest.java  |   53 +
- 81 files changed, 13185 insertions(+), 805 deletions(-)
+ 82 files changed, 13357 insertions(+), 805 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionBackend.java
@@ -405,6 +420,7 @@ container.enderchest; custom names retain their original localization policy.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/ContainerContentPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/BundleSelectionPacketTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ContainerDataPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ContainerLifecyclePacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/DropTransactionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/HotbarSelectionPacketTest.java
@@ -520,10 +536,10 @@ index a37f1b071..d535541bf 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-index 26f172417..ba45d4709 100644
+index 26f172417..89c73cda7 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-@@ -21,13 +21,34 @@ import com.viaversion.viaversion.api.connection.UserConnection;
+@@ -21,13 +21,36 @@ import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.minecraft.BlockPosition;
  import com.viaversion.viaversion.api.minecraft.item.Item;
  import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
@@ -552,18 +568,22 @@ index 26f172417..ba45d4709 100644
 +import java.util.ArrayList;
  import java.util.Arrays;
 +import java.util.Collections;
++import java.util.HashMap;
 +import java.util.IdentityHashMap;
 +import java.util.LinkedHashSet;
 +import java.util.List;
++import java.util.Map;
  import java.util.Set;
  import java.util.logging.Level;
  
-@@ -40,8 +61,18 @@ public abstract class Container {
+@@ -40,8 +63,20 @@ public abstract class Container {
      protected final BlockPosition position;
      protected final BedrockItem[] items;
      protected final Set<String> validBlockTags;
 +    private BlockBinding blockBinding;
 +    private long serverRevision;
++    private final Map<Integer, Integer> data = new HashMap<>();
++    private long serverDataRevision;
 +    private QuickCraftState quickCraftState;
  
 -    public Container(final UserConnection user, final byte containerId, final ContainerType type, final TextComponent title, final BlockPosition position, final int size, final String... validBlockTags) {
@@ -578,7 +598,7 @@ index 26f172417..ba45d4709 100644
          this.user = user;
          this.containerId = containerId;
          this.type = type;
-@@ -49,9 +80,17 @@ public abstract class Container {
+@@ -49,9 +84,17 @@ public abstract class Container {
          this.position = position;
          this.items = BedrockItem.emptyArray(size);
          this.validBlockTags = Set.of(validBlockTags);
@@ -597,7 +617,7 @@ index 26f172417..ba45d4709 100644
          this.user = user;
          this.containerId = containerId;
          this.type = type;
-@@ -59,9 +98,780 @@ public abstract class Container {
+@@ -59,9 +102,780 @@ public abstract class Container {
          this.position = position;
          this.items = items;
          this.validBlockTags = validBlockTags;
@@ -849,9 +869,8 @@ index 26f172417..ba45d4709 100644
 +        targetContainer.setItem(targetSlot, item);
 +
 +        return swapAction(container, sourceSlot, item, targetContainer, targetSlot, targetItem);
-     }
- 
--    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
++    }
++
 +    static ItemStackRequestAction swapAction(final Container container, final int sourceSlot,
 +                                             final BedrockItem item, final Container targetContainer,
 +                                             final int targetSlot, final BedrockItem targetItem) {
@@ -1181,8 +1200,9 @@ index 26f172417..ba45d4709 100644
 +                amountToDrop,
 +                inventoryTracker.getHudContainer().requestSlotInfo(0, cursorItem.netId()),
 +                false);
-+    }
-+
+     }
+ 
+-    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
 +    protected ItemStackRequestAction dropItem(
 +            final Container container, final int bedrockSlot, final int amountToDrop) {
 +        final BedrockItem item = container.getItem(bedrockSlot);
@@ -1379,7 +1399,7 @@ index 26f172417..ba45d4709 100644
          return false;
      }
  
-@@ -76,11 +886,23 @@ public abstract class Container {
+@@ -76,11 +890,23 @@ public abstract class Container {
      }
  
      public Item[] getJavaItems() {
@@ -1405,7 +1425,7 @@ index 26f172417..ba45d4709 100644
      }
  
      public BedrockItem[] getItems() {
-@@ -88,29 +910,152 @@ public abstract class Container {
+@@ -88,29 +914,175 @@ public abstract class Container {
      }
  
      public boolean setItem(final int slot, final BedrockItem item) {
@@ -1546,6 +1566,8 @@ index 26f172417..ba45d4709 100644
 +                    }
 +                };
 +        snapshot.serverRevision = this.serverRevision;
++        snapshot.data.putAll(this.data);
++        snapshot.serverDataRevision = this.serverDataRevision;
 +        snapshot.blockBinding = this.blockBinding;
 +        return snapshot;
 +    }
@@ -1558,6 +1580,27 @@ index 26f172417..ba45d4709 100644
 +        return this.serverRevision;
 +    }
 +
++    public boolean setData(final int id, final int value) {
++        final Integer previous = this.data.put(id, value);
++        if (previous != null && previous == value) {
++            return false;
++        }
++        this.serverDataRevision++;
++        return true;
++    }
++
++    public Integer getData(final int id) {
++        return this.data.get(id);
++    }
++
++    public Map<Integer, Integer> getData() {
++        return Map.copyOf(this.data);
++    }
++
++    public long serverDataRevision() {
++        return this.serverDataRevision;
++    }
++
 +    public short translateContainerData(final int containerData) {
 +        return -1;
 +    }
@@ -1565,7 +1608,7 @@ index 26f172417..ba45d4709 100644
      public int javaSlot(final int slot) {
          return slot;
      }
-@@ -123,6 +1068,10 @@ public abstract class Container {
+@@ -123,6 +1095,10 @@ public abstract class Container {
          return this.items.length;
      }
  
@@ -1576,7 +1619,7 @@ index 26f172417..ba45d4709 100644
      public byte containerId() {
          return this.containerId;
      }
-@@ -139,6 +1088,28 @@ public abstract class Container {
+@@ -139,6 +1115,28 @@ public abstract class Container {
          return this.position;
      }
  
@@ -1605,7 +1648,7 @@ index 26f172417..ba45d4709 100644
      public boolean isValidBlockTag(final String tag) {
          if (tag == null) {
              return false;
-@@ -147,7 +1118,55 @@ public abstract class Container {
+@@ -147,7 +1145,55 @@ public abstract class Container {
          }
      }
  
@@ -7436,7 +7479,7 @@ index 1db7752e0..2ae3ace9f 100644
  
      public static void sendUseItemOnBlock(final UserConnection user, final BlockPosition position, final int faceInt,
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index b26964536..d60a3568c 100644
+index b26964536..080912342 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -21,20 +21,23 @@ import com.viaversion.viaversion.libs.gson.JsonParser;
@@ -7520,7 +7563,7 @@ index b26964536..d60a3568c 100644
  
  import java.util.ArrayList;
  import java.util.List;
-@@ -96,11 +117,16 @@ public final class InventoryPackets {
+@@ -96,11 +117,39 @@ public final class InventoryPackets {
  
      private static final int DIALOG_BUTTON_WIDTH = 200;
      private static final int DIALOG_FAKE_BUTTON_WIDTH = 300;
@@ -7528,6 +7571,29 @@ index b26964536..d60a3568c 100644
 +    private static final String DIALOG_FAKE_BUTTON_TEXT =
 +            "This is not actually a button, but has to be one because dialogs don't support adding"
 +                + " text only elements. Clicking it has the same effect as closing the dialog.";
++
++    static void handleContainerData(final PacketWrapper wrapper) {
++        final byte containerId = wrapper.read(Types.BYTE);
++        final int id = wrapper.read(BedrockTypes.VAR_INT);
++        final int value = wrapper.read(BedrockTypes.VAR_INT);
++        final Container container = wrapper.user().get(InventoryTracker.class)
++                .getContainerClientbound(containerId, null, null);
++        if (container == null) {
++            wrapper.cancel();
++            return;
++        }
++        // Preserve the native int32 values before the Java compatibility projection.
++        // Progress updates must not change the item revision used for request recovery.
++        container.setData(id, value);
++        final short javaId = container.translateContainerData(id);
++        if (javaId < 0) {
++            wrapper.cancel();
++            return;
++        }
++        wrapper.write(Types.VAR_INT, Byte.toUnsignedInt(container.javaContainerId()));
++        wrapper.write(Types.SHORT, javaId);
++        wrapper.write(Types.SHORT, (short) value);
++    }
  
      static void handleContainerClose(final PacketWrapper wrapper) {
 -        final ContainerType containerType = ContainerType.getByValue(wrapper.read(Types.BYTE)); // type
@@ -7540,7 +7606,7 @@ index b26964536..d60a3568c 100644
  
          final CommandBlockSession command = wrapper.user().get(CommandBlockSession.class);
          if (command != null && command.matches((byte) (int) wrapper.get(Types.VAR_INT, 0))) {
-@@ -110,20 +136,29 @@ public final class InventoryPackets {
+@@ -110,20 +159,29 @@ public final class InventoryPackets {
              return;
          }
  
@@ -7574,7 +7640,7 @@ index b26964536..d60a3568c 100644
              wrapper.cancel();
          }
      }
-@@ -201,329 +236,854 @@ public final class InventoryPackets {
+@@ -201,329 +259,834 @@ public final class InventoryPackets {
                      wrapper.write(Types.STRING, ItemCooldown.javaGroup(wrapper.read(BedrockTypes.STRING)));
                      wrapper.write(Types.VAR_INT, Math.max(0, wrapper.read(BedrockTypes.VAR_INT)));
                  });
@@ -8119,27 +8185,7 @@ index b26964536..d60a3568c 100644
 +        protocol.registerClientbound(
 +                ClientboundBedrockPackets.CONTAINER_SET_DATA,
 +                ClientboundPackets26_3.CONTAINER_SET_DATA,
-+                wrapper -> {
-+                    final byte containerId = wrapper.read(Types.BYTE);
-+                    final int id = wrapper.read(BedrockTypes.VAR_INT);
-+                    final int value = wrapper.read(BedrockTypes.VAR_INT);
-+                    final Container container =
-+                            wrapper.user()
-+                                    .get(InventoryTracker.class)
-+                                    .getContainerClientbound(containerId, null, null);
-+                    if (container == null) {
-+                        wrapper.cancel();
-+                        return;
-+                    }
-+                    final short javaId = container.translateContainerData(id);
-+                    if (javaId < 0) {
-+                        wrapper.cancel();
-+                        return;
-+                    }
-+                    wrapper.write(Types.VAR_INT, Byte.toUnsignedInt(container.javaContainerId()));
-+                    wrapper.write(Types.SHORT, javaId);
-+                    wrapper.write(Types.SHORT, (short) value);
-+                });
++                InventoryPackets::handleContainerData);
 +        protocol.registerClientbound(
 +                ClientboundBedrockPackets.PLAYER_ENCHANT_OPTIONS,
 +                null,
@@ -8725,7 +8771,7 @@ index b26964536..d60a3568c 100644
          protocol.registerServerbound(
                  ServerboundPackets26_3.EDIT_BOOK,
                  null,
-@@ -574,33 +1134,55 @@ public final class InventoryPackets {
+@@ -574,33 +1137,55 @@ public final class InventoryPackets {
                      updatedTag.put("pages", updatedPages);
                      book.setTag(updatedTag);
                  });
@@ -8803,7 +8849,7 @@ index b26964536..d60a3568c 100644
          if (type == ContainerType.CONTAINER && actor != null) {
              final String filtered = actorTitle(actor, ActorDataIds.FILTERED_NAME);
              final String name = filtered.isEmpty() ? actorTitle(actor, ActorDataIds.NAME) : filtered;
-@@ -612,7 +1194,7 @@ public final class InventoryPackets {
+@@ -612,7 +1197,7 @@ public final class InventoryPackets {
              final String raw = customName.getValue();
              return new ContainerTitle(TextUtil.stringToTextComponent(user.get(ResourcePackStorage.class).getTexts().translate(raw)), raw, false);
          }
@@ -8812,7 +8858,7 @@ index b26964536..d60a3568c 100644
      }
  
      private static String actorTitle(final Entity actor, final ActorDataIds field) {
-@@ -620,23 +1202,55 @@ public final class InventoryPackets {
+@@ -620,23 +1205,55 @@ public final class InventoryPackets {
          return data != null && data.dataType() == EntityDataTypesBedrock.STRING && data.value() instanceof String value ? value : "";
      }
  
@@ -8877,7 +8923,7 @@ index b26964536..d60a3568c 100644
          presentation.send(BedrockProtocol.class);
      }
  
-@@ -930,13 +1544,147 @@ public final class InventoryPackets {
+@@ -930,13 +1547,147 @@ public final class InventoryPackets {
          }
      }
  
@@ -9027,7 +9073,7 @@ index b26964536..d60a3568c 100644
                  for (String line : BedrockTextUtils.split(text, "\n")) {
                      final TextInput textInput = new TextInput(TextUtil.stringToTextComponent(line));
                      textInput.setMaxLength(Integer.MAX_VALUE);
-@@ -944,14 +1692,53 @@ public final class InventoryPackets {
+@@ -944,14 +1695,53 @@ public final class InventoryPackets {
                      dialog.getInputs().add(new Input("dummy", textInput));
                  }
              } else { // VB compatibility
@@ -11570,10 +11616,10 @@ index fbc16b4b2..a02f9294f 100644
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java
 new file mode 100644
-index 000000000..be1b704b4
+index 000000000..b8466b5bf
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,198 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -11604,6 +11650,7 @@ index 000000000..be1b704b4
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +import static org.junit.jupiter.api.Assertions.assertSame;
 +import static org.junit.jupiter.api.Assertions.assertInstanceOf;
++import static org.junit.jupiter.api.Assertions.assertNull;
 +
 +class ContainerTest {
 +
@@ -11735,6 +11782,24 @@ index 000000000..be1b704b4
 +        assertSame(tracker.getHudContainer(), ((Container) player).resolveJavaSlot(tracker, (short) 1).container());
 +        assertSame(tracker.getArmorContainer(), ((Container) player).resolveJavaSlot(tracker, (short) 5).container());
 +        assertSame(tracker.getOffhandContainer(), ((Container) player).resolveJavaSlot(tracker, (short) 45).container());
++    }
++
++    @Test
++    void containerCopiesRetainIndependentDataWithoutChangingItemRevisions() {
++        final SnapshotContainer container = new SnapshotContainer();
++        container.markServerUpdate();
++        container.setData(0, 0);
++        container.setData(-1, Integer.MAX_VALUE);
++        final Container snapshot = container.copy();
++        assertEquals(container.getData(), snapshot.getData());
++        assertEquals(2, snapshot.serverDataRevision());
++        assertEquals(1, snapshot.serverRevision());
++        container.setData(0, Integer.MIN_VALUE);
++        snapshot.setData(7, 42);
++        assertEquals(Integer.valueOf(0), snapshot.getData(0));
++        assertNull(container.getData(7));
++        assertEquals(1, container.serverRevision());
++        assertEquals(3, container.serverDataRevision());
 +    }
 +
 +    private static final class SnapshotContainer extends Container {
@@ -12924,6 +12989,131 @@ index 93bdd824d..0b1b523f7 100644
      @Test
      void paddleInputOnlyLastsForOneAuthInputTick() {
          final ClientPlayerEntity player = player();
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ContainerDataPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ContainerDataPacketTest.java
+new file mode 100644
+index 000000000..2a2bc650b
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ContainerDataPacketTest.java
+@@ -0,0 +1,119 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.remapper.PacketHandler;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.container.block.FurnaceContainer;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.mockito.ArgumentCaptor;
++
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class ContainerDataPacketTest {
++
++    @Test
++    void registeredHandlerRetainsFullSignedValuesBeforeJavaProjection() throws Exception {
++        final BedrockProtocol protocol = mock(BedrockProtocol.class);
++        InventoryPackets.register(protocol);
++        final var handler = ArgumentCaptor.forClass(PacketHandler.class);
++        verify(protocol).registerClientbound(eq(ClientboundBedrockPackets.CONTAINER_SET_DATA),
++                eq(ClientboundPackets26_3.CONTAINER_SET_DATA), handler.capture());
++        final var fixture = new Fixture();
++        final int[] values = {Integer.MIN_VALUE, Integer.MAX_VALUE, Short.MAX_VALUE + 1, 0};
++        final short[] javaProperties = {2, 0, 1, 3};
++        for (int property = 0; property < values.length; property++) {
++            final var packet = fixture.receive(fixture.furnace.containerId(), property, values[property], handler.getValue());
++            assertFalse(packet.isCancelled());
++            assertEquals(5, packet.get(Types.VAR_INT, 0));
++            assertEquals(javaProperties[property], packet.get(Types.SHORT, 0));
++            assertEquals((short) values[property], packet.get(Types.SHORT, 1));
++            assertEquals(Integer.valueOf(values[property]), fixture.furnace.getData(property));
++        }
++        assertEquals(4, fixture.furnace.serverDataRevision());
++        assertEquals(0, fixture.furnace.serverRevision());
++        fixture.receive(fixture.furnace.containerId(), 3, 0, handler.getValue());
++        assertEquals(4, fixture.furnace.serverDataRevision());
++    }
++
++    @Test
++    void unknownPropertiesStayNativeAndDistinguishMissingFromZero() throws Exception {
++        final var fixture = new Fixture();
++        assertNull(fixture.furnace.getData(Integer.MIN_VALUE));
++        assertTrue(fixture.receive((byte) 5, Integer.MIN_VALUE, 0).isCancelled());
++        final Map<Integer, Integer> snapshot = fixture.furnace.getData();
++        assertEquals(Map.of(Integer.MIN_VALUE, 0), snapshot);
++        assertThrows(UnsupportedOperationException.class, () -> snapshot.put(9, 1));
++        assertTrue(fixture.receive((byte) 5, Integer.MIN_VALUE, Integer.MAX_VALUE).isCancelled());
++        assertEquals(Map.of(Integer.MIN_VALUE, 0), snapshot);
++        assertEquals(Integer.valueOf(Integer.MAX_VALUE), fixture.furnace.getData(Integer.MIN_VALUE));
++        assertEquals(2, fixture.furnace.serverDataRevision());
++    }
++
++    @Test
++    void unknownClosedAndReusedContainerIdsCannotShareRetainedProperties() throws Exception {
++        final var fixture = new Fixture();
++        assertTrue(fixture.receive((byte) 6, 0, 9).isCancelled());
++        assertTrue(fixture.furnace.getData().isEmpty());
++        fixture.receive((byte) 5, 0, 7);
++        fixture.inventory.markPendingClose(fixture.furnace);
++        assertTrue(fixture.receive((byte) 5, 0, 8).isCancelled());
++        fixture.inventory.setCurrentContainerClosed(false);
++        assertTrue(fixture.receive((byte) 5, 0, 9).isCancelled());
++        final var reopened = new FurnaceContainer(fixture.user, (byte) 5, null, null);
++        fixture.inventory.setCurrentContainer(reopened);
++        assertTrue(reopened.getData().isEmpty());
++        assertEquals(0, reopened.serverDataRevision());
++        fixture.receive((byte) 5, 0, 10);
++        assertEquals(Integer.valueOf(7), fixture.furnace.getData(0));
++        assertEquals(Integer.valueOf(10), reopened.getData(0));
++    }
++
++    private static final class Fixture {
++        private final UserConnection user = mock(UserConnection.class);
++        private final InventoryTracker inventory = new InventoryTracker(this.user);
++        private final FurnaceContainer furnace = new FurnaceContainer(this.user, (byte) 5, null, null);
++
++        private Fixture() {
++            when(this.user.get(InventoryTracker.class)).thenReturn(this.inventory);
++            this.inventory.setCurrentContainer(this.furnace);
++        }
++
++        private PacketWrapper receive(final byte containerId, final int property, final int value) throws Exception {
++            return this.receive(containerId, property, value, InventoryPackets::handleContainerData);
++        }
++
++        private PacketWrapper receive(final byte containerId, final int property, final int value,
++                                      final PacketHandler handler) throws Exception {
++            final ByteBuf bytes = Unpooled.buffer();
++            try {
++                bytes.writeByte(containerId);
++                BedrockTypes.VAR_INT.writePrimitive(bytes, property);
++                BedrockTypes.VAR_INT.writePrimitive(bytes, value);
++                final var packet = new PacketWrapperImpl(ClientboundPackets26_3.CONTAINER_SET_DATA, bytes, this.user);
++                handler.handle(packet);
++                assertFalse(bytes.isReadable());
++                return packet;
++            } finally {
++                bytes.release();
++            }
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ContainerLifecyclePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ContainerLifecyclePacketTest.java
 new file mode 100644
 index 000000000..c511c40c7
@@ -16642,10 +16832,10 @@ index 000000000..9574382a1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeAutoPlacementRecoveryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeAutoPlacementRecoveryTest.java
 new file mode 100644
-index 000000000..47641b13b
+index 000000000..9c35e9131
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeAutoPlacementRecoveryTest.java
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,120 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -16689,6 +16879,7 @@ index 000000000..47641b13b
 +        final var menu = new ChestContainer(user, (byte) 6, null, null, 27);
 +        inventory.setCurrentContainer(menu);
 +        menu.setItem(9, item(4, 1008));
++        menu.setData(0, 12);
 +        inventory.getHudContainer().setItem(0, item(4, 5001));
 +        final var binding =
 +                new NativeContainerAutoPlacement.Binding(
@@ -16715,7 +16906,10 @@ index 000000000..47641b13b
 +        menu.setItem(9, plan.sourceAfter());
 +        inventory.getInventoryContainer().setItem(plan.destinationSlot(), plan.destinationAfter());
 +        previous.capturePrediction(inventory);
++        menu.setData(0, 13);
 +        requests.restoreRejectedRequest(previous);
++        check(menu.getData(0) == 13 && menu.serverDataRevision() == 2);
++        check(previous.prevContainers().get(0).getData(0) == 12);
 +        check(
 +                menu.getItem(9).amount() == 4
 +                        && inventory.getInventoryContainer().getItem(0).isEmpty());
