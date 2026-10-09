@@ -1,4 +1,4 @@
-From f3f6fbad6c0bbf2fea5063518bc59108f9761aa4 Mon Sep 17 00:00:00 2001
+From 510151afa0ec6c7cdf92467b5f697171e4629225 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:42:36 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -229,6 +229,18 @@ clips the head, unlike the pinned native client.
 Resolve title factories from accepted HUD definitions instead of exposing control markers and subtitle image paths as Java title text. Apply native array insertions before selecting factory branches, retain title/subtitle ordering, and carry bounded fade timing to clients that advertise the HUD channel. The accepted CubeCraft 0.0.55 HUD on target Bedrock 1.26.51.1 supplies the authored banner, icon binding and fade/wait/fade chain.
 
 Prepare the shared JSON UI program only when a UI consumer needs it. Native actor and equipment storages should not repeatedly decode unrelated UI textures during loading.
+
+Retain each active title's timing when Times configures later titles.
+Native 1.26.51.1 (protocol 2193) keeps a 100-tick title visible for the
+same lifetime after a mid-title Times update to 20 ticks. The next title
+uses the shorter duration. Capture frame pacing affects wall-clock
+duration, so compare this sequence with the fresh-title control.
+
+Snapshot timing when the title factory starts. Do not emit a replacement
+scene for Times. Subtitle updates reuse that snapshot so a later timing
+configuration cannot truncate or change the active animation chain.
+The regression test covers timing changes, subtitle refreshes, the next
+title, and negative fields that preserve the other configured durations.
 ---
  build.gradle                                  |   11 +
  .../api/model/NativeContainerAction.java      |   93 ++
@@ -262,7 +274,7 @@ Prepare the shared JSON UI program only when a UI consumer needs it. Native acto
  .../protocol/storage/EntityTracker.java       |    4 +-
  .../protocol/storage/InventoryTracker.java    |   16 +-
  .../storage/NativeContainerUiState.java       |  112 ++
- .../protocol/storage/NativeHudTitleState.java |   74 ++
+ .../protocol/storage/NativeHudTitleState.java |   81 ++
  .../protocol/storage/ResourcePackStorage.java |   32 +-
  .../api/model/NativeContainerActionTest.java  |   88 ++
  .../api/model/NativeContainerMessageTest.java |   73 ++
@@ -272,7 +284,7 @@ Prepare the shared JSON UI program only when a UI consumer needs it. Native acto
  .../model/NativeNpcDialogueMessageTest.java   |   59 +
  .../api/resourcepack/ui/ContainerUiTest.java  |  352 +++++
  .../ui/FormCollectionActivationTest.java      |   97 ++
- .../api/resourcepack/ui/HudTitleUiTest.java   |   87 ++
+ .../api/resourcepack/ui/HudTitleUiTest.java   |  126 ++
  .../resourcepack/ui/JsonUiProgramTest.java    |  267 ++++
  .../resourcepack/ui/NpcDialogueUiTest.java    |  108 ++
  .../resourcepack/ui/NpcEditorStateTest.java   |  209 +++
@@ -286,7 +298,7 @@ Prepare the shared JSON UI program only when a UI consumer needs it. Native acto
  .../NativeContainerOpeningPacketTest.java     |  393 ++++++
  .../packet/NpcDialoguePacketTest.java         |  301 ++++-
  .../storage/NativeContainerUiStateTest.java   |   57 +
- 56 files changed, 8735 insertions(+), 302 deletions(-)
+ 56 files changed, 8781 insertions(+), 302 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerStatus.java
@@ -6381,10 +6393,10 @@ index 000000000..02d90a895
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleState.java
 new file mode 100644
-index 000000000..8965a9855
+index 000000000..044447735
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleState.java
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,81 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -6402,9 +6414,8 @@ index 000000000..8965a9855
 +
 +    private String title = "";
 +    private String subtitle = "";
-+    private int fadeIn = 10;
-+    private int stay = 70;
-+    private int fadeOut = 20;
++    private Timing configuredTiming = Timing.DEFAULT;
++    private Timing activeTiming = Timing.DEFAULT;
 +    private boolean nativeTitle;
 +
 +    public NativeHudMessage update(final SetTitlePacket_TitleType type, final String text,
@@ -6413,6 +6424,7 @@ index 000000000..8965a9855
 +        switch (type) {
 +            case Title, TitleTextObject -> {
 +                this.title = text;
++                this.activeTiming = this.configuredTiming;
 +                restart = true;
 +            }
 +            case Subtitle, SubtitleTextObject -> {
@@ -6420,24 +6432,15 @@ index 000000000..8965a9855
 +                restart = false;
 +            }
 +            case Times -> {
-+                if (in >= 0) {
-+                    this.fadeIn = Math.min(in, 72000);
-+                }
-+                if (hold >= 0) {
-+                    this.stay = Math.min(hold, 72000);
-+                }
-+                if (out >= 0) {
-+                    this.fadeOut = Math.min(out, 72000);
-+                }
-+                restart = false;
++                // Native title instances retain the timing captured when their factory was created.
++                this.configuredTiming = this.configuredTiming.update(in, hold, out);
++                return null;
 +            }
 +            case Clear, Reset -> {
 +                this.title = "";
 +                this.subtitle = "";
 +                if (type == SetTitlePacket_TitleType.Reset) {
-+                    this.fadeIn = 10;
-+                    this.stay = 70;
-+                    this.fadeOut = 20;
++                    this.configuredTiming = Timing.DEFAULT;
 +                }
 +                restart = false;
 +            }
@@ -6446,7 +6449,7 @@ index 000000000..8965a9855
 +            }
 +        }
 +        final var scene = this.title.isEmpty() ? null
-+                : new HudTitleUi(this.title, this.subtitle, this.fadeIn, this.stay, this.fadeOut).resolve(resources.getJsonUiProgram());
++                : new HudTitleUi(this.title, this.subtitle, this.activeTiming.fadeIn, this.activeTiming.stay, this.activeTiming.fadeOut).resolve(resources.getJsonUiProgram());
 +        if (scene == null) {
 +            if (!this.nativeTitle) {
 +                return null;
@@ -6455,7 +6458,23 @@ index 000000000..8965a9855
 +            return new NativeHudMessage("", false, 0);
 +        }
 +        this.nativeTitle = true;
-+        return new NativeHudMessage(scene.toString(), restart, this.fadeIn + this.stay + this.fadeOut);
++        return new NativeHudMessage(scene.toString(), restart, this.activeTiming.ticks());
++    }
++
++    private record Timing(int fadeIn, int stay, int fadeOut) {
++
++        private static final Timing DEFAULT = new Timing(10, 70, 20);
++
++        private Timing update(final int in, final int hold, final int out) {
++            return new Timing(in < 0 ? this.fadeIn : Math.min(in, 72000),
++                    hold < 0 ? this.stay : Math.min(hold, 72000),
++                    out < 0 ? this.fadeOut : Math.min(out, 72000));
++        }
++
++        private int ticks() {
++            return this.fadeIn + this.stay + this.fadeOut;
++        }
++
 +    }
 +
 +}
@@ -7383,10 +7402,10 @@ index 000000000..58a1f1216
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudTitleUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudTitleUiTest.java
 new file mode 100644
-index 000000000..92a8d101c
+index 000000000..e21168328
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudTitleUiTest.java
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,126 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7394,6 +7413,9 @@ index 000000000..92a8d101c
 + */
 +package net.raphimc.viabedrock.api.resourcepack.ui;
 +
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.model.NativeHudMessage;
 +import java.nio.charset.StandardCharsets;
 +import java.util.List;
 +import java.util.Map;
@@ -7452,6 +7474,42 @@ index 000000000..92a8d101c
 +        assertTrue(state.update(SetTitlePacket_TitleType.Reset, "", 0, 0, 0, resources).scene().isEmpty());
 +        assertEquals(100, state.update(SetTitlePacket_TitleType.Title, title, 0, 0, 0, resources).ticks());
 +        assertNull(state.update(SetTitlePacket_TitleType.Actionbar, title, 0, 0, 0, resources));
++    }
++
++    @Test
++    void keepsLiveTitleTimingWhenLaterPacketsConfigureTheNextTitle() {
++        final var resources = new ResourcePackStorage(List.of()) {
++            @Override
++            public JsonUiProgram getJsonUiProgram() {
++                return program();
++            }
++        };
++        final var state = new NativeHudTitleState();
++        final String title = UUID.randomUUID().toString();
++        final String subtitle = UUID.randomUUID().toString();
++        final var initial = state.update(SetTitlePacket_TitleType.Title, title, 0, 0, 0, resources);
++        assertEquals(100, initial.ticks());
++
++        // Changing the next title's hold time cannot destroy or retime the already visible instance.
++        assertNull(state.update(SetTitlePacket_TitleType.Times, "", -1, 20, -1, resources));
++        final var changedSubtitle = state.update(SetTitlePacket_TitleType.Subtitle, subtitle, 0, 0, 0, resources);
++        assertFalse(changedSubtitle.restart());
++        assertEquals(initial.ticks(), changedSubtitle.ticks());
++        assertEquals(alphaSequence(initial), alphaSequence(changedSubtitle));
++
++        final var next = state.update(SetTitlePacket_TitleType.TitleTextObject, title, 0, 0, 0, resources);
++        assertTrue(next.restart());
++        assertEquals(50, next.ticks());
++        assertNotEquals(alphaSequence(initial), alphaSequence(next));
++        assertNull(state.update(SetTitlePacket_TitleType.Times, "", 0, -1, 0, resources));
++        assertEquals(20, state.update(SetTitlePacket_TitleType.Title, title, 0, 0, 0, resources).ticks());
++    }
++
++    private static JsonArray alphaSequence(final NativeHudMessage message) {
++        return JsonParser.parseString(message.scene()).getAsJsonObject()
++                .getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject()
++                .getAsJsonArray("children").get(0).getAsJsonObject()
++                .getAsJsonArray("children").get(1).getAsJsonObject().getAsJsonArray("alpha_sequence");
 +    }
 +
 +    private static JsonUiProgram program() {
