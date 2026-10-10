@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, realpath, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { lstat, mkdir, open, rm, writeFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
 import { journalMagic, maxJournalBytes, summarizeJournal } from "./journal.ts";
+import { directChild, realDirectory } from "./private-path.ts";
 
 const execute = promisify(execFile);
 const protocol = 2193;
@@ -294,16 +295,16 @@ async function boundedFile(source: string, limit: number): Promise<Buffer> {
     await file.close();
   }
 }
-async function freshOutput(output: string, privateRoot: string): Promise<void> {
-  const state = await lstat(privateRoot);
-  if (!state.isDirectory() || state.isSymbolicLink() || await realpath(privateRoot) !== privateRoot
-      || dirname(output) !== privateRoot || basename(output).startsWith(".")) {
+async function freshOutput(output: string, privateRoot: string): Promise<string> {
+  privateRoot = await realDirectory(privateRoot);
+  if (basename(output).startsWith(".")) {
     throw new Error("Fixture output must be a fresh direct child of the owned private replay directory.");
   }
+  output = await directChild(privateRoot, output);
   try {
     await lstat(output);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return output;
     throw error;
   }
   throw new Error("Fixture output already exists.");
@@ -318,7 +319,7 @@ export async function writePrivateFixture(output: string, privateRoot: string, f
     }
     names.add(file.name);
   }
-  await freshOutput(output, privateRoot);
+  output = await freshOutput(output, privateRoot);
   await mkdir(output, { mode: 0o700 });
   const owner = await lstat(output);
   try {
@@ -344,7 +345,7 @@ export const prepareFormFixture = (planPath: string, privateRoot: string, review
     const planBytes = await boundedFile(planPath, 65536);
     const plan = validatePlan(JSON.parse(planBytes.toString("utf8")));
     const base = resolve(privateRoot);
-    await freshOutput(plan.output, base);
+    plan.output = await freshOutput(plan.output, base);
     const inputs: InputFile[] = [{ source: planPath, sha256: sha(planBytes), bytes: planBytes.length }];
     const checked = async (source: string, limit: number, expected?: string) => {
       const data = await boundedFile(source, limit);

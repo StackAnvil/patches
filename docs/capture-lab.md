@@ -225,6 +225,13 @@ Both global and instance Java selections use the copied Prism runtime.
 External Java paths, including system runtimes, require a separate sandbox contract and are rejected by isolated replay.
 Escaping source links and write-through links in profile configuration cause preparation to stop.
 
+Private preparation resolves ancestor aliases such as macOS `/var` to `/private/var` before checking ownership and copying data.
+The owned directory itself must still be a real directory, and writable configuration files cannot be symlinks.
+Native installation copies use the filesystem copy API with a full-copy fallback when cloning is unavailable.
+On macOS, native idle checks require Python 3 and inspect exact environment entries through Darwin's process API.
+They recognize path aliases, ignore command-line lookalikes, and never print process environments.
+Unavailable inspection stops preparation; the replay launcher's virtual display and network namespace requirements still apply.
+
 Java cleanup records process IDs and start times, including launcher descendants.
 It verifies these identities immediately before each signal.
 A reused or unrecorded process ID stops cleanup without signaling that process.

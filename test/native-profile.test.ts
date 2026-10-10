@@ -33,7 +33,7 @@ test("copies absolute launcher content into the private installation without cha
   expect(await readFile(join(input.source, "settings.json"))).toEqual(sourceSettings);
   expect(await readlink(join(input.source, "content"))).toBe(input.game);
   expect(result.settings.retain).toBe(input.settings.retain);
-  expect(await realpath(result.settings.proton)).toBe(join(input.runtime, relative(input.source, input.proton)));
+  expect(await realpath(result.settings.proton)).toBe(await realpath(join(input.runtime, relative(input.source, input.proton))));
 });
 
 test("supports relative content and internal source path aliases", async () => {
@@ -42,8 +42,20 @@ test("supports relative content and internal source path aliases", async () => {
   await symlink(input.game, alias);
   await writeFile(join(input.source, "settings.json"), JSON.stringify({ ...input.settings, game_dir: alias }));
   const result = await prepareNativeProfile(input);
-  expect(await realpath(join(result.runtime, "content"))).toBe(join(input.runtime, relative(input.source, input.game)));
-  expect(await realpath(alias)).toBe(input.game);
+  expect(await realpath(join(result.runtime, "content"))).toBe(await realpath(join(input.runtime, relative(input.source, input.game))));
+  expect(await realpath(alias)).toBe(await realpath(input.game));
+});
+
+test("prepares canonical installations through ancestor aliases without accepting owned root links", async () => {
+  const input = await fixture(), alias = join(input.root, "ancestor");
+  await symlink(input.root, alias);
+  const result = await prepareNativeProfile({ ...input, source: join(alias, "source"), privateRoot: join(alias, "replay"), runtime: join(alias, "replay", "native-client") });
+  expect(result.runtime).toBe(await realpath(input.runtime));
+  expect(await readFile(join(result.runtime, "content", "Minecraft.Windows.exe"))).toEqual(input.payload);
+  const rootLink = join(input.root, "owned-root-link");
+  await symlink(input.privateRoot, rootLink);
+  await expect(prepareNativeProfile({ ...input, privateRoot: rootLink, runtime: join(rootLink, "native-client") })).rejects.toThrow();
+  expect(await readFile(join(input.game, "Minecraft.Windows.exe"))).toEqual(input.payload);
 });
 
 test("repairs a cached owned source-pointing content link and preserves copied executable", async () => {
@@ -113,19 +125,21 @@ test("rejects foreign cached copies and root aliases without modifying them", as
 
 test("refuses a busy cached profile before repairing launcher pointers", async () => {
   const input = await fixture(); await prepareNativeProfile(input);
+  const runtime = await realpath(input.runtime);
   await rm(join(input.runtime, "content")); await symlink(input.game, join(input.runtime, "content"));
   await expect(prepareNativeProfile({ ...input, assertIdle: async profile => {
-    if (profile === input.runtime) throw new Error("Concurrent launcher");
+    if (profile === runtime) throw new Error("Concurrent launcher");
   } })).rejects.toThrow();
   expect(await readlink(join(input.runtime, "content"))).toBe(input.game);
 });
 
 test("rechecks cached ownership after an idle boundary before replacing content", async () => {
   const input = await fixture(); await prepareNativeProfile(input);
+  const runtime = await realpath(input.runtime);
   await rm(join(input.runtime, "content")); await symlink(input.game, join(input.runtime, "content"));
   const marker = join(input.runtime, ".stackanvil-source");
   await expect(prepareNativeProfile({ ...input, assertIdle: async profile => {
-    if (profile === input.runtime) await writeFile(marker, input.root);
+    if (profile === runtime) await writeFile(marker, input.root);
   } })).rejects.toThrow();
   expect(await readlink(join(input.runtime, "content"))).toBe(input.game);
   expect(await readFile(join(input.game, "Minecraft.Windows.exe"))).toEqual(input.payload);
@@ -141,7 +155,7 @@ test("rejects source settings aliases without creating a runtime", async () => {
   await expect(lstat(input.runtime)).rejects.toThrow();
 });
 
-test.skipIf(process.platform !== "linux")("detects exact live launcher ownership without running Bedrock", async () => {
+test.skipIf(!["linux", "darwin"].includes(process.platform))("detects exact live launcher ownership without running Bedrock", async () => {
   const input = await fixture();
   const child = Bun.spawn([process.execPath, "-e", 'console.log("ready"); setInterval(() => {}, 1000)'], {
     env: { ...process.env, BOL_HOME: input.runtime }, stdout: "pipe", stderr: "ignore",

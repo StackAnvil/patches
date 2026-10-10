@@ -1,6 +1,8 @@
 import { constants } from "node:fs";
-import { chmod, cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
+import { chmod, cp, lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { join, relative, sep } from "node:path";
+import { directChild, realDirectory } from "./private-path.ts";
+import { requireEnvironmentPathIdle } from "./process-environment.ts";
 
 const ownerFile = ".stackanvil-replay-prefix.json";
 const dataPatterns = [
@@ -38,8 +40,9 @@ async function sourceIdentity(source: string, run: string): Promise<PrefixOwner>
 
 /** Check the clone marker and filesystem identity before any profile mutation. */
 export async function validateNativeReplayPrefix(prefix: string, directory: string, sourcePrefix: string): Promise<void> {
-  const [run, source] = await Promise.all([realpath(directory), realpath(sourcePrefix)]);
-  if (resolve(prefix) !== join(run, "native-prefix") || (await lstat(prefix)).isSymbolicLink()) {
+  const [run, source] = await Promise.all([realDirectory(directory), realDirectory(sourcePrefix)]);
+  await directChild(run, prefix, "native-prefix");
+  if ((await lstat(prefix)).isSymbolicLink()) {
     throw new Error("The native replay prefix is outside its owned run.");
   }
   const actual = await realpath(prefix);
@@ -60,26 +63,14 @@ export async function validateNativeReplayPrefix(prefix: string, directory: stri
 
 /** Match the launcher's exact NUL-delimited WINEPREFIX entry without logging it. */
 export async function requireNativePrefixIdle(prefix: string): Promise<void> {
-  const expected = `WINEPREFIX=${prefix}`;
-  for (const name of await readdir("/proc")) {
-    if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
-    let environment: Buffer;
-    try { environment = await readFile(`/proc/${name}/environ`); }
-    catch (error) {
-      if (["ENOENT", "ESRCH", "EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) continue;
-      throw error;
-    }
-    if (environment.toString().split("\0").includes(expected)) {
-      throw new Error("The native replay prefix is in use. Stop its owned Wine processes before preparing another copy.");
-    }
-  }
+  await requireEnvironmentPathIdle("WINEPREFIX", prefix);
 }
 
 /** Create an exclusive per-run clone and seed it before the launcher can read it. */
 export async function prepareNativeReplayPrefix(options: NativePrefixOptions): Promise<string> {
   const payload = nativeReplayServerLine(options.port, Math.floor(Date.now() / 1000));
   const [root, run, source] = await Promise.all([
-    realpath(options.privateRoot), realpath(options.directory), realpath(options.sourcePrefix),
+    realDirectory(options.privateRoot), realDirectory(options.directory), realDirectory(options.sourcePrefix),
   ]);
   if (!inside(root, run) || inside(run, source) || inside(source, run) || run === source) {
     throw new Error("Native replay prefix preparation requires a private run and a separate source template.");

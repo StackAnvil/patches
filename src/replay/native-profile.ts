@@ -1,10 +1,10 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { promisify } from "node:util";
+import { constants } from "node:fs";
+import { chmod, cp, lstat, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, sep } from "node:path";
+import { directChild, realDirectory } from "./private-path.ts";
+import { requireEnvironmentPathIdle } from "./process-environment.ts";
 
-const execute = promisify(execFile);
 const ownerFile = ".stackanvil-source";
 
 export interface NativeProfileOptions {
@@ -30,25 +30,9 @@ async function plainFile(path: string): Promise<void> {
   if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("The native profile file is not an owned regular file.");
 }
 
-async function directory(path: string): Promise<string> {
-  const metadata = await lstat(path);
-  if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("The native profile root is not a real directory.");
-  return realpath(path);
-}
-
 /** Refuse profile changes while an owned launcher is using either installation. */
 export async function requireNativeProfileIdle(profile: string): Promise<void> {
-  const expected = `BOL_HOME=${profile}`;
-  for (const name of await readdir("/proc")) {
-    if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
-    let environment: Buffer;
-    try { environment = await readFile(`/proc/${name}/environ`); }
-    catch (error) {
-      if (["ENOENT", "ESRCH", "EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) continue;
-      throw error;
-    }
-    if (environment.toString().split("\0").includes(expected)) throw new Error("The native profile is in use.");
-  }
+  await requireEnvironmentPathIdle("BOL_HOME", profile);
 }
 
 async function atomicSettings(runtime: string, settings: NativeProfile["settings"], validate: () => Promise<void>): Promise<void> {
@@ -82,10 +66,10 @@ async function ownedContent(runtime: string, game: string, validate: () => Promi
 
 /** Copy launcher state without allowing its absolute content link to escape the copy. */
 export async function prepareNativeProfile(options: NativeProfileOptions): Promise<NativeProfile> {
-  const source = await directory(resolve(options.source));
-  const privateRoot = await directory(resolve(options.privateRoot));
-  const runtime = resolve(options.runtime);
-  if (runtime !== join(privateRoot, "native-client") || source === runtime || inside(source, runtime) || inside(runtime, source)) {
+  const source = await realDirectory(options.source);
+  const privateRoot = await realDirectory(options.privateRoot);
+  const runtime = await directChild(privateRoot, options.runtime, "native-client");
+  if (source === runtime || inside(source, runtime) || inside(runtime, source)) {
     throw new Error("The native profile requires a separate owned installation directory.");
   }
   await plainFile(join(source, "settings.json"));
@@ -103,7 +87,7 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
   const idle = options.assertIdle ?? requireNativeProfileIdle;
   await idle(source);
   try {
-    const existing = await directory(runtime);
+    const existing = await realDirectory(runtime);
     if (existing !== runtime) throw new Error("The native profile root escapes its owned installation.");
     await plainFile(join(runtime, ownerFile));
     if ((await readFile(join(runtime, ownerFile), "utf8")) !== source) throw new Error("The native profile belongs to a different source installation.");
@@ -111,7 +95,7 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     // An existing partial copy must never be merged with a second preparation.
     await mkdir(runtime, { mode: 0o700 });
-    await execute("cp", ["-a", "--reflink=auto", `${source}${sep}.`, runtime]);
+    await cp(source, runtime, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true, mode: constants.COPYFILE_FICLONE });
     await chmod(runtime, 0o700);
     const marker = join(runtime, ownerFile);
     try { await plainFile(marker); }
@@ -120,7 +104,7 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
     await chmod(marker, 0o600);
   }
   const validate = async () => {
-    if (await directory(runtime) !== runtime) throw new Error("The native profile root escapes its owned installation.");
+    if (await realDirectory(runtime) !== runtime) throw new Error("The native profile root escapes its owned installation.");
     await plainFile(join(runtime, ownerFile));
     if ((await readFile(join(runtime, ownerFile), "utf8")) !== source) throw new Error("The native profile belongs to a different source installation.");
   };

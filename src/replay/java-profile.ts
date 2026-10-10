@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { chmod, cp, lstat, readFile, readdir, readlink, realpath, statfs, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { realDirectory } from "./private-path.ts";
 
 const reserveBytes = 5 * 1024 ** 3;
 
@@ -27,7 +28,7 @@ async function validateTree(directory: string, path = directory): Promise<number
 }
 
 export async function validateReplayProfile(source: string): Promise<void> {
-  if (await realpath(source) !== source) throw new Error("Replay profile source cannot be a symlink.");
+  source = await realDirectory(source);
   async function validate(path: string): Promise<void> {
     const state = await lstat(path);
     if (state.isSymbolicLink()) throw new Error("Replay profile inputs cannot contain write-through symlinks.");
@@ -45,13 +46,20 @@ export async function validateReplayProfile(source: string): Promise<void> {
 }
 
 export async function privateReplayJavaPath(source: string, target: string, configured: string): Promise<string> {
-  const sourceJava = join(source, "java");
-  if (!configured.startsWith(sourceJava + "/") || !inside(sourceJava, await realpath(configured))) {
+  if (!isAbsolute(configured)) throw new Error("Replay Java executable must use an absolute copied runtime path.");
+  const [sourceRoot, targetRoot, configuredParent] = await Promise.all([
+    realDirectory(source), realDirectory(target), realpath(dirname(configured)),
+  ]);
+  const sourceJava = join(sourceRoot, "java");
+  const selected = join(configuredParent, basename(configured));
+  const sourceExecutable = await realpath(configured);
+  if (!inside(sourceJava, selected) || !inside(sourceJava, sourceExecutable) || !(await lstat(sourceExecutable)).isFile()) {
     throw new Error("Replay Java executable must come from the copied Prism runtime.");
   }
-  const privateJava = join(target, "java");
-  const path = join(privateJava, relative(sourceJava, configured));
-  if (!inside(privateJava, await realpath(path))) throw new Error("Copied Java executable escaped its private runtime.");
+  const privateJava = join(targetRoot, "java");
+  const path = join(privateJava, relative(sourceJava, selected));
+  const copiedExecutable = await realpath(path);
+  if (!inside(privateJava, copiedExecutable) || !(await lstat(copiedExecutable)).isFile()) throw new Error("Copied Java executable escaped its private runtime.");
   return path;
 }
 
@@ -71,7 +79,8 @@ export function requireReplayCopySpace(bytes: number, available: number): void {
 
 /** Prism may rewrite cached files, so every launcher directory has a private writable copy. */
 export async function prepareReplayPrismData(source: string, target: string): Promise<void> {
-  if (await realpath(source) !== source || await realpath(target) !== target || inside(source, target) || inside(target, source)) {
+  [source, target] = await Promise.all([realDirectory(source), realDirectory(target)]);
+  if (inside(source, target) || inside(target, source)) {
     throw new Error("Replay Prism data must use separate real directories.");
   }
   const entries = (await readdir(source, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name)).filter(entry =>

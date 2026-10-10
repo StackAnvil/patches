@@ -118,7 +118,7 @@ test("concurrent preparers cannot merge or overwrite the winning clone", async (
   }
 });
 
-test.skipIf(process.platform !== "linux")("detects a live exact WINEPREFIX without running Wine", async () => {
+test.skipIf(!["linux", "darwin"].includes(process.platform))("detects a live exact WINEPREFIX without running Wine", async () => {
   const input = await fixture();
   const child = Bun.spawn([process.execPath, "-e", 'console.log("ready"); setInterval(() => {}, 1000)'], {
     env: { ...process.env, WINEPREFIX: input.sourcePrefix }, stdout: "pipe", stderr: "ignore",
