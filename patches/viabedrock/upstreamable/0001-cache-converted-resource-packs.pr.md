@@ -2,6 +2,12 @@
 
 Please check that a changed source pack cannot reuse an older conversion, and that reconnecting with unchanged packs avoids another conversion.
 
+Cache retention and eviction now finish before the conversion future completes for callers.
+This prevents a subsequent request from reusing an oversized result through the pending map.
+A gated regression reproduces the previous ordering failure without sleeps.
+The owning patch passes all 46 tests and both Checkstyle tasks after the fix.
+The full core stack reports 1,190 tests, zero failures or errors, and 30 skips.
+
 ## Testing
 
 - [x] Run `./gradlew test checkstyleMain checkstyleTest` on the feature-only checkout.

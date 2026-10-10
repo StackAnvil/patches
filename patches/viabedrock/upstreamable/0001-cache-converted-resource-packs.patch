@@ -1,4 +1,4 @@
-From 264740966c8d0839e69d8c7c87bcef398e1ad35c Mon Sep 17 00:00:00 2001
+From 3d99f4155ab131bfdc3b5ba0880cbbb087b468a7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:52:24 +0200
 Subject: [PATCH] perf(resource-packs): cache converted packs by content
@@ -119,40 +119,46 @@ Regression tests cover LRU reuse, eviction, oversized archives and retry.
 
 Move completed download verification, ZIP decoding and resource definition preparation onto bounded workers. Keep publication on the connection event loop with current-session guards. Complete outstanding work during shutdown and close ZIP inflater resources immediately. Preserve the four-entry, 64 MiB cache limit from the current stack. Count received download chunks without repeatedly scanning the receipt array.
 
+Complete cache retention and eviction before exposing converted packs to callers.
+Returning the worker future allowed caller continuations to reuse a pending
+oversized result before cache bookkeeping ran. A gated regression reproduces
+the ordering failure without sleeps and verifies a new conversion follows
+when completed packs are not retained.
+
 Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.github.com>
 ---
  build.gradle                                  |  12 +
  .../api/model/entity/CustomEntity.java        |   2 +-
- .../resourcepack/ResourcePackExecutor.java    |  69 ++++
+ .../resourcepack/ResourcePackExecutor.java    |  69 +++
  .../api/resourcepack/content/Content.java     |  56 ++-
  .../content/DirectoryContent.java             |   2 +-
  .../resourcepack/content/InMemoryContent.java |   2 +-
  .../content/ResourcePackZipWriter.java        | 190 +++++++++
  .../api/resourcepack/content/ZipContent.java  |  11 +-
- .../http/ConvertedResourcePackCache.java      | 311 +++++++++++++++
+ .../http/ConvertedResourcePackCache.java      | 316 ++++++++++++++
  .../http/ConverterDataManifest.java           |  74 ++++
- .../http/ResourcePackHttpServer.java          | 157 ++++----
+ .../http/ResourcePackHttpServer.java          | 157 +++----
  .../viabedrock/api/util/FileSystemUtil.java   |  18 +
  .../packet/ResourcePackClientResponse.java    |  52 +++
  .../ResourcePackDownloadCompletion.java       |  38 ++
- .../protocol/packet/ResourcePackPackets.java  | 358 ++++++++++-------
+ .../protocol/packet/ResourcePackPackets.java  | 358 ++++++++++------
  .../packet/ResourcePackPreparation.java       |  38 ++
  .../provider/ResourcePackProvider.java        |   8 +-
  .../impl/DiskResourcePackProvider.java        |  47 ++-
  .../impl/InMemoryResourcePackProvider.java    |  34 +-
  .../impl/NoOpResourcePackProvider.java        |  11 +-
  .../storage/ResourcePackDownloadTracker.java  | 106 +++--
- .../storage/ResourcePackLoadStateTracker.java | 105 +++--
- .../ResourcePackExecutorTest.java             |  87 +++++
- .../content/ContentLanguageCacheTest.java     |  65 ++++
- .../content/ResourcePackZipWriterTest.java    | 241 ++++++++++++
- .../http/ConvertedResourcePackCacheTest.java  | 365 ++++++++++++++++++
+ .../storage/ResourcePackLoadStateTracker.java | 105 ++++-
+ .../ResourcePackExecutorTest.java             |  87 ++++
+ .../content/ContentLanguageCacheTest.java     |  65 +++
+ .../content/ResourcePackZipWriterTest.java    | 241 +++++++++++
+ .../http/ConvertedResourcePackCacheTest.java  | 398 ++++++++++++++++++
  .../ResourcePackClientResponseTest.java       |  74 ++++
- .../ResourcePackDownloadCompletionTest.java   | 206 ++++++++++
- .../packet/ResourcePackPreparationTest.java   | 140 +++++++
- .../ResourcePackDownloadTrackerTest.java      | 116 ++++++
- .../ResourcePackLoadStateTrackerTest.java     | 116 ++++++
- 31 files changed, 2800 insertions(+), 311 deletions(-)
+ .../ResourcePackDownloadCompletionTest.java   | 206 +++++++++
+ .../packet/ResourcePackPreparationTest.java   | 140 ++++++
+ .../ResourcePackDownloadTrackerTest.java      | 116 +++++
+ .../ResourcePackLoadStateTrackerTest.java     | 116 +++++
+ 31 files changed, 2838 insertions(+), 311 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackExecutor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
@@ -630,10 +636,10 @@ index 4264b66bc..d16e08e63 100644
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 new file mode 100644
-index 000000000..1bacc99f9
+index 000000000..d54945712
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-@@ -0,0 +1,311 @@
+@@ -0,0 +1,316 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -753,15 +759,20 @@ index 000000000..1bacc99f9
 +        if (existing != null) {
 +            return existing;
 +        }
-+        final CompletableFuture<Pack> future = this.executor.submit(() ->
-+                this.mode == ViaBedrockConfig.PackCacheMode.DISK ? this.loadOrConvert(key, storage) : this.convert(storage));
++        final CompletableFuture<Pack> future = new CompletableFuture<>();
 +        this.pending.put(key, future);
-+        future.whenComplete((pack, error) -> {
++        this.executor.submit(() -> this.mode == ViaBedrockConfig.PackCacheMode.DISK ? this.loadOrConvert(key, storage) : this.convert(storage)).whenComplete((pack, error) -> {
 +            synchronized (this) {
 +                this.pending.remove(key, future);
 +                if (error == null && !this.stopped) {
 +                    this.retain(key, pack);
 +                }
++            }
++            // Callers must observe retention and eviction before requesting another conversion.
++            if (error == null) {
++                future.complete(pack);
++            } else {
++                future.completeExceptionally(error);
 +            }
 +        });
 +        return future;
@@ -2737,10 +2748,10 @@ index 000000000..4e177dceb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 new file mode 100644
-index 000000000..648ae9604
+index 000000000..e340c5bd4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,398 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -3014,6 +3025,39 @@ index 000000000..648ae9604
 +            assertEquals(6, conversions.get());
 +            assertTrue(first.bytes().length > 0);
 +        } finally {
++            cache.stop();
++        }
++    }
++
++    @Test
++    void completesCacheBookkeepingBeforeCallerContinuations() throws Exception {
++        final CountDownLatch finishConversion = new CountDownLatch(1);
++        final AtomicInteger conversions = new AtomicInteger();
++        final ConvertedResourcePackCache cache = new ConvertedResourcePackCache(this.directory,
++                ViaBedrockConfig.PackCacheMode.MEMORY, storage -> {
++                    if (conversions.incrementAndGet() == 1) {
++                        try {
++                            if (!finishConversion.await(5, TimeUnit.SECONDS)) {
++                                throw new IllegalStateException("Conversion was not released");
++                            }
++                        } catch (final InterruptedException e) {
++                            Thread.currentThread().interrupt();
++                            throw new CompletionException(e);
++                        }
++                    }
++                    return new InMemoryContent();
++                }, 0, 0);
++        try {
++            final ResourcePackStorage storage = new ResourcePackStorage(List.of());
++            final var first = cache.prepare("uncached", storage);
++            final var retry = first.thenApply(pack -> cache.prepare("uncached", storage));
++            finishConversion.countDown();
++            final var next = retry.get(5, TimeUnit.SECONDS);
++            assertNotSame(first, next);
++            next.get(5, TimeUnit.SECONDS);
++            assertEquals(2, conversions.get());
++        } finally {
++            finishConversion.countDown();
 +            cache.stop();
 +        }
 +    }
