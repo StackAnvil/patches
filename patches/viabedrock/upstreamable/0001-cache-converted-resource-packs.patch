@@ -1,4 +1,4 @@
-From 6885c4ff11cc10007242fd0c5c55391d00ccba01 Mon Sep 17 00:00:00 2001
+From 786bc023b12d348feeabd8d2d0b2c988feaad3a6 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:52:24 +0200
 Subject: [PATCH] perf(resource-packs): cache converted packs by content
@@ -117,6 +117,12 @@ Bound converter and preparation queues without caller-thread fallback. Complete 
 Persist every downloaded INFO pack on the preparation worker before selecting and decrypting STACK resources. Unused offers otherwise bypass the source cache and download again on later joins. Save selected resources again only after actual decryption; individual cache-write failures remain nonfatal and do not prevent other downloaded packs from being saved.
 
 Route exceptions thrown while publishing prepared storage to the existing connection failure path, and catch resource advertisement failures on the event loop. Reject stale or disconnected load-completion errors before they can kick another session. Tests cover unused download persistence, continuing after an unwritable cache entry, and throwing publication callbacks.
+
+Keep resource-pack chunk assembly on the connection event loop, but verify the completed encoded archive hash and inflate its ZIP on existing bounded preparation workers. Track remaining chunks in constant time instead of scanning the receipt prefix after every packet. Preserve the synchronous decoder method, constructor and accessors for existing integrations.
+
+Retain the completed download entry until event-loop publication. Check the channel, load tracker, download tracker and exact entry identity before publishing success or failure so replaced transfers cannot affect a new session. Fail negotiation and report decoder, rejection and shutdown errors on the event loop. Guard acquisition failure callbacks with the same current-session checks. Release ZIP inflater resources immediately after successful or failed reads.
+
+Tests cover ordered, reversed and shuffled chunks; duplicate, range and failed-copy receipt accounting; hash mismatch; truncated ZIP and missing manifest errors; synchronous compatibility; event-loop responsiveness; stale transfer and session identities; worker rejection and cancellation; and exceptional negotiation completion.
 ---
  build.gradle                                  |  12 +
  .../api/model/entity/CustomEntity.java        |   2 +-
@@ -125,38 +131,46 @@ Route exceptions thrown while publishing prepared storage to the existing connec
  .../content/DirectoryContent.java             |   2 +-
  .../resourcepack/content/InMemoryContent.java |   2 +-
  .../content/ResourcePackZipWriter.java        | 190 +++++++++
+ .../api/resourcepack/content/ZipContent.java  |  11 +-
  .../http/ConvertedResourcePackCache.java      | 311 +++++++++++++++
  .../http/ConverterDataManifest.java           |  74 ++++
- .../http/ResourcePackHttpServer.java          | 153 ++++----
+ .../http/ResourcePackHttpServer.java          | 157 ++++----
  .../viabedrock/api/util/FileSystemUtil.java   |  18 +
  .../packet/ResourcePackClientResponse.java    |  52 +++
- .../protocol/packet/ResourcePackPackets.java  | 315 +++++++++------
+ .../ResourcePackDownloadCompletion.java       |  38 ++
+ .../protocol/packet/ResourcePackPackets.java  | 358 ++++++++++-------
  .../packet/ResourcePackPreparation.java       |  38 ++
  .../provider/ResourcePackProvider.java        |   8 +-
  .../impl/DiskResourcePackProvider.java        |  47 ++-
  .../impl/InMemoryResourcePackProvider.java    |  34 +-
  .../impl/NoOpResourcePackProvider.java        |  11 +-
- .../storage/ResourcePackLoadStateTracker.java | 101 +++--
+ .../storage/ResourcePackDownloadTracker.java  | 106 +++--
+ .../storage/ResourcePackLoadStateTracker.java | 105 +++--
  .../ResourcePackExecutorTest.java             |  87 +++++
  .../content/ContentLanguageCacheTest.java     |  65 ++++
  .../content/ResourcePackZipWriterTest.java    | 241 ++++++++++++
  .../http/ConvertedResourcePackCacheTest.java  | 364 ++++++++++++++++++
  .../ResourcePackClientResponseTest.java       |  74 ++++
+ .../ResourcePackDownloadCompletionTest.java   | 206 ++++++++++
  .../packet/ResourcePackPreparationTest.java   | 140 +++++++
- .../ResourcePackLoadStateTrackerTest.java     | 104 +++++
- 26 files changed, 2301 insertions(+), 269 deletions(-)
+ .../ResourcePackDownloadTrackerTest.java      | 116 ++++++
+ .../ResourcePackLoadStateTrackerTest.java     | 116 ++++++
+ 31 files changed, 2799 insertions(+), 311 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackExecutor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConverterDataManifest.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponse.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackDownloadCompletion.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPreparation.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackExecutorTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentLanguageCacheTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponseTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackDownloadCompletionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPreparationTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTrackerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTrackerTest.java
 
 diff --git a/build.gradle b/build.gradle
@@ -595,6 +609,28 @@ index 000000000..e818cc48e
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
+index 4264b66bc..d16e08e63 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
+@@ -25,11 +25,12 @@ import java.util.zip.ZipInputStream;
+ public class ZipContent extends InMemoryContent {
+ 
+     public ZipContent(final byte[] zipData) throws IOException {
+-        final ZipInputStream zipInputStream = new ZipInputStream(new ByteArrayInputStream(zipData));
+-        ZipEntry zipEntry;
+-        while ((zipEntry = zipInputStream.getNextEntry()) != null) {
+-            if (!zipEntry.isDirectory()) {
+-                this.content.put(zipEntry.getName(), zipInputStream.readAllBytes());
++        try (ZipInputStream zipInputStream = new ZipInputStream(new ByteArrayInputStream(zipData))) {
++            ZipEntry zipEntry;
++            while ((zipEntry = zipInputStream.getNextEntry()) != null) {
++                if (!zipEntry.isDirectory()) {
++                    this.content.put(zipEntry.getName(), zipInputStream.readAllBytes());
++                }
+             }
+         }
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 new file mode 100644
 index 000000000..a6857de88
@@ -993,10 +1029,10 @@ index 000000000..fc384c9b5
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ResourcePackHttpServer.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ResourcePackHttpServer.java
-index c769f6781..9089a7b10 100644
+index c769f6781..7d7e895fc 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ResourcePackHttpServer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ResourcePackHttpServer.java
-@@ -23,111 +23,110 @@ import io.netty.channel.*;
+@@ -23,111 +23,114 @@ import io.netty.channel.*;
  import io.netty.channel.nio.NioEventLoopGroup;
  import io.netty.channel.socket.nio.NioServerSocketChannel;
  import io.netty.handler.codec.http.*;
@@ -1061,31 +1097,6 @@ index c769f6781..9089a7b10 100644
 -                                if (user == null) {
 -                                    ctx.close();
 -                                    return;
--                                }
--
--                                while (!user.has(ResourcePackStorage.class)) {
--                                    Thread.sleep(100);
--                                }
--                                final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
--
--                                try {
--                                    final long start = System.nanoTime();
--                                    final Content javaContent = ResourcePackRewriter.bedrockToJava(resourcePackStorage);
--                                    final byte[] data = javaContent.toZip();
--                                    final long end = System.nanoTime();
--                                    ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Converted resource packs in " + ((end - start) / 1_000_000L) + "ms");
--                                    System.gc(); // Resource pack conversion is very memory intensive, so we trigger a GC after conversion to free up memory as soon as possible
--
--                                    final DefaultHttpResponse response = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK);
--                                    response.headers().set(HttpHeaderNames.TRANSFER_ENCODING, HttpHeaderValues.CHUNKED);
--                                    response.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/octet-stream");
--                                    response.headers().set(HttpHeaderNames.CONTENT_LENGTH, data.length);
--                                    response.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);
--                                    ctx.write(response);
--                                    ctx.writeAndFlush(new HttpChunkedInput(new ChunkedStream(new ByteArrayInputStream(data), 65535))).addListener(ChannelFutureListener.CLOSE);
--                                } catch (final Throwable e) {
--                                    ViaBedrock.getPlatform().getLogger().log(Level.SEVERE, "Failed to convert resource packs", e);
--                                    ctx.close();
 +                .group(new NioEventLoopGroup(0))
 +                .channel(NioServerSocketChannel.class)
 +                .option(ChannelOption.SO_BACKLOG, 128)
@@ -1132,9 +1143,38 @@ index c769f6781..9089a7b10 100644
 +                                        ctx.close();
 +                                    }
                                  }
++                            }
+ 
+-                                while (!user.has(ResourcePackStorage.class)) {
+-                                    Thread.sleep(100);
+-                                }
+-                                final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
+-
+-                                try {
+-                                    final long start = System.nanoTime();
+-                                    final Content javaContent = ResourcePackRewriter.bedrockToJava(resourcePackStorage);
+-                                    final byte[] data = javaContent.toZip();
+-                                    final long end = System.nanoTime();
+-                                    ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Converted resource packs in " + ((end - start) / 1_000_000L) + "ms");
+-                                    System.gc(); // Resource pack conversion is very memory intensive, so we trigger a GC after conversion to free up memory as soon as possible
+-
+-                                    final DefaultHttpResponse response = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK);
+-                                    response.headers().set(HttpHeaderNames.TRANSFER_ENCODING, HttpHeaderValues.CHUNKED);
+-                                    response.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/octet-stream");
+-                                    response.headers().set(HttpHeaderNames.CONTENT_LENGTH, data.length);
+-                                    response.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);
+-                                    ctx.write(response);
+-                                    ctx.writeAndFlush(new HttpChunkedInput(new ChunkedStream(new ByteArrayInputStream(data), 65535))).addListener(ChannelFutureListener.CLOSE);
+-                                } catch (final Throwable e) {
+-                                    ViaBedrock.getPlatform().getLogger().log(Level.SEVERE, "Failed to convert resource packs", e);
+-                                    ctx.close();
+-                                }
++                            @Override
++                            public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) {
++                                ctx.close();
                              }
 -                        }
- 
+-
 -                        @Override
 -                        public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) {
 -                            ctx.close();
@@ -1144,10 +1184,6 @@ index c769f6781..9089a7b10 100644
 -            })
 -            .bind(bindAddress)
 -            .syncUninterruptibly();
-+                            @Override
-+                            public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) {
-+                                ctx.close();
-+                            }
 +                        });
 +                    }
 +                })
@@ -1174,8 +1210,12 @@ index c769f6781..9089a7b10 100644
 +        return this.convertedPacks.prepare(storage);
 +    }
 +
-+    public CompletableFuture<ResourcePackStorage> prepareStorage(final Supplier<ResourcePackStorage> work) {
++    public <T> CompletableFuture<T> prepareResources(final Supplier<T> work) {
 +        return this.preparations.submit(work);
++    }
++
++    public CompletableFuture<ResourcePackStorage> prepareStorage(final Supplier<ResourcePackStorage> work) {
++        return this.prepareResources(work);
 +    }
 +
      public void stop() {
@@ -1271,8 +1311,52 @@ index 000000000..d6ef914b6
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackDownloadCompletion.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackDownloadCompletion.java
+new file mode 100644
+index 000000000..a6f6e14a2
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackDownloadCompletion.java
+@@ -0,0 +1,38 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackDownloadTracker;
++
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.Executor;
++import java.util.function.BooleanSupplier;
++import java.util.function.Consumer;
++import java.util.function.Function;
++import java.util.function.Supplier;
++
++/** Verifies completed downloads in workers and publishes only the receiving session's current entry. */
++final class ResourcePackDownloadCompletion {
++
++    private ResourcePackDownloadCompletion() {
++    }
++
++    static void finish(final Function<Supplier<ResourcePack>, CompletableFuture<ResourcePack>> workers, final Executor eventLoop,
++                       final BooleanSupplier sessionCurrent, final ResourcePackDownloadTracker tracker, final String key,
++                       final ResourcePackDownloadTracker.Download download, final Consumer<ResourcePack> loaded, final Consumer<Throwable> failed) {
++        ResourcePackPreparation.prepare(workers, eventLoop, () -> sessionCurrent.getAsBoolean() && tracker.get(key) == download,
++                download::verifyAndParse, (pack, error) -> {
++                    if (error != null) {
++                        failed.accept(error);
++                        return;
++                    }
++                    tracker.remove(key);
++                    loaded.accept(pack);
++                }, failed);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index 1d51a6165..c720f7ea1 100644
+index 1d51a6165..1d836bedc 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 @@ -19,13 +19,13 @@ package net.raphimc.viabedrock.protocol.packet;
@@ -1291,7 +1375,7 @@ index 1d51a6165..c720f7ea1 100644
  import net.raphimc.viabedrock.api.util.TextUtil;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
-@@ -47,117 +47,122 @@ import java.util.ArrayList;
+@@ -47,117 +47,126 @@ import java.util.ArrayList;
  import java.util.List;
  import java.util.UUID;
  import java.util.logging.Level;
@@ -1365,7 +1449,8 @@ index 1d51a6165..c720f7ea1 100644
 +                        cdnUrl = new URL(cdnUrlString);
                      }
 -                    infos[i] = new ResourcePackLoadStateTracker.Info(new ResourcePack.Key(id, version), contentKey, contentId, cdnUrl);
--                }
++                } catch (final MalformedURLException ignored) {
+                 }
 -                wrapper.user().put(new ResourcePackLoadStateTracker(wrapper.user(), infos));
 -
 -                if (ViaBedrock.getConfig().shouldTranslateResourcePacks() && wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolConstants.JAVA_VERSION)) {
@@ -1387,8 +1472,7 @@ index 1d51a6165..c720f7ea1 100644
 -                    resourcePack.write(Types.UUID, UUID.randomUUID()); // id
 -                    resourcePack.write(Types.VAR_INT, ResourcePackAction.DECLINED.ordinal()); // action
 -                    resourcePack.sendToServer(BedrockProtocol.class, false);
-+                } catch (final MalformedURLException ignored) {
-                 }
+-                }
 -            }, State.PLAY, (PacketHandler) PacketWrapper::cancel // Bedrock client ignores resource packs after the initial info packet
 -        );
 +                infos[i] = new ResourcePackLoadStateTracker.Info(new ResourcePack.Key(id, version), contentKey, contentId, cdnUrl);
@@ -1400,7 +1484,7 @@ index 1d51a6165..c720f7ea1 100644
 +            if (shouldTranslate(user)) {
 +                loadStateTracker.loadRequestedResourcePacks().thenRun(() -> {
 +                    user.getChannel().eventLoop().execute(() -> {
-+                        if (user.get(ResourcePackLoadStateTracker.class) != loadStateTracker || loadStateTracker.hasReceivedStack()) {
++                        if (!user.getChannel().isActive() || user.get(ResourcePackLoadStateTracker.class) != loadStateTracker || loadStateTracker.hasReceivedStack()) {
 +                            return;
 +                        }
 +                        final PacketWrapper response = PacketWrapper.create(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, user);
@@ -1408,7 +1492,11 @@ index 1d51a6165..c720f7ea1 100644
 +                        response.sendToServer(BedrockProtocol.class);
 +                    });
 +                }).exceptionally(e -> {
-+                    BedrockProtocol.kickForIllegalState(user, "One of the server resource packs failed to load. Try again later.", e);
++                    user.getChannel().eventLoop().execute(() -> {
++                        if (user.getChannel().isActive() && user.get(ResourcePackLoadStateTracker.class) == loadStateTracker) {
++                            BedrockProtocol.kickForIllegalState(user, "One of the server resource packs failed to load. Try again later.", e);
++                        }
++                    });
 +                    return null;
 +                });
 +            } else {
@@ -1512,7 +1600,32 @@ index 1d51a6165..c720f7ea1 100644
              }
          });
          protocol.registerClientbound(ClientboundBedrockPackets.RESOURCE_PACK_DATA_INFO, null, wrapper -> {
-@@ -212,44 +217,102 @@ public final class ResourcePackPackets {
+@@ -187,20 +196,14 @@ public final class ResourcePackPackets {
+ 
+             final ResourcePackDownloadTracker downloadTracker = wrapper.user().get(ResourcePackDownloadTracker.class);
+             final ResourcePackDownloadTracker.Download download = downloadTracker.get(key);
+-            if (download != null) {
+-                final ResourcePack resourcePack = download.processDataChunk(chunk, data);
+-                if (resourcePack != null) {
+-                    downloadTracker.remove(key);
+-                    if (download.type() == PackType.Resources) {
+-                        final ResourcePackLoadStateTracker loadStateTracker = wrapper.user().get(ResourcePackLoadStateTracker.class);
+-                        if (loadStateTracker != null) {
+-                            loadStateTracker.addRemoteResourcePack(resourcePack);
+-                        }
+-                    }
++            if (download != null && !download.isComplete()) {
++                if (download.acceptDataChunk(chunk, data)) {
++                    finishDownload(wrapper.user(), downloadTracker, key, download);
+                 }
+             } else {
+                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received RESOURCE_PACK_CHUNK_DATA for unknown pack: " + key);
+             }
++
+         });
+ 
+         protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.RESOURCE_PACK, ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, wrapper -> {
+@@ -212,44 +215,127 @@ public final class ResourcePackPackets {
                      if (resourcePackStorage != null) {
                          resourcePackStorage.setLoadedOnJavaClient();
                      }
@@ -1549,6 +1662,31 @@ index 1d51a6165..c720f7ea1 100644
 +                default -> throw new IllegalStateException("Unhandled ResourcePackAction: " + action);
 +            }
 +        });
++    }
++
++    private static void finishDownload(final UserConnection user, final ResourcePackDownloadTracker downloadTracker,
++                                       final String key, final ResourcePackDownloadTracker.Download download) {
++        final ResourcePackLoadStateTracker loadStateTracker = user.get(ResourcePackLoadStateTracker.class);
++        final Function<Supplier<ResourcePack>, CompletableFuture<ResourcePack>> preparation = ViaBedrock.getResourcePackServer() != null
++                ? ViaBedrock.getResourcePackServer()::prepareResources : loadStateTracker != null ? loadStateTracker::prepareStack : null;
++        if (preparation == null) {
++            throw new IllegalStateException("Received resource pack data without a load tracker");
++        }
++        ResourcePackDownloadCompletion.finish(preparation, user.getChannel().eventLoop(),
++                () -> user.getChannel().isActive() && user.get(ResourcePackDownloadTracker.class) == downloadTracker
++                        && user.get(ResourcePackLoadStateTracker.class) == loadStateTracker,
++                downloadTracker, key, download, resourcePack -> {
++                    if (download.type() == PackType.Resources && loadStateTracker != null) {
++                        loadStateTracker.addRemoteResourcePack(resourcePack);
++                    }
++                }, error -> failDownload(user, loadStateTracker, error));
++    }
++
++    private static void failDownload(final UserConnection user, final ResourcePackLoadStateTracker loadStateTracker, final Throwable error) {
++        if (loadStateTracker != null) {
++            loadStateTracker.failLoading(error);
++        }
++        BedrockProtocol.kickForIllegalState(user, "One of the server resource packs failed to load. Try again later.", error);
 +    }
 +
 +    private static void finishStack(final UserConnection user, final ResourcePackLoadStateTracker loadStateTracker, final ResourcePack.Key[] keys) {
@@ -1867,8 +2005,137 @@ index d24a41544..e466df71e 100644
      }
  
  }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTracker.java
+index 199d10fd2..62030195f 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTracker.java
+@@ -45,45 +45,97 @@ public class ResourcePackDownloadTracker implements StorableObject {
+         this.downloads.remove(key);
+     }
+ 
+-    public record Download(byte[] hash, boolean premium, PackType type, long chunkSize, boolean[] receivedChunks, byte[] data) {
++    /** Chunk assembly is owned by the event loop; a completed buffer is read only by its decoder. */
++    public static final class Download {
+ 
+-        public ResourcePack processDataChunk(final long chunk, final byte[] data) {
++        private final byte[] hash;
++        private final boolean premium;
++        private final PackType type;
++        private final long chunkSize;
++        private final boolean[] receivedChunks;
++        private final byte[] data;
++        private int remainingChunks;
++
++        public Download(final byte[] hash, final boolean premium, final PackType type, final long chunkSize, final boolean[] receivedChunks, final byte[] data) {
++            this.hash = hash;
++            this.premium = premium;
++            this.type = type;
++            this.chunkSize = chunkSize;
++            this.receivedChunks = receivedChunks;
++            this.data = data;
++            for (final boolean received : receivedChunks) {
++                if (!received) {
++                    this.remainingChunks++;
++                }
++            }
++        }
++
++        /** Copies one chunk without hashing or inflating the complete archive. */
++        public boolean acceptDataChunk(final long chunk, final byte[] data) {
+             if (chunk < 0 || chunk >= this.receivedChunks.length) {
+                 throw new IllegalStateException("Received out of bounds chunk");
+             }
+-            if (this.receivedChunks[Math.toIntExact(chunk)]) {
++            final int index = Math.toIntExact(chunk);
++            if (this.receivedChunks[index]) {
+                 throw new IllegalStateException("Received duplicate chunk");
+             }
+ 
+             System.arraycopy(data, 0, this.data, Math.toIntExact(chunk * this.chunkSize), data.length);
+-            this.receivedChunks[Math.toIntExact(chunk)] = true;
+-            if (this.hasReceivedAllChunks()) {
+-                try {
+-                    final MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
+-                    final byte[] hash = sha256.digest(this.data);
+-                    if (!Arrays.equals(hash, this.hash)) {
+-                        throw new IllegalStateException("Hash mismatch");
+-                    }
+-                } catch (final Throwable e) {
+-                    throw new RuntimeException("Failed to verify data hash", e);
+-                }
+-                try {
+-                    return new ResourcePack(new ZipContent(this.data));
+-                } catch (final Throwable e) {
+-                    throw new RuntimeException("Failed to parse resource pack data", e);
+-                }
+-            } else {
+-                return null;
+-            }
++            this.receivedChunks[index] = true;
++            return --this.remainingChunks == 0;
+         }
+ 
+-        private boolean hasReceivedAllChunks() {
+-            for (boolean receivedChunk : this.receivedChunks) {
+-                if (!receivedChunk) {
+-                    return false;
++        /** Retained for integrations using synchronous decoding; packet handlers use acceptDataChunk. */
++        public ResourcePack processDataChunk(final long chunk, final byte[] data) {
++            return this.acceptDataChunk(chunk, data) ? this.verifyAndParse() : null;
++        }
++
++        public ResourcePack verifyAndParse() {
++            if (!this.isComplete()) {
++                throw new IllegalStateException("Resource pack data is incomplete");
++            }
++            try {
++                final MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
++                final byte[] hash = sha256.digest(this.data);
++                if (!Arrays.equals(hash, this.hash)) {
++                    throw new IllegalStateException("Hash mismatch");
+                 }
++            } catch (final Throwable e) {
++                throw new RuntimeException("Failed to verify data hash", e);
++            }
++            try {
++                return new ResourcePack(new ZipContent(this.data));
++            } catch (final Throwable e) {
++                throw new RuntimeException("Failed to parse resource pack data", e);
+             }
+-            return true;
++        }
++
++        public boolean isComplete() {
++            return this.remainingChunks == 0;
++        }
++
++        public byte[] hash() {
++            return this.hash;
++        }
++
++        public boolean premium() {
++            return this.premium;
++        }
++
++        public PackType type() {
++            return this.type;
++        }
++
++        public long chunkSize() {
++            return this.chunkSize;
++        }
++
++        public boolean[] receivedChunks() {
++            return this.receivedChunks;
++        }
++
++        public byte[] data() {
++            return this.data;
+         }
+ 
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
-index f7f550941..53a65a908 100644
+index f7f550941..5bc485dc8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
 @@ -23,24 +23,29 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -1982,7 +2249,7 @@ index f7f550941..53a65a908 100644
                  resourcePackClientResponse.scheduleSendToServer(BedrockProtocol.class);
              } else {
                  this.loadFuture.complete(null);
-@@ -148,32 +172,63 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+@@ -148,32 +172,67 @@ public class ResourcePackLoadStateTracker extends StoredObject {
  
      public void loadUnrequestedResourcePacks(final ResourcePack.Key[] keys) {
          for (ResourcePack.Key key : keys) {
@@ -2007,18 +2274,22 @@ index f7f550941..53a65a908 100644
 -    @Override
 -    public void onRemove() {
 -        this.executor.shutdownNow();
-+    public CompletableFuture<Void> loadedFuture() {
-+        return this.loadFuture;
++    public void failLoading(final Throwable error) {
++        this.loadFuture.completeExceptionally(error);
      }
  
 -    public boolean hasJavaClientAccepted() {
 -        return this.javaClientAccepted;
-+    public void markStackReceived() {
-+        this.stackReceived = true;
++    public CompletableFuture<Void> loadedFuture() {
++        return this.loadFuture;
      }
  
 -    public void setJavaClientAccepted() {
 -        this.javaClientAccepted = true;
++    public void markStackReceived() {
++        this.stackReceived = true;
++    }
++
 +    public boolean hasReceivedStack() {
 +        return this.stackReceived;
 +    }
@@ -2917,6 +3188,218 @@ index 000000000..f3351181a
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackDownloadCompletionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackDownloadCompletionTest.java
+new file mode 100644
+index 000000000..2c2d2a3d7
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackDownloadCompletionTest.java
+@@ -0,0 +1,206 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import io.netty.channel.DefaultEventLoop;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePackExecutor;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PackType;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackDownloadTracker;
++import org.junit.jupiter.api.Test;
++
++import java.security.MessageDigest;
++import java.util.UUID;
++import java.util.concurrent.CancellationException;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.RejectedExecutionException;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.concurrent.atomic.AtomicReference;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ResourcePackDownloadCompletionTest {
++
++    @Test
++    void decodingWaitsForWorkersWithoutBlockingTheEventLoopOrPublishingEarly() throws Exception {
++        final ResourcePackExecutor workers = new ResourcePackExecutor(1, 4, "download-test");
++        final DefaultEventLoop loop = new DefaultEventLoop();
++        final CountDownLatch started = new CountDownLatch(1);
++        final CountDownLatch release = new CountDownLatch(1);
++        final ResourcePackDownloadTracker tracker = new ResourcePackDownloadTracker();
++        final var download = completed(tracker, false);
++        final CompletableFuture<ResourcePack> loaded = new CompletableFuture<>();
++        try {
++            workers.submit(() -> block(started, release));
++            assertTrue(started.await(5, TimeUnit.SECONDS));
++            loop.submit(() -> ResourcePackDownloadCompletion.finish(workers::submit, loop, () -> {
++                assertTrue(loop.inEventLoop());
++                return true;
++            }, tracker, "pack", download, pack -> {
++                assertTrue(loop.inEventLoop());
++                assertNull(tracker.get("pack"));
++                loaded.complete(pack);
++            }, loaded::completeExceptionally)).get(5, TimeUnit.SECONDS);
++            assertEquals("heartbeat", loop.submit(() -> "heartbeat").get(5, TimeUnit.SECONDS));
++            assertFalse(loaded.isDone());
++            assertSame(download, tracker.get("pack"));
++            release.countDown();
++            assertArrayEquals(new byte[]{1, 2, 3}, loaded.get(5, TimeUnit.SECONDS).content().get("payload"));
++        } finally {
++            release.countDown();
++            workers.stop();
++            loop.shutdownGracefully(0, 5, TimeUnit.SECONDS).sync();
++        }
++    }
++
++    @Test
++    void replacedDownloadTrackerLoadOwnerAndDisconnectedChannelDiscardCompletion() throws Exception {
++        for (int stale = 0; stale < 4; stale++) {
++            final ResourcePackExecutor workers = new ResourcePackExecutor(1, 4, "download-test");
++            final DefaultEventLoop loop = new DefaultEventLoop();
++            final CountDownLatch started = new CountDownLatch(1);
++            final CountDownLatch release = new CountDownLatch(1);
++            final ResourcePackDownloadTracker tracker = new ResourcePackDownloadTracker();
++            final var download = completed(tracker, stale % 2 != 0);
++            final AtomicReference<ResourcePackDownloadTracker> currentTracker = new AtomicReference<>(tracker);
++            final Object expectedOwner = new Object();
++            final AtomicReference<Object> currentOwner = new AtomicReference<>(expectedOwner);
++            final AtomicBoolean active = new AtomicBoolean(true);
++            final AtomicInteger publications = new AtomicInteger();
++            final AtomicInteger failures = new AtomicInteger();
++            try {
++                workers.submit(() -> block(started, release));
++                assertTrue(started.await(5, TimeUnit.SECONDS));
++                loop.submit(() -> ResourcePackDownloadCompletion.finish(workers::submit, loop,
++                        () -> active.get() && currentTracker.get() == tracker && currentOwner.get() == expectedOwner,
++                        tracker, "pack", download, pack -> publications.incrementAndGet(), error -> failures.incrementAndGet())).get(5, TimeUnit.SECONDS);
++                final int replacement = stale;
++                loop.submit(() -> {
++                    switch (replacement) {
++                        case 0 -> tracker.add("pack", 2, 2, new byte[32], false, PackType.Resources);
++                        case 1 -> currentTracker.set(new ResourcePackDownloadTracker());
++                        case 2 -> currentOwner.set(new Object());
++                        case 3 -> active.set(false);
++                        default -> throw new AssertionError();
++                    }
++                }).get(5, TimeUnit.SECONDS);
++                release.countDown();
++                workers.submit(() -> "worker-barrier").get(5, TimeUnit.SECONDS);
++                loop.submit(() -> "completion-barrier").get(5, TimeUnit.SECONDS);
++                assertEquals(0, publications.get());
++                assertEquals(0, failures.get());
++                assertNotNull(tracker.get("pack"));
++                if (stale == 0) {
++                    assertNotSame(download, tracker.get("pack"));
++                }
++            } finally {
++                release.countDown();
++                workers.stop();
++                loop.shutdownGracefully(0, 5, TimeUnit.SECONDS).sync();
++            }
++        }
++    }
++
++    @Test
++    void verificationFailureReportsOnTheEventLoopWithoutPublishing() throws Exception {
++        final ResourcePackExecutor workers = new ResourcePackExecutor(1, 4, "download-test");
++        final DefaultEventLoop loop = new DefaultEventLoop();
++        final ResourcePackDownloadTracker tracker = new ResourcePackDownloadTracker();
++        final var download = completed(tracker, true);
++        final CompletableFuture<Throwable> failed = new CompletableFuture<>();
++        final AtomicInteger publications = new AtomicInteger();
++        try {
++            loop.submit(() -> ResourcePackDownloadCompletion.finish(workers::submit, loop, () -> true, tracker, "pack", download,
++                    pack -> publications.incrementAndGet(), error -> {
++                        assertTrue(loop.inEventLoop());
++                        failed.complete(error);
++                    })).get(5, TimeUnit.SECONDS);
++            assertEquals("Failed to verify data hash", failed.get(5, TimeUnit.SECONDS).getMessage());
++            assertEquals(0, publications.get());
++            assertSame(download, tracker.get("pack"));
++        } finally {
++            workers.stop();
++            loop.shutdownGracefully(0, 5, TimeUnit.SECONDS).sync();
++        }
++    }
++
++    @Test
++    void rejectedDecoderReportsFailureWithoutRunningOnTheCaller() throws Exception {
++        final ResourcePackExecutor workers = new ResourcePackExecutor(1, 4, "download-test");
++        final DefaultEventLoop loop = new DefaultEventLoop();
++        final ResourcePackDownloadTracker tracker = new ResourcePackDownloadTracker();
++        final var download = completed(tracker, true);
++        final CompletableFuture<Throwable> failed = new CompletableFuture<>();
++        workers.stop();
++        try {
++            loop.submit(() -> ResourcePackDownloadCompletion.finish(workers::submit, loop, () -> true, tracker, "pack", download,
++                    pack -> fail("A rejected decoder cannot publish"), error -> {
++                        assertTrue(loop.inEventLoop());
++                        failed.complete(error);
++                    })).get(5, TimeUnit.SECONDS);
++            assertInstanceOf(RejectedExecutionException.class, failed.get(5, TimeUnit.SECONDS));
++            assertSame(download, tracker.get("pack"));
++        } finally {
++            loop.shutdownGracefully(0, 5, TimeUnit.SECONDS).sync();
++        }
++    }
++
++    @Test
++    void shutdownSettlesQueuedDecoderInsteadOfHangingNegotiation() throws Exception {
++        final ResourcePackExecutor workers = new ResourcePackExecutor(1, 4, "download-test");
++        final DefaultEventLoop loop = new DefaultEventLoop();
++        final CountDownLatch started = new CountDownLatch(1);
++        final CountDownLatch release = new CountDownLatch(1);
++        final ResourcePackDownloadTracker tracker = new ResourcePackDownloadTracker();
++        final var download = completed(tracker, false);
++        final CompletableFuture<Throwable> failed = new CompletableFuture<>();
++        try {
++            workers.submit(() -> block(started, release));
++            assertTrue(started.await(5, TimeUnit.SECONDS));
++            loop.submit(() -> ResourcePackDownloadCompletion.finish(workers::submit, loop, () -> true, tracker, "pack", download,
++                    pack -> fail("A cancelled decoder cannot publish"), failed::complete)).get(5, TimeUnit.SECONDS);
++            workers.stop();
++            assertInstanceOf(CancellationException.class, failed.get(5, TimeUnit.SECONDS));
++        } finally {
++            release.countDown();
++            workers.stop();
++            loop.shutdownGracefully(0, 5, TimeUnit.SECONDS).sync();
++        }
++    }
++
++    private static ResourcePackDownloadTracker.Download completed(final ResourcePackDownloadTracker tracker, final boolean mismatch) throws Exception {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID()
++                + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
++        content.put("payload", new byte[]{1, 2, 3});
++        final byte[] archive = content.toZip();
++        final byte[] hash = mismatch ? new byte[32] : MessageDigest.getInstance("SHA-256").digest(archive);
++        final var download = tracker.add("pack", archive.length, archive.length, hash, false, PackType.Resources);
++        assertTrue(download.acceptDataChunk(0, archive));
++        return download;
++    }
++
++    private static String block(final CountDownLatch started, final CountDownLatch release) {
++        started.countDown();
++        boolean interrupted = false;
++        while (release.getCount() != 0) {
++            try {
++                release.await();
++            } catch (final InterruptedException ignored) {
++                interrupted = true;
++            }
++        }
++        if (interrupted) {
++            Thread.currentThread().interrupt();
++        }
++        return "released";
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPreparationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPreparationTest.java
 new file mode 100644
 index 000000000..69ccd109e
@@ -3063,12 +3546,134 @@ index 000000000..69ccd109e
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTrackerTest.java
+new file mode 100644
+index 000000000..bd7fd6bb2
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTrackerTest.java
+@@ -0,0 +1,116 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PackType;
++import org.junit.jupiter.api.Test;
++
++import java.security.MessageDigest;
++import java.io.IOException;
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.Collections;
++import java.util.Random;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ResourcePackDownloadTrackerTest {
++
++    @Test
++    void assemblesOrderedReversedAndShuffledChunksAndOnlyCompletesOnce() throws Exception {
++        final byte[] archive = archive();
++        for (int ordering = 0; ordering < 3; ordering++) {
++            final var download = new ResourcePackDownloadTracker().add("pack", archive.length, 17, digest(archive), false, PackType.Resources);
++            final var chunks = new ArrayList<Integer>();
++            for (int chunk = 0; chunk < download.receivedChunks().length; chunk++) {
++                chunks.add(chunk);
++            }
++            if (ordering == 1) {
++                Collections.reverse(chunks);
++            } else if (ordering == 2) {
++                Collections.shuffle(chunks, new Random(2193));
++            }
++            assertFalse(download.isComplete());
++            assertThrows(IllegalStateException.class, download::verifyAndParse);
++            for (int index = 0; index < chunks.size(); index++) {
++                final int chunk = chunks.get(index);
++                final int offset = chunk * 17;
++                final boolean complete = download.acceptDataChunk(chunk, Arrays.copyOfRange(archive, offset, Math.min(offset + 17, archive.length)));
++                assertEquals(index == chunks.size() - 1, complete);
++                assertEquals(complete, download.isComplete());
++            }
++            assertArrayEquals(archive, download.data());
++            assertArrayEquals(new byte[]{1, 2, 3}, download.verifyAndParse().content().get("payload"));
++            assertThrows(IllegalStateException.class, () -> download.acceptDataChunk(chunks.get(0), new byte[0]));
++        }
++    }
++
++    @Test
++    void duplicateOutOfBoundsAndFailedCopiesDoNotAdvanceReceiptCount() {
++        final var download = new ResourcePackDownloadTracker().add("pack", 4, 2, new byte[32], false, PackType.Resources);
++        assertFalse(download.acceptDataChunk(1, new byte[]{3, 4}));
++        assertThrows(IllegalStateException.class, () -> download.acceptDataChunk(1, new byte[]{3, 4}));
++        assertThrows(IllegalStateException.class, () -> download.acceptDataChunk(-1, new byte[0]));
++        assertThrows(IllegalStateException.class, () -> download.acceptDataChunk(2, new byte[0]));
++        assertThrows(IndexOutOfBoundsException.class, () -> download.acceptDataChunk(0, new byte[5]));
++        assertFalse(download.isComplete());
++        assertTrue(download.acceptDataChunk(0, new byte[]{1, 2}));
++        assertArrayEquals(new byte[]{1, 2, 3, 4}, download.data());
++    }
++
++    @Test
++    void rejectsHashMismatchBeforeParsing() throws Exception {
++        final byte[] archive = archive();
++        final var download = new ResourcePackDownloadTracker().add("pack", archive.length, archive.length, new byte[32], false, PackType.Resources);
++        assertTrue(download.acceptDataChunk(0, archive));
++        final RuntimeException error = assertThrows(RuntimeException.class, download::verifyAndParse);
++        assertEquals("Failed to verify data hash", error.getMessage());
++        assertEquals("Hash mismatch", error.getCause().getMessage());
++    }
++
++    @Test
++    void rejectsTruncatedZipAndMissingManifestWithTheExistingParseError() throws Exception {
++        final InMemoryContent missingManifest = new InMemoryContent();
++        missingManifest.put("payload", new byte[]{1});
++        final InMemoryContent truncatedContent = new InMemoryContent();
++        truncatedContent.putStored("payload", new byte[1024]);
++        final byte[] truncated = Arrays.copyOf(truncatedContent.toZip(), 100);
++        for (final byte[] invalid : new byte[][]{truncated, missingManifest.toZip()}) {
++            final var download = new ResourcePackDownloadTracker().add("pack", invalid.length, invalid.length, digest(invalid), false, PackType.Resources);
++            assertTrue(download.acceptDataChunk(0, invalid));
++            final RuntimeException error = assertThrows(RuntimeException.class, download::verifyAndParse);
++            assertEquals("Failed to parse resource pack data", error.getMessage());
++            if (invalid == truncated) {
++                assertInstanceOf(IOException.class, error.getCause());
++            } else {
++                assertInstanceOf(IllegalStateException.class, error.getCause().getCause());
++                assertEquals("Missing manifest.json", error.getCause().getCause().getMessage());
++            }
++        }
++    }
++
++    @Test
++    void synchronousCompatibilityMethodStillReturnsTheDecodedPack() throws Exception {
++        final byte[] archive = archive();
++        final var download = new ResourcePackDownloadTracker().add("pack", archive.length, archive.length, digest(archive), false, PackType.Resources);
++        assertArrayEquals(new byte[]{1, 2, 3}, download.processDataChunk(0, archive).content().get("payload"));
++    }
++
++    private static byte[] archive() throws Exception {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID()
++                + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
++        content.put("payload", new byte[]{1, 2, 3});
++        return content.toZip();
++    }
++
++    private static byte[] digest(final byte[] data) throws Exception {
++        return MessageDigest.getInstance("SHA-256").digest(data);
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTrackerTest.java
 new file mode 100644
-index 000000000..ca5c0c370
+index 000000000..87f0e716c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTrackerTest.java
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,116 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -3098,6 +3703,8 @@ index 000000000..ca5c0c370
 +import java.util.Map;
 +import java.util.ArrayList;
 +import java.io.IOException;
++import java.util.concurrent.ExecutionException;
++import java.util.concurrent.TimeUnit;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -3162,6 +3769,16 @@ index 000000000..ca5c0c370
 +        assertFalse(provider.has(failed.key(), failedInfo.cacheIdentity()));
 +        assertTrue(provider.has(unused.key(), unusedInfo.cacheIdentity()));
 +        assertArrayEquals(new byte[]{2}, provider.load(unused.key(), unusedInfo.cacheIdentity()).content().get("payload"));
++    }
++
++    @Test
++    void failedDecodeCompletesTheNegotiationFutureExceptionally() {
++        final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(null, new ResourcePackLoadStateTracker.Info[0]);
++        final var negotiation = tracker.loadedFuture();
++        final IllegalStateException failure = new IllegalStateException("Bad downloaded pack");
++        tracker.failLoading(failure);
++        assertSame(failure, assertThrows(ExecutionException.class, () -> negotiation.get(5, TimeUnit.SECONDS)).getCause());
++        tracker.onRemove();
 +    }
 +
 +    private static ResourcePack pack(final byte[] payload) {

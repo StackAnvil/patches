@@ -2,6 +2,14 @@
 
 Please check that a changed source pack cannot reuse an older conversion, and that reconnecting with unchanged packs avoids another conversion.
 
+## Download completion on bounded workers
+
+Receiving the last pack chunk no longer hashes and inflates the entire archive on the connection event loop. Chunk assembly stays on that loop, with a constant-time remaining count; completed archives use the existing bounded preparation workers. Duplicate chunks cannot alter a completed buffer or enqueue another decode. ZIP input streams release their native inflater after success or failure.
+
+Decoded packs remain associated with their exact download entry until publication on the event loop. Channel, load tracker, download tracker, and entry identity checks reject obsolete results. Decode failures, worker rejection, and shutdown settle negotiation and use the existing disconnect handling. The synchronous decoder API remains available for integrations.
+
+The standalone owning patch passes 45 tests and both Checkstyle tasks. New regressions cover out-of-order chunks, failed-copy accounting, digest and archive errors, event-loop responsiveness, stale owners, rejection, shutdown, and failed negotiation completion. The complete core build passes 1,155 tests with 30 optional skips and no failures or errors. These are correctness and responsiveness checks; no new live-server frame-time or joining benchmark was performed.
+
 ## Testing
 
 - [x] Run `./gradlew test checkstyleMain checkstyleTest` on the feature-only checkout.
