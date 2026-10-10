@@ -1,4 +1,4 @@
-From 956400222e556c523ac88e516224129b0bd70cd8 Mon Sep 17 00:00:00 2001
+From f7b6b2b79783f34a68e8114f21701e4f7d123243 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 9 Oct 2026 16:10:14 +0200
 Subject: [PATCH] feat(render): use supported native world actor definitions
@@ -8,15 +8,25 @@ Ordinary mapped Java entities previously skipped the bundled Bedrock client enti
 Replace the Java appearance only after every selected surface resolves. Preserve Java fallback for missing queries, effects, equipment, sleeping, riding, unsupported materials and active crystal beams, and retain the original shadow radius. Tests exercise the bundled crystal, camera independence and unsupported overrides.
 
 Verify the target 1.26.51.1 crystal animation at 20, 60 and 144 frames per second across three loops. Each nested bone retains its authored -60-degree-per-second rotation and stable random phase. Preserve the native rate instead of changing it to a Java approximation.
+
+Capture position deltas as frame values before creating the native query
+callback. World actor playback scopes outlive the frame and are values in
+a weak entity map; capturing the entity in that callback retained the weak
+key and every removed actor's playback. The regression checks immutable
+frame values and captured references directly, avoiding unreliable GC
+assertions. This fixes the same lifecycle error already removed from the
+player renderer for world actors and end crystals.
 ---
  .../BedrockWorldActorAppearance.java          |  71 ++++++
  .../render/MixinEntityRenderDispatcher.java   |  16 ++
- .../render/BedrockWorldActorRenderer.java     | 215 ++++++++++++++++++
+ .../render/BedrockWorldActorRenderer.java     | 222 ++++++++++++++++++
  .../BedrockWorldActorAppearanceTest.java      |  86 +++++++
- 4 files changed, 388 insertions(+)
+ .../render/BedrockWorldActorQueryTest.java    |  47 ++++
+ 5 files changed, 442 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
 new file mode 100644
@@ -148,10 +158,10 @@ index 94877d4..7b5265c 100644
              return;
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
 new file mode 100644
-index 0000000..f8f3498
+index 0000000..14d4600
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,222 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -259,9 +269,7 @@ index 0000000..f8f3498
 +                throw new IllegalArgumentException("Missing native entity property");
 +            return snapshot.properties().get(String.valueOf(args.getFirst()));
 +        });
-+        queries.put("position_delta", (BedrockActorAnimation.Query) args -> args.size() != 1 ? 0F : switch (((Number) args.getFirst()).intValue()) {
-+            case 0 -> entity.getX() - entity.xo; case 1 -> entity.getY() - entity.yo; case 2 -> entity.getZ() - entity.zo; default -> 0F;
-+        });
++        queries.put("position_delta", positionDeltaQuery(entity));
 +        if (entity instanceof LivingEntity living) {
 +            queries.put("target_x_rotation", Mth.rotLerp(partial, entity.xRotO, entity.getXRot()));
 +            queries.put("target_y_rotation", Mth.rotLerp(partial, living.yHeadRotO, living.yHeadRot) - yaw);
@@ -284,6 +292,15 @@ index 0000000..f8f3498
 +        } catch (IOException | RuntimeException unsupported) {
 +            actor.failed = true; actor.frame = null; return false;
 +        }
++    }
++
++    static BedrockActorAnimation.Query positionDeltaQuery(final Entity entity) {
++        final double dx = entity.getX() - entity.xo;
++        final double dy = entity.getY() - entity.yo;
++        final double dz = entity.getZ() - entity.zo;
++        return args -> args.size() != 1 ? 0F : switch (((Number) args.getFirst()).intValue()) {
++            case 0 -> dx; case 1 -> dy; case 2 -> dz; default -> 0F;
++        };
 +    }
 +
 +    @Override
@@ -456,6 +473,59 @@ index 0000000..00b033e
 +            final var actor = appearance("{\"render_controllers\":{\"controller.render.ender_crystal\":{\"geometry\":\"Geometry.default\",\"materials\":[{\"*\":\""
 +                    + unsupported + "\"}],\"textures\":[\"Texture.default\"]}}}").playback();
 +            assertNull(actor.sample(0, new BedrockActorAnimation.Frame(Map.of("show_bottom", true), Map.of())));
++        }
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java
+new file mode 100644
+index 0000000..8938e49
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java
+@@ -0,0 +1,47 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.lang.reflect.Modifier;
++import java.util.List;
++import net.minecraft.SharedConstants;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.entity.Entity;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class BedrockWorldActorQueryTest {
++    @BeforeAll
++    static void bootstrap() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void capturesFrameDeltasWithoutRetainingTheWeakEntityKey() throws Exception {
++        final var entity = mock(Entity.class);
++        when(entity.getX()).thenReturn(11.25);
++        when(entity.getY()).thenReturn(-2.5);
++        when(entity.getZ()).thenReturn(7.75);
++        entity.xo = 10;
++        entity.yo = -3;
++        entity.zo = 8;
++        final var delta = BedrockWorldActorRenderer.positionDeltaQuery(entity);
++        when(entity.getX()).thenReturn(500D);
++        entity.xo = 0;
++        assertEquals(1.25, delta.evaluate(List.of(0)));
++        assertEquals(.5, delta.evaluate(List.of(1)));
++        assertEquals(-.25, delta.evaluate(List.of(2)));
++        assertEquals(0D, ((Number) delta.evaluate(List.of(3))).doubleValue());
++        for (final var field : delta.getClass().getDeclaredFields()) {
++            if (Modifier.isStatic(field.getModifiers()) || field.getType().isPrimitive()) continue;
++            field.setAccessible(true);
++            assertFalse(field.get(delta) instanceof Entity);
 +        }
 +    }
 +}

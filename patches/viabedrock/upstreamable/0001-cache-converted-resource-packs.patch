@@ -1,4 +1,4 @@
-From 0816b184908e6d6208cedc1e19e6c27e0bc1cc6d Mon Sep 17 00:00:00 2001
+From e7031d7d93a24c296a3c137fface2ea1de893517 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:52:24 +0200
 Subject: [PATCH] perf(resource-packs): cache converted packs by content
@@ -107,6 +107,15 @@ BREAKING CHANGE: Content subclasses implement protected putBytes instead
 of overriding put. The public put method now maintains ZIP metadata.
 
 Advance the emitted-resource format identity when sidebar image metadata gains source dimensions and its aspect-ratio setting. Rebuild cached packs so the add-on does not receive stale metadata.
+
+Separate in-flight deduplication from completed conversion retention.
+Keep at most four completed packs under a 64 MiB archive and serialized
+metadata budget, evicting least recently used results. Remove completed
+futures on success and failure; active HTTP clients retain their own pack
+reference, and disk archives remain available after eviction. Clear both
+maps on shutdown. Rejoining servers with distinct pack fingerprints must
+not retain every converted ZIP and native metadata object indefinitely.
+Regression tests cover LRU reuse, eviction, oversized archives and retry.
 ---
  build.gradle                                  |  12 +
  .../api/model/entity/CustomEntity.java        |   2 +-
@@ -114,12 +123,12 @@ Advance the emitted-resource format identity when sidebar image metadata gains s
  .../content/DirectoryContent.java             |   2 +-
  .../resourcepack/content/InMemoryContent.java |   2 +-
  .../content/ResourcePackZipWriter.java        | 190 +++++++++++
- .../http/ConvertedResourcePackCache.java      | 253 +++++++++++++++
+ .../http/ConvertedResourcePackCache.java      | 292 +++++++++++++++++
  .../http/ConverterDataManifest.java           |  74 +++++
  .../http/ResourcePackHttpServer.java          | 145 ++++-----
  .../viabedrock/api/util/FileSystemUtil.java   |  18 ++
  .../packet/ResourcePackClientResponse.java    |  52 +++
- .../protocol/packet/ResourcePackPackets.java  | 295 ++++++++++--------
+ .../protocol/packet/ResourcePackPackets.java  | 295 +++++++++--------
  .../provider/ResourcePackProvider.java        |   8 +-
  .../impl/DiskResourcePackProvider.java        |  47 ++-
  .../impl/InMemoryResourcePackProvider.java    |  34 +-
@@ -127,10 +136,10 @@ Advance the emitted-resource format identity when sidebar image metadata gains s
  .../storage/ResourcePackLoadStateTracker.java |  62 ++--
  .../content/ContentLanguageCacheTest.java     |  65 ++++
  .../content/ResourcePackZipWriterTest.java    | 241 ++++++++++++++
- .../http/ConvertedResourcePackCacheTest.java  | 255 +++++++++++++++
+ .../http/ConvertedResourcePackCacheTest.java  | 304 ++++++++++++++++++
  .../ResourcePackClientResponseTest.java       |  74 +++++
  .../ResourcePackLoadStateTrackerTest.java     |  43 +++
- 22 files changed, 1675 insertions(+), 266 deletions(-)
+ 22 files changed, 1763 insertions(+), 266 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConverterDataManifest.java
@@ -504,10 +513,10 @@ index 000000000..e818cc48e
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 new file mode 100644
-index 000000000..07d8bd362
+index 000000000..857dab65e
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,292 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -549,6 +558,7 @@ index 000000000..07d8bd362
 +import java.util.ArrayList;
 +import java.util.Collection;
 +import java.util.HexFormat;
++import java.util.LinkedHashMap;
 +import java.util.List;
 +import java.util.UUID;
 +import java.util.Map;
@@ -567,6 +577,9 @@ index 000000000..07d8bd362
 +    // Advance when the set or format of emitted resources changes independently of converter profiles.
 +    private static final int RESOURCE_FORMAT_VERSION = 6;
 +
++    private static final long MAX_CACHED_BYTES = 64L * 1024 * 1024;
++    private static final int MAX_CACHED_ENTRIES = 4;
++
 +    private final Path directory;
 +    private final ViaBedrockConfig.PackCacheMode mode;
 +    private final Function<ResourcePackStorage, Content> converter;
@@ -576,6 +589,8 @@ index 000000000..07d8bd362
 +        return thread;
 +    });
 +    private final ConcurrentHashMap<String, CompletableFuture<Pack>> pending = new ConcurrentHashMap<>();
++    private final Map<String, CachedPack> completed = new LinkedHashMap<>(16, .75F, true);
++    private long cachedBytes;
 +
 +    public ConvertedResourcePackCache(final Path directory, final ViaBedrockConfig.PackCacheMode mode) {
 +        this(directory, mode, storage -> {
@@ -601,21 +616,52 @@ index 000000000..07d8bd362
 +            return CompletableFuture.supplyAsync(() -> this.convert(storage), this.executor);
 +        }
 +        return CompletableFuture.supplyAsync(() -> fingerprint(storage.getPackStackTopToBottom()), this.executor).thenCompose(key -> {
-+            final CompletableFuture<Pack> future = this.pending.computeIfAbsent(key, ignored -> CompletableFuture.supplyAsync(() ->
-+                    this.mode == ViaBedrockConfig.PackCacheMode.DISK ? this.loadOrConvert(key, storage) : this.convert(storage), this.executor));
-+            return future.thenApply(pack -> {
++            final Pack cached = this.cached(key);
++            final CompletableFuture<Pack> future = cached != null ? CompletableFuture.completedFuture(cached)
++                    : this.pending.computeIfAbsent(key, ignored -> CompletableFuture.supplyAsync(() ->
++                            this.mode == ViaBedrockConfig.PackCacheMode.DISK ? this.loadOrConvert(key, storage) : this.convert(storage), this.executor));
++            return future.whenComplete((pack, error) -> {
++                if (error == null && cached == null) {
++                    this.retain(key, pack);
++                }
++                this.pending.remove(key, future);
++            }).thenApply(pack -> {
 +                storage.getConverterData().putAll(pack.converterData());
 +                return pack;
-+            }).whenComplete((pack, error) -> {
-+                if (error != null) {
-+                    this.pending.remove(key, future);
-+                }
 +            });
 +        });
 +    }
 +
++    private synchronized Pack cached(final String key) {
++        final CachedPack cached = this.completed.get(key);
++        return cached == null ? null : cached.pack();
++    }
++
++    private void retain(final String key, final Pack pack) {
++        // Bound archive bytes and serialized metadata as well as entry count. Disk ZIPs stay on disk.
++        final long weight = (pack.bytes() == null ? 0 : pack.bytes().length)
++                + 2L * ConverterDataManifest.encode(pack.converterData()).toString().length();
++        synchronized (this) {
++            if (this.executor.isShutdown() || weight > MAX_CACHED_BYTES) {
++                return;
++            }
++            final CachedPack previous = this.completed.put(key, new CachedPack(pack, weight));
++            this.cachedBytes += weight - (previous == null ? 0 : previous.weight());
++            final var entries = this.completed.entrySet().iterator();
++            while (this.completed.size() > MAX_CACHED_ENTRIES || this.cachedBytes > MAX_CACHED_BYTES) {
++                this.cachedBytes -= entries.next().getValue().weight();
++                entries.remove();
++            }
++        }
++    }
++
 +    public void stop() {
 +        this.executor.shutdownNow();
++        this.pending.clear();
++        synchronized (this) {
++            this.completed.clear();
++            this.cachedBytes = 0;
++        }
 +    }
 +
 +    private Pack loadOrConvert(final String key, final ResourcePackStorage storage) {
@@ -752,6 +798,8 @@ index 000000000..07d8bd362
 +            throw new IllegalStateException(algorithm + " is not available", e);
 +        }
 +    }
++
++    private record CachedPack(Pack pack, long weight) { }
 +
 +    public record Pack(Path path, byte[] bytes, long size, String sha1, UUID id, Map<String, Object> converterData) {
 +
@@ -2094,10 +2142,10 @@ index 000000000..4e177dceb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 new file mode 100644
-index 000000000..53ea1ce25
+index 000000000..1861614ac
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,304 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -2343,6 +2391,55 @@ index 000000000..53ea1ce25
 +        manifest.getAsJsonObject("entity_scales").addProperty("ce_example_scale", Double.MAX_VALUE);
 +        assertThrows(IllegalArgumentException.class, () -> ConverterDataManifest.decode(manifest.toString()));
 +        assertThrows(IllegalArgumentException.class, () -> ConverterDataManifest.encode(Map.of("arbitrary_key", true)));
++    }
++
++    @Test
++    void evictsLeastRecentlyUsedCompletedConversionsWithoutInvalidatingReturnedPacks() {
++        final AtomicInteger conversions = new AtomicInteger();
++        final ConvertedResourcePackCache cache = new ConvertedResourcePackCache(this.directory,
++                ViaBedrockConfig.PackCacheMode.MEMORY, storage -> {
++                    conversions.incrementAndGet();
++                    return new InMemoryContent();
++                });
++        try {
++            final var sources = java.util.stream.IntStream.range(0, 5)
++                    .mapToObj(index -> new ResourcePackStorage(List.of(pack(UUID.randomUUID(), new byte[]{(byte) index}))))
++                    .toList();
++            final var first = cache.prepare(sources.get(0)).join();
++            for (int index = 1; index < 4; index++) {
++                cache.prepare(sources.get(index)).join();
++            }
++            assertSame(first, cache.prepare(sources.get(0)).join());
++            cache.prepare(sources.get(sources.size() - 1)).join();
++            assertSame(first, cache.prepare(sources.get(0)).join());
++            assertEquals(5, conversions.get());
++            cache.prepare(sources.get(1)).join();
++            assertEquals(6, conversions.get());
++            assertTrue(first.bytes().length > 0);
++        } finally {
++            cache.stop();
++        }
++    }
++
++    @Test
++    void oversizedMemoryArchivesAreReturnedWithoutRetainingCompletedFutures() {
++        final AtomicInteger conversions = new AtomicInteger();
++        final byte[] payload = new byte[64 * 1024 * 1024];
++        new Random(2193).nextBytes(payload);
++        final ConvertedResourcePackCache cache = new ConvertedResourcePackCache(this.directory,
++                ViaBedrockConfig.PackCacheMode.MEMORY, storage -> {
++                    conversions.incrementAndGet();
++                    final InMemoryContent content = new InMemoryContent();
++                    content.put("assets/example/payload", payload);
++                    return content;
++                });
++        try {
++            assertTrue(cache.prepare(new ResourcePackStorage(List.of())).join().size() > payload.length);
++            cache.prepare(new ResourcePackStorage(List.of())).join();
++            assertEquals(2, conversions.get());
++        } finally {
++            cache.stop();
++        }
 +    }
 +
 +    private static ResourcePack pack(final UUID id, final byte[] data) {

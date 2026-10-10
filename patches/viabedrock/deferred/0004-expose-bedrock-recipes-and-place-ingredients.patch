@@ -1,4 +1,4 @@
-From e45505ec132476322db1e1893be892dcc8394763 Mon Sep 17 00:00:00 2001
+From 6bdd1e9e9077d248564e55519030b033c079a5bb Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 21:09:29 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -79,15 +79,28 @@ unknown native enum values without forcing them into Java book state.
 Decode bounded native envelopes before dispatch so malformed input cannot
 mutate preferences or become a server edit. Native furnace scene controls
 and native/direct/ViaProxy behavior comparisons remain incomplete.
+
+Allow ordinary crafting-result pickup onto a compatible cursor stack in
+both player and table grids. Preserve the cursor's confirmed stack ID and
+existing metadata, and require space for the full per-craft result before
+consuming input. A normal click still makes one craft; Shift-click batches
+available ingredients. Rejected requests restore both the cursor and grid.
+
+The pinned Geyser 2.11.3 InventoryTranslator at
+63a4e2b79b12f0d138777d5fd80176a112b4bd72 maps a CreatedOutput-to-cursor
+Place action to one ordinary result-slot click, including an occupied
+cursor. Parameterized handler tests cover both grids, network identities,
+rollback, incompatible or full cursors, and two logs yielding eight planks
+through two normal clicks or one Shift-click.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 ++
- .../model/container/CraftingOutputPlan.java   |  97 ++++
+ .../model/container/CraftingOutputPlan.java   | 109 +++++
  .../model/container/CraftingPlacement.java    | 229 +++++++++
  .../container/FurnaceRecipePlacement.java     | 194 ++++++++
- .../block/CraftingTableContainer.java         |  92 ++--
+ .../block/CraftingTableContainer.java         | 100 ++--
  .../container/block/FurnaceContainer.java     |  57 +++
  .../model/container/player/HudContainer.java  |   3 +
- .../container/player/InventoryContainer.java  | 196 +++++++-
+ .../container/player/InventoryContainer.java  | 190 +++++++-
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/ServerboundBedrockPackets.java   |   1 +
  .../protocol/model/FurnaceOptions.java        |  17 +
@@ -114,10 +127,11 @@ and native/direct/ViaProxy behavior comparisons remain incomplete.
  .../packet/FurnaceOptionsPacketTest.java      | 156 ++++++
  .../NativeFurnaceOptionsPacketTest.java       | 214 ++++++++
  .../storage/CookingRecipeBookTest.java        | 118 +++++
+ .../protocol/storage/CraftingCursorTest.java  | 158 ++++++
  .../storage/CraftingDataTrackerTest.java      | 236 +++++++++
  .../storage/FurnaceRecipeRequestTest.java     | 126 +++++
  .../types/model/FurnaceOptionsTypeTest.java   |  75 +++
- 37 files changed, 3383 insertions(+), 104 deletions(-)
+ 38 files changed, 3548 insertions(+), 111 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CraftingPlacement.java
@@ -135,6 +149,7 @@ and native/direct/ViaProxy behavior comparisons remain incomplete.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/FurnaceOptionsPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NativeFurnaceOptionsPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CookingRecipeBookTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingCursorTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/model/FurnaceOptionsTypeTest.java
@@ -191,10 +206,10 @@ index 000000000..712ddc8a3
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java b/src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java
 new file mode 100644
-index 000000000..bb7f4a7e8
+index 000000000..588fe1538
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,109 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -219,7 +234,7 @@ index 000000000..bb7f4a7e8
 +
 +import java.util.Arrays;
 +
-+/** One server-authoritative craft request whose output fits in a single inventory slot. */
++/** One server-authoritative craft request whose output fits in one inventory or cursor slot. */
 +public record CraftingOutputPlan(int destination, int crafts, int outputAmount,
 +                                 int destinationNetId) {
 +
@@ -277,6 +292,18 @@ index 000000000..bb7f4a7e8
 +        return null;
 +    }
 +
++    public static CraftingOutputPlan pickup(final Container hud, final BedrockItem result,
++            final int maxStackSize) {
++        final BedrockItem cursor = hud.getItem(0);
++        if (result.isEmpty() || result.amount() > Math.min(255, maxStackSize) - cursor.amount()) {
++            return null;
++        }
++        if (!cursor.isEmpty() && (!canStack(cursor, result) || cursor.netId() == null)) {
++            return null;
++        }
++        return new CraftingOutputPlan(0, 1, result.amount(), cursor.isEmpty() ? 0 : cursor.netId());
++    }
++
 +    private static boolean canStack(final BedrockItem existing, final BedrockItem result) {
 +        return !existing.isDifferent(result)
 +                && Arrays.equals(existing.canPlace(), result.canPlace())
@@ -284,7 +311,7 @@ index 000000000..bb7f4a7e8
 +                && existing.blockingTicks() == result.blockingTicks();
 +    }
 +
-+    public void apply(final InventoryContainer inventory, final BedrockItem result) {
++    public void apply(final Container inventory, final BedrockItem result) {
 +        final BedrockItem existing = inventory.getItem(this.destination);
 +        final BedrockItem updated = existing.isEmpty() ? result.copy() : existing.copy();
 +        updated.setAmount(existing.amount() + this.outputAmount);
@@ -728,7 +755,7 @@ index 000000000..668c87af5
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
-index fec81fe6c..85d9ca352 100644
+index fec81fe6c..178d1ef15 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
 @@ -22,6 +22,8 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -751,7 +778,7 @@ index fec81fe6c..85d9ca352 100644
  import net.raphimc.viabedrock.protocol.storage.InventoryRequestStorage;
  import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
  import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
-@@ -108,12 +112,12 @@ public final class CraftingTableContainer extends Container {
+@@ -108,41 +112,48 @@ public final class CraftingTableContainer extends Container {
              return false;
          }
  
@@ -768,21 +795,25 @@ index fec81fe6c..85d9ca352 100644
          if (result.isEmpty()) {
              return false;
          }
-@@ -123,26 +127,35 @@ public final class CraftingTableContainer extends Container {
-         if (!toInventory && !inventory.getHudContainer().getItem(0).isEmpty()) {
-             return false;
-         }
+         final InventoryTracker inventory = this.user.get(InventoryTracker.class);
+         final InventoryContainer player = inventory.getInventoryContainer();
+         final boolean toInventory = action == ContainerInput.QUICK_MOVE;
+-        if (!toInventory && !inventory.getHudContainer().getItem(0).isEmpty()) {
+-            return false;
+-        }
 -        final int destination = toInventory ? firstEmptySlot(player) : 0;
+-        if (destination < 0) {
++        final int maxStackSize = this.user.get(ItemRewriter.class).maxStackSize(result);
 +        final CraftingOutputPlan plan = toInventory
-+                ? CraftingOutputPlan.plan(player, result, this, 32, match.amounts(),
-+                        this.user.get(ItemRewriter.class).maxStackSize(result)) : null;
-+        final int destination = toInventory ? plan == null ? -1 : plan.destination() : 0;
-         if (destination < 0) {
++                ? CraftingOutputPlan.plan(player, result, this, 32, match.amounts(), maxStackSize)
++                : CraftingOutputPlan.pickup(inventory.getHudContainer(), result, maxStackSize);
++        if (plan == null) {
              return false;
          }
-+        final int crafts = toInventory ? plan.crafts() : 1;
-+        final int outputAmount = toInventory ? plan.outputAmount() : result.amount();
-+        final int destinationNetId = toInventory ? plan.destinationNetId() : 0;
++        final int destination = plan.destination();
++        final int crafts = plan.crafts();
++        final int outputAmount = plan.outputAmount();
++        final int destinationNetId = plan.destinationNetId();
  
          final InventoryRequestTracker requests = this.user.get(InventoryRequestTracker.class);
          final int requestId = requests.nextRequestId();
@@ -810,7 +841,7 @@ index fec81fe6c..85d9ca352 100644
                              new ItemStackRequestSlotInfo(
                                      this.getFullContainerName(slot),
                                      (byte) slot,
-@@ -154,13 +167,14 @@ public final class CraftingTableContainer extends Container {
+@@ -154,13 +165,14 @@ public final class CraftingTableContainer extends Container {
                          : inventory.getHudContainer().getFullContainerName(0);
          actions.add(
                  new ItemStackRequestAction.PlaceAction(
@@ -827,7 +858,7 @@ index fec81fe6c..85d9ca352 100644
          final ItemStackRequestInfo request =
                  new ItemStackRequestInfo(
                          requestId, actions, List.of(), TextProcessingEventOrigin.unknown);
-@@ -169,14 +183,17 @@ public final class CraftingTableContainer extends Container {
+@@ -169,18 +181,44 @@ public final class CraftingTableContainer extends Container {
          requests.addRequest(
                  new InventoryRequestStorage(
                          request, revision, inventory.getHudContainer().copy(), snapshots));
@@ -844,23 +875,23 @@ index fec81fe6c..85d9ca352 100644
 +            this.setItem(slot, this.itemAfterRemovingAmount(
 +                    ingredient, match.amounts()[index] * crafts));
          }
-         if (toInventory) {
+-        if (toInventory) {
 -            player.setItem(destination, result.copy());
-+            plan.apply(player, result);
-         } else {
-             inventory.getHudContainer().setItem(0, result.copy());
-         }
-@@ -185,6 +202,33 @@ public final class CraftingTableContainer extends Container {
-         return true;
-     }
- 
+-        } else {
+-            inventory.getHudContainer().setItem(0, result.copy());
++        plan.apply(toInventory ? player : inventory.getHudContainer(), result);
++        this.refreshOutput();
++        PacketFactory.sendBedrockInventoryRequest(this.user, new ItemStackRequestInfo[] {request});
++        return true;
++    }
++
 +    public boolean handleRecipePlacement(final CraftingDataStorage recipe,
 +            final boolean maxItems) {
 +        final InventoryTracker inventory = this.user.get(InventoryTracker.class);
 +        final InventoryRequestTracker requests = this.user.get(InventoryRequestTracker.class);
 +        if (!requests.canStartRecipePlacement()) {
 +            return false;
-+        }
+         }
 +        final InventoryContainer player = inventory.getInventoryContainer();
 +        final CraftingPlacement.Placement placement = CraftingPlacement.plan(recipe, 3, 32,
 +                this, player, maxItems, this.user.get(ItemRewriter.class)::maxStackSize,
@@ -875,16 +906,12 @@ index fec81fe6c..85d9ca352 100644
 +        requests.addRequest(new InventoryRequestStorage(request, 0,
 +                inventory.getHudContainer().copy(), List.of(this.copy(), player.copy())));
 +        CraftingPlacement.apply(placement, this, player);
-+        this.refreshOutput();
+         this.refreshOutput();
 +        PacketFactory.sendJavaContainerSetContent(this.user, player);
-+        PacketFactory.sendBedrockInventoryRequest(this.user, new ItemStackRequestInfo[] {request});
-+        return true;
-+    }
-+
-     private void refreshOutput() {
-         final CraftingDataStorage recipe =
-                 this.user.get(CraftingDataTracker.class).getRecipeData(this, "crafting_table");
-@@ -202,18 +246,4 @@ public final class CraftingTableContainer extends Container {
+         PacketFactory.sendBedrockInventoryRequest(this.user, new ItemStackRequestInfo[] {request});
+         return true;
+     }
+@@ -202,18 +240,4 @@ public final class CraftingTableContainer extends Container {
          return BedrockItem.empty();
      }
  
@@ -998,7 +1025,7 @@ index 4e784b7df..638c832b4 100644
              return slot - 27;
          } else {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
-index b5ae97d51..e77c2a2a2 100644
+index b5ae97d51..957492cd9 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
 @@ -26,23 +26,40 @@ import com.viaversion.viaversion.api.type.Types;
@@ -1090,7 +1117,7 @@ index b5ae97d51..e77c2a2a2 100644
          System.arraycopy(armorItems, 0, combinedItems, 5, armorItems.length);
          System.arraycopy(inventoryItems, 9, combinedItems, 9, 27);
          System.arraycopy(inventoryItems, 0, combinedItems, 36, 9);
-@@ -134,6 +177,157 @@ public class InventoryContainer extends Container {
+@@ -134,6 +177,151 @@ public class InventoryContainer extends Container {
          return (byte) ContainerID.CONTAINER_ID_INVENTORY.getValue();
      }
  
@@ -1158,19 +1185,17 @@ index b5ae97d51..e77c2a2a2 100644
 +        final InventoryTracker inventory = this.user.get(InventoryTracker.class);
 +        final HudContainer hud = inventory.getHudContainer();
 +        final boolean toInventory = action == ContainerInput.QUICK_MOVE;
-+        if (!toInventory && !hud.getItem(0).isEmpty()) {
-+            return false;
-+        }
++        final int maxStackSize = this.user.get(ItemRewriter.class).maxStackSize(result);
 +        final CraftingOutputPlan plan = toInventory
-+                ? CraftingOutputPlan.plan(this, result, hud, 28, match.amounts(),
-+                        this.user.get(ItemRewriter.class).maxStackSize(result)) : null;
-+        final int destination = toInventory ? plan == null ? -1 : plan.destination() : 0;
-+        if (destination < 0) {
++                ? CraftingOutputPlan.plan(this, result, hud, 28, match.amounts(), maxStackSize)
++                : CraftingOutputPlan.pickup(hud, result, maxStackSize);
++        if (plan == null) {
 +            return false;
 +        }
-+        final int crafts = toInventory ? plan.crafts() : 1;
-+        final int outputAmount = toInventory ? plan.outputAmount() : result.amount();
-+        final int destinationNetId = toInventory ? plan.destinationNetId() : 0;
++        final int destination = plan.destination();
++        final int crafts = plan.crafts();
++        final int outputAmount = plan.outputAmount();
++        final int destinationNetId = plan.destinationNetId();
 +        final InventoryRequestTracker requests = this.user.get(InventoryRequestTracker.class);
 +        final int requestId = requests.nextRequestId();
 +        final List<ItemStackRequestAction> actions = craftingOutputActions(match, hud,
@@ -1192,11 +1217,7 @@ index b5ae97d51..e77c2a2a2 100644
 +            final BedrockItem ingredient = hud.getItem(slot);
 +            hud.setItem(slot, this.itemAfterRemovingAmount(ingredient, amount * crafts));
 +        }
-+        if (toInventory) {
-+            plan.apply(this, result);
-+        } else {
-+            hud.setItem(0, result.copy());
-+        }
++        plan.apply(toInventory ? this : hud, result);
 +        this.refreshCraftingOutput();
 +        PacketFactory.sendBedrockInventoryRequest(this.user, new ItemStackRequestInfo[] {request});
 +        return true;
@@ -3822,6 +3843,170 @@ index 000000000..573cf6145
 +            final List<ItemDescriptor> inputs, final boolean unlocked) {
 +        return new CraftingDataStorage(RecipeType.SHAPELESS, 7,
 +                new ShapelessRecipe(name, UUID.randomUUID(), tag, 0, inputs, List.of(new BedrockItem(3))), unlocked);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingCursorTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingCursorTest.java
+new file mode 100644
+index 000000000..bb2efb764
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingCursorTest.java
+@@ -0,0 +1,158 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import net.raphimc.viabedrock.api.model.container.Container;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.model.container.block.CraftingTableContainer;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.recipe.RecipeType;
++import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.*;
++import static org.mockito.Mockito.*;
++
++class CraftingCursorTest {
++
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void repeatedPickupMergesResultsUsingConfirmedCursorIdentityAndRollsBack(final boolean table) {
++        final Fixture fixture = new Fixture(table);
++        final List<ItemStackRequestInfo> sent = new ArrayList<>();
++        try (var packets = mockStatic(PacketFactory.class)) {
++            packets.when(() -> PacketFactory.sendBedrockInventoryRequest(eq(fixture.user), any()))
++                    .thenAnswer(call -> {
++                        final var request = ((ItemStackRequestInfo[]) call.getArgument(1))[0];
++                        sent.add(request);
++                        fixture.requests.getRequest(request.requestId()).capturePrediction(fixture.inventory);
++                        return null;
++                    });
++            assertTrue(fixture.output.handleClick(0, (short) 0, (byte) 0, ContainerInput.PICKUP));
++            assertEquals(4, fixture.cursor().amount());
++            assertEquals(1, fixture.ingredient().amount());
++            fixture.cursor().setNetId(23);
++            fixture.ingredient().setNetId(18);
++            fixture.requests.removeRequest(sent.getFirst().requestId());
++
++            assertTrue(fixture.output.handleClick(1, (short) 0, (byte) 0, ContainerInput.PICKUP));
++            assertEquals(8, fixture.cursor().amount());
++            assertTrue(fixture.ingredient().isEmpty());
++            final var request = sent.getLast();
++            final var craft = assertInstanceOf(ItemStackRequestAction.CraftRecipeAction.class, request.actions().get(0));
++            final var consume = assertInstanceOf(ItemStackRequestAction.ConsumeAction.class, request.actions().get(2));
++            final var place = assertInstanceOf(ItemStackRequestAction.PlaceAction.class, request.actions().get(3));
++            assertEquals(1, craft.numberOfRequestedCrafts());
++            assertEquals(1, consume.count());
++            assertEquals(18, consume.item().stackNetworkId());
++            assertEquals(4, place.count());
++            assertEquals(23, place.destination().stackNetworkId());
++
++            fixture.requests.restoreRejectedRequest(fixture.requests.getRequest(request.requestId()));
++            assertEquals(4, fixture.cursor().amount());
++            assertEquals(23, fixture.cursor().netId());
++            assertEquals(1, fixture.ingredient().amount());
++            assertEquals(18, fixture.ingredient().netId());
++        }
++    }
++
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void refusesIncompatibleFullOrUnconfirmedCursorWithoutConsumingInputs(final boolean table) {
++        final Fixture fixture = new Fixture(table);
++        try (var packets = mockStatic(PacketFactory.class)) {
++            for (final BedrockItem cursor : List.of(item(3, 4, 23), item(2, 61, 23), item(2, 4, null))) {
++                fixture.inventory.getHudContainer().setItem(0, cursor);
++                assertFalse(fixture.output.handleClick(0, (short) 0, (byte) 0, ContainerInput.PICKUP));
++                assertEquals(cursor, fixture.cursor());
++                assertEquals(2, fixture.ingredient().amount());
++            }
++            packets.verify(() -> PacketFactory.sendBedrockInventoryRequest(eq(fixture.user), any()), never());
++        }
++    }
++
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void shiftPickupStillCraftsBothLogsInOneRequest(final boolean table) {
++        final Fixture fixture = new Fixture(table);
++        try (var packets = mockStatic(PacketFactory.class)) {
++            assertTrue(fixture.output.handleClick(0, (short) 0, (byte) 0, ContainerInput.QUICK_MOVE));
++            assertEquals(8, fixture.inventory.getInventoryContainer().getItem(9).amount());
++            assertTrue(fixture.cursor().isEmpty());
++            assertTrue(fixture.ingredient().isEmpty());
++        }
++    }
++
++    private static BedrockItem item(final int id, final int count, final Integer netId) {
++        final BedrockItem item = new BedrockItem(id);
++        item.setAmount(count);
++        item.setNetId(netId);
++        return item;
++    }
++
++    private static final class Fixture {
++        private final Map<Class<?>, Object> storage = new HashMap<>();
++        private final UserConnection user = (UserConnection) Proxy.newProxyInstance(
++                UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
++                (proxy, method, args) -> method.getName().equals("get") ? this.storage.get(args[0]) : null);
++        private final InventoryTracker inventory = new InventoryTracker(this.user);
++        private final InventoryRequestTracker requests = new InventoryRequestTracker(this.user);
++        private final Container output;
++        private final Container grid;
++        private final int gridSlot;
++
++        private Fixture(final boolean table) {
++            this.output = table ? new CraftingTableContainer(this.user, (byte) 5, null, null)
++                    : this.inventory.getInventoryContainer();
++            this.grid = table ? this.output : this.inventory.getHudContainer();
++            this.gridSlot = table ? 32 : 28;
++            if (table) {
++                this.inventory.setCurrentContainer(this.output);
++            }
++            this.storage.put(InventoryTracker.class, this.inventory);
++            this.storage.put(InventoryRequestTracker.class, this.requests);
++            final ItemRewriter items = mock(ItemRewriter.class);
++            when(items.maxStackSize(any())).thenReturn(64);
++            this.storage.put(ItemRewriter.class, items);
++            final CraftingDataTracker recipes = mock(CraftingDataTracker.class);
++            this.storage.put(CraftingDataTracker.class, recipes);
++            final var recipe = new ShapelessRecipe("test", UUID.randomUUID(), "crafting_table", 0,
++                    List.of(), List.of(item(2, 4, null)));
++            final int[] amounts = new int[table ? 9 : 4];
++            amounts[0] = 1;
++            final var match = new CraftingDataTracker.RecipeMatch(
++                    new CraftingDataStorage(RecipeType.SHAPELESS, 37, recipe, true), amounts);
++            when(recipes.getRecipeMatch(any(), eq("crafting_table")))
++                    .thenAnswer(_ -> this.ingredient().isEmpty() ? null : match);
++            this.grid.setItem(this.gridSlot, item(1, 2, 19));
++        }
++
++        private BedrockItem cursor() {
++            return this.inventory.getHudContainer().getItem(0);
++        }
++
++        private BedrockItem ingredient() {
++            return this.grid.getItem(this.gridSlot);
++        }
++
 +    }
 +
 +}

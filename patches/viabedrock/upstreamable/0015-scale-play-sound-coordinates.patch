@@ -1,4 +1,4 @@
-From ccb4bcdfb0dd68fce65746354a1c213560ebb8c1 Mon Sep 17 00:00:00 2001
+From 233055fd1ffeac89815d72e68d800b78eba4415c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:48:51 +0200
 Subject: [PATCH] feat(effects): transport native resources and sound commands
@@ -134,6 +134,13 @@ Mark the payload explicitly so ordinary models, JSON and textures keep
 existing compression. Carry this choice through the final content merge.
 The archive format and decoder remain unchanged; older disk packs remain
 valid. This trades some transfer size for less conversion CPU work.
+
+Share immutable sound-caption translations across native actor libraries.
+Overlay only higher-pack language files and search all layers for the
+selected locale before English fallback, preserving pack order and empty
+translations. An overlay without language files reuses the original table.
+This avoids duplicating every bundled locale for each world actor type.
+Tests cover structural reuse, overlay priority and locale fallback.
 ---
  build.gradle                                  |   6 +
  .../api/model/NativeBlockIdentifiers.java     | 144 +++++++++++
@@ -144,7 +151,7 @@ valid. This trades some transfer size for less conversion CPU work.
  .../api/model/SoundPlaybackMessage.java       |  76 ++++++
  .../api/resourcepack/NativeActorLibrary.java  | 136 +++++++++++
  .../resourcepack/NativeResourceArchive.java   | 153 ++++++++++++
- .../api/resourcepack/SoundTranslations.java   |  52 ++++
+ .../api/resourcepack/SoundTranslations.java   |  70 ++++++
  .../api/resourcepack/WaveSound.java           | 228 ++++++++++++++++++
  .../protocol/ClientboundBedrockPackets.java   |   4 +-
  .../bedrock/generated/MinecraftPacketIds.java |   1 +
@@ -161,13 +168,13 @@ valid. This trades some transfer size for less conversion CPU work.
  .../api/model/SoundListenerRangeTest.java     |  27 +++
  .../resourcepack/NativeActorLibraryTest.java  | 186 ++++++++++++++
  .../NativeResourceArchiveTest.java            |  51 ++++
- .../resourcepack/SoundTranslationsTest.java   |  46 ++++
+ .../resourcepack/SoundTranslationsTest.java   |  64 +++++
  .../api/resourcepack/WaveSoundTest.java       | 182 ++++++++++++++
  .../protocol/model/PlaySoundTest.java         |  66 +++++
  .../protocol/packet/PlaySoundPacketsTest.java |  88 +++++++
  .../protocol/packet/SoundUpdateTest.java      |  79 ++++++
  .../storage/NativeBlockSectionTest.java       |  54 +++++
- 32 files changed, 2533 insertions(+), 71 deletions(-)
+ 32 files changed, 2569 insertions(+), 71 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockSection.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
@@ -1113,10 +1120,10 @@ index 000000000..8b528490d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java
 new file mode 100644
-index 000000000..45bbd83cf
+index 000000000..8c40620ca
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,70 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1134,8 +1141,14 @@ index 000000000..45bbd83cf
 +public final class SoundTranslations {
 +
 +    private final Map<String, Map<String, String>> languages = new HashMap<>();
++    private final SoundTranslations inherited;
 +
 +    public SoundTranslations(final List<Map<String, byte[]>> packs) {
++        this(null, packs);
++    }
++
++    private SoundTranslations(final SoundTranslations inherited, final List<Map<String, byte[]>> packs) {
++        this.inherited = inherited;
 +        for (final Map<String, byte[]> pack : packs) {
 +            for (final Map.Entry<String, byte[]> entry : pack.entrySet()) {
 +                final String path = entry.getKey();
@@ -1160,12 +1173,24 @@ index 000000000..45bbd83cf
 +        }
 +    }
 +
++    public SoundTranslations withOverrides(final List<Map<String, byte[]>> packs) {
++        final boolean hasLanguages = packs.stream().flatMap(pack -> pack.keySet().stream())
++                .anyMatch(path -> path.startsWith("texts/") && path.endsWith(".lang") && path.indexOf('/', 6) < 0);
++        return hasLanguages ? new SoundTranslations(this, packs) : this;
++    }
++
 +    public String translate(final String key, final String locale) {
-+        final Map<String, String> selected = this.languages.get(locale.toLowerCase(Locale.ROOT));
-+        if (selected != null && selected.containsKey(key)) {
-+            return selected.get(key);
++        final String selected = this.lookup(key, locale.toLowerCase(Locale.ROOT));
++        if (selected != null) {
++            return selected;
 +        }
-+        return this.languages.getOrDefault("en_us", Map.of()).getOrDefault(key, key);
++        final String english = this.lookup(key, "en_us");
++        return english == null ? key : english;
++    }
++
++    private String lookup(final String key, final String locale) {
++        final String translated = this.languages.getOrDefault(locale, Map.of()).get(key);
++        return translated != null || this.inherited == null ? translated : this.inherited.lookup(key, locale);
 +    }
 +
 +}
@@ -2603,10 +2628,10 @@ index 000000000..3c77ca2d0
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
 new file mode 100644
-index 000000000..773812c2f
+index 000000000..de4a1c640
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,64 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2620,6 +2645,7 @@ index 000000000..773812c2f
 +import java.io.ByteArrayInputStream;
 +import java.util.UUID;
 +import java.util.List;
++import java.util.Map;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -2650,6 +2676,23 @@ index 000000000..773812c2f
 +        assertEquals("base", translations.translate("first", "unknown"));
 +        assertEquals("absent", translations.translate("absent", "de_de"));
 +        assertArrayEquals(archive, NativeActorLibrary.encode(sources, ignored -> true));
++    }
++
++    @Test
++    void overlaysReuseInheritedLocalesBeforeFallingBackToHigherEnglish() {
++        final var builtin = new SoundTranslations(List.of(Map.of(
++                "texts/de_DE.lang", "local=localized\nempty=localized\n".getBytes(java.nio.charset.StandardCharsets.UTF_8),
++                "texts/en_US.lang", "local=english\nfallback=lower\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
++        assertSame(builtin, builtin.withOverrides(List.of(Map.of("textures/test.png", new byte[]{1}))));
++        final var overlay = builtin.withOverrides(List.of(Map.of(
++                "texts/en_US.lang", "local=upper\nfallback=upper\n".getBytes(java.nio.charset.StandardCharsets.UTF_8),
++                "texts/de_DE.lang", "empty=\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
++        assertEquals("localized", overlay.translate("local", "de_DE"));
++        assertEquals("upper", overlay.translate("local", "unknown"));
++        assertEquals("upper", overlay.translate("fallback", "de_de"));
++        assertEquals("", overlay.translate("empty", "de_de"));
++        assertEquals("lower", builtin.translate("fallback", "unknown"));
++        assertEquals("missing", overlay.translate("missing", "de_de"));
 +    }
 +
 +}

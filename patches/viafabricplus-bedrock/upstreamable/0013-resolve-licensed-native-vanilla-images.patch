@@ -1,4 +1,4 @@
-From 8695204d89fec9296037e401f3f26bac2c93c67e Mon Sep 17 00:00:00 2001
+From b8efe063a7d2b10725dcc8fd90295cf0a545cf9f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 00:00:06 +0200
 Subject: [PATCH] feat(resources): resolve bundled native vanilla images
@@ -24,17 +24,27 @@ versioned item icon resolution. Verify the real bundled material families
 and equipment definitions without an account.
 
 Cache the projected native pack list and actor layers instead of copying about 50 MiB of texture bytes for every actor and equipment request. Share one accepted-resource selection and inherited model library per resource generation. Cache parsed native animation documents without retaining different server documents in the native cache. Preserve server order, provenance and defensive copies in materialized actor storage. Include the target native item and terrain atlases beneath accepted overrides.
+
+Reuse the bundled sound-caption translation tables in derived actor
+libraries. Parse only higher-pack language files instead of every bundled
+locale for every native actor type. The October 10 memory-exhaustion log
+fails in SoundTranslations during world actor preparation. A regression
+checks that 32 actor libraries share the same caption table while server
+locale overrides preserve selected-language precedence and fallback.
+This removes a confirmed duplication path without claiming the log alone
+identifies every retained heap object.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   3 +
  .../appearance/BedrockActorAnimation.java     |   2 +-
  .../appearance/BedrockActorDependencies.java  |  62 +++++++++
  .../appearance/BedrockEntityResources.java    |  29 ++--
- .../appearance/BedrockResourceLibrary.java    |  81 +++++++++++-
+ .../appearance/BedrockResourceLibrary.java    |  87 +++++++++++-
  ...FabricPlusBuiltinResourcePackProvider.java |  36 +++++
  .../BedrockActorDependenciesTest.java         | 109 +++++++++++++++
+ .../BedrockResourceLibraryTest.java           |  19 +++
  .../BedrockServerEntityAnimationTest.java     |  14 +-
  ...icPlusBuiltinResourcePackProviderTest.java | 125 ++++++++++++++++++
- 9 files changed, 441 insertions(+), 20 deletions(-)
+ 10 files changed, 465 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependencies.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependenciesTest.java
@@ -208,7 +218,7 @@ index 8293687..33d73c7 100644
 +    }
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-index d9d7ca6..b82ec33 100644
+index d9d7ca6..6e459bc 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 @@ -34,6 +34,11 @@ final class BedrockResourceLibrary {
@@ -231,7 +241,20 @@ index d9d7ca6..b82ec33 100644
          final Map<String, List<JsonObject>> models = new LinkedHashMap<>();
          if (builtin != null) models.putAll(builtin.models);
          for (int index = builtin == null ? 0 : builtin.packs.size(); index < packs.size(); index++) {
-@@ -164,6 +170,48 @@ final class BedrockResourceLibrary {
+@@ -82,7 +88,11 @@ final class BedrockResourceLibrary {
+         models.replaceAll((name, documents) -> List.copyOf(documents));
+         this.models = Map.copyOf(models);
+         this.sounds = this.readSounds();
+-        this.translations = new net.raphimc.viabedrock.api.resourcepack.SoundTranslations(packs.stream().map(Pack::files).toList());
++        final var languagePacks = packs.subList(builtin == null ? 0 : builtin.packs.size(), packs.size())
++                .stream().map(Pack::files).toList();
++        this.translations = builtin == null
++                ? new net.raphimc.viabedrock.api.resourcepack.SoundTranslations(languagePacks)
++                : builtin.translations.withOverrides(languagePacks);
+         final Map<String, BedrockLevelSounds.Configured> levelSounds = new LinkedHashMap<>();
+         for (final Pack pack : this.packs) {
+             final byte[] bytes = pack.files.get("sounds.json");
+@@ -164,6 +174,48 @@ final class BedrockResourceLibrary {
          return this.packs.stream().map(Pack::name).toList();
      }
  
@@ -280,7 +303,7 @@ index d9d7ca6..b82ec33 100644
      byte[] file(final String path) throws IOException {
          BedrockBuiltinAssets.validPath(path);
          for (int index = this.packs.size() - 1; index >= 0; index--) {
-@@ -256,16 +304,37 @@ final class BedrockResourceLibrary {
+@@ -256,16 +308,37 @@ final class BedrockResourceLibrary {
          return definitions.getFirst();
      }
  
@@ -321,7 +344,7 @@ index d9d7ca6..b82ec33 100644
                      final JsonObject definitions = document.getAsJsonObject(field);
                      if (definitions == null) continue;
                      final String version =
-@@ -286,7 +355,9 @@ final class BedrockResourceLibrary {
+@@ -286,7 +359,9 @@ final class BedrockResourceLibrary {
                  if (resolved.size() > 4096)
                      throw new IOException("Too many actor animation resources");
              }
@@ -332,7 +355,7 @@ index d9d7ca6..b82ec33 100644
          } catch (RuntimeException invalid) {
              throw new IOException("Invalid actor animation resource", invalid);
          }
-@@ -392,6 +463,8 @@ final class BedrockResourceLibrary {
+@@ -392,6 +467,8 @@ final class BedrockResourceLibrary {
          }
      }
  
@@ -498,6 +521,36 @@ index 0000000..6ebabf6
 +
 +    private static byte[] bytes(final String json) { return json.getBytes(StandardCharsets.UTF_8); }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
+index 592514d..0465792 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
+@@ -25,6 +25,25 @@ final class BedrockResourceLibraryTest {
+         files.put("library/" + pack + "/" + path, json.getBytes(StandardCharsets.UTF_8));
+     }
+ 
++    @Test
++    void actorLibrariesShareBundledCaptionTablesAndOverlayOnlyServerLocales() throws Exception {
++        final var builtin = BedrockResourceLibrary.read(Map.of(
++                "library/vanilla/texts/de_DE.lang", "caption=localized\n".getBytes(java.nio.charset.StandardCharsets.UTF_8),
++                "library/vanilla/texts/en_US.lang", "caption=english\nfallback=base\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
++        final var captions = BedrockResourceLibrary.class.getDeclaredField("translations");
++        captions.setAccessible(true);
++        for (int actor = 0; actor < 32; actor++) {
++            final var selected = BedrockResourceLibrary.withServerPacks(builtin,
++                    List.of(Map.of("textures/entity/fixture.png", new byte[]{(byte) actor})));
++            assertSame(captions.get(builtin), captions.get(selected));
++        }
++        final var server = BedrockResourceLibrary.withServerPacks(builtin, List.of(Map.of(
++                "texts/en_US.lang", "caption=server\nfallback=server\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
++        assertEquals("localized", server.translate("caption", "de_de"));
++        assertEquals("server", server.translate("caption", "unknown"));
++        assertEquals("server", server.translate("fallback", "de_de"));
++    }
++
+     @Test
+     void resolvesServerParticlesTexturesAndLevelSoundsAcrossPackOverrides() throws Exception {
+         final java.util.List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> packs = new java.util.ArrayList<>();
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java
 index 14ccd22..74c64c4 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java

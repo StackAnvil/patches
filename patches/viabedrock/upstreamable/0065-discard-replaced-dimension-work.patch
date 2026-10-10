@@ -1,4 +1,4 @@
-From 1631b80b7ae0b5ded14d4b3341c5ee561606898c Mon Sep 17 00:00:00 2001
+From 9b87ee33a8883ba31466983e82921a864b248fab Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] fix(chunks): discard work from replaced dimension trackers
@@ -8,10 +8,19 @@ previous tracker tick or light result is already queued on the event loop.
 Reject callbacks whose tracker no longer owns the connection, preventing
 16-section data from reaching the new 24-section dimension. The failure
 is reproducible from the saved scene without another public connection.
+
+Coalesce queued chunk ticks per tracker while the connection event loop is
+stalled. Keep one outstanding callback instead of adding another callback
+on every timer tick, and release the slot after completion, replacement,
+disconnect or rejected submission. Weak scheduling keys do not retain an
+abandoned tracker after an event-loop shutdown. Tests stall 1,000 ticks,
+replace the dimension tracker and reject a submission before retrying.
 ---
- .../net/raphimc/viabedrock/protocol/storage/ChunkTracker.java  | 2 +-
- .../raphimc/viabedrock/protocol/task/ChunkTrackerTickTask.java | 3 ++-
- 2 files changed, 3 insertions(+), 2 deletions(-)
+ .../protocol/storage/ChunkTracker.java        |  2 +-
+ .../protocol/task/ChunkTrackerTickTask.java   | 38 +++++---
+ .../task/ChunkTrackerTickTaskTest.java        | 94 +++++++++++++++++++
+ 3 files changed, 121 insertions(+), 13 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTaskTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 index ecd155033..08b0e243c 100644
@@ -27,18 +36,159 @@ index ecd155033..08b0e243c 100644
                  }
                  if (error != null) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTask.java b/src/main/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTask.java
-index fe5c0a709..e35cc7104 100644
+index fe5c0a709..a065107bf 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTask.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTask.java
-@@ -30,7 +30,8 @@ public class ChunkTrackerTickTask implements Runnable {
-             final ChunkTracker chunkTracker = info.get(ChunkTracker.class);
-             if (chunkTracker != null) {
-                 info.getChannel().eventLoop().submit(() -> {
--                    if (!info.getChannel().isActive()) {
-+                    // A dimension change can replace this tracker while its tick is queued.
-+                    if (!info.getChannel().isActive() || info.get(ChunkTracker.class) != chunkTracker) {
-                         return;
-                     }
+@@ -22,24 +22,38 @@ import com.viaversion.viaversion.api.connection.UserConnection;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
  
++import java.util.Collections;
++import java.util.Set;
++import java.util.WeakHashMap;
++import java.util.concurrent.RejectedExecutionException;
++
+ public class ChunkTrackerTickTask implements Runnable {
+ 
++    private final Set<ChunkTracker> scheduled = Collections.synchronizedSet(
++            Collections.newSetFromMap(new WeakHashMap<>()));
++
+     @Override
+     public void run() {
+         for (UserConnection info : Via.getManager().getConnectionManager().getConnections()) {
+             final ChunkTracker chunkTracker = info.get(ChunkTracker.class);
+-            if (chunkTracker != null) {
+-                info.getChannel().eventLoop().submit(() -> {
+-                    if (!info.getChannel().isActive()) {
+-                        return;
+-                    }
+-
+-                    try {
+-                        chunkTracker.tick();
+-                    } catch (final Throwable e) {
+-                        BedrockProtocol.kickForIllegalState(info, "Error ticking chunk tracker. See console for details.", e);
+-                    }
+-                });
++            if (chunkTracker != null && this.scheduled.add(chunkTracker)) {
++                try {
++                    info.getChannel().eventLoop().execute(() -> {
++                        try {
++                            // A dimension change can replace this tracker while its tick is queued.
++                            if (!info.getChannel().isActive() || info.get(ChunkTracker.class) != chunkTracker) {
++                                return;
++                            }
++                            chunkTracker.tick();
++                        } catch (final Throwable e) {
++                            BedrockProtocol.kickForIllegalState(info, "Error ticking chunk tracker. See console for details.", e);
++                        } finally {
++                            this.scheduled.remove(chunkTracker);
++                        }
++                    });
++                } catch (final RejectedExecutionException stopped) {
++                    this.scheduled.remove(chunkTracker);
++                }
+             }
+         }
+     }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTaskTest.java b/src/test/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTaskTest.java
+new file mode 100644
+index 000000000..7a52d13c0
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTaskTest.java
+@@ -0,0 +1,94 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.task;
++
++import com.viaversion.viaversion.api.Via;
++import com.viaversion.viaversion.api.ViaManager;
++import com.viaversion.viaversion.api.connection.ConnectionManager;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import io.netty.channel.Channel;
++import io.netty.channel.EventLoop;
++import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayDeque;
++import java.util.Queue;
++import java.util.Set;
++import java.util.concurrent.RejectedExecutionException;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class ChunkTrackerTickTaskTest {
++
++    @Test
++    void coalescesStalledTicksAndReleasesReplacedTrackers() {
++        final UserConnection user = mock(UserConnection.class);
++        final Channel channel = mock(Channel.class);
++        final EventLoop loop = mock(EventLoop.class);
++        final ViaManager manager = mock(ViaManager.class);
++        final ConnectionManager connections = mock(ConnectionManager.class);
++        final ChunkTracker first = mock(ChunkTracker.class);
++        final ChunkTracker replacement = mock(ChunkTracker.class);
++        final Queue<Runnable> pending = new ArrayDeque<>();
++        when(user.getChannel()).thenReturn(channel);
++        when(channel.eventLoop()).thenReturn(loop);
++        when(channel.isActive()).thenReturn(true);
++        when(user.get(ChunkTracker.class)).thenReturn(first);
++        when(manager.getConnectionManager()).thenReturn(connections);
++        when(connections.getConnections()).thenReturn(Set.of(user));
++        doAnswer(call -> {
++            pending.add(call.getArgument(0));
++            return null;
++        }).when(loop).execute(any(Runnable.class));
++        try (var via = mockStatic(Via.class)) {
++            via.when(Via::getManager).thenReturn(manager);
++            final ChunkTrackerTickTask task = new ChunkTrackerTickTask();
++            for (int tick = 0; tick < 1000; tick++) {
++                task.run();
++            }
++            assertEquals(1, pending.size());
++            pending.remove().run();
++            verify(first).tick();
++            task.run();
++            when(user.get(ChunkTracker.class)).thenReturn(replacement);
++            task.run();
++            assertEquals(2, pending.size());
++            pending.remove().run();
++            verify(first, times(1)).tick();
++            pending.remove().run();
++            verify(replacement).tick();
++            task.run();
++            assertEquals(1, pending.size());
++            when(channel.isActive()).thenReturn(false);
++            pending.remove().run();
++            verify(replacement, times(1)).tick();
++        }
++    }
++
++    @Test
++    void rejectedSubmissionDoesNotSuppressLaterTicks() {
++        final UserConnection user = mock(UserConnection.class);
++        final Channel channel = mock(Channel.class);
++        final EventLoop loop = mock(EventLoop.class);
++        final ViaManager manager = mock(ViaManager.class);
++        final ConnectionManager connections = mock(ConnectionManager.class);
++        when(user.getChannel()).thenReturn(channel);
++        when(channel.eventLoop()).thenReturn(loop);
++        when(user.get(ChunkTracker.class)).thenReturn(mock(ChunkTracker.class));
++        when(manager.getConnectionManager()).thenReturn(connections);
++        when(connections.getConnections()).thenReturn(Set.of(user));
++        doThrow(new RejectedExecutionException()).doNothing().when(loop).execute(any(Runnable.class));
++        try (var via = mockStatic(Via.class)) {
++            via.when(Via::getManager).thenReturn(manager);
++            final ChunkTrackerTickTask task = new ChunkTrackerTickTask();
++            assertDoesNotThrow(task::run);
++            assertDoesNotThrow(task::run);
++            verify(loop, times(2)).execute(any(Runnable.class));
++        }
++    }
++
++}
 -- 
 2.56.0
