@@ -316,3 +316,10 @@ The fixture supplies component IDs and allocated runtime state; it does not esta
 The observed `block_light_filter` form retains its precedence and decoding.
 The existing zero-to-fifteen clamp also remains because final native handling of out-of-range bytes needs verification.
 Geometry-dependent omitted dampening and complete registered alias selection remain separate research.
+
+## Indexed terrain atlas lookup
+
+Keep all native terrain atlas variants for explicit auxiliary-value lookup.
+Scalar server overrides apply to every variant.
+The existing first-path block API retains its behavior.
+Native glass-pane item conversion uses the indexed lookup for all sixteen stained-glass colors.

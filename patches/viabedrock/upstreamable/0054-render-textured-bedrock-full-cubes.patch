@@ -1,4 +1,4 @@
-From 71fc44a4f96c8e1442e5e111061584695797a485 Mon Sep 17 00:00:00 2001
+From a2a669303f2dab31e763084c5d6baea39e323cc3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -215,6 +215,8 @@ match. Original tessellator constants establish face tolerances of
 ambient overrides, and visible native comparison remain separate work.
 
 Parse native item atlas object texture paths and object entries inside arrays. Targeted atlas tests preserve path precedence and invalid entry handling.
+
+Retain indexed terrain atlas variants for callers that select a Bedrock auxiliary value. Scalar server overrides apply to every variant, while the existing first-path block API keeps its behavior. Native pane item conversion needs this lookup for all sixteen stained-glass colors.
 ---
  .../api/model/CustomBlockCulling.java         | 206 +++++++
  .../api/model/CustomBlockFaceLighting.java    |  98 +++
@@ -226,7 +228,7 @@ Parse native item atlas object texture paths and object entries inside arrays. T
  .../definition/BlockDefinitions.java          |  17 +-
  .../definition/CustomBlockDefinition.java     |  73 +++
  .../definition/ModelDefinitions.java          |   7 +
- .../definition/TextureDefinitions.java        |  65 +-
+ .../definition/TextureDefinitions.java        |  85 ++-
  .../http/ConvertedResourcePackCache.java      |  14 +-
  .../viabedrock/protocol/BedrockProtocol.java  |  27 +-
  .../protocol/packet/JoinPackets.java          |  30 +-
@@ -257,7 +259,7 @@ Parse native item atlas object texture paths and object entries inside arrays. T
  .../protocol/storage/ChunkTrackerTest.java    |  22 +
  .../storage/CustomBlockPackStorageTest.java   | 169 ++++++
  .../storage/VoxelShapeRegistryTest.java       | 130 ++++
- 41 files changed, 4574 insertions(+), 24 deletions(-)
+ 41 files changed, 4594 insertions(+), 24 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
@@ -1211,14 +1213,15 @@ index d267ff7fe..f4e91c4de 100644
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java
-index ba8c2db57..6df862698 100644
+index ba8c2db57..5c6717bea 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java
-@@ -29,9 +29,33 @@ import java.util.logging.Level;
+@@ -29,9 +29,44 @@ import java.util.logging.Level;
  public class TextureDefinitions {
  
      private final Map<String, List<ItemTextureDefinition>> itemTextures = new HashMap<>();
 +    private final Map<String, String> terrainTextures = new HashMap<>();
++    private final Map<String, List<String>> terrainTextureVariants = new HashMap<>();
 +    private final Set<String> serverTerrainTextures = new HashSet<>();
  
      public TextureDefinitions(final ResourcePackStorage resourcePackStorage) {
@@ -1235,6 +1238,16 @@ index ba8c2db57..6df862698 100644
 +                            final String path = firstTexturePath(entry.getValue().getAsJsonObject().get("textures"));
 +                            if (path != null) {
 +                                this.terrainTextures.put(entry.getKey(), path);
++                                final JsonElement textures = entry.getValue().getAsJsonObject().get("textures");
++                                if (textures.isJsonArray()) {
++                                    final List<String> variants = new ArrayList<>();
++                                    for (final JsonElement texture : textures.getAsJsonArray()) {
++                                        variants.add(firstTexturePath(texture));
++                                    }
++                                    this.terrainTextureVariants.put(entry.getKey(), Collections.unmodifiableList(variants));
++                                } else {
++                                    this.terrainTextureVariants.remove(entry.getKey());
++                                }
 +                                if (resourcePackStorage.isServerPack(pack)) {
 +                                    this.serverTerrainTextures.add(entry.getKey());
 +                                }
@@ -1248,7 +1261,7 @@ index ba8c2db57..6df862698 100644
              if (pack.content().contains("textures/item_texture.json")) {
                  try {
                      final JsonObject itemTexture = pack.content().getJson("textures/item_texture.json");
-@@ -46,7 +70,16 @@ public class TextureDefinitions {
+@@ -46,7 +81,16 @@ public class TextureDefinitions {
                                  itemTextureDefinitions.add(new ItemTextureDefinition(name, textures.getAsString()));
                              } else if (textures.isJsonArray()) {
                                  for (JsonElement texture : textures.getAsJsonArray()) {
@@ -1266,12 +1279,21 @@ index ba8c2db57..6df862698 100644
                                  }
                              }
                              this.itemTextures.put(name, itemTextureDefinitions);
-@@ -63,6 +96,36 @@ public class TextureDefinitions {
+@@ -63,6 +107,45 @@ public class TextureDefinitions {
          return Collections.unmodifiableMap(this.itemTextures);
      }
  
 +    public Map<String, String> terrainTextures() {
 +        return Collections.unmodifiableMap(this.terrainTextures);
++    }
++
++    /** Bedrock auxiliary values select atlas entries, while a scalar override applies to every variant. */
++    public String terrainTexture(final String name, final int index) {
++        if (index < 0) {
++            return null;
++        }
++        final List<String> variants = this.terrainTextureVariants.get(name);
++        return variants == null ? this.terrainTextures.get(name) : index < variants.size() ? variants.get(index) : null;
 +    }
 +
 +    public Set<String> serverTerrainTextures() {

@@ -1,4 +1,4 @@
-From 8fb058640cfecd41e76cc7ad499ce6260299f470 Mon Sep 17 00:00:00 2001
+From 24f60ce35faae891af78846a15800a364901e515 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 00:00:06 +0200
 Subject: [PATCH] feat(resources): resolve bundled native vanilla images
@@ -6,8 +6,9 @@ Subject: [PATCH] feat(resources): resolve bundled native vanilla images
 Servers reference built-in Bedrock textures without redistributing them.
 Supply images from the versioned resource bundle shipped with the add-on,
 including offline joins. Preserve native layer order, path casing, and
-server-pack precedence. Copy image bytes into each conversion so mutable
-pack contents cannot change the shared bundle.
+server-pack precedence. Cache native projections for consumers that treat
+the shared buffers as immutable. Materialized actor storage retains its
+defensive copies.
 
 The 1.26.51.1 game package supplies the missing Hive bread, bucket, and
 potion textures. Asset preparation reads local resources without Store
@@ -17,16 +18,26 @@ Report a missing or corrupt bundle as an installation failure.
 The matching licensed 1.26.51.1 bundle also supplies native equipment,
 models, animations, controllers and material inheritance. Publish these
 actor dependencies in the same lower-priority native layers. Preserve
-server overrides and exclude native entity declarations and atlas maps
-that the core already supplies. Verify the real bundled material families
+server overrides and exclude native entity declarations that the core
+already supplies. Include exact native item and terrain atlas paths for
+versioned item icon resolution. Verify the real bundled material families
 and equipment definitions without an account.
+
+Cache the projected native pack list and actor layers instead of copying about 50 MiB of texture bytes for every actor and equipment request. Share one accepted-resource selection and inherited model library per resource generation. Cache parsed native animation documents without retaining different server documents in the native cache. Preserve server order, provenance and defensive copies in materialized actor storage. Include the target native item and terrain atlases beneath accepted overrides.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   3 +
- .../appearance/BedrockResourceLibrary.java    |  32 +++++
- ...FabricPlusBuiltinResourcePackProvider.java |  36 ++++++
- ...icPlusBuiltinResourcePackProviderTest.java | 122 ++++++++++++++++++
- 4 files changed, 193 insertions(+)
+ .../appearance/BedrockActorAnimation.java     |   2 +-
+ .../appearance/BedrockActorDependencies.java  |  62 +++++++++
+ .../appearance/BedrockEntityResources.java    |  29 ++--
+ .../appearance/BedrockResourceLibrary.java    |  81 +++++++++++-
+ ...FabricPlusBuiltinResourcePackProvider.java |  36 +++++
+ .../BedrockActorDependenciesTest.java         | 109 +++++++++++++++
+ .../BedrockServerEntityAnimationTest.java     |  14 +-
+ ...icPlusBuiltinResourcePackProviderTest.java | 125 ++++++++++++++++++
+ 9 files changed, 441 insertions(+), 20 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependencies.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependenciesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -56,27 +67,189 @@ index b33ea1c..53a8749 100644
          Via.getManager().getProviders().use(EmoteProvider.class, new ViaFabricPlusEmoteProvider());
      }
  
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
+index 0fc19bc..8dc47cb 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
+@@ -44,7 +44,7 @@ public final class BedrockActorAnimation {
+         for (final var pack : packs.getPackStackBottomToTop()) {
+             for (final String folder : List.of("animations/", "animation_controllers/")) {
+                 for (final String path : pack.content().getFilesDeep(folder, ".json")) {
+-                    final JsonObject document = JsonParser.parseString(pack.content().getString(path)).getAsJsonObject();
++                    final JsonObject document = builtin.document(path, pack.content().get(path));
+                     final String field = folder.equals("animations/") ? "animations" : "animation_controllers";
+                     final JsonObject definitions = document.getAsJsonObject(field);
+                     if (definitions == null) continue;
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependencies.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependencies.java
+new file mode 100644
+index 0000000..8aca84a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependencies.java
+@@ -0,0 +1,62 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.io.IOException;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.CompletionException;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++/** One shared native dependency selection and parsed model library per accepted resource generation. */
++final class BedrockActorDependencies {
++    private static ResourcePackStorage source;
++    private static CompletableFuture<Resolved> dependencies;
++
++    private BedrockActorDependencies() {}
++
++    static synchronized CompletableFuture<Resolved> get(final ResourcePackStorage accepted) {
++        if (source != accepted) {
++            clear();
++            source = accepted;
++            dependencies = CompletableFuture.supplyAsync(() -> {
++                try {
++                    return resolve(BedrockBuiltinAssets.load().library(), accepted);
++                } catch (IOException invalid) {
++                    throw new CompletionException(invalid);
++                }
++            });
++        }
++        return dependencies;
++    }
++
++    static Resolved resolve(final BedrockResourceLibrary builtin, final ResourcePackStorage accepted) throws IOException {
++        // Direct connections already include the very same bundled visual packs. Reuse them below
++        // core metadata instead of selecting and parsing every licensed model a second time.
++        final var builtinPacks = builtin.resourcePacks();
++        final var acceptedPacks = accepted.getPackStackBottomToTop().stream()
++                .filter(pack -> !builtinPacks.contains(pack)).toList();
++        return merge(builtin, NativeActorLibrary.resources(acceptedPacks, accepted::isServerPack));
++    }
++
++    static Resolved merge(final BedrockResourceLibrary builtin, final List<NativeActorLibrary.Layer> accepted) throws IOException {
++        final var layers = new ArrayList<>(builtin.actorLayers());
++        layers.addAll(accepted);
++        final var library = BedrockResourceLibrary.withServerPacks(builtin,
++                accepted.stream().map(NativeActorLibrary.Layer::resources).toList());
++        return new Resolved(library, List.copyOf(layers));
++    }
++
++    static synchronized void clear() {
++        if (dependencies != null) dependencies.cancel(false);
++        source = null;
++        dependencies = null;
++    }
++
++    record Resolved(BedrockResourceLibrary library, List<NativeActorLibrary.Layer> layers) {}
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
+index 8293687..33d73c7 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
+@@ -30,11 +30,14 @@ public final class BedrockEntityResources {
+ 
+     public static synchronized ResourcePackStorage get(final ResourcePackStorage accepted, final String identifier) {
+         if (accepted == null) return null;
+-        if (source != accepted) { clear(); source = accepted; }
+-        final var result = ACTORS.computeIfAbsent(identifier, _ -> CompletableFuture.supplyAsync(() -> {
++        if (source != accepted) {
++            ACTORS.values().forEach(result -> result.cancel(false));
++            ACTORS.clear();
++            source = accepted;
++        }
++        final var result = ACTORS.computeIfAbsent(identifier, _ -> BedrockActorDependencies.get(accepted).thenApplyAsync(dependencies -> {
+             try {
+-                return merge(BedrockBuiltinAssets.load().library(),
+-                        NativeActorLibrary.resources(accepted.getPackStackBottomToTop(), accepted::isServerPack), identifier);
++                return merge(dependencies, identifier);
+             } catch (IOException invalid) { throw new CompletionException(invalid); }
+         }));
+         // A failed actor keeps its Java fallback for this generation, without repeated log spam.
+@@ -43,17 +46,18 @@ public final class BedrockEntityResources {
+ 
+     static ResourcePackStorage merge(final BedrockResourceLibrary builtin,
+                                      final List<NativeActorLibrary.Layer> accepted, final String identifier) throws IOException {
+-        final var library = BedrockResourceLibrary.withServerPacks(builtin,
+-                accepted.stream().map(NativeActorLibrary.Layer::resources).toList());
++        return merge(BedrockActorDependencies.merge(builtin, accepted), identifier);
++    }
++
++    private static ResourcePackStorage merge(final BedrockActorDependencies.Resolved dependencies, final String identifier) throws IOException {
++        final var library = dependencies.library();
+         final var entity = library.entity(identifier);
+         if (entity == null) return null;
+         final var description = entity.getAsJsonObject("description");
+         final Set<String> textures = new HashSet<>();
+         if (description.has("textures")) description.getAsJsonObject("textures").entrySet()
+                 .forEach(entry -> textures.add(entry.getValue().getAsString()));
+-        final List<NativeActorLibrary.Layer> layers = new ArrayList<>(
+-                NativeActorLibrary.resources(builtin.resourcePacks(), _ -> false));
+-        layers.addAll(accepted);
++        final var layers = dependencies.layers();
+         final List<NativeActorLibrary.Layer> selected = new ArrayList<>();
+         for (final var layer : layers) {
+             final Map<String, byte[]> files = new LinkedHashMap<>();
+@@ -99,5 +103,10 @@ public final class BedrockEntityResources {
+ 
+     private static byte[] bytes(final JsonObject json) { return json.toString().getBytes(StandardCharsets.UTF_8); }
+ 
+-    public static synchronized void clear() { source = null; ACTORS.clear(); }
++    public static synchronized void clear() {
++        source = null;
++        ACTORS.values().forEach(result -> result.cancel(false));
++        ACTORS.clear();
++        BedrockActorDependencies.clear();
++    }
+ }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-index d9d7ca6..9278b92 100644
+index d9d7ca6..b82ec33 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-@@ -164,6 +164,38 @@ final class BedrockResourceLibrary {
+@@ -34,6 +34,11 @@ final class BedrockResourceLibrary {
+     private static final Pattern MODEL_IDENTIFIER =
+             Pattern.compile("(?:[a-z0-9_.-]{1,64}:)?geometry\\.[a-zA-Z0-9_.'-]{1,128}");
+     private final List<Pack> packs;
++    private final BedrockResourceLibrary inherited;
++    private final Map<DefinitionKey, Map<String, Definition>> definitions = new java.util.HashMap<>();
++    private final Map<byte[], JsonObject> documents = new java.util.IdentityHashMap<>();
++    private List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> resourcePacks;
++    private List<net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.Layer> actorLayers;
+     private final Map<String, List<JsonObject>> models;
+     private final Map<String, BedrockSoundEvent> sounds;
+     private final net.raphimc.viabedrock.api.resourcepack.SoundTranslations translations;
+@@ -45,6 +50,7 @@ final class BedrockResourceLibrary {
+ 
+     private BedrockResourceLibrary(final List<Pack> packs, final BedrockResourceLibrary builtin) throws IOException {
+         this.packs = List.copyOf(packs);
++        this.inherited = builtin;
+         final Map<String, List<JsonObject>> models = new LinkedHashMap<>();
+         if (builtin != null) models.putAll(builtin.models);
+         for (int index = builtin == null ? 0 : builtin.packs.size(); index < packs.size(); index++) {
+@@ -164,6 +170,48 @@ final class BedrockResourceLibrary {
          return this.packs.stream().map(Pack::name).toList();
      }
  
 +    /** Native visual and actor dependencies in pack order, below core metadata and server overrides. */
-+    List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> resourcePacks() {
++    synchronized List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> resourcePacks() {
++        if (this.resourcePacks != null) return this.resourcePacks;
 +        final List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> result = new ArrayList<>();
 +        for (final Pack pack : this.packs) {
 +            final var content = new net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent();
 +            for (final var entry : pack.files.entrySet()) {
 +                final String path = entry.getKey();
-+                if (path.startsWith("materials/") && path.endsWith(".material")
++                if (path.equals("textures/item_texture.json") || path.equals("textures/terrain_texture.json")
++                        || path.startsWith("materials/") && path.endsWith(".material")
 +                        || path.endsWith(".json") && List.of("attachables/", "models/", "animations/",
 +                            "animation_controllers/", "render_controllers/").stream().anyMatch(path::startsWith)
 +                        || path.startsWith("textures/")
 +                        && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")))
-+                    content.put(path, entry.getValue().clone());
++                    content.put(path, entry.getValue());
 +            }
 +            if (content.size() == 0) continue;
 +            final JsonObject manifest = new JsonObject(), header = new JsonObject();
@@ -93,12 +266,81 @@ index d9d7ca6..9278b92 100644
 +            content.putString("manifest.json", manifest.toString());
 +            result.add(new net.raphimc.viabedrock.api.resourcepack.ResourcePack(content));
 +        }
-+        return List.copyOf(result);
++        this.resourcePacks = List.copyOf(result);
++        return this.resourcePacks;
++    }
++
++    /** Select the immutable bundled actor payload once, sharing bytes with the licensed library. */
++    synchronized List<net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.Layer> actorLayers() throws IOException {
++        if (this.actorLayers == null) this.actorLayers = net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary
++                .resources(this.resourcePacks(), _ -> false);
++        return this.actorLayers;
 +    }
 +
      byte[] file(final String path) throws IOException {
          BedrockBuiltinAssets.validPath(path);
          for (int index = this.packs.size() - 1; index >= 0; index--) {
+@@ -256,16 +304,37 @@ final class BedrockResourceLibrary {
+         return definitions.getFirst();
+     }
+ 
+-    Map<String, Definition> definitions(final String directory, final String field)
++    /** Shares parsed native documents even after an independent actor view copies their byte buffers.
++     * Accepted documents that differ remain local to that resource generation. */
++    synchronized JsonObject document(final String path, final byte[] bytes) throws IOException {
++        for (final Pack pack : this.packs) {
++            final byte[] nativeBytes = pack.files.get(path);
++            if (nativeBytes != null && java.util.Arrays.equals(nativeBytes, bytes)) {
++                final var cached = this.documents.get(nativeBytes);
++                if (cached != null) return cached;
++                final var document = json(nativeBytes);
++                this.documents.put(nativeBytes, document);
++                return document;
++            }
++        }
++        return json(bytes);
++    }
++
++    synchronized Map<String, Definition> definitions(final String directory, final String field)
+             throws IOException {
++        final var key = new DefinitionKey(directory, field);
++        final var cached = this.definitions.get(key);
++        if (cached != null) return cached;
+         try {
+             final Map<String, Definition> resolved = new LinkedHashMap<>();
+-            for (final Pack pack : this.packs) {
++            if (this.inherited != null) resolved.putAll(this.inherited.definitions(directory, field));
++            for (int index = this.inherited == null ? 0 : this.inherited.packs.size(); index < this.packs.size(); index++) {
++                final Pack pack = this.packs.get(index);
+                 final Map<String, Definition> local = new LinkedHashMap<>();
+                 for (final var entry : pack.files.entrySet()) {
+                     if (!entry.getKey().startsWith(directory + "/")
+                             || !entry.getKey().endsWith(".json")) continue;
+-                    final JsonObject document = json(entry.getValue());
++                    final JsonObject document = this.document(entry.getKey(), entry.getValue());
+                     final JsonObject definitions = document.getAsJsonObject(field);
+                     if (definitions == null) continue;
+                     final String version =
+@@ -286,7 +355,9 @@ final class BedrockResourceLibrary {
+                 if (resolved.size() > 4096)
+                     throw new IOException("Too many actor animation resources");
+             }
+-            return Map.copyOf(resolved);
++            final var result = Map.copyOf(resolved);
++            this.definitions.put(key, result);
++            return result;
+         } catch (RuntimeException invalid) {
+             throw new IOException("Invalid actor animation resource", invalid);
+         }
+@@ -392,6 +463,8 @@ final class BedrockResourceLibrary {
+         }
+     }
+ 
++    private record DefinitionKey(String directory, String field) {}
++
+     record Definition(JsonObject value, String formatVersion) {}
+ 
+     private record Pack(String name, Map<String, byte[]> files) {}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
 new file mode 100644
 index 0000000..e2661d0
@@ -141,12 +383,169 @@ index 0000000..e2661d0
 +        BedrockResourceLibrary load() throws IOException;
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependenciesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependenciesTest.java
+new file mode 100644
+index 0000000..6ebabf6
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependenciesTest.java
+@@ -0,0 +1,109 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockActorDependenciesTest {
++    @Test
++    void sharesTheLicensedPayloadAcrossCachedVisualAndActorSelections() throws Exception {
++        final byte[] texture = new byte[2 * 1024 * 1024];
++        final var builtin = BedrockResourceLibrary.read(Map.of(
++                "library/vanilla/textures/entity/probe.png", texture));
++        final var packs = builtin.resourcePacks();
++        assertSame(packs, builtin.resourcePacks());
++        assertSame(texture, packs.getFirst().content().get("textures/entity/probe.png"));
++        final var layers = builtin.actorLayers();
++        assertSame(layers, builtin.actorLayers());
++        assertSame(texture, layers.getFirst().resources().get("textures/entity/probe.png"));
++        assertThrows(UnsupportedOperationException.class, () -> layers.getFirst().resources().clear());
++    }
++
++    @Test
++    void selectsBuiltinVisualPacksOnlyOnceAndRetainsServerOverrides() throws Exception {
++        final byte[] texture = new byte[1024];
++        final var builtin = BedrockResourceLibrary.read(Map.of(
++                "library/vanilla/textures/entity/probe.png", texture,
++                "library/vanilla/entity/probe.json", bytes("""
++                {"minecraft:client_entity":{"description":{"identifier":"test:probe",
++                  "textures":{"default":"textures/entity/probe","retained":"textures/entity/probe"}}}}
++                """)));
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\""
++                + UUID.randomUUID() + "\",\"version\":[1,0,0]}}");
++        final byte[] override = new byte[] {17};
++        content.put("textures/entity/probe.png", override);
++        content.putString("entity/probe.json", """
++                {"minecraft:client_entity":{"description":{"identifier":"test:probe",
++                  "textures":{"default":"textures/entity/server"}}}}
++                """);
++        final var server = new ResourcePack(content);
++        final var accepted = new ResourcePackStorage(List.of(server), builtin.resourcePacks());
++        final var dependencies = BedrockActorDependencies.resolve(builtin, accepted);
++        final var layers = dependencies.layers();
++        assertEquals(accepted.getPackStackBottomToTop().size(), layers.size());
++        assertEquals(1, layers.stream().filter(layer -> layer.resources().get("textures/entity/probe.png") == texture).count());
++        final var highest = layers.getLast();
++        assertTrue(highest.server());
++        assertSame(override, highest.resources().get("textures/entity/probe.png"));
++        assertSame(override, dependencies.library().file("textures/entity/probe.png"));
++        final var textures = dependencies.library().entity("test:probe").getAsJsonObject("description").getAsJsonObject("textures");
++        assertEquals("textures/entity/server", textures.get("default").getAsString());
++        assertEquals("textures/entity/probe", textures.get("retained").getAsString());
++    }
++
++    @Test
++    void sharesParsedInheritedDefinitionsAndReplacesOnlyHigherIdentifiers() throws Exception {
++        final var builtin = BedrockResourceLibrary.read(Map.of(
++                "library/vanilla/animations/probe.json", bytes("""
++                {"format_version":"1.10.0","animations":{
++                  "animation.retained":{"loop":true},"animation.replaced":{"loop":false}}}
++                """)));
++        final var definitions = builtin.definitions("animations", "animations");
++        assertSame(definitions, builtin.definitions("animations", "animations"));
++        final var accepted = BedrockResourceLibrary.withServerPacks(builtin, List.of(Map.of(
++                "animations/server.json", bytes("""
++                {"format_version":"1.26.0","animations":{"animation.replaced":{"loop":true}}}
++                """))));
++        final var inherited = accepted.definitions("animations", "animations");
++        assertSame(inherited, accepted.definitions("animations", "animations"));
++        assertSame(definitions.get("animation.retained"), inherited.get("animation.retained"));
++        assertNotSame(definitions.get("animation.replaced"), inherited.get("animation.replaced"));
++        assertTrue(inherited.get("animation.replaced").value().get("loop").getAsBoolean());
++        assertFalse(definitions.get("animation.replaced").value().get("loop").getAsBoolean());
++        assertThrows(UnsupportedOperationException.class, () -> inherited.clear());
++    }
++
++    @Test
++    void sharesParsedNativeBuffersWithoutCachingDifferentAcceptedDocuments() throws Exception {
++        final byte[] nativeBytes = bytes("""
++                {"animations":{"animation.probe":{"loop":true}}}
++                """);
++        final var builtin = BedrockResourceLibrary.read(Map.of("library/vanilla/animations/probe.json", nativeBytes));
++        final var nativeDocument = builtin.document("animations/probe.json", nativeBytes);
++        assertSame(nativeDocument, builtin.document("animations/probe.json", nativeBytes.clone()));
++        final var acceptedBytes = bytes("""
++                {"animations":{"animation.probe":{"loop":false}}}
++                """);
++        final var accepted = builtin.document("animations/probe.json", acceptedBytes);
++        assertNotSame(nativeDocument, accepted);
++        assertFalse(accepted.getAsJsonObject("animations").getAsJsonObject("animation.probe").get("loop").getAsBoolean());
++        assertTrue(nativeDocument.getAsJsonObject("animations").getAsJsonObject("animation.probe").get("loop").getAsBoolean());
++        assertNotSame(accepted, builtin.document("animations/probe.json", acceptedBytes));
++        assertSame(nativeDocument.getAsJsonObject("animations").getAsJsonObject("animation.probe"),
++                builtin.definitions("animations", "animations").get("animation.probe").value());
++    }
++
++    private static byte[] bytes(final String json) { return json.getBytes(StandardCharsets.UTF_8); }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java
+index 14ccd22..74c64c4 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java
+@@ -158,8 +158,10 @@ final class BedrockServerEntityAnimationTest {
+         final var packs = stack(content);
+         content.animationReads = 0;
+         final var first = BedrockActorAnimation.serverEntity(packs, "fixture:actor").playback();
++        final int firstReads = content.animationReads;
++        assertTrue(firstReads > 0);
+         final var second = BedrockActorAnimation.serverEntity(packs, "fixture:other").playback();
+-        assertEquals(1, content.animationReads);
++        assertEquals(firstReads, content.animationReads);
+         assertEquals(1F, first.sample(0, input(0, 0)).get("root").rotation().x());
+         assertEquals(2F, first.sample(1, input(1, 0)).get("root").rotation().x());
+         assertEquals(1F, second.sample(0, input(0, 0)).get("root").rotation().x());
+@@ -167,9 +169,11 @@ final class BedrockServerEntityAnimationTest {
+         final var replacement = new CountingContent();
+         for (final String file : content.getFilesDeep("", ".json")) replacement.putString(file, content.getString(file));
+         replacement.putString("animations/actor.json", animation.formatted(3));
+-        final var replaced = BedrockActorAnimation.serverEntity(stack(replacement), "fixture:actor").playback();
++        final var replacementStack = stack(replacement);
++        replacement.animationReads = 0;
++        final var replaced = BedrockActorAnimation.serverEntity(replacementStack, "fixture:actor").playback();
+         assertEquals(3F, replaced.sample(0, input(0, 0)).get("root").rotation().x());
+-        assertEquals(1, replacement.animationReads);
++        assertEquals(firstReads, replacement.animationReads);
+         assertEquals(2F, first.expression("v.count", -1));
+         assertEquals(1F, second.expression("v.count", -1));
+     }
+@@ -178,9 +182,9 @@ final class BedrockServerEntityAnimationTest {
+         private int animationReads;
+ 
+         @Override
+-        public String getString(final String path) {
++        public byte[] get(final String path) {
+             if (path.startsWith("animations/")) this.animationReads++;
+-            return super.getString(path);
++            return super.get(path);
+         }
+     }
+ 
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
 new file mode 100644
-index 0000000..8a17510
+index 0000000..008c104
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,125 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
@@ -197,13 +596,15 @@ index 0000000..8a17510
 +    }
 +
 +    @Test
-+    void preservesNativeLayersAndExactPathsWithoutExportingDefinitions() throws Exception {
++    void preservesNativeLayersAndExactPathsWithCachedVisualPayloads() throws Exception {
 +        final Map<String, byte[]> files = new LinkedHashMap<>();
 +        files.put("library/vanilla_1.10/textures/items/shared.tga", new byte[] {10});
 +        files.put("library/vanilla/textures/items/shared.png", new byte[] {1});
 +        files.put("library/vanilla_1.9/textures/items/shared.png", new byte[] {9});
 +        files.put("library/vanilla_base/textures/items/CaseSensitive.jpg", new byte[] {2});
 +        files.put("library/vanilla/textures/item_texture.json", new byte[] {'{', '}'});
++        files.put("library/vanilla/textures/terrain_texture.json", new byte[] {'{', '}'});
++        files.put("library/vanilla/textures/unrelated.json", new byte[] {'{', '}'});
 +        files.put("library/vanilla/entity/player.entity.json", new byte[] {'{', '}'});
 +        files.put("library/vanilla_1.11/manifest.json", new byte[] {'{', '}'});
 +        final var library = BedrockResourceLibrary.read(files);
@@ -214,16 +615,17 @@ index 0000000..8a17510
 +        assertNull(packs.get(1).content().get("textures/items/casesensitive.jpg"));
 +        assertArrayEquals(new byte[] {9}, packs.get(2).content().get("textures/items/shared.png"));
 +        assertArrayEquals(new byte[] {10}, packs.get(3).content().get("textures/items/shared.tga"));
++        assertSame(files.get("library/vanilla/textures/item_texture.json"), packs.getFirst().content().get("textures/item_texture.json"));
++        assertSame(files.get("library/vanilla/textures/terrain_texture.json"), packs.getFirst().content().get("textures/terrain_texture.json"));
 +        for (final ResourcePack pack : packs) {
-+            assertFalse(pack.content().contains("textures/item_texture.json"));
++            assertFalse(pack.content().contains("textures/unrelated.json"));
 +            assertFalse(pack.content().contains("entity/player.entity.json"));
 +        }
 +        assertEquals(4, packs.stream().map(ResourcePack::key).distinct().count());
 +        assertEquals(packs.stream().map(ResourcePack::key).toList(),
 +                library.resourcePacks().stream().map(ResourcePack::key).toList());
-+        packs.getFirst().content().get("textures/items/shared.png")[0] = 99;
-+        assertArrayEquals(new byte[] {1}, files.get("library/vanilla/textures/items/shared.png"));
-+        assertArrayEquals(new byte[] {1}, library.resourcePacks().getFirst().content().get("textures/items/shared.png"));
++        assertSame(packs, library.resourcePacks());
++        assertSame(files.get("library/vanilla/textures/items/shared.png"), packs.getFirst().content().get("textures/items/shared.png"));
 +    }
 +
 +    @Test

@@ -13,3 +13,9 @@ These dependencies retain their lower priority and built-in provenance.
 Server packs can replace them.
 Unrelated entity, block and atlas definitions remain excluded.
 The shield regression covers dependencies, precedence and provenance.
+
+## Native icon atlases
+
+Permit the exact `textures/item_texture.json` and `textures/terrain_texture.json` paths beside licensed images.
+These definitions select native bed and pane icons when servers do not replace them.
+Other unrelated definitions remain excluded, and accepted server packs retain precedence.

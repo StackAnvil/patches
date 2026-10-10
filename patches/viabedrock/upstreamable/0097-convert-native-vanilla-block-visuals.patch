@@ -1,4 +1,4 @@
-From 37dcb22cc08e33a5a0ef23101b3e0a4f8272648f Mon Sep 17 00:00:00 2001
+From b2615f68e6ed7219985c3e2b1eeac6c6fa586860 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 9 Oct 2026 19:03:10 +0200
 Subject: [PATCH] feat(resources): convert native vanilla block visuals
@@ -6,11 +6,15 @@ Subject: [PATCH] feat(resources): convert native vanilla block visuals
 Use the accepted native redstone torch textures with plain torch geometry. Java 26.3 adds bulb planes absent from the target Bedrock 1.26.51.1 torch. Keep accepted-pack precedence and export complete block and item models.
 
 Targeted conversion tests cover source precedence and generated models.
+
+Render all sixteen bed items from the target 1.26.51.1 native bed atlas. Preserve Bedrock auxiliary-value order, selected server icon and texture overrides, mapped Java item metadata and later attachable overrides. Replace the Java special-bed item definition with a generated sprite model while retaining placed block behavior.
+
+Render all seventeen glass-pane inventory icons as angled generated plates. The native 1.26.51.1 client shows a flat held pane and an angled inventory plate; its measured front edge and cell size support a GUI rotation of 30/225/0 and scale of 0.75. Read the native terrain atlas in auxiliary-value order, preserve explicit server item icons and atlas overrides, and leave held and placed panes unchanged.
 ---
- .../rewriter/ResourcePackRewriter.java        |  2 +
- .../VanillaBlockVisualResourceRewriter.java   | 69 +++++++++++++++++++
- ...anillaBlockVisualResourceRewriterTest.java | 35 ++++++++++
- 3 files changed, 106 insertions(+)
+ .../rewriter/ResourcePackRewriter.java        |   2 +
+ .../VanillaBlockVisualResourceRewriter.java   | 167 ++++++++++++++
+ ...anillaBlockVisualResourceRewriterTest.java | 216 ++++++++++++++++++
+ 3 files changed, 385 insertions(+)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/VanillaBlockVisualResourceRewriter.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/VanillaBlockVisualResourceRewriterTest.java
 
@@ -36,10 +40,10 @@ index 88eb0f0c3..e7971e106 100644
          REWRITERS.add(new NativeEffectsResourceRewriter());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/VanillaBlockVisualResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/VanillaBlockVisualResourceRewriter.java
 new file mode 100644
-index 000000000..46bb7708d
+index 000000000..ea3ca8bc5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/VanillaBlockVisualResourceRewriter.java
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,167 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -47,8 +51,10 @@ index 000000000..46bb7708d
 + */
 +package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
 +
++import com.viaversion.viaversion.libs.gson.JsonArray;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.definition.TextureDefinitions;
 +import net.raphimc.viabedrock.api.resourcepack.content.Content;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
@@ -66,6 +72,10 @@ index 000000000..46bb7708d
 +            new Visual("redstone_torch_off", "redstone_torch_off", "template_torch", false),
 +            new Visual("redstone_wall_torch", "redstone_torch_on", "template_torch_wall", false),
 +            new Visual("redstone_wall_torch_off", "redstone_torch_off", "template_torch_wall", false));
++
++    // Target 1.26.51.1 item_texture.json indexes beds by the legacy dye auxiliary value.
++    private static final List<String> BED_COLORS = List.of("white", "orange", "magenta", "light_blue",
++            "yellow", "lime", "pink", "gray", "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black");
 +
 +    @Override
 +    public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
@@ -103,7 +113,99 @@ index 000000000..46bb7708d
 +                break;
 +            }
 +        }
++        convertBeds(storage, output);
++        convertGlassPanes(storage, output);
 +        return output;
++    }
++
++    private static void convertBeds(final ResourcePackStorage storage, final Content output) {
++        final var definition = storage.getItems().get("minecraft:bed");
++        final String icon = definition != null && definition.iconComponent() != null ? definition.iconComponent() : "bed";
++        final List<TextureDefinitions.ItemTextureDefinition> textures = storage.getTextures().itemTextures().get(icon);
++        if (textures == null || textures.isEmpty()) {
++            return;
++        }
++        for (int index = 0; index < BED_COLORS.size(); index++) {
++            final int textureIndex = textures.size() == 1 ? 0 : index;
++            if (textureIndex >= textures.size()) {
++                continue;
++            }
++            final String name = BED_COLORS.get(index) + "_bed";
++            convertItemSprite(storage, output, name, textures.get(textureIndex).texturePath(), false);
++        }
++    }
++
++    private static void convertGlassPanes(final ResourcePackStorage storage, final Content output) {
++        convertGlassPane(storage, output, "glass_pane", "minecraft:glass_pane", "glass", 0);
++        for (int index = 0; index < BED_COLORS.size(); index++) {
++            convertGlassPane(storage, output, BED_COLORS.get(index) + "_stained_glass_pane",
++                    "minecraft:stained_glass_pane", "stained_glass", index);
++        }
++    }
++
++    private static void convertGlassPane(final ResourcePackStorage storage, final Content output, final String name,
++                                         final String identifier, final String terrainTexture, final int index) {
++        var definition = storage.getItems().get("minecraft:" + name);
++        if (definition == null) {
++            definition = storage.getItems().get(identifier);
++        }
++        if (definition != null && definition.iconComponent() != null) {
++            final var icons = storage.getTextures().itemTextures().get(definition.iconComponent());
++            if (icons != null && !icons.isEmpty()) {
++                convertItemSprite(storage, output, name, icons.getFirst().texturePath(), false);
++            }
++        } else {
++            convertItemSprite(storage, output, name, storage.getTextures().terrainTexture(terrainTexture, index), true);
++        }
++    }
++
++    private static void convertItemSprite(final ResourcePackStorage storage, final Content output, final String name,
++                                          final String texturePath, final boolean pane) {
++        if (texturePath == null) {
++            return;
++        }
++        for (final ResourcePack pack : storage.getPackStackTopToBottom()) {
++            final var source = pack.content().getShortnameImage(texturePath);
++            if (source == null) {
++                continue;
++            }
++            final var image = source.getImage();
++            if (image.getWidth() <= 1024 && image.getHeight() <= 1024) {
++                final String texture = "viabedrock:item/native/" + name;
++                output.putPngImage("assets/viabedrock/textures/item/native/" + name + ".png", image);
++                final JsonObject model = new JsonObject();
++                model.addProperty("parent", "minecraft:item/generated");
++                final JsonObject layers = new JsonObject();
++                layers.addProperty("layer0", texture);
++                model.add("textures", layers);
++                if (pane) {
++                    // The target-native inventory plate is tilted; held panes remain generated flat sprites.
++                    final JsonObject gui = new JsonObject();
++                    gui.add("rotation", vector(30, 225, 0));
++                    gui.add("scale", vector(0.75F, 0.75F, 0.75F));
++                    final JsonObject display = new JsonObject();
++                    display.add("gui", gui);
++                    model.add("display", display);
++                }
++                output.putJson("assets/viabedrock/models/item/native/" + name + ".json", model);
++                final JsonObject rendering = new JsonObject();
++                rendering.addProperty("type", "minecraft:model");
++                rendering.addProperty("model", "viabedrock:item/native/" + name);
++                final JsonObject item = new JsonObject();
++                item.add("model", rendering);
++                // Java beds use a special renderer, so changing only its model cannot select the native sprite.
++                output.putJson("assets/minecraft/items/" + name + ".json", item);
++            }
++            break;
++        }
++    }
++
++    private static JsonArray vector(final float... values) {
++        final JsonArray vector = new JsonArray();
++        for (final float value : values) {
++            vector.add(value);
++        }
++        return vector;
 +    }
 +
 +    private record Visual(String javaModel, String nativeTexture, String javaTemplate, boolean item) { }
@@ -111,12 +213,15 @@ index 000000000..46bb7708d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/VanillaBlockVisualResourceRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/VanillaBlockVisualResourceRewriterTest.java
 new file mode 100644
-index 000000000..b3e1f75dc
+index 000000000..c5eb00967
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/VanillaBlockVisualResourceRewriterTest.java
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,216 @@
 +package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
 +
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -138,6 +243,184 @@ index 000000000..b3e1f75dc
 +        assertEquals(1, output.getFilesDeep("", ".png").size());
 +        assertEquals(3, output.getFilesDeep("", ".json").size());
 +        assertTrue(VanillaBlockVisualResourceRewriter.convert(new ResourcePackStorage(List.of())).getFilesDeep("", "").isEmpty());
++    }
++
++    @Test
++    void convertsEveryBedAuxiliaryVariantWithoutChangingBlockModels() {
++        final var nativePack = beds(16);
++        final var override = imagePack("textures/items/bed_14", 0xFF446688);
++        final var storage = new ResourcePackStorage(List.of(override), List.of(nativePack));
++        final var output = VanillaBlockVisualResourceRewriter.convert(storage);
++        final var colors = List.of("white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
++                "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black");
++        assertEquals(16, output.getFilesDeep("assets/minecraft/items/", ".json").size());
++        assertTrue(output.getFilesDeep("assets/minecraft/models/block/", ".json").isEmpty());
++        for (int index = 0; index < colors.size(); index++) {
++            final var item = output.getJson("assets/minecraft/items/" + colors.get(index) + "_bed.json").getAsJsonObject("model");
++            final var model = output.getJson("assets/viabedrock/models/" + item.get("model").getAsString().substring("viabedrock:".length()) + ".json");
++            final var sprite = output.getImage("assets/viabedrock/textures/"
++                    + model.getAsJsonObject("textures").get("layer0").getAsString().substring("viabedrock:".length()) + ".png");
++            assertEquals(index == 14 ? 0xFF446688 : 0xFF110000 | index, sprite.getImage().getRGB(7, 6));
++        }
++    }
++
++    @Test
++    void honorsAcceptedAtlasPathsBeforeBundledBedDefinitions() {
++        final var nativePack = beds(16);
++        final var override = imagePack("textures/items/server_bed", 0xFF774411);
++        final var atlas = nativePack.content().getJson("textures/item_texture.json");
++        final var textures = atlas.getAsJsonObject("texture_data").getAsJsonObject("bed").getAsJsonArray("textures");
++        for (int index = 0; index < textures.size(); index++) {
++            textures.set(index, new JsonPrimitive("textures/items/server_bed"));
++        }
++        override.content().putJson("textures/item_texture.json", atlas);
++        final var output = VanillaBlockVisualResourceRewriter.convert(new ResourcePackStorage(List.of(override), List.of(nativePack)));
++        assertEquals(16, output.getFilesDeep("assets/viabedrock/textures/item/native/", ".png").size());
++        for (final String path : output.getFilesDeep("assets/viabedrock/textures/item/native/", ".png")) {
++            assertEquals(0xFF774411, output.getImage(path).getImage().getRGB(7, 6));
++        }
++    }
++
++    @Test
++    void appliesSingleBedAtlasOverridesToEveryColorAndIndexesCustomIconVariants() {
++        final var builtin = beds(16);
++        final var scalar = imagePack("textures/items/shared_bed", 0xFF336688);
++        scalar.content().putString("textures/item_texture.json",
++                "{\"texture_data\":{\"bed\":{\"textures\":\"textures/items/shared_bed\"}}}");
++        final var shared = VanillaBlockVisualResourceRewriter.convert(new ResourcePackStorage(List.of(scalar), List.of(builtin)));
++        assertEquals(16, shared.getFilesDeep("assets/minecraft/items/", ".json").size());
++        for (final String path : shared.getFilesDeep("assets/viabedrock/textures/item/native/", ".png")) {
++            assertEquals(0xFF336688, shared.getImage(path).getImage().getRGB(7, 6));
++        }
++        final var custom = beds(16);
++        final var atlas = custom.content().getJson("textures/item_texture.json");
++        final var data = atlas.getAsJsonObject("texture_data");
++        data.add("server_beds", data.remove("bed"));
++        custom.content().putJson("textures/item_texture.json", atlas);
++        custom.content().putString("items/bed.json",
++                "{\"minecraft:item\":{\"description\":{\"identifier\":\"minecraft:bed\"},"
++                        + "\"components\":{\"minecraft:icon\":\"server_beds\"}}}");
++        final var indexed = VanillaBlockVisualResourceRewriter.convert(new ResourcePackStorage(List.of(custom), List.of(builtin)));
++        assertEquals(16, indexed.getFilesDeep("assets/minecraft/items/", ".json").size());
++        assertEquals(0xFF110000, indexed.getImage("assets/viabedrock/textures/item/native/white_bed.png").getImage().getRGB(7, 6));
++        assertEquals(0xFF11000E, indexed.getImage("assets/viabedrock/textures/item/native/red_bed.png").getImage().getRGB(7, 6));
++        assertEquals(0xFF11000F, indexed.getImage("assets/viabedrock/textures/item/native/black_bed.png").getImage().getRGB(7, 6));
++    }
++
++    @Test
++    void leavesMissingBedVariantsUnchangedAndRespectsFailedOverridePrecedence() {
++        final var nativePack = beds(2);
++        final var override = imagePack("textures/items/bed_0", 0xFF446688);
++        override.content().putPngImage("textures/items/bed_0.png", new BufferedImage(1025, 16, BufferedImage.TYPE_INT_ARGB));
++        final var output = VanillaBlockVisualResourceRewriter.convert(new ResourcePackStorage(List.of(override, nativePack)));
++        assertEquals(1, output.getFilesDeep("assets/minecraft/items/", ".json").size());
++        assertTrue(output.contains("assets/minecraft/items/orange_bed.json"));
++    }
++
++    @Test
++    void preservesIndexedGlassColorsAndOnlyChangesTheirInventoryPose() {
++        final var builtin = glassPanes();
++        final var output = VanillaBlockVisualResourceRewriter.convert(new ResourcePackStorage(List.of(), List.of(builtin)));
++        assertEquals(17, output.getFilesDeep("assets/minecraft/items/", ".json").size());
++        assertTrue(output.getFilesDeep("assets/minecraft/models/block/", ".json").isEmpty());
++        for (final String path : output.getFilesDeep("assets/viabedrock/models/item/native/", ".json")) {
++            final var model = output.getJson(path);
++            assertEquals(1, model.getAsJsonObject("display").size());
++            final var gui = model.getAsJsonObject("display").getAsJsonObject("gui");
++            assertEquals(30, gui.getAsJsonArray("rotation").get(0).getAsInt());
++            assertEquals(225, gui.getAsJsonArray("rotation").get(1).getAsInt());
++            assertEquals(0.75F, gui.getAsJsonArray("scale").get(0).getAsFloat());
++        }
++        final var colors = List.of("white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
++                "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black");
++        for (int index = 0; index < colors.size(); index++) {
++            assertEquals(0xFF220000 | index, output.getImage("assets/viabedrock/textures/item/native/"
++                    + colors.get(index) + "_stained_glass_pane.png").getImage().getRGB(7, 6));
++        }
++        final var override = imagePack("textures/items/shared_glass", 0xFF446688);
++        override.content().putString("textures/terrain_texture.json",
++                "{\"texture_data\":{\"stained_glass\":{\"textures\":\"textures/items/shared_glass\"}}}");
++        final var overridden = VanillaBlockVisualResourceRewriter.convert(new ResourcePackStorage(List.of(override), List.of(builtin)));
++        for (final String color : colors) {
++            assertEquals(0xFF446688, overridden.getImage("assets/viabedrock/textures/item/native/"
++                    + color + "_stained_glass_pane.png").getImage().getRGB(7, 6));
++        }
++    }
++
++    @Test
++    void preservesServerPaneIconComponentsAboveNativeTerrainSprites() {
++        final var override = imagePack("textures/items/server_pane", 0xFF557799);
++        override.content().putString("textures/item_texture.json",
++                "{\"texture_data\":{\"server_icon\":{\"textures\":\"textures/items/server_pane\"}}}");
++        for (final String identifier : List.of("glass_pane", "stained_glass_pane")) {
++            override.content().putString("items/" + identifier + ".json",
++                    "{\"minecraft:item\":{\"description\":{\"identifier\":\"minecraft:" + identifier
++                            + "\"},\"components\":{\"minecraft:icon\":\"server_icon\"}}}");
++        }
++        final var output = VanillaBlockVisualResourceRewriter.convert(new ResourcePackStorage(List.of(override), List.of(glassPanes())));
++        assertEquals(17, output.getFilesDeep("assets/minecraft/items/", ".json").size());
++        for (final String path : output.getFilesDeep("assets/viabedrock/textures/item/native/", ".png")) {
++            assertEquals(0xFF557799, output.getImage(path).getImage().getRGB(7, 6));
++        }
++        for (final String path : output.getFilesDeep("assets/viabedrock/models/item/native/", ".json")) {
++            assertFalse(output.getJson(path).has("display"));
++        }
++    }
++
++    private static ResourcePack glassPanes() {
++        final var base = beds(16);
++        final var content = new InMemoryContent();
++        content.put("manifest.json", base.content().get("manifest.json"));
++        final var variants = new JsonArray();
++        for (int index = 0; index < 16; index++) {
++            final String path = "textures/blocks/glass_" + index;
++            variants.add(path);
++            final var image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
++            image.setRGB(7, 6, 0xFF220000 | index);
++            content.putPngImage(path + ".png", image);
++        }
++        content.put("textures/blocks/glass.png", content.get("textures/blocks/glass_0.png"));
++        final var glass = new JsonObject();
++        glass.addProperty("textures", "textures/blocks/glass");
++        final var stained = new JsonObject();
++        stained.add("textures", variants);
++        final var data = new JsonObject();
++        data.add("glass", glass);
++        data.add("stained_glass", stained);
++        final var atlas = new JsonObject();
++        atlas.add("texture_data", data);
++        content.putJson("textures/terrain_texture.json", atlas);
++        return new ResourcePack(content);
++    }
++
++    private static ResourcePack beds(final int count) {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + java.util.UUID.randomUUID()
++                + "\",\"version\":[1,0,0],\"name\":\"test\"}}");
++        final var atlas = new JsonObject();
++        final var textures = new JsonArray();
++        for (int index = 0; index < count; index++) {
++            final String path = "textures/items/bed_" + index;
++            textures.add(path);
++            final var image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
++            image.setRGB(7, 6, 0xFF110000 | index);
++            content.putPngImage(path + ".png", image);
++        }
++        final var bed = new JsonObject();
++        bed.add("textures", textures);
++        final var data = new JsonObject();
++        data.add("bed", bed);
++        atlas.add("texture_data", data);
++        content.putJson("textures/item_texture.json", atlas);
++        return new ResourcePack(content);
++    }
++
++    private static ResourcePack imagePack(final String path, final int color) {
++        final var pack = pack(color);
++        final var content = new InMemoryContent();
++        content.put("manifest.json", pack.content().get("manifest.json"));
++        content.put(path + ".png", pack.content().get("textures/blocks/redstone_torch_on.png"));
++        return new ResourcePack(content);
 +    }
 +
 +    private static ResourcePack pack(final int color) {

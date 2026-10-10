@@ -227,3 +227,10 @@ The final JAR's UI and actor bundles pass checksum and entry verification agains
 The shared UI renderer now displays core-resolved HUD title factories with authored images, captions, size and anchors. Alpha animations follow fade, wait and fade-out chains. Subtitle updates retain the original title clock. Late updates cannot revive an expired title, and disconnects invalidate queued work and release resources. Ordinary titles remain available for scenes the core cannot resolve.
 
 Targeted tests sample the alpha chain before, during and after each phase, including replacement scene nodes on the same clock. The complete addon suite passes 799 tests: 679 passed and 120 skipped. All four full-stack builds and bundle checks pass.
+
+## Persistent HUD image metadata
+
+The persistent HUD previously rejected later icons after its metadata cache reached 256 entries.
+Both success and failure metadata now evict the least recently used entry instead of retiring a valid title.
+The resource manager retains ownership of pack textures.
+Tests cover more than 256 icons, frequent cache hits, evicted entries and changed resource sources.

@@ -11,3 +11,8 @@ Targeted tests load the bundled crystal without server overrides. They cover cam
 ## Validation
 
 The complete four-project build and modpack bundle pass. Core passes 1,045 tests with 30 optional skips. The add-on passes 700 tests with 120 optional skips. The cleaned patch stack replays to the same source tree. The north-star PR check also passes.
+
+Additional crystal regressions sample the bundled animation at 20, 60 and 144 frames per second through three animation loops.
+Each nested bone retains the authored rate of minus 60 degrees per second.
+The bob uses the authored 230-degree-per-second sine input, and the random phase remains stable for the playback lifetime.
+These tests pass without a speed adjustment and do not establish live native screenshot parity.

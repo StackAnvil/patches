@@ -283,3 +283,14 @@ Accepted HUD definitions now resolve title factories before unrelated HUD collec
 The saved CubeCraft 0.0.55 pack for Bedrock 1.26.51.1, protocol 2193, supplies the title marker, subtitle image binding, top banner and alpha/wait chain. A private production-resolver check produces the clean caption, its 30-by-30 icon and normalized texture identities. It does not establish native screenshot parity. Targeted tests cover inserted factories beside unrelated grids, timing chains, title ordering and message bounds.
 
 Actor-only storage now creates its shared JSON UI program on first UI access. This avoids decoding UI textures in each equipment or actor storage. On the saved pack, actor storage falls from 1.7 to 2.0 seconds to 80 to 91 ms. These are local preparation measurements, not total join-time guarantees. The complete core build passes 1,066 tests: 1,036 passed and 30 skipped. All Checkstyle tasks pass.
+
+## Bound HUD opacity
+
+The saved CubeCraft HUD binds opacity to `#alpha` and propagation to `#propagateAlpha`.
+The resolver now exports both values on each control and restores local defaults for descendants.
+The converted-pack identity changes so existing caches do not retain scenes with omitted bindings.
+The targeted UI and HUD gate passes all 20 tests with the bundled target UI.
+The remaining custom title-image report has no current scene reproduction.
+These checks do not establish live server or native pixel parity.
+
+The complete core build passes 1,153 tests with no failures; 30 optional tests remain skipped.
