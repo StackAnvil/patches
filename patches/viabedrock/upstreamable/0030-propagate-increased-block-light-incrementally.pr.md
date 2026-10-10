@@ -65,3 +65,9 @@ The add-on build passes with 605 tests, including 117 fixture skips. Neither sui
 ViaProxy builds successfully. All 1,250 core files match both downstream bundles, except their manifests.
 The emission regressions fail with the old rules and pass with the corrected rules.
 These checks do not include a new live Java/native screenshot comparison.
+
+## Coalesce queued chunk ticks
+
+Each connection now has at most one queued or executing chunk tick. A token owns the reservation until its callback finishes, so a busy connection cannot accumulate repeated scheduler callbacks. Rejection and exceptions release the reservation; an older rejected submission cannot remove a newer reservation. Later dimension-replacement guards remain inside the callback.
+
+Targeted regressions cover pending and running work, independent connections, rejection, exceptions, and reservation ownership. The full core build and Checkstyle pass with 1,144 passing tests and 30 skips. Tick coalescing bounds queued work; it does not establish a live latency improvement for every lighting workload.

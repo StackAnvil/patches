@@ -1,4 +1,4 @@
-From 4c8ea67ee3ec6914a96beab16b0b6019b2e406fb Mon Sep 17 00:00:00 2001
+From 4ae13b75885f70312fe638609f32c31fe5612c01 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 03:59:09 +0200
 Subject: [PATCH] perf(lighting): propagate increased block light incrementally
@@ -55,18 +55,39 @@ assets and probe output remain private. Rendered image parity remains open.
 Bound the lifetime of background lighting jobs through result application or discard, including slow connection event loops, rejected executors and failures. Releasing worker capacity before completion delivery allowed queued callbacks to retain unlimited region snapshots. Keep one permit per job and release it exactly once.
 
 Keep uniform lighting snapshots as one state instead of 4,096 integers. Reuse the emission workspace for block light, and avoid allocating arrays for uniform zero/full light sections. Preserve mixed-section, secondary-water, border and incremental propagation semantics. Stress tests exercise 32,000 submissions with blocked result delivery, abandoned trackers and exception cleanup. Full-height and dense/compact parity tests check the storage bound and output. A private 24-section benchmark produces identical light data with approximately 27 percent less allocation per update; its mostly uniform snapshot uses approximately 96 percent less state-array storage. These measurements do not establish game-wide heap or frame-rate improvement.
+
+Keep at most one queued or running chunk-tracker callback per connection.
+A slow event loop previously retained every timer callback and processed
+catch-up bursts after chunk conversion or other blocking work completed.
+Dirty chunks and light work already remain in their tracker queues, so
+repeated timer callbacks need no separate replay.
+
+Release the connection reservation in finally when the callback runs or
+is discarded. Recover rejected submissions during channel shutdown and
+clean up other submission failures. Identity-specific reservation tokens
+prevent an old failed submission from clearing a newer callback's slot.
+Keep the existing callback boundary so subsequent dimension-tracker
+identity checks still reject stale work.
+
+Five manual-executor regression tests cover 32 bursts of 1,000 redundant
+timer submissions, independent connections, a running callback, discarded
+work, failed callbacks, rejected executors, and replacement reservations
+across inline executor failure. All pass; changed test Checkstyle passes.
 ---
  .../api/chunk/light/LightEngine.java          | 228 ++++++++++--
  .../protocol/data/BedrockMappingData.java     |  32 +-
  .../protocol/storage/ChunkTracker.java        | 332 +++++++++++++++---
+ .../protocol/task/ChunkTrackerTickTask.java   |  33 +-
  .../api/chunk/light/LightEngineTest.java      | 211 +++++++++++
  .../protocol/data/BlockLightEmissionTest.java |  91 +++++
  .../data/BlockLightFilteringTest.java         |  97 +++++
  .../protocol/storage/ChunkTrackerTest.java    | 168 +++++++++
- 7 files changed, 1071 insertions(+), 88 deletions(-)
+ .../task/ChunkTrackerTickTaskTest.java        | 148 ++++++++
+ 9 files changed, 1251 insertions(+), 89 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightEmissionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTaskTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java b/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java
 index 7083d9305..d101d0b5a 100644
@@ -474,7 +495,7 @@ index 98d435ad8..ae1e0fe72 100644
              return Integer.parseInt(blockState.properties().getOrDefault(property, String.valueOf(fallback)));
          } catch (final NumberFormatException e) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-index 12898b47f..07b236527 100644
+index 67c2261f0..132a4c34e 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 @@ -67,12 +67,17 @@ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
@@ -645,7 +666,7 @@ index 12898b47f..07b236527 100644
      public BedrockChunkSection handleBlockPalette(final BedrockChunkSection section) {
          this.replaceLegacyBlocks(section);
          this.resolvePersistentIds(section);
-@@ -800,17 +893,21 @@ public class ChunkTracker extends StoredObject {
+@@ -803,17 +896,21 @@ public class ChunkTracker extends StoredObject {
  
      private ChunkLight computeChunkLight(final int chunkX, final int chunkZ) {
          final int[][][] regionStates = new int[9][][];
@@ -671,7 +692,7 @@ index 12898b47f..07b236527 100644
          for (int dz = -1; dz <= 1; dz++) {
              for (int dx = -1; dx <= 1; dx++) {
                  final BedrockChunk neighbor = this.chunks.get(ChunkPosition.chunkKey(chunkX + dx, chunkZ + dz));
-@@ -820,9 +917,10 @@ public class ChunkTracker extends StoredObject {
+@@ -823,9 +920,10 @@ public class ChunkTracker extends StoredObject {
  
                  final int chunkIndex = (dz + 1) * 3 + (dx + 1);
                  regionStates[chunkIndex] = this.snapshotChunkStates(neighbor);
@@ -683,7 +704,7 @@ index 12898b47f..07b236527 100644
      }
  
      private int[][] snapshotChunkStates(final BedrockChunk chunk) {
-@@ -833,27 +931,53 @@ public class ChunkTracker extends StoredObject {
+@@ -836,27 +934,53 @@ public class ChunkTracker extends StoredObject {
          return states.clone();
      }
  
@@ -754,7 +775,7 @@ index 12898b47f..07b236527 100644
                  this.pendingLightComputations.remove(chunkKey);
                  if (!this.user().getChannel().isActive()) {
                      return;
-@@ -883,7 +1007,6 @@ public class ChunkTracker extends StoredObject {
+@@ -886,7 +1010,6 @@ public class ChunkTracker extends StoredObject {
                  this.writeLightData(lightUpdate, lightData);
                  lightUpdate.send(BedrockProtocol.class);
              });
@@ -762,7 +783,7 @@ index 12898b47f..07b236527 100644
      }
  
      private int[][] getJavaBlockStates(final BedrockChunk chunk) {
-@@ -901,13 +1024,12 @@ public class ChunkTracker extends StoredObject {
+@@ -904,13 +1027,12 @@ public class ChunkTracker extends StoredObject {
  
      /**
       * Converts the bedrock block states of a chunk section into java block states, indexed with
@@ -778,7 +799,7 @@ index 12898b47f..07b236527 100644
          }
  
          final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
-@@ -917,6 +1039,10 @@ public class ChunkTracker extends StoredObject {
+@@ -920,6 +1042,10 @@ public class ChunkTracker extends StoredObject {
              final int javaId = blockStateRewriter.javaId(layer0.idByIndex(i));
              entryJavaIds[i] = javaId != -1 ? javaId : ProtocolConstants.JAVA_AIR_ID;
          }
@@ -789,7 +810,7 @@ index 12898b47f..07b236527 100644
          if (layer0.size() == 1) {
              if (entryJavaIds[0] != ProtocolConstants.JAVA_AIR_ID) {
                  Arrays.fill(states, entryJavaIds[0]);
-@@ -930,7 +1056,37 @@ public class ChunkTracker extends StoredObject {
+@@ -933,7 +1059,37 @@ public class ChunkTracker extends StoredObject {
                  }
              }
          }
@@ -828,7 +849,7 @@ index 12898b47f..07b236527 100644
      }
  
      private void invalidateJavaBlockStates(final int chunkX, final int subChunkY, final int chunkZ) {
-@@ -942,6 +1098,10 @@ public class ChunkTracker extends StoredObject {
+@@ -945,6 +1101,10 @@ public class ChunkTracker extends StoredObject {
          final int sectionIndex = subChunkY + Math.abs(this.minY >> 4);
          if (sectionIndex >= 0 && sectionIndex < chunkStates.length) {
              chunkStates[sectionIndex] = null;
@@ -839,7 +860,7 @@ index 12898b47f..07b236527 100644
          }
      }
  
-@@ -1021,23 +1181,50 @@ public class ChunkTracker extends StoredObject {
+@@ -1024,21 +1184,48 @@ public class ChunkTracker extends StoredObject {
              this.sendChunk(chunkPos.chunkX(), chunkPos.chunkZ());
          }
  
@@ -872,10 +893,10 @@ index 12898b47f..07b236527 100644
 +                this.pendingLightComputations.remove(chunkKey);
 +                task.close();
 +                throw failure;
-             }
-         }
-     }
- 
++            }
++        }
++    }
++
 +    static OptionalLong takeLightUpdate(final LongSet dirty, final LongSet pending, final LongPredicate loaded) {
 +        final var iterator = dirty.iterator();
 +        while (iterator.hasNext()) {
@@ -888,16 +909,14 @@ index 12898b47f..07b236527 100644
 +            // Keep the newer column's refresh queued until that worker releases this key.
 +            if (pending.contains(key)) {
 +                continue;
-+            }
+             }
 +            iterator.remove();
 +            return OptionalLong.of(key);
-+        }
+         }
 +        return OptionalLong.empty();
-+    }
-+
+     }
+ 
      private long distanceToCenterSquared(final int chunkX, final int chunkZ) {
-         final long dx = (long) chunkX - this.centerX;
-         final long dz = (long) chunkZ - this.centerZ;
 @@ -1334,6 +1521,63 @@ public class ChunkTracker extends StoredObject {
          }
      }
@@ -962,6 +981,62 @@ index 12898b47f..07b236527 100644
      private record SubChunkPosition(int chunkX, int subChunkY, int chunkZ) {
      }
  
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTask.java b/src/main/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTask.java
+index fe5c0a709..4ff6b7c1a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTask.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTask.java
+@@ -22,14 +22,21 @@ import com.viaversion.viaversion.api.connection.UserConnection;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
+ 
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.ConcurrentMap;
++import java.util.concurrent.Executor;
++import java.util.concurrent.RejectedExecutionException;
++
+ public class ChunkTrackerTickTask implements Runnable {
+ 
++    private final ConcurrentMap<UserConnection, Object> pendingTicks = new ConcurrentHashMap<>();
++
+     @Override
+     public void run() {
+         for (UserConnection info : Via.getManager().getConnectionManager().getConnections()) {
+             final ChunkTracker chunkTracker = info.get(ChunkTracker.class);
+             if (chunkTracker != null) {
+-                info.getChannel().eventLoop().submit(() -> {
++                submitTick(this.pendingTicks, info, info.getChannel().eventLoop(), () -> {
+                     if (!info.getChannel().isActive()) {
+                         return;
+                     }
+@@ -44,4 +51,28 @@ public class ChunkTrackerTickTask implements Runnable {
+         }
+     }
+ 
++    static <T> boolean submitTick(final ConcurrentMap<T, Object> pending, final T connection, final Executor executor, final Runnable tick) {
++        final Object reservation = new Object();
++        if (pending.putIfAbsent(connection, reservation) != null) {
++            return false;
++        }
++        try {
++            executor.execute(() -> {
++                try {
++                    tick.run();
++                } finally {
++                    pending.remove(connection, reservation);
++                }
++            });
++            return true;
++        } catch (final RejectedExecutionException _) {
++            // A channel can shut down between the timer's connection snapshot and submission.
++            pending.remove(connection, reservation);
++            return false;
++        } catch (final RuntimeException | Error failure) {
++            pending.remove(connection, reservation);
++            throw failure;
++        }
++    }
++
+ }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java b/src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
 new file mode 100644
 index 000000000..695c24ce8
@@ -1581,5 +1656,159 @@ index 130e48f58..17bc55d4d 100644
 +    }
 +
  }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTaskTest.java b/src/test/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTaskTest.java
+new file mode 100644
+index 000000000..bc141a9a2
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/task/ChunkTrackerTickTaskTest.java
+@@ -0,0 +1,148 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.task;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayDeque;
++import java.util.Queue;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.ConcurrentMap;
++import java.util.concurrent.Executor;
++import java.util.concurrent.RejectedExecutionException;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class ChunkTrackerTickTaskTest {
++
++    @Test
++    void delayedEventLoopCoalescesBurstsAndResumesWithoutCatchUpTicks() {
++        final ConcurrentMap<String, Object> pending = new ConcurrentHashMap<>();
++        final ManualExecutor eventLoop = new ManualExecutor();
++        final AtomicInteger ticks = new AtomicInteger();
++        for (int burst = 0; burst < 32; burst++) {
++            assertTrue(ChunkTrackerTickTask.submitTick(pending, "player", eventLoop, ticks::incrementAndGet));
++            for (int timerTick = 0; timerTick < 1000; timerTick++) {
++                assertFalse(ChunkTrackerTickTask.submitTick(pending, "player", eventLoop, ticks::incrementAndGet));
++            }
++            assertEquals(1, eventLoop.tasks.size());
++            assertEquals(Set.of("player"), pending.keySet());
++            eventLoop.drain();
++            assertEquals(burst + 1, ticks.get());
++            assertTrue(pending.isEmpty());
++        }
++    }
++
++    @Test
++    void separateConnectionsProgressAndRunningCallbackRemainsReserved() {
++        final ConcurrentMap<String, Object> pending = new ConcurrentHashMap<>();
++        final ManualExecutor eventLoop = new ManualExecutor();
++        final AtomicInteger ticks = new AtomicInteger();
++        assertTrue(ChunkTrackerTickTask.submitTick(pending, "first", eventLoop, () -> {
++            assertFalse(ChunkTrackerTickTask.submitTick(pending, "first", eventLoop, ticks::incrementAndGet));
++            ticks.incrementAndGet();
++        }));
++        assertTrue(ChunkTrackerTickTask.submitTick(pending, "second", eventLoop, ticks::incrementAndGet));
++        assertEquals(2, eventLoop.tasks.size());
++        eventLoop.drain();
++        assertEquals(2, ticks.get());
++        assertTrue(pending.isEmpty());
++    }
++
++    @Test
++    void discardedTrackerOrDisconnectedCallbackReleasesTheConnection() {
++        final ConcurrentMap<String, Object> pending = new ConcurrentHashMap<>();
++        final ManualExecutor eventLoop = new ManualExecutor();
++        final AtomicBoolean current = new AtomicBoolean(true);
++        final AtomicInteger ticks = new AtomicInteger();
++        assertTrue(ChunkTrackerTickTask.submitTick(pending, "player", eventLoop, () -> {
++            if (!current.get()) {
++                return;
++            }
++            ticks.incrementAndGet();
++        }));
++        current.set(false);
++        eventLoop.drain();
++        assertEquals(0, ticks.get());
++        assertTrue(pending.isEmpty());
++        assertTrue(ChunkTrackerTickTask.submitTick(pending, "player", eventLoop, ticks::incrementAndGet));
++        eventLoop.drain();
++        assertEquals(1, ticks.get());
++    }
++
++    @Test
++    void rejectedExecutorAndFailedCallbackDoNotPermanentlySuppressTicks() {
++        final ConcurrentMap<String, Object> pending = new ConcurrentHashMap<>();
++        final ManualExecutor eventLoop = new ManualExecutor();
++        final Executor rejected = _ -> {
++            throw new RejectedExecutionException();
++        };
++        assertFalse(ChunkTrackerTickTask.submitTick(pending, "player", rejected, () -> { }));
++        assertTrue(pending.isEmpty());
++        assertTrue(ChunkTrackerTickTask.submitTick(pending, "player", eventLoop, () -> {
++            throw new IllegalStateException();
++        }));
++        assertThrows(IllegalStateException.class, eventLoop::drain);
++        assertTrue(pending.isEmpty());
++        final Executor failedSubmission = _ -> {
++            throw new IllegalStateException();
++        };
++        assertThrows(IllegalStateException.class,
++                () -> ChunkTrackerTickTask.submitTick(pending, "player", failedSubmission, () -> { }));
++        assertTrue(pending.isEmpty());
++        final AtomicInteger ticks = new AtomicInteger();
++        assertTrue(ChunkTrackerTickTask.submitTick(pending, "player", eventLoop, ticks::incrementAndGet));
++        eventLoop.drain();
++        assertEquals(1, ticks.get());
++    }
++
++    @Test
++    void failedInlineExecutionRetainsReplacementReservation() {
++        final ConcurrentMap<String, Object> pending = new ConcurrentHashMap<>();
++        final ManualExecutor eventLoop = new ManualExecutor();
++        final AtomicInteger ticks = new AtomicInteger();
++        final Executor inline = callback -> {
++            try {
++                callback.run();
++            } catch (final IllegalStateException failure) {
++                assertTrue(ChunkTrackerTickTask.submitTick(pending, "player", eventLoop, ticks::incrementAndGet));
++                throw failure;
++            }
++        };
++        assertThrows(IllegalStateException.class, () -> ChunkTrackerTickTask.submitTick(pending, "player", inline, () -> {
++            throw new IllegalStateException();
++        }));
++        assertFalse(ChunkTrackerTickTask.submitTick(pending, "player", eventLoop, ticks::incrementAndGet));
++        assertEquals(1, eventLoop.tasks.size());
++        eventLoop.drain();
++        assertEquals(1, ticks.get());
++        assertTrue(pending.isEmpty());
++    }
++
++    private static final class ManualExecutor implements Executor {
++
++        private final Queue<Runnable> tasks = new ArrayDeque<>();
++
++        @Override
++        public void execute(final Runnable task) {
++            this.tasks.add(task);
++        }
++
++        private void drain() {
++            while (!this.tasks.isEmpty()) {
++                this.tasks.remove().run();
++            }
++        }
++
++    }
++
++}
 -- 
-2.56.0
+2.50.1 (Apple Git-155)

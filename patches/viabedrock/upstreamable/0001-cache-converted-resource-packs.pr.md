@@ -228,3 +228,13 @@ The cache schema still restores finite scales as floats.
 The feature-only tests and both Checkstyle tasks pass.
 The cache patch applies alone to the pinned upstream base and passes all 22 tests and both Checkstyle tasks.
 The complete core and add-on builds also pass after replaying the stacks.
+
+## Bound retention and keep preparation off connection threads
+
+Completed conversions now use a 32-entry LRU with a 128 MiB retention budget for archive bytes and estimated metadata. In-flight sharing is separate, so oversized results can serve waiting connections without remaining cached. Verified disk entries can reload after eviction.
+
+Source ZIP loading, decryption, persistence, and definition construction run on bounded workers. Conversion has two workers and 64 queued tasks; HTTP-server preparation has two workers and 32 queued tasks. Hosts with fewer processors use fewer workers. Translation-disabled connections lazily own one preparation worker with one queued task. Saturation fails through the existing connection error path without running heavy work on the caller. Shutdown completes pending futures.
+
+Preserve all downloaded INFO packs before selecting STACK resources, including unused offers. Publish storage and advertise resources only while the owning tracker, storage, and channel remain current. Selected subpacks, builtin layers, and conversion-profile fingerprints survive full-stack replay.
+
+Validation: the standalone owning patch passes 34 tests and both Checkstyle tasks. The complete core build passes with 1,144 tests passed and 30 skipped; the add-on and ViaProxy also build against the updated library. Regressions cover eviction, oversized sharing, queue rejection, shutdown, nonfatal source-cache failures, stale publication, and event-loop responsiveness. No new live joining-time or frame-time measurements were made.

@@ -1,4 +1,4 @@
-From 84e0e211f101e3ca4d1d16ad4c8d7275248a3570 Mon Sep 17 00:00:00 2001
+From 975acba50f3e83608ab82cc956e5e77dec3d299b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 12:06:00 +0200
 Subject: [PATCH] feat(scoreboard): convert native sidebar title images and
@@ -31,7 +31,7 @@ Tests cover default aspect preservation, explicit stretching, metadata dimension
  .../model/scoreboard/ScoreboardObjective.java |  22 +-
  .../definition/ScoreboardUiDefinitions.java   | 430 ++++++++++++++++++
  .../definition/TextFormattingDefinitions.java | 109 +++++
- .../http/ConvertedResourcePackCache.java      |  22 +-
+ .../http/ConvertedResourcePackCache.java      |  29 +-
  .../raphimc/viabedrock/api/util/TextUtil.java |  30 +-
  .../protocol/packet/HudPackets.java           |  38 +-
  .../rewriter/ResourcePackRewriter.java        |   2 +
@@ -43,7 +43,7 @@ Tests cover default aspect preservation, explicit stretching, metadata dimension
  .../http/ConvertedResourcePackCacheTest.java  |  32 ++
  .../api/util/TextPaletteFormattingTest.java   |  39 ++
  .../protocol/packet/HudPacketsTest.java       |  39 ++
- 16 files changed, 1427 insertions(+), 20 deletions(-)
+ 16 files changed, 1433 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java
@@ -676,7 +676,7 @@ index 000000000..72539af5b
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index 068fcc97d..fe3125938 100644
+index dc02e950c..460205e38 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -53,11 +53,12 @@ import java.util.logging.Level;
@@ -692,29 +692,40 @@ index 068fcc97d..fe3125938 100644
 +    private final String conversionVersion;
      private final ViaBedrockConfig.PackCacheMode mode;
      private final Function<ResourcePackStorage, Content> converter;
-     private final ExecutorService executor = Executors.newFixedThreadPool(Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors())), task -> {
-@@ -81,6 +82,11 @@ public class ConvertedResourcePackCache {
+     private static final int MAX_COMPLETED_PACKS = 32;
+@@ -85,11 +86,21 @@ public class ConvertedResourcePackCache {
      }
  
      ConvertedResourcePackCache(final Path directory, final ViaBedrockConfig.PackCacheMode mode, final Function<ResourcePackStorage, Content> converter) {
-+        this(directory, mode, converter, CONVERSION_VERSION);
+-        this(directory, mode, converter, MAX_COMPLETED_PACKS, MAX_COMPLETED_BYTES);
++        this(directory, mode, converter, CONVERSION_VERSION, MAX_COMPLETED_PACKS, MAX_COMPLETED_BYTES);
 +    }
 +
 +    ConvertedResourcePackCache(final Path directory, final ViaBedrockConfig.PackCacheMode mode, final Function<ResourcePackStorage, Content> converter, final String conversionVersion) {
++        this(directory, mode, converter, conversionVersion, MAX_COMPLETED_PACKS, MAX_COMPLETED_BYTES);
+     }
+ 
+     ConvertedResourcePackCache(final Path directory, final ViaBedrockConfig.PackCacheMode mode, final Function<ResourcePackStorage, Content> converter,
+                                final int maxCompletedPacks, final long maxCompletedBytes) {
++        this(directory, mode, converter, CONVERSION_VERSION, maxCompletedPacks, maxCompletedBytes);
++    }
++
++    private ConvertedResourcePackCache(final Path directory, final ViaBedrockConfig.PackCacheMode mode, final Function<ResourcePackStorage, Content> converter,
++                                       final String conversionVersion, final int maxCompletedPacks, final long maxCompletedBytes) {
 +        this.conversionVersion = conversionVersion;
          this.directory = directory;
          this.mode = mode;
          this.converter = converter;
-@@ -90,7 +96,7 @@ public class ConvertedResourcePackCache {
+@@ -101,7 +112,7 @@ public class ConvertedResourcePackCache {
          if (this.mode == ViaBedrockConfig.PackCacheMode.DISABLED) {
-             return CompletableFuture.supplyAsync(() -> this.convert(storage), this.executor);
+             return this.executor.submit(() -> this.convert(storage));
          }
--        return CompletableFuture.supplyAsync(() -> fingerprint(storage), this.executor).thenCompose(key -> {
-+        return CompletableFuture.supplyAsync(() -> fingerprint(storage, this.conversionVersion), this.executor).thenCompose(key -> {
-             final CompletableFuture<Pack> future = this.pending.computeIfAbsent(key, ignored -> CompletableFuture.supplyAsync(() ->
-                     this.mode == ViaBedrockConfig.PackCacheMode.DISK ? this.loadOrConvert(key, storage) : this.convert(storage), this.executor));
-             return future.thenApply(pack -> {
-@@ -206,11 +212,15 @@ public class ConvertedResourcePackCache {
+-        return this.executor.submit(() -> fingerprint(storage)).thenCompose(key ->
++        return this.executor.submit(() -> fingerprint(storage, this.conversionVersion)).thenCompose(key ->
+                 this.prepare(key, storage).thenApply(pack -> {
+                     storage.getConverterData().putAll(pack.converterData());
+                     return pack;
+@@ -264,11 +275,15 @@ public class ConvertedResourcePackCache {
      }
  
      static String fingerprint(final Collection<ResourcePack> packs) {
@@ -731,7 +742,7 @@ index 068fcc97d..fe3125938 100644
              for (ResourcePack pack : packs) {
                  writeString(output, pack.key().toString());
                  final List<String> paths = new ArrayList<>(pack.content().getFilesDeep("", ""));
-@@ -230,7 +240,11 @@ public class ConvertedResourcePackCache {
+@@ -288,7 +303,11 @@ public class ConvertedResourcePackCache {
      }
  
      static String fingerprint(final ResourcePackStorage storage) {
@@ -1649,10 +1660,10 @@ index 000000000..6f0ed29be
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-index a764ca59c..8b6981215 100644
+index 4fdf1a0ef..7883b9646 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-@@ -175,6 +175,38 @@ class ConvertedResourcePackCacheTest {
+@@ -177,6 +177,38 @@ class ConvertedResourcePackCacheTest {
          assertEquals(original, ConvertedResourcePackCache.fingerprint(storage));
      }
  
@@ -1802,4 +1813,4 @@ index dfd42cd14..8199a3e78 100644
  
          private final Map<Long, ScoreboardEntry> entries = new HashMap<>();
 -- 
-2.56.0
+2.50.1 (Apple Git-155)
