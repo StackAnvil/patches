@@ -100,3 +100,9 @@ Core reports 664 passing tests and 19 skips; CubeConverter reports 16 passing te
 All eight neighbor-shape tests pass, with no failures or errors.
 Fresh Java comparisons match the 4,096 stair cases and the earlier 4,096 gate, slab, and snow cases.
 Live joins and complete movement parity were not verified in this run.
+
+## Skip sections without connected states
+
+Neighbor refreshes classify palette entries once and visit only cells whose entries need connected-state resolution. Sections without candidates avoid a 4,096-cell scan; border refreshes use the same helper with edge bounds. Preserve Java and Bedrock palette indexing, secondary-layer waterlogging, and the later upper-door predicate.
+
+Eight connected-shape tests pass, including differential comparisons with full-array scans for both palette types and all four borders. The complete core stack replays and builds with Checkstyle, 1,144 passing tests, and 30 skips. These checks establish equivalent candidate selection, without measuring live chunk frame times.

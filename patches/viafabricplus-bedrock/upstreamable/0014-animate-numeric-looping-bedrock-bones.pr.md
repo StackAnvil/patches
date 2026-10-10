@@ -144,3 +144,9 @@ An accepted CubeCraft pack references native player root controllers and the emp
 A private production-graph fixture resolves the original pack references and samples right-arm position `(13.5, -10, 12)` and rotation `(95, -45, 115)`. The accepted server visibility script reveals the empty hand and hides it with a compass equipped. Targeted tests cover baseline inheritance, effect lookup, accepted-pack overrides, duplicate controller formats and non-VR hand binding.
 
 The complete add-on build passes: 532 tests passed, 117 optional tests skipped, no failures. Access-widener validation passes. The reviewed candidate was installed in the desktop client, which joined CubeCraft successfully. The user confirms the arm is visible. This verifies the reported empty-hand regression; VR, all costumes and complete native visual parity remain separate checks.
+
+## Index effect locators once per resource generation
+
+The first nonblank locator request builds a lazy index that parses each model JSON once and retains only locator maps. Effect models are built after the requested locator resolves. Keep bottom-to-top pack overrides, first duplicate geometry definitions, empty-definition overrides, and malformed-file behavior equivalent to the previous scan. Resource generation changes discard the index.
+
+Five regressions pass, including a seeded differential comparison over 384 definitions and 144 repeated requests across two geometries with one model parse. The full add-on build passes with 784 tests passed, 120 skipped, and no failures or errors. Live particle-heavy frame-time profiling remains separate from these operation-count checks.

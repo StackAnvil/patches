@@ -1,4 +1,4 @@
-From a0fbed1b21f9627b48065dcf19b37a5c6b809708 Mon Sep 17 00:00:00 2001
+From 8c92046b9958d637dce8dffe78327976bdf6787a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:56:50 +0200
 Subject: [PATCH] feat(entities): evaluate custom actors with shared animation
@@ -87,6 +87,12 @@ hiding it while holding a compass. Live GPU rendering remains a separate
 verification step.
 
 Keep weak resource-cache locks limited to lookup and publication. Parse a missing generation outside the lock so equipment preparation cannot block rendering an already prepared actor generation.
+
+Defer custom actor effect preparation until an emitted sound or particle requests a named locator. Parse every accepted model document once for all geometries and retain only converted locator maps, instead of reparsing the entire model pack for each rendered geometry. Construct animated effect models only after a requested locator resolves.
+
+Keep bottom-to-top pack order, first matching modern definitions inside one file, empty-definition overrides, legacy locator rotations, and malformed-resource fallback identical to the former scan. Cache missing lookups and unreadable files until resource replacement. Preserve the locator index across level changes while clearing animated model state.
+
+Validation: five standalone JUnit tests pass against the production locator parser and its unchanged Vector record, extracted for compilation without Minecraft. Differential tests compare the former scan over overrides, duplicate and malformed definitions and 384 seeded model definitions. A 144-frame two-geometry test verifies one file parse, and replacement-generation tests verify missing locators are retried.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   5 +
  .../appearance/BedrockActorAnimation.java     | 358 ++++++++++++++++--
@@ -95,9 +101,11 @@ Keep weak resource-cache locks limited to lookup and publication. Parse a missin
  .../bedrock/render/BedrockActorState.java     |  16 +-
  .../render/BedrockActorUvAnimation.java       |  21 +
  .../bedrock/render/BedrockAnimatedModel.java  |  24 +-
- .../bedrock/render/BedrockEntityRenderer.java | 181 ++++++++-
+ .../bedrock/render/BedrockEntityRenderer.java | 178 ++++++++-
  .../render/BedrockFirstPersonInput.java       |   2 +
  .../bedrock/render/BedrockGeometry.java       |  22 +-
+ .../render/BedrockModelLocatorIndex.java      |  77 ++++
+ .../bedrock/render/BedrockModelLocators.java  |   2 +-
  .../bedrock/render/BedrockPlayerSkins.java    |   2 +
  .../render/NativeAnimationPayload.java        |  24 ++
  .../BedrockAnimationCommandsTest.java         | 180 +++++++++
@@ -105,15 +113,18 @@ Keep weak resource-cache locks limited to lookup and publication. Parse a missin
  .../BedrockServerEntityAnimationTest.java     | 200 ++++++++++
  .../render/BedrockActorUvAnimationTest.java   |  63 +++
  .../render/BedrockCustomActorModelTest.java   |  57 +++
- 17 files changed, 1307 insertions(+), 49 deletions(-)
+ .../render/BedrockModelLocatorIndexTest.java  | 207 ++++++++++
+ 20 files changed, 1589 insertions(+), 50 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorFrame.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorIndex.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeAnimationPayload.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationCommandsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerActorResourcesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCustomActorModelTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorIndexTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index eeba5f9..b33ea1c 100644
@@ -912,7 +923,7 @@ index 9feeff0..1c1c8c8 100644
          final String normalized = name.toLowerCase(Locale.ROOT).replace("_", "");
          return normalized.equals("hip") ? "waist" : normalized;
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-index 66bd0e5..4285662 100644
+index 8c62842..2d5ad78 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 @@ -19,6 +19,16 @@
@@ -932,7 +943,7 @@ index 66bd0e5..4285662 100644
  import com.mojang.math.Axis;
  import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
  import com.viaversion.viafabricplus.bedrock.render.CustomEntityRenderStore.RenderData;
-@@ -45,18 +55,24 @@ import net.raphimc.viabedrock.api.model.entity.CustomEntity;
+@@ -46,19 +56,27 @@ import net.raphimc.viabedrock.api.model.entity.CustomEntity;
  import net.raphimc.viabedrock.api.util.StringUtil;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
@@ -942,6 +953,7 @@ index 66bd0e5..4285662 100644
  public final class BedrockEntityRenderer extends EntityRenderer<Interaction, EntityRenderState> {
  
      private final Map<ModelKey, Model<EntityRenderState>> models = new HashMap<>();
+     private final BedrockRenderSnapshotCache<UUID, RenderData, List<RenderedModel>> resolvedModels = new BedrockRenderSnapshotCache<>(1024);
 +    private final Map<BedrockRenderController.UvAnimation, BedrockActorUvAnimation> uvAnimations = new HashMap<>();
      private final Map<MaterialKey, RenderType> renderTypes = new LinkedHashMap<>(16, 0.75F, true) {
          @Override
@@ -953,12 +965,14 @@ index 66bd0e5..4285662 100644
      };
 +    private final Map<String, Optional<BedrockActorAnimation>> animationGraphs = new HashMap<>();
 +    private final Map<Interaction, ActorPlayback> actors = new WeakHashMap<>();
-+    private final Map<String, EffectModel> effectModels = new HashMap<>();
++    private final Map<String, BedrockAnimatedModel> effectModels = new HashMap<>();
++    private final BedrockModelLocatorIndex effectLocators = new BedrockModelLocatorIndex(this::effectLocatorDocuments,
++            (file, invalid) -> ViaFabricPlusBedrock.impl().logger().warn("Could not load actor locators from {}", file, invalid));
 +    private Object currentLevel;
      private ResourcePackStorage currentPacks;
      private BedrockActorMaterialDefinitions materialDefinitions;
  
-@@ -86,26 +102,60 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -88,6 +106,10 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
          }
          state.models = List.of();
          state.scale = 1F;
@@ -969,33 +983,41 @@ index 66bd0e5..4285662 100644
          final ResourcePackStorage packs = BedrockActorResources.get();
          if (packs == null) {
              this.currentPacks = null;
-             this.materialDefinitions = null;
+@@ -95,24 +117,57 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
              this.models.clear();
              this.renderTypes.clear();
+             this.resolvedModels.clear();
 +            this.uvAnimations.clear();
 +            this.animationGraphs.clear();
 +            this.actors.clear();
 +            this.effectModels.clear();
++            this.effectLocators.clear();
              return;
          }
          final RenderData renderData = CustomEntityRenderStore.get(entity.getUUID());
          if (renderData == null) {
+             this.resolvedModels.remove(entity.getUUID());
 +            this.actors.remove(entity);
              return;
          }
 -        if (this.currentPacks != packs) {
 +        if (this.currentPacks != packs || this.currentLevel != entity.level()) {
++            final boolean resourcesChanged = this.currentPacks != packs;
 +            this.currentLevel = entity.level();
              this.currentPacks = packs;
              this.materialDefinitions = BedrockActorMaterialDefinitions.load(packs);
              this.models.clear();
              this.renderTypes.clear();
+             this.resolvedModels.clear();
 +            this.uvAnimations.clear();
 +            this.animationGraphs.clear();
 +            this.actors.clear();
 +            this.effectModels.clear();
++            if (resourcesChanged) this.effectLocators.clear();
          }
-         state.models = this.resolveModels(renderData, packs);
+         final boolean netherLighting = BedrockActorRenderTypes.usesNetherLighting();
+         state.models = this.resolvedModels.resolve(entity.getUUID(), renderData, packs, netherLighting,
+                 () -> this.resolveModels(renderData, packs, netherLighting));
          state.scale = renderData.scale();
 +        final BedrockActorAnimation graph = this.animationGraphs.computeIfAbsent(renderData.identifier(), identifier -> {
 +            try {
@@ -1020,7 +1042,7 @@ index 66bd0e5..4285662 100644
          state.yaw = entity.getYRot();
      }
  
-@@ -133,32 +183,123 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -140,32 +195,117 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
                  final Model<EntityRenderState> model = this.models.computeIfAbsent(modelKey, _ -> BedrockGeometry.entityModel(geometry, material.getValue()));
                  final var alphaTest = this.materialDefinitions.alphaTest(material.getKey());
                  final RenderType type;
@@ -1039,26 +1061,6 @@ index 66bd0e5..4285662 100644
                  }
 -                resolved.add(new RenderedModel(model, type));
 +                resolved.add(new RenderedModel(model, type, key, uv, evaluated.geometryValue()));
-+                this.effectModels.computeIfAbsent(evaluated.geometryValue(), name -> {
-+                    Map<String, BedrockModelLocators.Locator> locators = Map.of();
-+                    for (final var pack : packs.getPackStackBottomToTop()) {
-+                        for (final String file : pack.content().getFilesDeep("models/", ".json")) {
-+                            try {
-+                                final var document = pack.content().getJson(file);
-+                                boolean defines = document.has(name);
-+                                if (document.has("minecraft:geometry")) {
-+                                    for (final var entry : document.getAsJsonArray("minecraft:geometry")) {
-+                                        if (name.equals(entry.getAsJsonObject().getAsJsonObject("description").get("identifier").getAsString())) defines = true;
-+                                    }
-+                                }
-+                                if (defines) locators = BedrockModelLocators.read(document, name);
-+                            } catch (RuntimeException invalid) {
-+                                ViaFabricPlusBedrock.impl().logger().warn("Could not load actor locators from {}", file, invalid);
-+                            }
-+                        }
-+                    }
-+                    return new EffectModel(BedrockGeometry.actorModel(geometry), locators);
-+                });
              }
          }
          return List.copyOf(resolved);
@@ -1130,14 +1132,28 @@ index 66bd0e5..4285662 100644
 +    private org.joml.Matrix4f effectLocator(final ActorPlayback actor, final String locator, final Vec3 position, final float yaw) {
 +        if (locator == null || locator.isBlank()) return null;
 +        for (final String name : actor.models) {
-+            final EffectModel model = this.effectModels.get(name);
-+            final var declaration = model == null ? null : model.locators.get(locator);
++            final var declaration = this.effectLocators.get(name, locator);
 +            if (declaration != null) {
-+                model.model.pose(actor.pose);
-+                return model.model.worldLocator(declaration, position, yaw, actor.scale);
++                final BedrockAnimatedModel model = this.effectModels.computeIfAbsent(name, geometryName -> {
++                    final var geometry = this.currentPacks.getModels().entityModels().get(geometryName);
++                    return geometry == null ? null : BedrockGeometry.actorModel(geometry);
++                });
++                if (model == null) continue;
++                model.pose(actor.pose);
++                return model.worldLocator(declaration, position, yaw, actor.scale);
 +            }
 +        }
 +        return null;
++    }
++
++    private List<BedrockModelLocatorIndex.Document> effectLocatorDocuments() {
++        final List<BedrockModelLocatorIndex.Document> documents = new ArrayList<>();
++        for (final var pack : this.currentPacks.getPackStackBottomToTop()) {
++            for (final String file : pack.content().getFilesDeep("models/", ".json")) {
++                documents.add(new BedrockModelLocatorIndex.Document(file, () -> pack.content().getJson(file)));
++            }
++        }
++        return documents;
 +    }
 +
 +    private Vec3 effectPosition(final ActorPlayback actor, final String locator, final Vec3 origin, final float yaw) {
@@ -1148,7 +1164,7 @@ index 66bd0e5..4285662 100644
      static void applyActorTransform(final PoseStack poseStack, final float yaw, final float scale) {
          // Scale around the native actor origin before compensating for the Java model origin.
          poseStack.scale(scale, scale, scale);
-@@ -169,17 +310,41 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -176,17 +316,39 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
  
      public static final class State extends EntityRenderState {
          private List<RenderedModel> models = List.of();
@@ -1161,8 +1177,8 @@ index 66bd0e5..4285662 100644
          private float scale = 1F;
 +        Map<String, BedrockBoneAnimation.Transform> pose() { return this.pose; }
 +        BedrockActorAnimation.Visibility visibility() { return this.visibility; }
-     }
- 
++    }
++
 +    private static final class ActorPlayback {
 +        private final BedrockActorAnimation graph;
 +        private final BedrockActorAnimation.Playback playback;
@@ -1176,10 +1192,8 @@ index 66bd0e5..4285662 100644
 +            this.playback = playback;
 +            this.lifetime = lifetime;
 +        }
-+    }
-+
-+    private record EffectModel(BedrockAnimatedModel model, Map<String, BedrockModelLocators.Locator> locators) {}
-+
+     }
+ 
      private record ModelKey(String geometry, Set<String> bones) {
      }
  
@@ -1248,6 +1262,102 @@ index 8998b94..6e99eea 100644
      private static ModelPart root(final BedrockGeometryModel geometry, final boolean player,
                                    final Predicate<String> selectedBones) {
          return root(geometry, player, Map.of(), null, null, selectedBones);
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorIndex.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorIndex.java
+new file mode 100644
+index 0000000..a52dad0
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorIndex.java
+@@ -0,0 +1,77 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.function.BiConsumer;
++import java.util.function.Supplier;
++
++/** One lazy locator-only index for a resource generation, in accepted pack override order. */
++final class BedrockModelLocatorIndex {
++    private final Supplier<List<Document>> documents;
++    private final BiConsumer<String, RuntimeException> diagnostics;
++    private Map<String, Map<String, BedrockModelLocators.Locator>> locators;
++
++    BedrockModelLocatorIndex(final Supplier<List<Document>> documents,
++                            final BiConsumer<String, RuntimeException> diagnostics) {
++        this.documents = documents;
++        this.diagnostics = diagnostics;
++    }
++
++    BedrockModelLocators.Locator get(final String geometry, final String locator) {
++        if (locator == null || locator.isBlank()) return null;
++        if (this.locators == null) this.locators = this.read();
++        return this.locators.getOrDefault(geometry, Map.of()).get(locator);
++    }
++
++    void clear() {
++        this.locators = null;
++    }
++
++    private Map<String, Map<String, BedrockModelLocators.Locator>> read() {
++        final Map<String, Map<String, BedrockModelLocators.Locator>> result = new LinkedHashMap<>();
++        for (final Document resource : this.documents.get()) {
++            try {
++                final JsonObject document = resource.content.get();
++                final boolean modern = document.has("minecraft:geometry");
++                final Map<String, JsonObject> definitions = new LinkedHashMap<>();
++                if (modern) {
++                    // Validate every identity before publishing this file, just as the former per-model scan did.
++                    for (final var entry : document.getAsJsonArray("minecraft:geometry")) {
++                        final JsonObject model = entry.getAsJsonObject();
++                        final String name = model.getAsJsonObject("description").get("identifier").getAsString();
++                        // BedrockModelLocators.read selects the first matching definition inside one document.
++                        definitions.putIfAbsent(name, model);
++                    }
++                    // A modern document takes precedence over any legacy keys in that same document.
++                    for (final String key : document.keySet())
++                        if (!definitions.containsKey(key)) result.put(key, Map.of());
++                } else {
++                    for (final var entry : document.entrySet())
++                        if (entry.getValue().isJsonObject()) definitions.put(entry.getKey(), entry.getValue().getAsJsonObject());
++                }
++                for (final var entry : definitions.entrySet()) {
++                    try {
++                        // An empty winning definition clears lower-pack locators; malformed ones retain them.
++                        result.put(entry.getKey(), BedrockModelLocators.model(entry.getValue(), modern));
++                    } catch (RuntimeException invalid) {
++                        this.diagnostics.accept(resource.path, invalid);
++                    }
++                }
++            } catch (RuntimeException invalid) {
++                this.diagnostics.accept(resource.path, invalid);
++            }
++        }
++        return Map.copyOf(result);
++    }
++
++    record Document(String path, Supplier<JsonObject> content) {
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocators.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocators.java
+index 73a8827..0e8d0d3 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocators.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocators.java
+@@ -62,7 +62,7 @@ final class BedrockModelLocators {
+         return model(model, true);
+     }
+ 
+-    private static Map<String, Locator> model(final JsonObject model, final boolean modern) {
++    static Map<String, Locator> model(final JsonObject model, final boolean modern) {
+         final Map<String, Locator> locators = new LinkedHashMap<>();
+         if (!model.has("bones")) return Map.of();
+         for (final var entry : model.getAsJsonArray("bones")) {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 index 7176ee7..a46b849 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
@@ -1968,5 +2078,218 @@ index 0000000..4676741
 +        assertEquals(2F,normal.length(),.00001F);
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorIndexTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorIndexTest.java
+new file mode 100644
+index 0000000..dace656
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorIndexTest.java
+@@ -0,0 +1,207 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.Random;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.concurrent.atomic.AtomicReference;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockModelLocatorIndexTest {
++    @Test
++    void waitsForNamedEffectsAndParsesEachFileOnceForAllGeometries() {
++        final AtomicInteger listings = new AtomicInteger();
++        final AtomicInteger parses = new AtomicInteger();
++        final JsonObject document = modern(model("geometry.first", 1), model("geometry.second", 2));
++        final var index = new BedrockModelLocatorIndex(() -> {
++            listings.incrementAndGet();
++            return List.of(new BedrockModelLocatorIndex.Document("models/two.json", () -> {
++                parses.incrementAndGet();
++                return document;
++            }));
++        }, (_, _) -> fail("Valid model rejected"));
++
++        assertNull(index.get("geometry.first", null));
++        assertNull(index.get("geometry.first", "  "));
++        assertEquals(0, listings.get());
++        for (int frame = 0; frame < 144; frame++) {
++            assertEquals(-9F, index.get("geometry.first", "touch").x());
++            assertEquals(-8F, index.get("geometry.second", "touch").x());
++            assertNull(index.get("geometry.missing", "touch"));
++            assertNull(index.get("geometry.first", "missing"));
++        }
++        assertEquals(1, listings.get());
++        assertEquals(1, parses.get());
++    }
++
++    @Test
++    void clearRetriesMissingLocatorsAndLoadsReplacementGeneration() {
++        final AtomicInteger parses = new AtomicInteger();
++        final AtomicReference<JsonObject> document = new AtomicReference<>(modern());
++        final var index = new BedrockModelLocatorIndex(() -> List.of(
++                new BedrockModelLocatorIndex.Document("models/replaced.json", () -> {
++                    parses.incrementAndGet();
++                    return document.get();
++                })), (_, _) -> fail("Valid model rejected"));
++        assertNull(index.get("geometry.actor", "touch"));
++        document.set(modern(model("geometry.actor", 4)));
++        assertNull(index.get("geometry.actor", "touch"));
++        assertEquals(1, parses.get());
++        index.clear();
++        assertEquals(-6F, index.get("geometry.actor", "touch").x());
++        assertEquals(2, parses.get());
++    }
++
++    @Test
++    void preservesFormerScanResultsAcrossOverridesDuplicatesAndMalformedModels() {
++        final List<JsonObject> documents = new ArrayList<>();
++        documents.add(modern(model("geometry.override", 1), model("geometry.clear", 2),
++                model("geometry.mixed", 3), model("geometry.invalid_identity", 4)));
++        final JsonObject legacy = new JsonObject();
++        legacy.add("geometry.legacy", model("geometry.legacy", 5));
++        documents.add(legacy);
++        documents.add(modern(model("geometry.override", 6), model("geometry.duplicate", 7), model("geometry.duplicate", 8)));
++        documents.add(modern(empty("geometry.clear")));
++        final JsonObject malformed = model("geometry.override", 9);
++        malformed.getAsJsonArray("bones").get(0).getAsJsonObject().getAsJsonObject("locators")
++                .getAsJsonObject("touch").add("offset", vector(1, 2));
++        documents.add(modern(malformed, model("geometry.sibling", 10)));
++        final JsonObject invalidIdentity = modern(model("geometry.invalid_identity", 11), new JsonObject());
++        documents.add(invalidIdentity);
++        final JsonObject mixed = modern(model("geometry.unrelated", 12));
++        mixed.add("geometry.mixed", model("geometry.mixed", 13));
++        documents.add(mixed);
++
++        final List<String> diagnostics = new ArrayList<>();
++        final var index = index(documents, diagnostics);
++        for (final String geometry : List.of("geometry.override", "geometry.clear", "geometry.mixed", "geometry.legacy",
++                "geometry.duplicate", "geometry.sibling", "geometry.invalid_identity", "geometry.unrelated", "geometry.missing")) {
++            for (final String locator : List.of("touch", "missing"))
++                assertEquals(previousScan(documents, geometry).get(locator), index.get(geometry, locator), geometry);
++        }
++        assertEquals(-3F, index.get("geometry.duplicate", "touch").x());
++        assertEquals(0F, index.get("geometry.legacy", "touch").rotationX());
++        assertNull(index.get("geometry.clear", "touch"));
++        assertNull(index.get("geometry.mixed", "touch"));
++        assertEquals(2, diagnostics.size());
++    }
++
++    @Test
++    void matchesFormerScanAcrossManyOrderedPackDefinitions() {
++        final Random random = new Random(934872);
++        final List<JsonObject> documents = new ArrayList<>();
++        for (int file = 0; file < 24; file++) {
++            final List<JsonObject> models = new ArrayList<>();
++            for (int entry = 0; entry < 16; entry++) {
++                final String identifier = "geometry.actor_" + random.nextInt(40);
++                models.add(random.nextInt(4) == 0 ? empty(identifier) : model(identifier, random.nextInt(80)));
++            }
++            documents.add(modern(models.toArray(JsonObject[]::new)));
++        }
++        final var index = index(documents, new ArrayList<>());
++        for (int geometry = 0; geometry < 48; geometry++) {
++            final String identifier = "geometry.actor_" + geometry;
++            assertEquals(previousScan(documents, identifier).get("touch"), index.get(identifier, "touch"), identifier);
++        }
++    }
++
++    @Test
++    void skipsUnreadableFilesOnceWhileRetainingEarlierLocators() {
++        final AtomicInteger failedReads = new AtomicInteger();
++        final List<String> diagnostics = new ArrayList<>();
++        final var index = new BedrockModelLocatorIndex(() -> List.of(
++                new BedrockModelLocatorIndex.Document("models/base.json", () -> modern(model("geometry.actor", 1))),
++                new BedrockModelLocatorIndex.Document("models/broken.json", () -> {
++                    failedReads.incrementAndGet();
++                    throw new IllegalArgumentException("Malformed JSON");
++                })), (file, _) -> diagnostics.add(file));
++        assertEquals(-9F, index.get("geometry.actor", "touch").x());
++        assertEquals(-9F, index.get("geometry.actor", "touch").x());
++        assertNull(index.get("geometry.missing", "touch"));
++        assertEquals(1, failedReads.get());
++        assertEquals(List.of("models/broken.json"), diagnostics);
++    }
++
++    private static BedrockModelLocatorIndex index(final List<JsonObject> documents, final List<String> diagnostics) {
++        return new BedrockModelLocatorIndex(() -> {
++            final List<BedrockModelLocatorIndex.Document> resources = new ArrayList<>();
++            for (int file = 0; file < documents.size(); file++) {
++                final JsonObject document = documents.get(file);
++                resources.add(new BedrockModelLocatorIndex.Document("models/" + file + ".json", () -> document));
++            }
++            return resources;
++        }, (file, _) -> diagnostics.add(file));
++    }
++
++    /** The pre-index renderer algorithm, retained as the differential behavior reference. */
++    private static Map<String, BedrockModelLocators.Locator> previousScan(final List<JsonObject> documents,
++                                                                        final String geometry) {
++        Map<String, BedrockModelLocators.Locator> locators = Map.of();
++        for (final JsonObject document : documents) {
++            try {
++                boolean defines = document.has(geometry);
++                if (document.has("minecraft:geometry")) {
++                    for (final var entry : document.getAsJsonArray("minecraft:geometry")) {
++                        if (geometry.equals(entry.getAsJsonObject().getAsJsonObject("description").get("identifier").getAsString()))
++                            defines = true;
++                    }
++                }
++                if (defines) locators = BedrockModelLocators.read(document, geometry);
++            } catch (RuntimeException ignored) {
++            }
++        }
++        return locators;
++    }
++
++    private static JsonObject modern(final JsonObject... models) {
++        final JsonObject document = new JsonObject();
++        document.addProperty("format_version", "1.12.0");
++        final JsonArray geometries = new JsonArray();
++        for (final JsonObject model : models) geometries.add(model);
++        document.add("minecraft:geometry", geometries);
++        return document;
++    }
++
++    private static JsonObject empty(final String identifier) {
++        final JsonObject model = new JsonObject();
++        final JsonObject description = new JsonObject();
++        description.addProperty("identifier", identifier);
++        model.add("description", description);
++        return model;
++    }
++
++    private static JsonObject model(final String identifier, final int offsetX) {
++        final JsonObject model = empty(identifier);
++        final JsonObject bone = new JsonObject();
++        bone.addProperty("name", "root");
++        bone.add("pivot", vector(10, 20, 30));
++        final JsonObject locator = new JsonObject();
++        locator.add("offset", vector(offsetX, 42, -4));
++        locator.add("rotation", vector(11, 22, 33));
++        locator.addProperty("ignore_inherited_scale", true);
++        final JsonObject locators = new JsonObject();
++        locators.add("touch", locator);
++        bone.add("locators", locators);
++        final JsonArray bones = new JsonArray();
++        bones.add(bone);
++        model.add("bones", bones);
++        return model;
++    }
++
++    private static JsonArray vector(final int... values) {
++        final JsonArray vector = new JsonArray();
++        for (final int value : values) vector.add(value);
++        return vector;
++    }
++}
 -- 
-2.56.0
+2.50.1 (Apple Git-155)

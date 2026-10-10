@@ -1,4 +1,4 @@
-From e81d8ea8a5a8ab9574279fd0e56c544ba367cbc8 Mon Sep 17 00:00:00 2001
+From 80cb20e775604c4e448d8cef758465818f1a58a5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 03:58:26 +0200
 Subject: [PATCH] feat(resource-packs): apply dependencies and selected
@@ -10,11 +10,11 @@ Resolve pack order from manifest dependencies while preserving server precedence
  .../api/resourcepack/ResourcePackStack.java   |  75 ++++++++++++
  .../api/resourcepack/content/Content.java     |   3 +-
  .../resourcepack/content/SubpackContent.java  | 104 ++++++++++++++++
- .../protocol/packet/ResourcePackPackets.java  |  20 ++--
+ .../protocol/packet/ResourcePackPackets.java  |  24 ++--
  .../protocol/storage/ResourcePackStorage.java |   8 +-
  .../resourcepack/ResourcePackStackTest.java   | 113 ++++++++++++++++++
  .../http/ConvertedResourcePackCacheTest.java  |  11 ++
- 8 files changed, 390 insertions(+), 19 deletions(-)
+ 8 files changed, 392 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStack.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/SubpackContent.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStackTest.java
@@ -348,10 +348,10 @@ index 000000000..26031077e
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index 983fa9381..376a1a04b 100644
+index c720f7ea1..1b3836ee0 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-@@ -72,7 +72,7 @@ public final class ResourcePackPackets {
+@@ -75,7 +75,7 @@ public final class ResourcePackPackets {
                  final String version = wrapper.read(BedrockTypes.STRING); // pack version
                  wrapper.read(BedrockTypes.UNSIGNED_LONG_LE); // pack size
                  final byte[] contentKey = wrapper.read(BedrockTypes.BYTE_ARRAY); // content key
@@ -360,7 +360,7 @@ index 983fa9381..376a1a04b 100644
                  final String contentId = wrapper.read(BedrockTypes.STRING); // content identity
                  wrapper.read(Types.BOOLEAN); // has scripts
                  wrapper.read(Types.BOOLEAN); // is addon pack
-@@ -122,10 +122,11 @@ public final class ResourcePackPackets {
+@@ -125,10 +125,11 @@ public final class ResourcePackPackets {
  
              wrapper.read(Types.BOOLEAN); // resource pack required
              final ResourcePack.Key[] keys = new ResourcePack.Key[wrapper.read(BedrockTypes.UNSIGNED_VAR_INT)]; // resource packs size
@@ -373,7 +373,7 @@ index 983fa9381..376a1a04b 100644
                  keys[i] = new ResourcePack.Key(id, version);
              }
              wrapper.read(BedrockTypes.STRING); // base game version
-@@ -149,14 +150,18 @@ public final class ResourcePackPackets {
+@@ -155,14 +156,18 @@ public final class ResourcePackPackets {
                          BedrockProtocol.kickForIllegalState(user, "One of the server resource packs failed to load. Try again later.", error);
                      } else {
                          try {
@@ -394,16 +394,28 @@ index 983fa9381..376a1a04b 100644
              }
          });
          protocol.registerClientbound(ClientboundBedrockPackets.RESOURCE_PACK_DATA_INFO, null, wrapper -> {
-@@ -226,14 +231,15 @@ public final class ResourcePackPackets {
+@@ -232,12 +237,12 @@ public final class ResourcePackPackets {
          });
      }
  
 -    private static void finishStack(final UserConnection user, final ResourcePackLoadStateTracker loadStateTracker, final ResourcePack.Key[] keys) {
 +    private static void finishStack(final UserConnection user, final ResourcePackLoadStateTracker loadStateTracker, final ResourcePack.Key[] keys, final String[] subpackNames) {
-         if (user.get(ResourcePackLoadStateTracker.class) != loadStateTracker) {
-             return;
-         }
-         user.remove(ResourcePackLoadStateTracker.class);
+         final Function<Supplier<ResourcePackStorage>, CompletableFuture<ResourcePackStorage>> preparation = ViaBedrock.getResourcePackServer() != null
+                 ? ViaBedrock.getResourcePackServer()::prepareStorage : loadStateTracker::prepareStack;
+         ResourcePackPreparation.prepare(preparation, user.getChannel().eventLoop(),
+                 () -> user.getChannel().isActive() && user.get(ResourcePackLoadStateTracker.class) == loadStateTracker,
+-                () -> prepareStack(loadStateTracker, keys), (storage, error) -> {
++                () -> prepareStack(loadStateTracker, keys, subpackNames), (storage, error) -> {
+                     if (error != null) {
+                         BedrockProtocol.kickForIllegalState(user, "Failed to prepare the server resource packs.", error);
+                         return;
+@@ -267,11 +272,12 @@ public final class ResourcePackPackets {
+                 }, error -> BedrockProtocol.kickForIllegalState(user, "Failed to publish the server resource packs.", error));
+     }
+ 
+-    private static ResourcePackStorage prepareStack(final ResourcePackLoadStateTracker loadStateTracker, final ResourcePack.Key[] keys) {
++    private static ResourcePackStorage prepareStack(final ResourcePackLoadStateTracker loadStateTracker, final ResourcePack.Key[] keys, final String[] subpackNames) {
+         loadStateTracker.saveRemoteResourcePacks();
          loadStateTracker.loadUnrequestedResourcePacks(keys);
          final List<ResourcePack> resourcePacks = new ArrayList<>();
 -        for (ResourcePack.Key key : keys) {
@@ -412,7 +424,7 @@ index 983fa9381..376a1a04b 100644
              final ResourcePack resourcePack = loadStateTracker.getResourcePack(key);
              if (resourcePack != null) {
                  final ResourcePackLoadStateTracker.Info info = loadStateTracker.getRequest(key);
-@@ -245,7 +251,7 @@ public final class ResourcePackPackets {
+@@ -284,7 +290,7 @@ public final class ResourcePackPackets {
                          ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to save resource pack: " + resourcePack.key(), e);
                      }
                  }
@@ -571,10 +583,10 @@ index 000000000..1abb141dd
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-index 53ea1ce25..4ea0f89f7 100644
+index dd08f175e..d88fe5cef 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-@@ -162,6 +162,17 @@ class ConvertedResourcePackCacheTest {
+@@ -164,6 +164,17 @@ class ConvertedResourcePackCacheTest {
          assertNotEquals(ConvertedResourcePackCache.fingerprint(List.of(original)), ConvertedResourcePackCache.fingerprint(List.of(updated)));
      }
  
@@ -593,4 +605,4 @@ index 53ea1ce25..4ea0f89f7 100644
      void sourceCacheDoesNotReuseAnotherAdvertisedContentIdentity() throws Exception {
          final UUID id = UUID.randomUUID();
 -- 
-2.55.0
+2.50.1 (Apple Git-155)
