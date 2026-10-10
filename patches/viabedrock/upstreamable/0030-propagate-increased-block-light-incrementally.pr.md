@@ -65,3 +65,21 @@ The add-on build passes with 605 tests, including 117 fixture skips. Neither sui
 ViaProxy builds successfully. All 1,250 core files match both downstream bundles, except their manifests.
 The emission regressions fail with the old rules and pass with the corrected rules.
 These checks do not include a new live Java/native screenshot comparison.
+
+## Palette lookup reuse
+
+Section snapshots resolve Java states and water flags once per palette entry.
+Chunk remapping also resolves block tags once per palette entry.
+Coordinate order, waterlogging and uniform-section compaction remain intact.
+The current weak tracker reservations still coalesce chunk callbacks and discard replaced dimensions.
+The existing water snapshot regression checks coordinates and independent earlier snapshots.
+
+## Combined stack validation
+
+The full dependency build passes for CubeConverter, ViaBedrock, the Bedrock add-on and ViaProxy.
+Core passes 1,159 tests and the add-on passes 786 tests.
+JUnit skips 30 core tests and 120 add-on tests.
+CubeConverter passes 18 tests and ViaProxy passes four tests.
+The standalone cache patch passes 45 tests and both Checkstyle tasks.
+TypeScript checking and patch whitespace checks also pass.
+These results establish stack replay and test behavior. Live server frame-time profiling remains separate.

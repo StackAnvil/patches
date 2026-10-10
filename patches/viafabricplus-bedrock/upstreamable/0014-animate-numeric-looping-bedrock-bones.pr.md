@@ -144,3 +144,22 @@ An accepted CubeCraft pack references native player root controllers and the emp
 A private production-graph fixture resolves the original pack references and samples right-arm position `(13.5, -10, 12)` and rotation `(95, -45, 115)`. The accepted server visibility script reveals the empty hand and hides it with a compass equipped. Targeted tests cover baseline inheritance, effect lookup, accepted-pack overrides, duplicate controller formats and non-VR hand binding.
 
 The complete add-on build passes: 532 tests passed, 117 optional tests skipped, no failures. Access-widener validation passes. The reviewed candidate was installed in the desktop client, which joined CubeCraft successfully. The user confirms the arm is visible. This verifies the reported empty-hand regression; VR, all costumes and complete native visual parity remain separate checks.
+
+## Effect locator index
+
+The first locator request builds an index for the accepted resource generation.
+Each model document parses once. Animated effect models remain lazy until a locator resolves.
+The index preserves pack override order, duplicate definitions, empty overrides and malformed-file behavior.
+Resource replacement clears the index.
+Differential tests compare the new index with the previous per-geometry resolver.
+Repeated requests also verify that the index reuses the parsed document.
+
+## Combined stack validation
+
+The full dependency build passes for CubeConverter, ViaBedrock, the Bedrock add-on and ViaProxy.
+Core passes 1,159 tests and the add-on passes 786 tests.
+JUnit skips 30 core tests and 120 add-on tests.
+CubeConverter passes 18 tests and ViaProxy passes four tests.
+The standalone cache patch passes 45 tests and both Checkstyle tasks.
+TypeScript checking and patch whitespace checks also pass.
+These results establish stack replay and test behavior. Live server frame-time profiling remains separate.

@@ -295,3 +295,22 @@ The fixture reaches playable spawn and loads its pack.
 Its general world-rendering audit does not apply because it injects an extra skin and omits world chunks.
 The reported skin still needs a visual comparison with stock Chat Heads.
 The add-on build passes 681 tests, with 120 skipped.
+
+## Resolved actor draws
+
+A 1,024-entry LRU reuses resolved draws for unchanged immutable actor snapshots.
+The cache also checks accepted resource identity and Nether lighting.
+Resource changes, world replacement and missing actors invalidate retained state.
+Animation poses, UV expressions, scale and yaw retain their frame evaluation.
+Tests cover repeated frames, snapshot replacement, resource changes, failed resolver retries and eviction.
+These tests establish operation reuse. They do not establish live frame-time improvement.
+
+## Combined stack validation
+
+The full dependency build passes for CubeConverter, ViaBedrock, the Bedrock add-on and ViaProxy.
+Core passes 1,159 tests and the add-on passes 786 tests.
+JUnit skips 30 core tests and 120 add-on tests.
+CubeConverter passes 18 tests and ViaProxy passes four tests.
+The standalone cache patch passes 45 tests and both Checkstyle tasks.
+TypeScript checking and patch whitespace checks also pass.
+These results establish stack replay and test behavior. Live server frame-time profiling remains separate.

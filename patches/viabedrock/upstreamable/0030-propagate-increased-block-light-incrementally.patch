@@ -1,4 +1,4 @@
-From 4c8ea67ee3ec6914a96beab16b0b6019b2e406fb Mon Sep 17 00:00:00 2001
+From e8fc0112719a03683ce0ccdb9c48fc708644d6fa Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 03:59:09 +0200
 Subject: [PATCH] perf(lighting): propagate increased block light incrementally
@@ -55,6 +55,10 @@ assets and probe output remain private. Rendered image parity remains open.
 Bound the lifetime of background lighting jobs through result application or discard, including slow connection event loops, rejected executors and failures. Releasing worker capacity before completion delivery allowed queued callbacks to retain unlimited region snapshots. Keep one permit per job and release it exactly once.
 
 Keep uniform lighting snapshots as one state instead of 4,096 integers. Reuse the emission workspace for block light, and avoid allocating arrays for uniform zero/full light sections. Preserve mixed-section, secondary-water, border and incremental propagation semantics. Stress tests exercise 32,000 submissions with blocked result delivery, abandoned trackers and exception cleanup. Full-height and dense/compact parity tests check the storage bound and output. A private 24-section benchmark produces identical light data with approximately 27 percent less allocation per update; its mostly uniform snapshot uses approximately 96 percent less state-array storage. These measurements do not establish game-wide heap or frame-rate improvement.
+
+Map Java states and secondary water flags once per palette entry. Reuse indexed values while building section snapshots and resolving block entity tags. Preserve palette coordinate order and uniform-section compaction. Tests cover secondary water positions and palette-sized classification work.
+
+Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.github.com>
 ---
  .../api/chunk/light/LightEngine.java          | 228 ++++++++++--
  .../protocol/data/BedrockMappingData.java     |  32 +-
@@ -474,7 +478,7 @@ index 98d435ad8..ae1e0fe72 100644
              return Integer.parseInt(blockState.properties().getOrDefault(property, String.valueOf(fallback)));
          } catch (final NumberFormatException e) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-index 12898b47f..07b236527 100644
+index 67c2261f0..132a4c34e 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 @@ -67,12 +67,17 @@ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
@@ -645,7 +649,7 @@ index 12898b47f..07b236527 100644
      public BedrockChunkSection handleBlockPalette(final BedrockChunkSection section) {
          this.replaceLegacyBlocks(section);
          this.resolvePersistentIds(section);
-@@ -800,17 +893,21 @@ public class ChunkTracker extends StoredObject {
+@@ -803,17 +896,21 @@ public class ChunkTracker extends StoredObject {
  
      private ChunkLight computeChunkLight(final int chunkX, final int chunkZ) {
          final int[][][] regionStates = new int[9][][];
@@ -671,7 +675,7 @@ index 12898b47f..07b236527 100644
          for (int dz = -1; dz <= 1; dz++) {
              for (int dx = -1; dx <= 1; dx++) {
                  final BedrockChunk neighbor = this.chunks.get(ChunkPosition.chunkKey(chunkX + dx, chunkZ + dz));
-@@ -820,9 +917,10 @@ public class ChunkTracker extends StoredObject {
+@@ -823,9 +920,10 @@ public class ChunkTracker extends StoredObject {
  
                  final int chunkIndex = (dz + 1) * 3 + (dx + 1);
                  regionStates[chunkIndex] = this.snapshotChunkStates(neighbor);
@@ -683,7 +687,7 @@ index 12898b47f..07b236527 100644
      }
  
      private int[][] snapshotChunkStates(final BedrockChunk chunk) {
-@@ -833,27 +931,53 @@ public class ChunkTracker extends StoredObject {
+@@ -836,27 +934,53 @@ public class ChunkTracker extends StoredObject {
          return states.clone();
      }
  
@@ -754,7 +758,7 @@ index 12898b47f..07b236527 100644
                  this.pendingLightComputations.remove(chunkKey);
                  if (!this.user().getChannel().isActive()) {
                      return;
-@@ -883,7 +1007,6 @@ public class ChunkTracker extends StoredObject {
+@@ -886,7 +1010,6 @@ public class ChunkTracker extends StoredObject {
                  this.writeLightData(lightUpdate, lightData);
                  lightUpdate.send(BedrockProtocol.class);
              });
@@ -762,7 +766,7 @@ index 12898b47f..07b236527 100644
      }
  
      private int[][] getJavaBlockStates(final BedrockChunk chunk) {
-@@ -901,13 +1024,12 @@ public class ChunkTracker extends StoredObject {
+@@ -904,13 +1027,12 @@ public class ChunkTracker extends StoredObject {
  
      /**
       * Converts the bedrock block states of a chunk section into java block states, indexed with
@@ -778,7 +782,7 @@ index 12898b47f..07b236527 100644
          }
  
          final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
-@@ -917,6 +1039,10 @@ public class ChunkTracker extends StoredObject {
+@@ -920,6 +1042,10 @@ public class ChunkTracker extends StoredObject {
              final int javaId = blockStateRewriter.javaId(layer0.idByIndex(i));
              entryJavaIds[i] = javaId != -1 ? javaId : ProtocolConstants.JAVA_AIR_ID;
          }
@@ -789,7 +793,7 @@ index 12898b47f..07b236527 100644
          if (layer0.size() == 1) {
              if (entryJavaIds[0] != ProtocolConstants.JAVA_AIR_ID) {
                  Arrays.fill(states, entryJavaIds[0]);
-@@ -930,7 +1056,37 @@ public class ChunkTracker extends StoredObject {
+@@ -933,7 +1059,37 @@ public class ChunkTracker extends StoredObject {
                  }
              }
          }
@@ -828,7 +832,7 @@ index 12898b47f..07b236527 100644
      }
  
      private void invalidateJavaBlockStates(final int chunkX, final int subChunkY, final int chunkZ) {
-@@ -942,6 +1098,10 @@ public class ChunkTracker extends StoredObject {
+@@ -945,6 +1101,10 @@ public class ChunkTracker extends StoredObject {
          final int sectionIndex = subChunkY + Math.abs(this.minY >> 4);
          if (sectionIndex >= 0 && sectionIndex < chunkStates.length) {
              chunkStates[sectionIndex] = null;
@@ -839,7 +843,7 @@ index 12898b47f..07b236527 100644
          }
      }
  
-@@ -1021,23 +1181,50 @@ public class ChunkTracker extends StoredObject {
+@@ -1024,21 +1184,48 @@ public class ChunkTracker extends StoredObject {
              this.sendChunk(chunkPos.chunkX(), chunkPos.chunkZ());
          }
  
@@ -872,10 +876,10 @@ index 12898b47f..07b236527 100644
 +                this.pendingLightComputations.remove(chunkKey);
 +                task.close();
 +                throw failure;
-             }
-         }
-     }
- 
++            }
++        }
++    }
++
 +    static OptionalLong takeLightUpdate(final LongSet dirty, final LongSet pending, final LongPredicate loaded) {
 +        final var iterator = dirty.iterator();
 +        while (iterator.hasNext()) {
@@ -888,16 +892,14 @@ index 12898b47f..07b236527 100644
 +            // Keep the newer column's refresh queued until that worker releases this key.
 +            if (pending.contains(key)) {
 +                continue;
-+            }
+             }
 +            iterator.remove();
 +            return OptionalLong.of(key);
-+        }
+         }
 +        return OptionalLong.empty();
-+    }
-+
+     }
+ 
      private long distanceToCenterSquared(final int chunkX, final int chunkZ) {
-         final long dx = (long) chunkX - this.centerX;
-         final long dz = (long) chunkZ - this.centerZ;
 @@ -1334,6 +1521,63 @@ public class ChunkTracker extends StoredObject {
          }
      }

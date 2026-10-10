@@ -1,4 +1,4 @@
-From aa125fd6ba32c3eb5f46a49cf1eafb52f843deb8 Mon Sep 17 00:00:00 2001
+From fbe079c4300f34bea1387725fd98aac134f752b4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -418,6 +418,10 @@ portraits and animated persona faces remain separate rendering work.
 Pixel tests cover both geometry dimensions on the same double-size image.
 
 Retain the difference between native and Java vehicle yaw when applying rider anchors. Boat Java yaw is offset by ninety degrees, but the native rider seat remains defined in native vehicle coordinates. Directional boat anchor tests cover quarter and half turns.
+
+Reuse resolved actor draws while the immutable model snapshot, accepted resources and Nether lighting remain unchanged. Bound retained snapshots to 1,024 actor identities. Clear the cache on resource or world replacement, while poses, UV animations, scale and yaw continue their existing frame evaluation. Targeted tests cover identity invalidation, failed resolution retries and least-recently-used eviction.
+
+Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.github.com>
 ---
  build.gradle.kts                              |   6 +
  .../bedrock/ViaFabricPlusBedrock.java         |  17 ++
@@ -447,13 +451,14 @@ Retain the difference between native and Java vehicle yaw when applying rider an
  .../bedrock/render/BedrockActorResources.java |  43 +++
  .../render/BedrockActorUvTransform.java       |  18 ++
  .../bedrock/render/BedrockEmissiveMask.java   |  27 ++
- .../bedrock/render/BedrockEntityRenderer.java | 185 ++++++++++++
+ .../bedrock/render/BedrockEntityRenderer.java | 192 ++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 +++++++++++++
  .../bedrock/render/BedrockModelCube.java      |  35 +++
  .../bedrock/render/BedrockNameTagAnchors.java |  75 +++++
  .../bedrock/render/BedrockNameTags.java       |  76 +++++
  .../bedrock/render/BedrockPlayerRenderer.java |  53 ++++
  .../bedrock/render/BedrockPlayerSkins.java    | 283 ++++++++++++++++++
+ .../render/BedrockRenderSnapshotCache.java    |  48 +++
  .../bedrock/render/BedrockRidingAnchors.java  |  73 +++++
  .../bedrock/render/BedrockShaderEmission.java | 181 +++++++++++
  .../render/BedrockShaderPipelines.java        |  28 ++
@@ -477,11 +482,12 @@ Retain the difference between native and Java vehicle yaw when applying rider an
  .../render/BedrockNameTagAnchorsTest.java     | 120 ++++++++
  .../bedrock/render/BedrockNameTagsTest.java   | 127 ++++++++
  .../render/BedrockPlayerMaterialsTest.java    |  42 +++
+ .../BedrockRenderSnapshotCacheTest.java       | 123 ++++++++
  .../render/BedrockRidingAnchorsTest.java      | 149 +++++++++
  .../render/BedrockShaderPipelinesTest.java    |  49 +++
  .../bedrock/render/BedrockSkinImagesTest.java |  82 +++++
  .../render/CustomEntityRenderStoreTest.java   |  62 ++++
- 62 files changed, 4015 insertions(+), 1 deletion(-)
+ 64 files changed, 4193 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockDynamicTexture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisPipelines.java
@@ -515,6 +521,7 @@ Retain the difference between native and Java vehicle yaw when applying rider an
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockRenderSnapshotCache.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchors.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderEmission.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelines.java
@@ -535,6 +542,7 @@ Retain the difference between native and Java vehicle yaw when applying rider an
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchorsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerMaterialsTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRenderSnapshotCacheTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchorsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImagesTest.java
@@ -1899,10 +1907,10 @@ index 0000000..8017f31
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 new file mode 100644
-index 0000000..66bd0e5
+index 0000000..8c62842
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,192 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1933,6 +1941,7 @@ index 0000000..66bd0e5
 +import java.util.LinkedHashMap;
 +import java.util.Set;
 +import java.util.Map;
++import java.util.UUID;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.model.Model;
 +import net.minecraft.client.renderer.SubmitNodeCollector;
@@ -1955,6 +1964,7 @@ index 0000000..66bd0e5
 +public final class BedrockEntityRenderer extends EntityRenderer<Interaction, EntityRenderState> {
 +
 +    private final Map<ModelKey, Model<EntityRenderState>> models = new HashMap<>();
++    private final BedrockRenderSnapshotCache<UUID, RenderData, List<RenderedModel>> resolvedModels = new BedrockRenderSnapshotCache<>(1024);
 +    private final Map<MaterialKey, RenderType> renderTypes = new LinkedHashMap<>(16, 0.75F, true) {
 +        @Override
 +        protected boolean removeEldestEntry(final Map.Entry<MaterialKey, RenderType> eldest) {
@@ -1997,10 +2007,12 @@ index 0000000..66bd0e5
 +            this.materialDefinitions = null;
 +            this.models.clear();
 +            this.renderTypes.clear();
++            this.resolvedModels.clear();
 +            return;
 +        }
 +        final RenderData renderData = CustomEntityRenderStore.get(entity.getUUID());
 +        if (renderData == null) {
++            this.resolvedModels.remove(entity.getUUID());
 +            return;
 +        }
 +        if (this.currentPacks != packs) {
@@ -2008,18 +2020,21 @@ index 0000000..66bd0e5
 +            this.materialDefinitions = BedrockActorMaterialDefinitions.load(packs);
 +            this.models.clear();
 +            this.renderTypes.clear();
++            this.resolvedModels.clear();
 +        }
-+        state.models = this.resolveModels(renderData, packs);
++        final boolean netherLighting = BedrockActorRenderTypes.usesNetherLighting();
++        state.models = this.resolvedModels.resolve(entity.getUUID(), renderData, packs, netherLighting,
++                () -> this.resolveModels(renderData, packs, netherLighting));
 +        state.scale = renderData.scale();
 +        state.yaw = entity.getYRot();
 +    }
 +
 +    private List<RenderedModel> resolveModels(
 +        final RenderData renderData,
-+        final ResourcePackStorage packs
++        final ResourcePackStorage packs,
++        final boolean netherLighting
 +    ) {
 +        final List<RenderedModel> resolved = new ArrayList<>();
-+        final boolean netherLighting = BedrockActorRenderTypes.usesNetherLighting();
 +        for (var evaluated : renderData.models()) {
 +            final BedrockGeometryModel geometry = packs.getModels().entityModels().get(evaluated.geometryValue());
 +            if (geometry == null) {
@@ -2860,6 +2875,60 @@ index 0000000..45f54b4
 +        }
 +    }
 +
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockRenderSnapshotCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockRenderSnapshotCache.java
+new file mode 100644
+index 0000000..3bf88f1
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockRenderSnapshotCache.java
+@@ -0,0 +1,48 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.function.Supplier;
++
++/** Reuses resolved draws only while the authoritative snapshot and rendering inputs are unchanged. */
++final class BedrockRenderSnapshotCache<K, S, V> {
++    private final Map<K, Entry<S, V>> entries;
++
++    BedrockRenderSnapshotCache(final int maximumEntries) {
++        if (maximumEntries <= 0) throw new IllegalArgumentException("Invalid render cache capacity");
++        this.entries = new LinkedHashMap<>(16, 0.75F, true) {
++            @Override
++            protected boolean removeEldestEntry(final Map.Entry<K, Entry<S, V>> eldest) {
++                return this.size() > maximumEntries;
++            }
++        };
++    }
++
++    V resolve(final K owner, final S snapshot, final Object generation, final boolean netherLighting,
++              final Supplier<V> resolver) {
++        final Entry<S, V> cached = this.entries.get(owner);
++        // Snapshot identity avoids comparing entire model/material lists in the render hot path.
++        if (cached != null && cached.snapshot == snapshot && cached.generation == generation
++                && cached.netherLighting == netherLighting) return cached.value;
++        final V value = resolver.get();
++        this.entries.put(owner, new Entry<>(snapshot, generation, netherLighting, value));
++        return value;
++    }
++
++    void remove(final K owner) {
++        this.entries.remove(owner);
++    }
++
++    void clear() {
++        this.entries.clear();
++    }
++
++    private record Entry<S, V>(S snapshot, Object generation, boolean netherLighting, V value) {
++    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchors.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchors.java
 new file mode 100644
@@ -4600,6 +4669,135 @@ index 0000000..195df27
 +        }
 +        assertSame(BedrockActorRenderTypes.selectPipeline(false, true, false, false),
 +            BedrockActorRenderTypes.selectPipeline(false, true, false, true));
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRenderSnapshotCacheTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRenderSnapshotCacheTest.java
+new file mode 100644
+index 0000000..4a9a4de
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRenderSnapshotCacheTest.java
+@@ -0,0 +1,123 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicInteger;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockRenderSnapshotCacheTest {
++    @Test
++    void resolvesRetainedSnapshotsOnceAcrossRepeatedFrames() {
++        final var cache = new BedrockRenderSnapshotCache<String, Object, List<String>>(8);
++        final Object snapshot = new Object();
++        final Object generation = new Object();
++        final AtomicInteger resolutions = new AtomicInteger();
++        final var expected = cache.resolve("actor", snapshot, generation, false, () -> {
++            resolutions.incrementAndGet();
++            return List.of("geometry.body");
++        });
++
++        for (int frame = 0; frame < 144; frame++) {
++            assertSame(expected, cache.resolve("actor", snapshot, generation, false, () -> {
++                throw new AssertionError("Resolved an unchanged actor frame");
++            }));
++        }
++        assertEquals(1, resolutions.get());
++    }
++
++    @Test
++    void replacesEqualSnapshotsAndKeepsActorsIndependent() {
++        final var cache = new BedrockRenderSnapshotCache<String, List<String>, Object>(8);
++        final Object generation = new Object();
++        final List<String> before = new ArrayList<>(List.of("geometry.body"));
++        final List<String> replacement = new ArrayList<>(before);
++        final Object first = new Object();
++        final Object second = new Object();
++        final Object updated = new Object();
++        assertSame(first, cache.resolve("first", before, generation, false, () -> first));
++        assertSame(second, cache.resolve("second", before, generation, false, () -> second));
++        assertSame(updated, cache.resolve("first", replacement, generation, false, () -> updated));
++        assertSame(second, cache.resolve("second", before, generation, false, () -> {
++            throw new AssertionError("Invalidated another actor");
++        }));
++    }
++
++    @Test
++    void invalidatesPackGenerationsAndLightingChanges() {
++        final var cache = new BedrockRenderSnapshotCache<String, Object, String>(8);
++        final Object snapshot = new Object();
++        final Object before = new Object();
++        final Object replacement = new Object();
++        assertEquals("overworld", cache.resolve("actor", snapshot, before, false, () -> "overworld"));
++        assertEquals("nether", cache.resolve("actor", snapshot, before, true, () -> "nether"));
++        assertEquals("replacement", cache.resolve("actor", snapshot, replacement, true, () -> "replacement"));
++        assertEquals("overworld again", cache.resolve("actor", snapshot, replacement, false, () -> "overworld again"));
++    }
++
++    @Test
++    void retainsMissingAssetsUntilReplacementResourcesAreAvailable() {
++        final var cache = new BedrockRenderSnapshotCache<String, Object, List<String>>(8);
++        final Object snapshot = new Object();
++        final Object missingGeneration = new Object();
++        final AtomicInteger resourceReads = new AtomicInteger();
++        final Map<String, String> assets = new java.util.HashMap<>();
++        final java.util.function.Supplier<List<String>> resolve = () -> {
++            resourceReads.incrementAndGet();
++            final String asset = assets.get("geometry.body");
++            return asset == null ? List.of() : List.of(asset);
++        };
++        assertEquals(List.of(), cache.resolve("actor", snapshot, missingGeneration, false, resolve));
++        assertEquals(List.of(), cache.resolve("actor", snapshot, missingGeneration, false, resolve));
++        assertEquals(1, resourceReads.get());
++
++        assets.put("geometry.body", "replacement texture");
++        assertEquals(List.of("replacement texture"), cache.resolve("actor", snapshot, new Object(), false, resolve));
++        assertEquals(2, resourceReads.get());
++    }
++
++    @Test
++    void boundsRetainedSnapshotsWithAccessOrderEviction() {
++        final var cache = new BedrockRenderSnapshotCache<String, Object, String>(2);
++        final Object snapshot = new Object();
++        final Object generation = new Object();
++        cache.resolve("first", snapshot, generation, false, () -> "first");
++        cache.resolve("second", snapshot, generation, false, () -> "second");
++        assertEquals("first", cache.resolve("first", snapshot, generation, false, () -> "unexpected"));
++        cache.resolve("third", snapshot, generation, false, () -> "third");
++        assertEquals("first", cache.resolve("first", snapshot, generation, false, () -> "unexpected"));
++        assertEquals("second resolved again", cache.resolve("second", snapshot, generation, false, () -> "second resolved again"));
++    }
++
++    @Test
++    void removalAndClearDiscardCachedAssets() {
++        final var cache = new BedrockRenderSnapshotCache<String, Object, String>(8);
++        final Object snapshot = new Object();
++        final Object generation = new Object();
++        cache.resolve("first", snapshot, generation, false, () -> "first");
++        cache.resolve("second", snapshot, generation, false, () -> "second");
++        cache.remove("first");
++        assertEquals("new actor", cache.resolve("first", snapshot, generation, false, () -> "new actor"));
++        cache.clear();
++        assertEquals("reloaded", cache.resolve("second", snapshot, generation, false, () -> "reloaded"));
++    }
++
++    @Test
++    void failedResolutionRemainsRetryable() {
++        final var cache = new BedrockRenderSnapshotCache<String, Object, String>(8);
++        final Object snapshot = new Object();
++        final Object generation = new Object();
++        assertThrows(IllegalStateException.class, () -> cache.resolve("actor", snapshot, generation, false, () -> {
++            throw new IllegalStateException("Asset load failed");
++        }));
++        assertEquals("retry", cache.resolve("actor", snapshot, generation, false, () -> "retry"));
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchorsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchorsTest.java

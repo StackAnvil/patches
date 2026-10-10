@@ -228,3 +228,26 @@ The cache schema still restores finite scales as floats.
 The feature-only tests and both Checkstyle tasks pass.
 The cache patch applies alone to the pinned upstream base and passes all 22 tests and both Checkstyle tasks.
 The complete core and add-on builds also pass after replaying the stacks.
+
+## Bounded resource preparation
+
+Completed game-protocol downloads now verify their hash and decode their ZIP on bounded workers.
+Resource definition preparation, decryption and source persistence also use bounded workers.
+The event loop retains chunk assembly and publishes results only for the current transfer and session.
+Decoder errors, queue rejection and worker shutdown complete negotiation through the existing error path.
+ZIP readers close their inflater after each read.
+
+The completed cache retains the current four-entry and 64 MiB limits.
+Unused downloaded INFO packs still enter the source cache.
+Tests cover chunk order, duplicate receipt, hash errors, stale publication, saturation, shutdown, metadata restoration and eviction.
+The standalone upstream replay passes 45 tests and both Checkstyle tasks.
+
+## Combined stack validation
+
+The full dependency build passes for CubeConverter, ViaBedrock, the Bedrock add-on and ViaProxy.
+Core passes 1,159 tests and the add-on passes 786 tests.
+JUnit skips 30 core tests and 120 add-on tests.
+CubeConverter passes 18 tests and ViaProxy passes four tests.
+The standalone cache patch passes 45 tests and both Checkstyle tasks.
+TypeScript checking and patch whitespace checks also pass.
+These results establish stack replay and test behavior. Live server frame-time profiling remains separate.
