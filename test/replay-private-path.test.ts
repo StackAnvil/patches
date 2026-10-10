@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { directChild, realDirectory } from "../src/replay/private-path.ts";
 import { requireEnvironmentPathIdle } from "../src/replay/process-environment.ts";
 import { writePrivateFixture } from "../src/replay/form-fixture.ts";
@@ -65,3 +66,24 @@ test.skipIf(process.platform !== "darwin")("refuses unavailable Darwin inspectio
   expect(await new Response(child.stdout).text()).toBe("");
   expect(await new Response(child.stderr).text()).toBe("");
 });
+
+test.skipIf(process.platform !== "darwin")("retries Darwin stack-copy races while preserving bounded failures for unreadable live processes", async () => {
+  const script = fileURLToPath(new URL("./replay-process-environment.test.py", import.meta.url));
+  const child = Bun.spawn(["python3", script], { stdout: "pipe", stderr: "pipe" });
+  const output = await new Response(child.stderr).text();
+  expect(await child.exited).toBe(0);
+  expect(output).toContain("Ran 6 tests");
+  expect(await new Response(child.stdout).text()).toBe("");
+});
+
+test.skipIf(process.platform !== "darwin")("keeps inspecting exact ownership while unrelated processes repeatedly exit", async () => {
+  const input = await fixture();
+  const code = 'console.log("ready"); while (true) { const child = Bun.spawn([process.execPath, "-e", ""], {stdout:"ignore",stderr:"ignore"}); await child.exited; }';
+  const churn = Bun.spawn([process.execPath, "-e", code], { stdout: "pipe", stderr: "ignore" });
+  try {
+    const reader = churn.stdout.getReader(); await reader.read(); reader.releaseLock();
+    for (let iteration = 0; iteration < 30; iteration++) {
+      await requireEnvironmentPathIdle("WINEPREFIX", input.actual);
+    }
+  } finally { churn.kill(); await churn.exited; }
+}, 15000);

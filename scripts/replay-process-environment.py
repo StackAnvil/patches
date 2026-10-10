@@ -8,6 +8,7 @@ import errno
 import os
 import struct
 import sys
+import time
 
 
 def environment(data):
@@ -27,10 +28,44 @@ def environment(data):
         cursor = end + 1
 
 
+def live_environment(read, state, pause=time.sleep):
+    """Retry stack-copy races; only a verified exited/zombie process can be discarded."""
+    for attempt in range(3):
+        try:
+            data = read()
+            return () if data is None else tuple(environment(data))
+        except OSError as error:
+            if error.errno != errno.EIO:
+                raise
+            failure = error
+        except ValueError as error:
+            failure = error
+        if state() in (None, 5):  # No process, or SZOMB: it cannot use the profile.
+            return ()
+        if attempt == 2:
+            raise failure
+        pause(0.005)
+
+
+def process_state(library, pid):
+    # PROC_PIDT_SHORTBSDINFO has a 64-byte fixed layout, including its reserved trailing uint32.
+    # pbsi_status is its fourth uint32. A smaller buffer fails with ENOMEM.
+    info = ctypes.create_string_buffer(64)
+    used = library.proc_pidinfo(pid, 13, 0, info, len(info))
+    if used == len(info):
+        return struct.unpack_from("=I", info.raw, 12)[0]
+    code = ctypes.get_errno()
+    if used == 0 and code in (errno.ESRCH, errno.ENOENT):
+        return None
+    raise OSError(code, "Cannot verify process lifetime")
+
+
 def busy(variable, path, owner_pid):
     library = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
     library.proc_listpids.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_int]
     library.proc_listpids.restype = ctypes.c_int
+    library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+    library.proc_pidinfo.restype = ctypes.c_int
     library.sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint, ctypes.c_void_p,
                               ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t]
     library.sysctl.restype = ctypes.c_int
@@ -62,16 +97,19 @@ def busy(variable, path, owner_pid):
     for pid in pids[:used // 4]:
         if pid <= 0 or pid in (os.getpid(), owner_pid):
             continue
-        length = ctypes.c_size_t(argmax.value)
-        if library.sysctl((ctypes.c_int * 3)(1, 49, pid), 3, data, ctypes.byref(length), None, 0):
-            # Exited, zombie/kernel, and inaccessible foreign processes have no readable environment.
-            # This matches the Linux /proc inspection's permission and lifetime handling.
-            if ctypes.get_errno() in (errno.ESRCH, errno.EINVAL, errno.EACCES, errno.EPERM):
-                continue
-            raise OSError("Cannot inspect process environment")
-        if length.value > argmax.value:
-            raise ValueError("Invalid argument size")
-        for entry in environment(data.raw[:length.value]):
+        def read():
+            length = ctypes.c_size_t(argmax.value)
+            if library.sysctl((ctypes.c_int * 3)(1, 49, pid), 3, data, ctypes.byref(length), None, 0):
+                code = ctypes.get_errno()
+                # Keep Linux /proc's handling of exited, zombie/kernel, and foreign processes.
+                if code in (errno.ESRCH, errno.EINVAL, errno.EACCES, errno.EPERM):
+                    return None
+                raise OSError(code, "Cannot inspect process environment")
+            if length.value > argmax.value:
+                raise ValueError("Invalid argument size")
+            return data.raw[:length.value]
+
+        for entry in live_environment(read, lambda: process_state(library, pid)):
             if entry.startswith(prefix) and os.path.realpath(os.fsdecode(entry[len(prefix):])) == path:
                 return True
     return False
