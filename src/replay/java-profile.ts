@@ -1,8 +1,7 @@
 import { constants } from "node:fs";
-import { chmod, cp, lstat, readFile, readdir, readlink, realpath, statfs, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, readFile, readdir, readlink, realpath, rm, statfs, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
-
-const reserveBytes = 5 * 1024 ** 3;
+import { requirePrivateCopySpace } from "../copy-space.ts";
 
 function inside(directory: string, path: string): boolean {
   const name = relative(directory, path);
@@ -63,14 +62,63 @@ export async function rebindReplayJavaConfig(path: string, source: string, targe
   await writeFile(path, cfg.replace(/^JavaPath=.+$/m, `JavaPath=${java}`), { mode: 0o600 });
 }
 
-export function requireReplayCopySpace(bytes: number, available: number): void {
-  if (!Number.isSafeInteger(bytes) || bytes < 0 || !Number.isFinite(available) || available < bytes + reserveBytes) {
-    throw new Error("Private Prism copies require their full file size plus 5 GiB of free disk reserve.");
+/** Register only a newly created private game; call its release after owned processes stop. */
+export async function prepareReplayInstanceCleanup(prism: string, game: string): Promise<() => Promise<void>> {
+  const parts = relative(prism, game).split("/");
+  if (parts.length !== 3 || parts[0] !== "instances" || parts[1] === ".." || parts[2] !== "minecraft") {
+    throw new Error("Replay game must belong to the private Prism directory.");
   }
+  const paths = [prism, join(prism, "instances"), join(prism, "instances", parts[1]!), game];
+  const owners = await Promise.all(paths.map(async path => {
+    const identity = await lstat(path);
+    if (!identity.isDirectory() || identity.isSymbolicLink() || await realpath(path) !== path) {
+      throw new Error("Replay game must use real private directories.");
+    }
+    return { path, identity };
+  }));
+  return async () => {
+    for (const { path, identity } of owners) {
+      const current = await lstat(path);
+      if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino || await realpath(path) !== path) {
+        throw new Error("Replay game directory changed; cache cleanup refused.");
+      }
+    }
+    await rm(join(game, "mods"), { recursive: true, force: true });
+    const downloads = join(game, "downloads");
+    let entries: string[] = [];
+    try {
+      const state = await lstat(downloads);
+      if (!state.isDirectory() || state.isSymbolicLink()) throw new Error("Replay download cache is not a real directory.");
+      entries = await readdir(downloads);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    for (const entry of entries) {
+      if (entry !== "log.json") await rm(join(downloads, entry), { recursive: true, force: true });
+    }
+    for (const relativeCache of ["config/viafabricplus/viabedrock/server_packs", "config/viabedrock/server_packs"]) {
+      let cache = game;
+      let present = true;
+      for (const part of relativeCache.split("/")) {
+        cache = join(cache, part);
+        try {
+          const state = await lstat(cache);
+          if (!state.isDirectory() || state.isSymbolicLink() || await realpath(cache) !== cache) {
+            throw new Error("Replay server pack cache must use real private directories.");
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          present = false;
+          break;
+        }
+      }
+      if (present) await rm(cache, { recursive: true, force: true });
+    }
+  };
 }
 
 /** Prism may rewrite cached files, so every launcher directory has a private writable copy. */
-export async function prepareReplayPrismData(source: string, target: string): Promise<void> {
+export async function prepareReplayPrismData(source: string, target: string): Promise<() => Promise<void>> {
   if (await realpath(source) !== source || await realpath(target) !== target || inside(source, target) || inside(target, source)) {
     throw new Error("Replay Prism data must use separate real directories.");
   }
@@ -89,11 +137,29 @@ export async function prepareReplayPrismData(source: string, target: string): Pr
     throw new Error("Replay Prism destination already contains source data.");
   }
   const filesystem = await statfs(target);
-  requireReplayCopySpace(requiredBytes, filesystem.bavail * filesystem.bsize);
-  for (const entry of entries) {
-    const from = join(source, entry.name);
-    const to = join(target, entry.name);
-    await cp(from, to, { recursive: true, force: false, errorOnExist: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
-    if (entry.isFile()) await chmod(to, 0o600);
+  requirePrivateCopySpace(requiredBytes, filesystem.bavail * filesystem.bsize);
+  const identity = await lstat(target);
+  // Call only after the owned launcher and game have stopped. Retain configuration,
+  // instance logs and evidence; dependencies can be copied again for another run.
+  const release = async () => {
+    const current = await lstat(target);
+    if (current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino || await realpath(target) !== target) {
+      throw new Error("Replay Prism directory changed; dependency cleanup refused.");
+    }
+    for (const name of ["assets", "libraries", "java", "cache"]) {
+      if (entries.some(entry => entry.name === name)) await rm(join(target, name), { recursive: true, force: true });
+    }
+  };
+  try {
+    for (const entry of entries) {
+      const from = join(source, entry.name);
+      const to = join(target, entry.name);
+      await cp(from, to, { recursive: true, force: false, errorOnExist: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
+      if (entry.isFile()) await chmod(to, 0o600);
+    }
+  } catch (error) {
+    await release();
+    throw error;
   }
+  return release;
 }

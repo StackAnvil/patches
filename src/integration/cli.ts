@@ -21,6 +21,7 @@ import { connectionFailure, waitForJoin, type JoinRoute } from "./join.ts";
 import { complexGameplayCaseIds } from "./ranged-observation.ts";
 import { integrationHelp, integrationOptions } from "./options.ts";
 import { installModpack } from "./modpack.ts";
+import { copyBedrockServerInstallation } from "./server-installation.ts";
 import { configureShaders, graphicsFailures, installGraphicsProfile, readGraphicsLock, integrationPrismNames, type GraphicsProfile } from "./graphics.ts";
 
 const execute = promisify(execFile);
@@ -36,6 +37,7 @@ const prismData = join(homedir(), ".var", "app", "org.prismlauncher.PrismLaunche
 const bdsSource = resolve(process.env.BEDROCK_SERVER_HOME ?? join(homedir(), "bedrock-server"));
 const proxyBdsSource = resolve(process.env.STACKANVIL_JAVA_BEDROCK_SERVER_HOME ?? bdsSource);
 const started: ChildProcess[] = [];
+const serverDependencyCleanup: Array<() => Promise<void>> = [];
 
 async function textFile(path: string): Promise<string> {
   return existsSync(path) ? readFile(path, "utf8") : "";
@@ -155,10 +157,7 @@ async function bedrockServer(dir: string, source: string, name: string, entityPr
   resourceProbe?: { variant: "a" | "b"; run: string }): Promise<{ child: ChildProcess; log: string; port: number; version: string; transport: string }> {
   if (!existsSync(join(source, "bedrock_server"))) throw new Error(`Bedrock server missing in ${source}. Set BEDROCK_SERVER_HOME or STACKANVIL_JAVA_BEDROCK_SERVER_HOME.`);
   const home = join(dir, name);
-  await mkdir(home, { recursive: true, mode: 0o700 });
-  for (const entry of ["bedrock_server", "behavior_packs", "resource_packs", "definitions", "config", "data", "profanity_filter.wlist", "packetlimitconfig.json", "allowlist.json", "permissions.json"]) {
-    if (existsSync(join(source, entry))) await command("cp", ["-a", "--reflink=auto", join(source, entry), home]);
-  }
+  serverDependencyCleanup.push(await copyBedrockServerInstallation(source, home));
   const port = await udpPort();
   const properties = await textFile(join(source, "server.properties"));
   const set = (value: string, key: string, replacement: string) => new RegExp(`^${key}=.*$`, "m").test(value)
@@ -461,13 +460,24 @@ async function removeTemporaryServer(name: string, port: number): Promise<void> 
 }
 
 async function cleanup(): Promise<void> {
-  for (const child of started.reverse()) {
-    if (alive(child.pid)) {
+  const groupAlive = (child: ChildProcess): boolean => {
+    if (!child.pid) return false;
+    try { process.kill(-child.pid, 0); return true; } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+      throw error;
+    }
+  };
+  for (const child of started.toReversed()) {
+    if (groupAlive(child)) {
       try { process.kill(-child.pid!, "SIGINT"); } catch { /* Already stopped. */ }
     }
   }
-  await Bun.sleep(1000);
-  await stopDisplay();
+  for (let attempt = 0; attempt < 40 && started.some(groupAlive); attempt++) await Bun.sleep(250);
+  if (started.some(groupAlive)) throw new Error("Integration processes remain alive; retain their dependencies and display.");
+  const results = await Promise.allSettled(serverDependencyCleanup.map(release => release()));
+  try { await stopDisplay(); } catch (reason) { results.push({ status: "rejected", reason }); }
+  const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
+  if (errors.length) throw new AggregateError(errors, "Integration cleanup failed.");
 }
 
 async function main(): Promise<void> {

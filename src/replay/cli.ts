@@ -14,11 +14,12 @@ import { configureShaders, graphicsFailures, installGraphicsProfile, readGraphic
 import { activeDisplay, displayEnv, stopDisplay } from "../lab/display.ts";
 import { inspectJournal } from "./journal.ts";
 import { prepareFormFixture } from "./form-fixture.ts";
-import { prepareReplayPrismData, rebindReplayJavaConfig, validateReplayProfile } from "./java-profile.ts";
+import { prepareReplayInstanceCleanup, prepareReplayPrismData, rebindReplayJavaConfig, validateReplayProfile } from "./java-profile.ts";
 import { OwnedProcesses, requireOwnedSilentModule } from "./owned-processes.ts";
 import { requireNativeOfflineReplay, requireNativeReplayProcessNamespaces, type NativeOfflineProof } from "./native-offline.ts";
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
+import { cleanupReplaySession } from "./session-cleanup.ts";
 import { hasGameplayAcknowledgments, verifyRendering, type SceneFeatures, type RenderAudit, type ControllerAudit } from "./verification.ts";
 
 const execute = promisify(execFile);
@@ -37,6 +38,8 @@ const children: ChildProcess[] = [];
 let nativeClient: { pid: number; directory: string } | undefined;
 let javaCleanup: OwnedProcesses | undefined;
 let javaDisplayCleanup: OwnedProcesses | undefined;
+let javaDataCleanup: (() => Promise<void>) | undefined;
+const temporaryBuilds: string[] = [];
 
 function alive(pid?: number): boolean { if (!pid) return false; try { process.kill(pid, 0); return true; } catch { return false; } }
 async function logText(path: string): Promise<string> { return existsSync(path) ? readFile(path, "utf8") : ""; }
@@ -73,6 +76,7 @@ async function buildPlugin(jar: string): Promise<{ classes: string; plugin: stri
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
   await chmod(privateRoot, 0o700);
   const build = await mkdtemp(join(privateRoot, "build-"));
+  temporaryBuilds.push(build);
   const classes = join(build, "classes");
   await mkdir(classes, { recursive: true, mode: 0o700 });
   const source = join(root, "src/replay/java/com/enderdash/agent/replay");
@@ -153,7 +157,7 @@ async function launchJava(directory: string, address: string, client: "addon" | 
   await mkdir(prism, { mode: 0o700 });
   await mkdir(join(prism, "logs"), { mode: 0o700 });
   await mkdir(join(prism, "instances"), { mode: 0o700 });
-  await prepareReplayPrismData(prismData, prism);
+  javaDataCleanup = await prepareReplayPrismData(prismData, prism);
   const globalCfg = join(prism, "prismlauncher.cfg");
   if (existsSync(globalCfg)) await rebindReplayJavaConfig(globalCfg, prismData, prism);
   const instance = join(prism, "instances", name);
@@ -173,6 +177,13 @@ async function launchJava(directory: string, address: string, client: "addon" | 
   }
   const game = join(instance, "minecraft");
   await mkdir(game, { mode: 0o700 });
+  const releaseGame = await prepareReplayInstanceCleanup(prism, game);
+  const releasePrism = javaDataCleanup;
+  javaDataCleanup = async () => {
+    const results = await Promise.allSettled([releaseGame(), releasePrism()]);
+    const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
+    if (errors.length) throw new AggregateError(errors, "Replay dependency cleanup failed.");
+  };
   for (const file of ["config", "options.txt"]) if (existsSync(join(source, "minecraft", file))) await cp(join(source, "minecraft", file), join(game, file), { recursive: true });
   if (guiScale !== undefined) {
     const optionsFile = join(game, "options.txt");
@@ -492,22 +503,37 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
     }
     unexpectedClientExit = !alive(gamePid);
   } finally {
-    if (javaCleanup) await writeFile(join(directory, "process-ownership.json"), JSON.stringify({
-      java: javaCleanup.all(), display: javaDisplayCleanup?.all() ?? [],
-    }, null, 2), { mode: 0o600 });
-    await stopAll(gamePid);
-    if (ownedDisplay) await stopDisplay(javaDisplayCleanup ? {
-      process: pid => {
-        if (!javaDisplayCleanup!.alive(pid)) throw new Error("Owned display process exited before teardown.");
-      },
-      audioModule: async id => {
-        const { stdout } = await execute("pactl", ["list", "modules", "short"]);
-        requireOwnedSilentModule(stdout, id);
-      },
-    } : undefined);
-    process.off("SIGINT", abort); process.off("SIGTERM", abort);
-    // Proxy libraries write their own saves with default permissions.
-    for (const name of ["saves.json", "viaproxy.yml"]) if (existsSync(join(proxyHome, name))) await chmod(join(proxyHome, name), 0o600);
+    try {
+      await cleanupReplaySession({
+        recordOwnership: async () => {
+          if (javaCleanup) await writeFile(join(directory, "process-ownership.json"), JSON.stringify({
+            java: javaCleanup.all(), display: javaDisplayCleanup?.all() ?? [],
+          }, null, 2), { mode: 0o600 });
+        },
+        stopProcesses: () => stopAll(gamePid),
+        releaseDependencies: async () => {
+          if (javaDataCleanup) {
+            await javaDataCleanup();
+            javaDataCleanup = undefined;
+          }
+        },
+        stopDisplay: async () => {
+          if (ownedDisplay) await stopDisplay(javaDisplayCleanup ? {
+            process: pid => {
+              if (!javaDisplayCleanup!.alive(pid)) throw new Error("Owned display process exited before teardown.");
+            },
+            audioModule: async id => {
+              const { stdout } = await execute("pactl", ["list", "modules", "short"]);
+              requireOwnedSilentModule(stdout, id);
+            },
+          } : undefined);
+        },
+      });
+    } finally {
+      process.off("SIGINT", abort); process.off("SIGTERM", abort);
+      // Proxy libraries write their own saves with default permissions.
+      for (const name of ["saves.json", "viaproxy.yml"]) if (existsSync(join(proxyHome, name))) await chmod(join(proxyHome, name), 0o600);
+    }
   }
   if (client === "native" && /Native connection failed:|Native capture failed:/.test(await logText(join(directory, "proxy.log")))) throw new Error("The native recorder failed. Read its private proxy log; this capture is incomplete.");
   if (client === "native" && /Native pack observation failed:/.test(await logText(join(directory, "proxy.log")))) throw new Error("Native pack reconstruction failed. The raw recording is preserved for offline repair; read its private proxy log.");
@@ -560,4 +586,13 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
 }
 
 Effect.runPromise(Effect.tryPromise({ try: main, catch: (cause) => cause instanceof Error ? cause : new Error(String(cause)) }))
+  .finally(async () => {
+    // A failed stop must keep dependencies available to any remaining processes.
+    if (children.some(child => alive(child.pid)) || (nativeClient && alive(nativeClient.pid))) return;
+    if (javaCleanup) {
+      javaCleanup.captureDescendants();
+      if (javaCleanup.all().some(identity => javaCleanup!.alive(identity.pid))) return;
+    }
+    for (const build of temporaryBuilds) await rm(build, { recursive: true, force: true });
+  })
   .catch((error: unknown) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

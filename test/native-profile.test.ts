@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, stat, statfs, symlink, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { prepareNativeProfile, requireNativeProfileIdle } from "../src/replay/native-profile.ts";
@@ -42,8 +42,97 @@ test("supports relative content and internal source path aliases", async () => {
   await symlink(input.game, alias);
   await writeFile(join(input.source, "settings.json"), JSON.stringify({ ...input.settings, game_dir: alias }));
   const result = await prepareNativeProfile(input);
-  expect(await realpath(join(result.runtime, "content"))).toBe(join(input.runtime, relative(input.source, input.game)));
+  expect(await realpath(join(result.runtime, "content"))).toBe(join(input.runtime, ".stackanvil-game"));
   expect(await realpath(alias)).toBe(input.game);
+});
+
+test("shares the source GPU interlock without copying its incident or lock files", async () => {
+  const input = await fixture();
+  const marker = join(input.source, ".gpu-launch-in-progress.json"), acknowledgement = join(input.source, ".gpu-safety-ack.json");
+  await writeFile(marker, input.payload);
+  await writeFile(acknowledgement, input.payload);
+  await writeFile(join(input.source, ".shared-assets.lock"), input.payload);
+  await writeFile(join(input.source, ".launch.lock"), input.payload);
+  const result = await prepareNativeProfile(input);
+  const guardRoot = join(await realpath(join(result.runtime, "games")), "..");
+  expect(await realpath(guardRoot)).toBe(input.source);
+  expect(await readFile(join(guardRoot, ".gpu-launch-in-progress.json"))).toEqual(input.payload);
+  for (const name of [".gpu-launch-in-progress.json", ".gpu-safety-ack.json", ".shared-assets.lock", ".launch.lock"]) {
+    await expect(lstat(join(result.runtime, name))).rejects.toThrow();
+  }
+  const changed = Buffer.from([7, 13]);
+  await writeFile(acknowledgement, changed);
+  expect(await readFile(join(guardRoot, ".gpu-safety-ack.json"))).toEqual(changed);
+  expect(await realpath(result.settings.game_dir)).not.toStartWith(await realpath(join(result.runtime, "games")));
+});
+
+test("migrates an idle cached copy without losing its private game changes", async () => {
+  const input = await fixture();
+  await cp(input.source, input.runtime, { recursive: true });
+  await writeFile(join(input.runtime, ".stackanvil-source"), input.source);
+  const oldGame = join(input.runtime, relative(input.source, input.game));
+  const changed = Buffer.from([0x4d, 0x5a, 19]);
+  await writeFile(join(oldGame, "Minecraft.Windows.exe"), changed);
+  const result = await prepareNativeProfile(input);
+  expect(await realpath(join(result.runtime, "games"))).toBe(join(input.source, "games"));
+  expect(await readFile(join(result.settings.game_dir, "Minecraft.Windows.exe"))).toEqual(changed);
+  expect(await readFile(join(input.game, "Minecraft.Windows.exe"))).toEqual(input.payload);
+  expect(await realpath(result.settings.game_dir)).toBe(join(input.runtime, ".stackanvil-games", relative(join(input.source, "games"), input.game)));
+  expect((await prepareNativeProfile(input)).settings.game_dir).toBe(result.settings.game_dir);
+});
+
+test("preserves an unresolved cached incident and refuses to change its interlock", async () => {
+  const input = await fixture();
+  await cp(input.source, input.runtime, { recursive: true });
+  await writeFile(join(input.runtime, ".stackanvil-source"), input.source);
+  const marker = join(input.runtime, ".gpu-launch-in-progress.json");
+  await writeFile(marker, input.payload);
+  const settings = await readFile(join(input.runtime, "settings.json"));
+  await expect(prepareNativeProfile(input)).rejects.toThrow();
+  expect((await lstat(join(input.runtime, "games"))).isDirectory()).toBe(true);
+  expect(await readFile(marker)).toEqual(input.payload);
+  expect(await readFile(join(input.runtime, "settings.json"))).toEqual(settings);
+  expect(await readFile(join(input.game, "Minecraft.Windows.exe"))).toEqual(input.payload);
+});
+
+test("refuses a migration archive collision without replacing either directory", async () => {
+  const input = await fixture();
+  await cp(input.source, input.runtime, { recursive: true });
+  await writeFile(join(input.runtime, ".stackanvil-source"), input.source);
+  const archive = join(input.runtime, ".stackanvil-games");
+  await mkdir(archive);
+  await writeFile(join(archive, "sentinel"), input.payload);
+  await expect(prepareNativeProfile(input)).rejects.toThrow();
+  expect((await lstat(join(input.runtime, "games"))).isDirectory()).toBe(true);
+  expect(await readFile(join(archive, "sentinel"))).toEqual(input.payload);
+  expect(await readFile(join(input.runtime, relative(input.source, input.game), "Minecraft.Windows.exe"))).toEqual(input.payload);
+});
+
+test("rejects a cached games link to a foreign interlock", async () => {
+  const input = await fixture();
+  await prepareNativeProfile(input);
+  const foreign = join(input.root, "foreign-games");
+  await mkdir(foreign);
+  const games = join(input.runtime, "games");
+  await rm(games); await symlink(foreign, games);
+  const settings = await readFile(join(input.runtime, "settings.json"));
+  await expect(prepareNativeProfile(input)).rejects.toThrow();
+  expect(await readlink(games)).toBe(foreign);
+  expect(await readFile(join(input.runtime, "settings.json"))).toEqual(settings);
+});
+
+test("does not relabel a cached executable when the source selects a different game", async () => {
+  const input = await fixture(), first = await prepareNativeProfile(input);
+  const game = join(input.source, "games", "imported", "1.26.51.1");
+  await mkdir(game, { recursive: true });
+  const changed = Buffer.from([0x4d, 0x5a, 29]);
+  await writeFile(join(game, "Minecraft.Windows.exe"), changed);
+  await writeFile(join(input.source, "settings.json"), JSON.stringify({ ...input.settings, game_dir: game }));
+  const settings = await readFile(join(input.runtime, "settings.json"));
+  await expect(prepareNativeProfile(input)).rejects.toThrow();
+  expect(await readFile(join(first.settings.game_dir, "Minecraft.Windows.exe"))).toEqual(input.payload);
+  expect(await readFile(join(input.runtime, "settings.json"))).toEqual(settings);
+  expect(await readFile(join(game, "Minecraft.Windows.exe"))).toEqual(changed);
 });
 
 test("repairs a cached owned source-pointing content link and preserves copied executable", async () => {
@@ -71,14 +160,78 @@ test("rejects a copied executable symlink that still resolves into source", asyn
   await expect(prepareNativeProfile(input)).rejects.toThrow();
   expect(await readFile(actual)).toEqual(input.payload);
   expect(await readlink(executable)).toBe(actual);
+  await expect(lstat(input.runtime)).rejects.toThrow();
 });
 
 test("does not replace unexpected content directories", async () => {
   const input = await fixture(); await rm(join(input.source, "content")); await mkdir(join(input.source, "content"));
   await writeFile(join(input.source, "content", "sentinel"), input.payload);
   await expect(prepareNativeProfile(input)).rejects.toThrow();
-  expect(await readFile(join(input.runtime, "content", "sentinel"))).toEqual(input.payload);
+  await expect(lstat(input.runtime)).rejects.toThrow();
   expect(await readFile(join(input.source, "content", "sentinel"))).toEqual(input.payload);
+});
+
+test("budgets a full native copy before creating its private directory", async () => {
+  const input = await fixture(), filesystem = await statfs(input.privateRoot);
+  const executable = join(input.game, "Minecraft.Windows.exe");
+  const bytes = filesystem.bavail * filesystem.bsize + 1;
+  // A sparse source exercises the real filesystem guard without allocating disk or copying it.
+  await truncate(executable, bytes);
+  await expect(prepareNativeProfile(input)).rejects.toThrow();
+  await expect(lstat(input.runtime)).rejects.toThrow();
+  expect((await stat(executable)).size).toBe(bytes);
+  expect(await readFile(join(input.proton, "proton"))).toEqual(input.payload);
+});
+
+test("does not budget or copy unselected game installations", async () => {
+  const input = await fixture(), other = join(input.source, "games", "unused"), filesystem = await statfs(input.privateRoot);
+  await mkdir(other);
+  const executable = join(other, "Minecraft.Windows.exe");
+  await writeFile(executable, input.payload);
+  await truncate(executable, filesystem.bavail * filesystem.bsize + 1);
+  const result = await prepareNativeProfile(input);
+  expect(await readFile(join(result.settings.game_dir, "Minecraft.Windows.exe"))).toEqual(input.payload);
+  await expect(lstat(join(input.runtime, ".stackanvil-game", "unused"))).rejects.toThrow();
+  expect((await stat(executable)).size).toBe(filesystem.bavail * filesystem.bsize + 1);
+});
+
+test("retains a replaced directory when fresh-copy rollback is requested", async () => {
+  const input = await fixture(), saved = join(input.privateRoot, "saved-copy");
+  let replaced = false;
+  await expect(prepareNativeProfile({ ...input, assertIdle: async profile => {
+    if (profile !== input.runtime || replaced) return;
+    replaced = true;
+    await rename(input.runtime, saved);
+    await mkdir(input.runtime);
+    await writeFile(join(input.runtime, "sentinel"), input.payload);
+    throw new Error("Preparation interrupted");
+  } })).rejects.toBeInstanceOf(AggregateError);
+  expect(await readFile(join(input.runtime, "sentinel"))).toEqual(input.payload);
+  expect(await readFile(join(saved, ".stackanvil-game", "Minecraft.Windows.exe"))).toEqual(input.payload);
+  expect(await readFile(join(input.game, "Minecraft.Windows.exe"))).toEqual(input.payload);
+});
+
+test("retains a fresh copy when its launcher becomes busy before rollback", async () => {
+  const input = await fixture();
+  await expect(prepareNativeProfile({ ...input, assertIdle: async profile => {
+    if (profile === input.runtime) throw new Error("Concurrent launcher");
+  } })).rejects.toBeInstanceOf(AggregateError);
+  expect(await readFile(join(input.runtime, ".stackanvil-game", "Minecraft.Windows.exe"))).toEqual(input.payload);
+  expect(await readFile(join(input.game, "Minecraft.Windows.exe"))).toEqual(input.payload);
+});
+
+test("retains an incident created during fresh-copy preparation", async () => {
+  const input = await fixture(), marker = join(input.runtime, ".gpu-launch-in-progress.json");
+  let interrupted = false;
+  await expect(prepareNativeProfile({ ...input, assertIdle: async profile => {
+    if (profile !== input.runtime || interrupted) return;
+    interrupted = true;
+    await writeFile(marker, input.payload);
+    throw new Error("Preparation interrupted");
+  } })).rejects.toBeInstanceOf(AggregateError);
+  expect(await readFile(marker)).toEqual(input.payload);
+  expect(await readFile(join(input.runtime, ".stackanvil-game", "Minecraft.Windows.exe"))).toEqual(input.payload);
+  expect(await readFile(join(input.game, "Minecraft.Windows.exe"))).toEqual(input.payload);
 });
 
 test("preserves cached settings when unexpected content directories prevent repair", async () => {
