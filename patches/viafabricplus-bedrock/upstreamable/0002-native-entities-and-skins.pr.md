@@ -295,3 +295,9 @@ The fixture reaches playable spawn and loads its pack.
 Its general world-rendering audit does not apply because it injects an extra skin and omits world chunks.
 The reported skin still needs a visual comparison with stock Chat Heads.
 The add-on build passes 681 tests, with 120 skipped.
+
+## Reuse unchanged actor render snapshots
+
+A 1,024-entry LRU retains resolved draws while actor snapshot identity, accepted resource generation, and Nether lighting remain unchanged. Geometry resolution, material partitioning, texture lookup, and warnings no longer repeat on every unchanged frame. UV expressions, animated poses, scale, and yaw still evaluate at their existing per-frame points. Snapshot replacement, pack changes, resource reloads, and level changes invalidate retained state.
+
+Seven helper regressions pass, including 144 unchanged frames with one resolution, invalidation, missing results, retry after failure, and LRU eviction. The complete add-on build passes with 784 tests passed and 120 skipped, against the updated ViaBedrock library and pinned ViaFabricPlus dependency. These checks measure operation reuse, not live FPS or frame-time percentiles.
