@@ -1,4 +1,4 @@
-From 4392298ae0df42c65856c9b2d8ae3ad4f88f9372 Mon Sep 17 00:00:00 2001
+From a0ecd4a4a4860672235535ad3f30e094c344563a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:39:38 +0200
 Subject: [PATCH] feat(players): render server player controllers and costumes
@@ -136,9 +136,14 @@ to repeat player.entity.json. Normalize only the actor's referenced models
 and retain server provenance and skin animation aliases. Load the resolved
 dependencies off the render thread and invalidate them with the resource
 generation. Ordinary classic owner graphs now also receive armor setup.
+
+Prepare only the render controllers declared by the entity. An equipment scope keeps its own variables while avoiding copies and visibility-pattern compilation for unrelated server controllers. Resolve UV defaults once per selected controller.
+
+An instrumented regression prepares twelve scopes with 2,049 available controllers. It performs twelve direct lookups and no full-controller map scans while retaining dynamic selection.
 ---
  .../appearance/BedrockActorAnimation.java     |  12 +
  .../appearance/BedrockEntityResources.java    | 103 ++++++
+ .../appearance/BedrockPlayerControllers.java  |  22 +-
  .../appearance/BedrockResourceLibrary.java    |  11 +-
  .../bedrock/render/BedrockPersonaLayer.java   |   1 +
  .../render/BedrockPlayerCostumeLayer.java     |  32 ++
@@ -146,13 +151,13 @@ generation. Ordinary classic owner graphs now also receive armor setup.
  .../bedrock/render/BedrockPlayerRenderer.java |   2 +
  .../bedrock/render/BedrockPlayerSkins.java    | 297 +++++++++++++++++-
  .../BedrockEntityResourcesTest.java           |  59 ++++
- .../BedrockPlayerControllersTest.java         |  86 +++++
+ .../BedrockPlayerControllersTest.java         | 128 ++++++++
  .../BedrockResourceLibraryTest.java           |  84 +++++
  .../BedrockServerActorVisibilityTest.java     |  45 +++
  .../BedrockPlayerCommandResourcesTest.java    |  67 ++++
  .../render/BedrockPlayerGeometryTest.java     |  32 ++
  .../render/BedrockPlayerQueriesTest.java      |  37 +++
- 15 files changed, 878 insertions(+), 12 deletions(-)
+ 16 files changed, 936 insertions(+), 18 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerCostumeLayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerQueries.java
@@ -164,10 +169,10 @@ generation. Ordinary classic owner graphs now also receive armor setup.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerQueriesTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-index 5b92013..0fc19bc 100644
+index 89c97d1..13e6ceb 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-@@ -77,6 +77,18 @@ public final class BedrockActorAnimation {
+@@ -81,6 +81,18 @@ public final class BedrockActorAnimation {
          return new ServerResources(Map.copyOf(animations), Map.copyOf(controllers), library);
      }
  
@@ -295,6 +300,51 @@ index 0000000..8293687
 +
 +    public static synchronized void clear() { source = null; ACTORS.clear(); }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
+index 47da5ae..dd43bf8 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
+@@ -35,8 +35,19 @@ public final class BedrockPlayerControllers {
+             final BedrockEntityData entity, final Map<String, BedrockRenderController> controllers,
+             final Map<String, UvAnimation> uvAnimations) {
+         this.entity = entity;
+-        this.controllers = Map.copyOf(controllers);
+-        this.uvAnimations = Map.copyOf(uvAnimations);
++        // Equipment changes create a new variable scope, not a new copy of every server controller.
++        final Map<String, BedrockRenderController> selected = new HashMap<>();
++        final Map<String, UvAnimation> uv = new HashMap<>();
++        for (final var reference : entity.getControllers()) {
++            final var controller = controllers.get(reference.identifier());
++            if (controller == null) continue;
++            selected.put(reference.identifier(), controller);
++            final var nativeUv = controller.uvAnimation();
++            uv.put(reference.identifier(), uvAnimations.getOrDefault(reference.identifier(),
++                    new UvAnimation(nativeUv.offsetU(), nativeUv.offsetV(), nativeUv.scaleU(), nativeUv.scaleV())));
++        }
++        this.controllers = Map.copyOf(selected);
++        this.uvAnimations = Map.copyOf(uv);
+         final Map<String, BedrockBonePattern> patterns = new HashMap<>();
+         for (final var controller : this.controllers.values()) {
+             for (final var rule : controller.partVisibility())
+@@ -93,15 +104,14 @@ public final class BedrockPlayerControllers {
+                 for (final var array : group) {
+                     final String[] values = new String[array.values().size()];
+                     for (int index = 0; index < values.length; index++) values[index] = this.value(molang, array.values().get(index)).getAsString();
+-                    arrays.put(array.name().replaceFirst("(?i)^array\\.", ""), values);
++                    final String name = array.name();
++                    arrays.put(name.regionMatches(true, 0, "array.", 0, 6) ? name.substring(6) : name, values);
+                 }
+             }
+             molang.binding("array", arrays);
+             final String geometry = this.value(molang, controller.geometryExpression()).getAsString();
+             final String material = controller.materialsMap().containsKey("*") ? this.value(molang, controller.materialsMap().get("*")).getAsString() : "entity_alphatest";
+-            final var nativeUv = controller.uvAnimation();
+-            final UvAnimation animation = this.uvAnimations.getOrDefault(reference.identifier(),
+-                    new UvAnimation(nativeUv.offsetU(), nativeUv.offsetV(), nativeUv.scaleU(), nativeUv.scaleV()));
++            final UvAnimation animation = this.uvAnimations.get(reference.identifier());
+             final Uv uv = new Uv(
+                     (float) this.value(molang, animation.offsetX()).getAsNumber(), (float) this.value(molang, animation.offsetY()).getAsNumber(),
+                     (float) this.value(molang, animation.scaleX()).getAsNumber(), (float) this.value(molang, animation.scaleY()).getAsNumber());
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 index 4922b46..d9d7ca6 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
@@ -429,19 +479,19 @@ index 5ddf747..2b4a386 100644
              return this.nativeMaterial(this.getTextureLocation(state));
          }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 023eab6..b72507e 100644
+index a46b849..9591ad4 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -34,7 +34,7 @@ import com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerAnimations;
- import com.viaversion.viafabricplus.bedrock.appearance.BedrockClassicOptions;
+@@ -35,7 +35,7 @@ import com.viaversion.viafabricplus.bedrock.appearance.BedrockClassicOptions;
  import com.viaversion.viafabricplus.bedrock.appearance.BedrockEmotePlayback;
  import com.viaversion.viafabricplus.bedrock.appearance.BedrockItemAnimation;
+ import com.viaversion.viafabricplus.bedrock.appearance.BedrockItemMetadata;
 -import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerControllers;
  import com.viaversion.viaversion.libs.gson.JsonArray;
  import com.viaversion.viaversion.libs.gson.JsonObject;
  import com.viaversion.viaversion.libs.gson.JsonParser;
-@@ -64,6 +64,8 @@ import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
+@@ -63,6 +63,8 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.minecraft.world.entity.EquipmentSlot;
  import net.raphimc.viabedrock.protocol.data.DataValues;
  import net.raphimc.viabedrock.protocol.model.SkinData;
@@ -450,7 +500,7 @@ index 023eab6..b72507e 100644
  
  import org.apache.logging.log4j.LogManager;
  import org.apache.logging.log4j.Logger;
-@@ -91,6 +93,8 @@ public final class BedrockPlayerSkins {
+@@ -90,6 +92,8 @@ public final class BedrockPlayerSkins {
      private static volatile EntityRendererProvider.Context rendererContext;
      private static volatile long rendererEpoch;
      private static FirstPersonFrame firstPersonFrame;
@@ -459,7 +509,7 @@ index 023eab6..b72507e 100644
  
      private BedrockPlayerSkins() {
      }
-@@ -265,7 +269,30 @@ public final class BedrockPlayerSkins {
+@@ -264,7 +268,30 @@ public final class BedrockPlayerSkins {
  
      public static AvatarRenderer<?> renderer(final UUID playerUuid) {
          final Appearance appearance = APPEARANCES.get(playerUuid);
@@ -491,7 +541,7 @@ index 023eab6..b72507e 100644
          if (appearance == null || geometry == null || rendererContext == null) {
              return null;
          }
-@@ -281,6 +308,157 @@ public final class BedrockPlayerSkins {
+@@ -280,6 +307,157 @@ public final class BedrockPlayerSkins {
          return appearance.renderer;
      }
  
@@ -649,7 +699,7 @@ index 023eab6..b72507e 100644
      private static Geometry geometry(final Appearance appearance, final boolean animated) {
          if (appearance == null) return null;
          if (appearance.geometry != null) return appearance.geometry;
-@@ -306,6 +484,7 @@ public final class BedrockPlayerSkins {
+@@ -305,6 +483,7 @@ public final class BedrockPlayerSkins {
      }
  
      private static BedrockActorAnimation.Playback actor(final Appearance appearance) {
@@ -657,7 +707,7 @@ index 023eab6..b72507e 100644
          return appearance == null ? null : appearance.animations.body();
      }
  
-@@ -432,7 +611,8 @@ public final class BedrockPlayerSkins {
+@@ -431,7 +610,8 @@ public final class BedrockPlayerSkins {
                  : BedrockFirstPersonCamera.Rotation.ZERO;
          final var scale = appearance.firstPersonActor.scale();
          final var nativeState = BedrockActorState.state(player.getUUID());
@@ -667,7 +717,7 @@ index 023eab6..b72507e 100644
          if (geometry != null && appearance.firstPersonModels == null) {
              final List<FirstPersonSurface> surfaces = new ArrayList<>();
              surfaces.add(new FirstPersonSurface(BedrockGeometry.animatedModel(geometry.model(), geometry.meshes()), appearance.bodyId));
-@@ -440,19 +620,81 @@ public final class BedrockPlayerSkins {
+@@ -439,19 +619,81 @@ public final class BedrockPlayerSkins {
                  surfaces.add(new FirstPersonSurface(BedrockGeometry.animatedModel(surface.geometry().model(), surface.geometry().meshes()), surface.texture()));
              appearance.firstPersonModels = List.copyOf(surfaces);
          }
@@ -752,7 +802,7 @@ index 023eab6..b72507e 100644
      /** Submits the actor once before Java's per-hand item transforms. */
      public static void submitFirstPersonActor(final PoseStack poses, final net.minecraft.client.renderer.SubmitNodeCollector collector,
                                                final int packedLight) {
-@@ -464,7 +706,8 @@ public final class BedrockPlayerSkins {
+@@ -463,7 +705,8 @@ public final class BedrockPlayerSkins {
              for (int index = 0; index < frame.surfaces.size(); index++) {
                  final var surface = frame.surfaces.get(index);
                  collector.order(index == 0 ? 0 : 1).submitModelPart(surface.model.model().root(), poses, surface.material(),
@@ -763,9 +813,9 @@ index 023eab6..b72507e 100644
          } finally {
              poses.popPose();
 @@ -574,6 +817,12 @@ public final class BedrockPlayerSkins {
-         queries.put("is_alive", entity.isAlive());
-         final var owner = BedrockActorState.lifetime(entity.getUUID());
-         queries.put("spellcolor", (BedrockActorAnimation.Query) _ -> BedrockActorState.spellColor(entity.getUUID(), owner));
+         final UUID actorId = entity.getUUID();
+         final var owner = BedrockActorState.lifetime(actorId);
+         queries.put("spellcolor", (BedrockActorAnimation.Query) _ -> BedrockActorState.spellColor(actorId, owner));
 +        final var nativeState = BedrockActorState.state(entity.getUUID());
 +        final Map<String, Object> properties = nativeState == null ? Map.of() : nativeState.properties();
 +        queries.put("mark_variant", nativeState == null ? 0 : nativeState.markVariant());
@@ -773,9 +823,9 @@ index 023eab6..b72507e 100644
 +        queries.put("property", (BedrockActorAnimation.Query) args -> args.isEmpty() ? 0 : properties.getOrDefault(String.valueOf(args.getFirst()), 0));
 +        queries.put("has_property", (BedrockActorAnimation.Query) args -> !args.isEmpty() && properties.containsKey(String.valueOf(args.getFirst())));
          queries.put("is_on_ground", entity.onGround());
-         queries.put("is_in_water", (BedrockActorAnimation.Query) _ -> entity.isInWater());
-         queries.put("ground_speed", (BedrockActorAnimation.Query) _ -> BedrockParticleQueries.groundSpeed(entity.getDeltaMovement()));
-@@ -588,6 +837,7 @@ public final class BedrockPlayerSkins {
+         // Cached actor scopes must retain frame values rather than their weakly keyed avatar.
+         queries.put("is_in_water", entity.isInWater());
+@@ -589,6 +838,7 @@ public final class BedrockPlayerSkins {
          queries.put("blocking", BedrockActorState.isBlocking(entity.getUUID(), entity.isBlocking()));
          queries.put("shield_blocking_bob", BedrockActorState.shieldBlockingBob(entity.getUUID(), partialTick));
          queries.put("target_x_rotation", state.xRot);
@@ -783,8 +833,8 @@ index 023eab6..b72507e 100644
          queries.put("target_y_rotation", state.yRot);
          queries.put("body_y_rotation", state.bodyRot);
          queries.put("walk_distance", entity instanceof BedrockWalkingAnimation.Provider walking
-@@ -833,6 +1083,8 @@ public final class BedrockPlayerSkins {
-         PLAYER_BY_TEXTURE.clear();
+@@ -823,6 +1073,8 @@ public final class BedrockPlayerSkins {
+         BedrockItemMetadata.clear();
          SKIN_ASSEMBLER.clear();
          skinConnection = null;
 +        cachedServerPacks = null;
@@ -792,7 +842,7 @@ index 023eab6..b72507e 100644
      }
  
      private static void release(final Appearance appearance) {
-@@ -845,6 +1097,7 @@ public final class BedrockPlayerSkins {
+@@ -835,6 +1087,7 @@ public final class BedrockPlayerSkins {
          for (final AnimatedSurface surface : appearance.surfaces) {
              textureManager.release(surface.texture());
          }
@@ -800,7 +850,7 @@ index 023eab6..b72507e 100644
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
-@@ -896,11 +1149,15 @@ public final class BedrockPlayerSkins {
+@@ -886,11 +1139,15 @@ public final class BedrockPlayerSkins {
                  3, geometryName(skin.skinResourcePatch(), "animated_128x128")),
                  skin.geometryData(), skin.skinData(), skin.animations());
          }
@@ -818,7 +868,7 @@ index 023eab6..b72507e 100644
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
              final BedrockGeometryModel model = models.stream().filter(value -> value.getIdentifier().equals(name)).findFirst()
                  .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
-@@ -1117,6 +1374,28 @@ public final class BedrockPlayerSkins {
+@@ -1107,6 +1364,28 @@ public final class BedrockPlayerSkins {
          private Map<String, BedrockBoneAnimation.Transform> previewPose = Map.of();
          private List<PreviewSurface> previewSurfaces;
          private long rendererEpoch;
@@ -914,10 +964,10 @@ index 0000000..fc750e1
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
 new file mode 100644
-index 0000000..578bd60
+index 0000000..1260a74
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,128 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -976,6 +1026,48 @@ index 0000000..578bd60
 +        assertTrue(controllers.select(1, Map.of("visible", true, "expected", 480), Map.of(), Map.of()).bodyVisible());
 +        assertFalse(controllers.select(2, Map.of("visible", false), Map.of(), Map.of()).bodyVisible());
 +    }
++
++    @Test
++    void resolvesOnlyDeclaredControllersWhenCreatingAnEquipmentScope() throws Exception {
++        final var entity = new BedrockEntityData("test:item", new BedrockEntityData.Scripts(List.of(), List.of(),
++                new BedrockEntityData.Scripts.Scale("1", "1", "1", "1"), List.of()),
++                List.of(new BedrockEntityData.RenderController("test:used", "")),
++                Map.of("default", "entity_alphatest"), Map.of(),
++                Map.of("default", "textures/item"), Map.of("default", "geometry.item"));
++        final var controller = new BedrockRenderController("test:used", Map.of("*", "Material.default"),
++                "Geometry.default", List.of("Texture.default"), List.of(), List.of(), List.of(), false, "1",
++                BedrockRenderController.UvAnimation.IDENTITY,
++                List.of(new BedrockRenderController.BoneVisibility("root", "1")));
++        final var definitions = new CountingControllers();
++        definitions.put(controller.identifier(), controller);
++        for (int index = 0; index < 2048; index++) definitions.put("test:unused_" + index, controller);
++        for (int lifetime = 0; lifetime < 12; lifetime++) {
++            final var scope = new BedrockPlayerControllers(entity, definitions);
++            final var selection = scope.select(0, Map.of(), Map.of(), Map.of());
++            assertEquals(1, selection.surfaces().size());
++            assertTrue(selection.surfaces().getFirst().visibility().getFirst().matches("root"));
++        }
++        assertEquals(12, definitions.lookups);
++        assertEquals(0, definitions.scans);
++    }
++
++    private static final class CountingControllers extends java.util.HashMap<String, BedrockRenderController> {
++        private int scans;
++        private int lookups;
++
++        @Override
++        public BedrockRenderController get(final Object key) {
++            this.lookups++;
++            return super.get(key);
++        }
++
++        @Override
++        public java.util.Set<Map.Entry<String, BedrockRenderController>> entrySet() {
++            this.scans++;
++            return super.entrySet();
++        }
++    }
++
 +
 +    private static BedrockPlayerControllers controllers(final boolean combined) {
 +        final var scripts = new BedrockEntityData.Scripts(List.of("v.show_hat = 0;"), List.of(

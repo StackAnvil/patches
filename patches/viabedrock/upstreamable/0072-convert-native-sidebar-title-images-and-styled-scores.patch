@@ -1,4 +1,4 @@
-From 89d0aea4760f39067c14924d3dddb52c8a3a4384 Mon Sep 17 00:00:00 2001
+From 84e0e211f101e3ca4d1d16ad4c8d7275248a3570 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 12:06:00 +0200
 Subject: [PATCH] feat(scoreboard): convert native sidebar title images and
@@ -20,24 +20,30 @@ and cannot safely serve the corrected item selection and worn renderer.
 
 Advance the conversion identity after adding cutout-plane back faces so
 existing disk caches cannot retain models with missing native geometry.
+
+Preserve the authored sidebar image box and transport source dimensions with keep_ratio. Fit and center the fallback image inside that box unless the pack explicitly disables aspect preservation.
+
+Bedrock 1.26.51.1 enables keep_ratio by default. Its image loader selects flag 8 when the property is absent, and its draw path fits the source aspect inside the destination. The captured CubeCraft logo is 360 by 94 pixels inside a 66 by 21 box; its fitted height is about 17.23 units.
+
+Tests cover default aspect preservation, explicit stretching, metadata dimensions, and transparent fallback padding.
 ---
  .../api/model/entity/PlayerEntity.java        |   2 +-
  .../model/scoreboard/ScoreboardObjective.java |  22 +-
- .../definition/ScoreboardUiDefinitions.java   | 427 ++++++++++++++++++
+ .../definition/ScoreboardUiDefinitions.java   | 430 ++++++++++++++++++
  .../definition/TextFormattingDefinitions.java | 109 +++++
  .../http/ConvertedResourcePackCache.java      |  22 +-
  .../raphimc/viabedrock/api/util/TextUtil.java |  30 +-
  .../protocol/packet/HudPackets.java           |  38 +-
  .../rewriter/ResourcePackRewriter.java        |   2 +
- .../ScoreboardUiResourceRewriter.java         | 120 +++++
+ .../ScoreboardUiResourceRewriter.java         | 126 +++++
  .../protocol/storage/ResourcePackStorage.java |  12 +
  .../ScoreboardPresentationTest.java           |  72 +++
- .../ScoreboardUiDefinitionsTest.java          | 330 ++++++++++++++
+ .../ScoreboardUiDefinitionsTest.java          | 353 ++++++++++++++
  .../TextFormattingDefinitionsTest.java        | 119 +++++
  .../http/ConvertedResourcePackCacheTest.java  |  32 ++
  .../api/util/TextPaletteFormattingTest.java   |  39 ++
  .../protocol/packet/HudPacketsTest.java       |  39 ++
- 16 files changed, 1395 insertions(+), 20 deletions(-)
+ 16 files changed, 1427 insertions(+), 20 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java
@@ -120,10 +126,10 @@ index 34b0825b5..cd527ea39 100644
      private void removeEntry0(final UserConnection user, final ScoreboardEntry entry) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
 new file mode 100644
-index 000000000..e0790543f
+index 000000000..acd07aa23
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
-@@ -0,0 +1,427 @@
+@@ -0,0 +1,430 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -411,8 +417,11 @@ index 000000000..e0790543f
 +            if (image == null || image.getImage().getWidth() > 4096 || image.getImage().getHeight() > 4096) {
 +                return null;
 +            }
-+            final String hash = hash(title + "\n" + path + "\n" + Arrays.toString(size) + Arrays.toString(offset) + rowHeight + background);
-+            return new SidebarImage(title, "viabedrock:scoreboard/" + hash, "viabedrock:textures/scoreboard/" + hash + ".png", size[0], size[1], offset[0], offset[1], rowHeight, fullPath, background);
++            final boolean keepRatio = !control.has("keep_ratio") || control.get("keep_ratio").getAsBoolean();
++            final int sourceWidth = image.getImage().getWidth();
++            final int sourceHeight = image.getImage().getHeight();
++            final String hash = hash(title + "\n" + path + "\n" + Arrays.toString(size) + Arrays.toString(offset) + rowHeight + background + keepRatio);
++            return new SidebarImage(title, "viabedrock:scoreboard/" + hash, "viabedrock:textures/scoreboard/" + hash + ".png", size[0], size[1], offset[0], offset[1], rowHeight, fullPath, background, sourceWidth, sourceHeight, keepRatio);
 +        }
 +        return null;
 +    }
@@ -547,7 +556,7 @@ index 000000000..e0790543f
 +    public record PanelBackground(String sourcePath, float alpha, int baseWidth, int baseHeight, int slice, int paddingX, int paddingY, int rowOffsetX, int rowOffsetY) {
 +    }
 +
-+    public record SidebarImage(String match, String font, String texture, int width, int height, int offsetX, int offsetY, int rowHeight, String sourcePath, PanelBackground background) {
++    public record SidebarImage(String match, String font, String texture, int width, int height, int offsetX, int offsetY, int rowHeight, String sourcePath, PanelBackground background, int sourceWidth, int sourceHeight, boolean keepRatio) {
 +    }
 +
 +}
@@ -667,7 +676,7 @@ index 000000000..72539af5b
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index e52363bde..830a3f1eb 100644
+index 068fcc97d..fe3125938 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -53,11 +53,12 @@ import java.util.logging.Level;
@@ -677,7 +686,7 @@ index e52363bde..830a3f1eb 100644
 -    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-and-offsets-8";
 +    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-and-offsets-11";
      // Advance when the set or format of emitted resources changes independently of converter profiles.
-     private static final int RESOURCE_FORMAT_VERSION = 5;
+     private static final int RESOURCE_FORMAT_VERSION = 6;
  
      private final Path directory;
 +    private final String conversionVersion;
@@ -910,10 +919,10 @@ index aa15ee75f..245bb4494 100644
          REWRITERS.add(new CustomAttachableResourceRewriter());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java
 new file mode 100644
-index 000000000..e93d0be1b
+index 000000000..27103fd33
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,126 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -970,7 +979,10 @@ index 000000000..e93d0be1b
 +                final BufferedImage stretched = new BufferedImage(image.width(), image.height(), BufferedImage.TYPE_INT_ARGB);
 +                final var graphics = stretched.createGraphics();
 +                try {
-+                    graphics.drawImage(original, 0, 0, image.width(), image.height(), null);
++                    final float scale = Math.min((float) image.width() / image.sourceWidth(), (float) image.height() / image.sourceHeight());
++                    final int width = image.keepRatio() ? Math.round(image.sourceWidth() * scale) : image.width();
++                    final int height = image.keepRatio() ? Math.round(image.sourceHeight() * scale) : image.height();
++                    graphics.drawImage(original, (image.width() - width) / 2, (image.height() - height) / 2, width, height, null);
 +                } finally {
 +                    graphics.dispose();
 +                }
@@ -994,6 +1006,9 @@ index 000000000..e93d0be1b
 +                entry.addProperty("texture", image.texture());
 +                entry.addProperty("width", image.width());
 +                entry.addProperty("height", image.height());
++                entry.addProperty("source_width", image.sourceWidth());
++                entry.addProperty("source_height", image.sourceHeight());
++                entry.addProperty("keep_ratio", image.keepRatio());
 +                entry.addProperty("row_height", image.rowHeight());
 +                entry.addProperty("offset_x", image.offsetX());
 +                entry.addProperty("offset_y", image.offsetY());
@@ -1151,10 +1166,10 @@ index 000000000..9d0d60d14
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java
 new file mode 100644
-index 000000000..6bb9b0c8c
+index 000000000..0a21d9064
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java
-@@ -0,0 +1,330 @@
+@@ -0,0 +1,353 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1212,6 +1227,29 @@ index 000000000..6bb9b0c8c
 +        assertTrue(output.contains("assets/viabedrock/font/" + definition.font().substring(11) + ".json"));
 +        assertNotEquals(storage.getScoreboardUi().titleComponent("sample.title", "fallback"), storage.getScoreboardUi().titleComponent("ordinary", "fallback"));
 +        assertThrows(UnsupportedOperationException.class, () -> storage.getScoreboardUi().images().clear());
++    }
++
++    @Test
++    void imageRatioDefaultsToNativeFitAndExplicitFalsePreservesAuthoredStretching() {
++        final JsonObject ui = panel("test", "textures/ui/sample", 66, 21);
++        for (final boolean keepRatio : new boolean[]{true, false}) {
++            if (!keepRatio) {
++                image(ui).addProperty("keep_ratio", false);
++            }
++            final var storage = new ResourcePackStorage(List.of(pack(ui, 0xFFFF8844)));
++            final var image = storage.getScoreboardUi().image("test");
++            assertEquals(keepRatio, image.keepRatio());
++            assertEquals(8, image.sourceWidth());
++            assertEquals(2, image.sourceHeight());
++            final var output = ScoreboardUiResourceRewriter.convert(storage);
++            final var metadata = output.getJson("assets/viabedrock/scoreboard_ui.json").getAsJsonArray("images").get(0).getAsJsonObject();
++            assertEquals(8, metadata.get("source_width").getAsInt());
++            assertEquals(2, metadata.get("source_height").getAsInt());
++            assertEquals(keepRatio, metadata.get("keep_ratio").getAsBoolean());
++            final var fallback = output.getImage("assets/viabedrock/" + image.texture().substring(11).replace(".png", "_font.png")).getImage();
++            assertEquals(keepRatio ? 0 : 0xFFFF8844, fallback.getRGB(33, 0));
++            assertEquals(0xFFFF8844, fallback.getRGB(33, 10));
++        }
 +    }
 +
 +    @Test

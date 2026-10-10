@@ -1,4 +1,4 @@
-From 0b7984b2446dbccf20fa7dd9cfda4e0c9d76dd6f Mon Sep 17 00:00:00 2001
+From 6b842af5214bbd1d92f33931fe57fe38386e0537 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 12:29:04 +0200
 Subject: [PATCH] feat(scoreboard): render native sidebar title images
@@ -6,15 +6,19 @@ Subject: [PATCH] feat(scoreboard): render native sidebar title images
 Load bounded protocol 2193 sidebar metadata from the accepted converted server resource pack. Match the exact dedicated title font and glyph before replacing the Java sidebar. Render the authored image dimensions and row height while preserving score order, styled entry components and number format. CubeCraft 1.26.51.1 declares a 66 by 21 title image and 10-pixel rows; its 360 by 94 source texture intentionally stretches to that UI size. Reload snapshots reject stale completions and resources from another pack, and disconnect clears prior server state. Tests cover metadata acceptance, identity, dimensions and layout.
 
 Render the declared static sidebar panel background using its original texture, alpha, nine-slice border, content padding and row offsets. Require that the background texture comes from the same accepted server pack as the title metadata. Preserve native corners rather than replacing the frame with two Java rectangles. The saved CubeCraft pack exercises all supported fields; bounded metadata and nine-slice layout tests pass.
+
+Read source image dimensions and the authored keep_ratio setting from converted sidebar metadata. Fit and center the image inside its existing header box instead of stretching the texture. Keep explicit false as authored stretching.
+
+Bedrock 1.26.51.1 defaults keep_ratio to true. A captured 360 by 94 CubeCraft logo fits to about 66 by 17.23 units inside its 66 by 21 header. Tests cover that fit, explicit stretching, layout stability, and malformed metadata.
 ---
  .../MixinBedrockRenderingConnection.java      |   2 +
  .../MixinBedrockRenderingResources.java       |   2 +
  .../render/MixinBedrockScoreboardSidebar.java |  34 +++
- .../render/hud/BedrockScoreboardImages.java   | 139 ++++++++++++
- .../render/hud/BedrockScoreboardRenderer.java | 110 ++++++++++
+ .../render/hud/BedrockScoreboardImages.java   | 146 +++++++++++
+ .../render/hud/BedrockScoreboardRenderer.java | 124 ++++++++++
  .../viafabricplus-bedrock.mixins.json         |   1 +
- .../hud/BedrockScoreboardImagesTest.java      | 205 ++++++++++++++++++
- 7 files changed, 493 insertions(+)
+ .../hud/BedrockScoreboardImagesTest.java      | 230 ++++++++++++++++++
+ 7 files changed, 539 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockScoreboardSidebar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImages.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardRenderer.java
@@ -101,10 +105,10 @@ index 0000000..dd4008a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImages.java
 new file mode 100644
-index 0000000..bbb0153
+index 0000000..d87bba1
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImages.java
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,146 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -217,10 +221,17 @@ index 0000000..bbb0153
 +                background = null;
 +            }
 +            final Image definition = new Image(font, Identifier.parse(textureName), integer(image.get("width"), 1, 1024),
-+                integer(image.get("height"), 1, 1024), integer(image.get("offset_x"), -1024, 1024), integer(image.get("offset_y"), -1024, 1024), integer(image.get("row_height"), 1, 64), background);
++                integer(image.get("height"), 1, 1024), integer(image.get("offset_x"), -1024, 1024), integer(image.get("offset_y"), -1024, 1024), integer(image.get("row_height"), 1, 64), background,
++                integer(image.get("source_width"), 1, 4096), integer(image.get("source_height"), 1, 4096), bool(image.get("keep_ratio")));
 +            if (images.putIfAbsent(font, definition) != null) throw new IllegalArgumentException("Duplicate scoreboard image font");
 +        }
 +        return Map.copyOf(images);
++    }
++
++    private static boolean bool(final JsonElement value) {
++        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean())
++            throw new IllegalArgumentException("Expected scoreboard image boolean");
++        return value.getAsBoolean();
 +    }
 +
 +    private static int integer(final JsonElement value, final int min, final int max) {
@@ -241,15 +252,15 @@ index 0000000..bbb0153
 +    public record Background(Identifier texture, float alpha, int baseWidth, int baseHeight, int slice, int paddingX, int paddingY, int rowOffsetX, int rowOffsetY) {
 +    }
 +
-+    public record Image(Identifier font, Identifier texture, int width, int height, int offsetX, int offsetY, int rowHeight, Background background) {
++    public record Image(Identifier font, Identifier texture, int width, int height, int offsetX, int offsetY, int rowHeight, Background background, int sourceWidth, int sourceHeight, boolean keepRatio) {
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardRenderer.java
 new file mode 100644
-index 0000000..e576185
+index 0000000..ca33ec1
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardRenderer.java
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,124 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -306,7 +317,9 @@ index 0000000..e576185
 +                    background.baseWidth(), background.baseHeight(), color);
 +            }
 +        }
-+        graphics.blit(image.texture(), layout.imageX, layout.imageY, layout.imageX + image.width(), layout.imageY + image.height(), 0, 1, 0, 1);
++        final ImageBounds imageBounds = imageBounds(layout, image);
++        graphics.blit(image.texture(), Math.round(imageBounds.left), Math.round(imageBounds.top),
++            Math.round(imageBounds.right), Math.round(imageBounds.bottom), 0, 1, 0, 1);
 +        for (int i = 0; i < entries.size(); i++) {
 +            final var entry = entries.get(i);
 +            final int y = layout.rowTop + i * image.rowHeight();
@@ -331,6 +344,18 @@ index 0000000..e576185
 +            left + (width - image.width()) / 2 + image.offsetX(), origin + image.offsetY(),
 +            left + (background == null ? 0 : background.rowOffsetX()), left - paddingX / 2, backgroundTop,
 +            left + width + paddingX - paddingX / 2, bottom + paddingY - paddingY / 2);
++    }
++
++    static ImageBounds imageBounds(final Layout layout, final BedrockScoreboardImages.Image image) {
++        final float scale = Math.min((float) image.width() / image.sourceWidth(), (float) image.height() / image.sourceHeight());
++        final float width = image.keepRatio() ? image.sourceWidth() * scale : image.width();
++        final float height = image.keepRatio() ? image.sourceHeight() * scale : image.height();
++        final float x = layout.imageX + (image.width() - width) / 2;
++        final float y = layout.imageY + (image.height() - height) / 2;
++        return new ImageBounds(x, y, x + width, y + height);
++    }
++
++    record ImageBounds(float left, float top, float right, float bottom) {
 +    }
 +
 +    static List<Quad> slices(final Layout layout, final BedrockScoreboardImages.Background background) {
@@ -374,10 +399,10 @@ index 7f71593..0f0f5c4 100644
      "features.render.MixinBedrockRenderingSession",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImagesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImagesTest.java
 new file mode 100644
-index 0000000..e3493bb
+index 0000000..af40cf6
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImagesTest.java
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,230 @@
 +package com.viaversion.viafabricplus.bedrock.render.hud;
 +
 +import com.viaversion.viaversion.libs.gson.JsonArray;
@@ -462,6 +487,9 @@ index 0000000..e3493bb
 +        image.addProperty("height", 0);
 +        assertThrows(IllegalArgumentException.class, () -> BedrockScoreboardImages.parse(metadata));
 +        image.addProperty("height", 21);
++        image.addProperty("source_width", 360);
++        image.addProperty("source_height", 94);
++        image.addProperty("keep_ratio", true);
 +        metadata.getAsJsonArray("images").add(image.deepCopy());
 +        assertThrows(IllegalArgumentException.class, () -> BedrockScoreboardImages.parse(metadata));
 +    }
@@ -483,9 +511,28 @@ index 0000000..e3493bb
 +    }
 +
 +    @Test
++    void rectangularImagesFitInsideTheAuthoredHeaderUnlessRatioIsExplicitlyDisabled() {
++        final var metadata = metadata();
++        final var definition = metadata.getAsJsonArray("images").get(0).getAsJsonObject();
++        for (final boolean keepRatio : new boolean[]{true, false}) {
++            definition.addProperty("keep_ratio", keepRatio);
++            final var image = BedrockScoreboardImages.parse(metadata).get(FONT);
++            final var layout = BedrockScoreboardRenderer.layout(640, 347, 100, 8, image);
++            final var bounds = BedrockScoreboardRenderer.imageBounds(layout, image);
++            assertEquals(image.width(), bounds.right() - bounds.left(), .00001F);
++            assertEquals(keepRatio ? 17.233333F : 21F, bounds.bottom() - bounds.top(), .00002F);
++            assertEquals(layout.imageY() + (keepRatio ? 1.883333F : 0), bounds.top(), .00002F);
++            assertTrue(bounds.top() >= layout.headerTop());
++            assertTrue(bounds.bottom() <= layout.rowTop());
++        }
++        definition.addProperty("keep_ratio", "false");
++        assertThrows(IllegalArgumentException.class, () -> BedrockScoreboardImages.parse(metadata));
++    }
++
++    @Test
 +    void positiveAndNegativeImageOffsetsRemainInsideTheHeaderBudget() {
 +        for (int y : new int[]{-20, -1, 0, 1, 20}) {
-+            final var image = new BedrockScoreboardImages.Image(FONT, TEXTURE, 66, 21, 4, y, 10, null);
++            final var image = new BedrockScoreboardImages.Image(FONT, TEXTURE, 66, 21, 4, y, 10, null, 360, 94, true);
 +            final var layout = BedrockScoreboardRenderer.layout(640, 347, 100, 8, image);
 +            assertTrue(layout.imageY() >= layout.headerTop());
 +            assertTrue(layout.imageY() + image.height() <= layout.rowTop());
@@ -555,6 +602,9 @@ index 0000000..e3493bb
 +        image.addProperty("texture", TEXTURE.toString());
 +        image.addProperty("width", 66);
 +        image.addProperty("height", 21);
++        image.addProperty("source_width", 360);
++        image.addProperty("source_height", 94);
++        image.addProperty("keep_ratio", true);
 +        image.addProperty("row_height", 10);
 +        image.addProperty("offset_x", 0);
 +        image.addProperty("offset_y", 0);

@@ -1,4 +1,4 @@
-From 9066fa4606c02b9e6a383a4c374bc0cf150960fc Mon Sep 17 00:00:00 2001
+From a0fbed1b21f9627b48065dcf19b37a5c6b809708 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:56:50 +0200
 Subject: [PATCH] feat(entities): evaluate custom actors with shared animation
@@ -85,13 +85,15 @@ The pinned 1.26.51.1 resources produce position (13.5,-10,12) and rotation
 (95,-45,115), with the accepted controller showing an empty right arm and
 hiding it while holding a compass. Live GPU rendering remains a separate
 verification step.
+
+Keep weak resource-cache locks limited to lookup and publication. Parse a missing generation outside the lock so equipment preparation cannot block rendering an already prepared actor generation.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   5 +
- .../appearance/BedrockActorAnimation.java     | 354 ++++++++++++++++--
+ .../appearance/BedrockActorAnimation.java     | 358 ++++++++++++++++--
  .../appearance/BedrockResourceLibrary.java    |   8 +
  .../bedrock/render/BedrockActorFrame.java     |  53 +++
  .../bedrock/render/BedrockActorState.java     |  16 +-
- .../render/BedrockActorUvAnimation.java       |  21 ++
+ .../render/BedrockActorUvAnimation.java       |  21 +
  .../bedrock/render/BedrockAnimatedModel.java  |  24 +-
  .../bedrock/render/BedrockEntityRenderer.java | 181 ++++++++-
  .../render/BedrockFirstPersonInput.java       |   2 +
@@ -101,9 +103,9 @@ verification step.
  .../BedrockAnimationCommandsTest.java         | 180 +++++++++
  .../BedrockServerActorResourcesTest.java      | 140 +++++++
  .../BedrockServerEntityAnimationTest.java     | 200 ++++++++++
- .../render/BedrockActorUvAnimationTest.java   |  63 ++++
+ .../render/BedrockActorUvAnimationTest.java   |  63 +++
  .../render/BedrockCustomActorModelTest.java   |  57 +++
- 17 files changed, 1303 insertions(+), 49 deletions(-)
+ 17 files changed, 1307 insertions(+), 49 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorFrame.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeAnimationPayload.java
@@ -137,10 +139,10 @@ index eeba5f9..b33ea1c 100644
          ClientPlayNetworking.registerGlobalReceiver(NativeBlockIdentifiersPayload.TYPE,
                  (payload, context) -> BedrockNativeBlocks.accept(payload.message()));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-index 01d7636..5b92013 100644
+index 01d7636..89c97d1 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-@@ -7,19 +7,104 @@ package com.viaversion.viafabricplus.bedrock.appearance;
+@@ -7,19 +7,108 @@ package com.viaversion.viafabricplus.bedrock.appearance;
  
  import com.google.gson.JsonElement;
  import com.google.gson.JsonObject;
@@ -170,9 +172,11 @@ index 01d7636..5b92013 100644
 +                                   BedrockResourceLibrary effects) {
 +    }
 +
-+    private static synchronized ServerResources serverResources(final ResourcePackStorage packs) throws IOException {
-+        final ServerResources cached = SERVER_RESOURCES.get(packs);
-+        if (cached != null) return cached;
++    private static ServerResources serverResources(final ResourcePackStorage packs) throws IOException {
++        synchronized (SERVER_RESOURCES) {
++            final ServerResources cached = SERVER_RESOURCES.get(packs);
++            if (cached != null) return cached;
++        }
 +        final BedrockResourceLibrary builtin = BedrockBuiltinAssets.load().library();
 +        final ServerResources inherited = resources(builtin);
 +        final Map<String, JsonObject> animations = new LinkedHashMap<>(inherited.animations());
@@ -198,8 +202,10 @@ index 01d7636..5b92013 100644
 +        }
 +        final ServerResources resources = new ServerResources(Map.copyOf(animations), Map.copyOf(controllers),
 +                BedrockResourceLibrary.serverActors(builtin, packs));
-+        SERVER_RESOURCES.put(packs, resources);
-+        return resources;
++        synchronized (SERVER_RESOURCES) {
++            final ServerResources existing = SERVER_RESOURCES.putIfAbsent(packs, resources);
++            return existing == null ? resources : existing;
++        }
 +    }
 +
 +    private static ServerResources resources(final BedrockResourceLibrary library) throws IOException {
@@ -245,7 +251,7 @@ index 01d7636..5b92013 100644
      @FunctionalInterface
      public interface Query {
          Object evaluate(List<Object> arguments);
-@@ -51,6 +136,8 @@ public final class BedrockActorAnimation {
+@@ -51,6 +140,8 @@ public final class BedrockActorAnimation {
          }
      }
  
@@ -254,7 +260,7 @@ index 01d7636..5b92013 100644
      private final Map<String, String> aliases;
      private final Map<String, String> soundAliases;
      private final Map<String, String> particleAliases;
-@@ -68,6 +155,8 @@ public final class BedrockActorAnimation {
+@@ -68,6 +159,8 @@ public final class BedrockActorAnimation {
              final Map<String, ControllerResource> controllerDefinitions,
              final BedrockResourceLibrary resources) throws IOException {
          this.resources = resources;
@@ -263,7 +269,7 @@ index 01d7636..5b92013 100644
          final Map<String, JsonObject> renderControllers = new LinkedHashMap<>();
          if (resources != null)
              resources.definitions("render_controllers", "render_controllers")
-@@ -103,47 +192,48 @@ public final class BedrockActorAnimation {
+@@ -103,47 +196,48 @@ public final class BedrockActorAnimation {
              declaredAnimations.entrySet()
                      .forEach(entry -> aliases.put(entry.getKey(), entry.getValue().getAsString()));
          }
@@ -331,7 +337,7 @@ index 01d7636..5b92013 100644
      static BedrockActorAnimation read(
              final JsonObject entity,
              final Map<String, String> overrides,
-@@ -177,14 +267,14 @@ public final class BedrockActorAnimation {
+@@ -177,14 +271,14 @@ public final class BedrockActorAnimation {
              final Map<String, JsonObject> animations,
              final Map<String, ControllerResource> controllers,
              final Set<String> chain,
@@ -349,7 +355,7 @@ index 01d7636..5b92013 100644
              if (!this.controllers.containsKey(name)) {
                  final ControllerResource resource = controllers.get(name);
                  if (resource != null) {
-@@ -192,7 +282,7 @@ public final class BedrockActorAnimation {
+@@ -192,7 +286,7 @@ public final class BedrockActorAnimation {
                              Controller.read(resource.definition, resource.deferredEntry);
                      for (final State state : controller.states.values())
                          for (final Reference reference : state.animations)
@@ -358,7 +364,7 @@ index 01d7636..5b92013 100644
                      this.controllers.put(name, controller);
                  }
              }
-@@ -315,6 +405,10 @@ public final class BedrockActorAnimation {
+@@ -315,6 +409,10 @@ public final class BedrockActorAnimation {
      public final class Playback {
          private BedrockMolang molang = new BedrockMolang();
          private List<Active> active;
@@ -369,7 +375,7 @@ index 01d7636..5b92013 100644
          private StatePlayback queryState;
          private float previousTime = Float.NaN;
          private float delta;
-@@ -323,6 +417,139 @@ public final class BedrockActorAnimation {
+@@ -323,6 +421,139 @@ public final class BedrockActorAnimation {
          private boolean eventsEnabled;
          private Consumer<SoundCue> soundOutput;
          private Consumer<ParticleCue> particleOutput;
@@ -509,7 +515,7 @@ index 01d7636..5b92013 100644
  
          public Map<String, BedrockBoneAnimation.Transform> sample(
                  final float time, final Frame input) {
-@@ -347,6 +574,9 @@ public final class BedrockActorAnimation {
+@@ -347,6 +578,9 @@ public final class BedrockActorAnimation {
                  this.molang = new BedrockMolang();
                  this.active = null;
                  this.allocated = 0;
@@ -519,7 +525,7 @@ index 01d7636..5b92013 100644
              }
              this.delta = this.active == null ? 0 : Math.max(0, time - this.previousTime);
              this.previousTime = time;
-@@ -367,6 +597,7 @@ public final class BedrockActorAnimation {
+@@ -367,6 +601,7 @@ public final class BedrockActorAnimation {
                  this.run(initialize);
              }
              this.molang.variables(input.variables);
@@ -527,7 +533,7 @@ index 01d7636..5b92013 100644
              this.run(preAnimation);
              for (final var setup : input.parentSetup()) {
                  this.molang.context(setup.context);
-@@ -375,6 +606,8 @@ public final class BedrockActorAnimation {
+@@ -375,6 +610,8 @@ public final class BedrockActorAnimation {
              this.molang.context(input.context());
              final Map<String, BedrockBoneAnimation.Transform> result = new LinkedHashMap<>();
              for (final Active value : this.active) value.apply(time, 1, queries, result);
@@ -536,7 +542,7 @@ index 01d7636..5b92013 100644
              this.pose = Map.copyOf(result);
              return this.pose;
          }
-@@ -427,13 +660,13 @@ public final class BedrockActorAnimation {
+@@ -427,13 +664,13 @@ public final class BedrockActorAnimation {
          private List<Active> create(final List<Reference> references) {
              final List<Active> values = new ArrayList<>();
              for (final Reference reference : references) {
@@ -552,7 +558,7 @@ index 01d7636..5b92013 100644
                                  animations.get(name),
                                  controllers.get(name)));
              }
-@@ -451,7 +684,7 @@ public final class BedrockActorAnimation {
+@@ -451,7 +688,7 @@ public final class BedrockActorAnimation {
              private final Controller controller;
              private final Map<String, StatePlayback> states = new HashMap<>();
              private BedrockBoneAnimation.Playback playback;
@@ -561,7 +567,7 @@ index 01d7636..5b92013 100644
              private float elapsed, blendTime;
  
              private Active(
-@@ -481,7 +714,7 @@ public final class BedrockActorAnimation {
+@@ -481,7 +718,7 @@ public final class BedrockActorAnimation {
  
              private StatePlayback state(final String name) {
                  return this.states.computeIfAbsent(
@@ -570,7 +576,7 @@ index 01d7636..5b92013 100644
              }
  
              private void apply(
-@@ -507,7 +740,24 @@ public final class BedrockActorAnimation {
+@@ -507,7 +744,24 @@ public final class BedrockActorAnimation {
                  try {
                      final boolean first = this.current == null;
                      if (first) this.current = this.state(this.controller.initial);
@@ -596,7 +602,7 @@ index 01d7636..5b92013 100644
                          this.current.reset();
                          if (eventsEnabled) run(this.current.definition.entry);
                          entered = this.current;
-@@ -581,14 +831,45 @@ public final class BedrockActorAnimation {
+@@ -581,14 +835,45 @@ public final class BedrockActorAnimation {
          }
  
          private final class StatePlayback {
@@ -644,7 +650,7 @@ index 01d7636..5b92013 100644
              }
  
              private boolean allFinished() {
-@@ -619,9 +900,13 @@ public final class BedrockActorAnimation {
+@@ -619,9 +904,13 @@ public final class BedrockActorAnimation {
          }
      }
  
@@ -660,7 +666,7 @@ index 01d7636..5b92013 100644
  
      private record Point(float input, float output) {}
  
-@@ -656,6 +941,9 @@ public final class BedrockActorAnimation {
+@@ -656,6 +945,9 @@ public final class BedrockActorAnimation {
              List<Point> blend,
              boolean shortestPath) {}
  
@@ -670,7 +676,7 @@ index 01d7636..5b92013 100644
      private record ControllerResource(JsonObject definition, boolean deferredEntry) {}
  
      private record Controller(
-@@ -684,7 +972,7 @@ public final class BedrockActorAnimation {
+@@ -684,7 +976,7 @@ public final class BedrockActorAnimation {
                          transitions.add(
                                  new Transition(
                                          target.getKey(),
@@ -1243,10 +1249,10 @@ index 8998b94..6e99eea 100644
                                    final Predicate<String> selectedBones) {
          return root(geometry, player, Map.of(), null, null, selectedBones);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index cd47944..023eab6 100644
+index 7176ee7..a46b849 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -347,6 +347,7 @@ public final class BedrockPlayerSkins {
+@@ -346,6 +346,7 @@ public final class BedrockPlayerSkins {
              return emote;
          }
          if (actor == null) return Map.of();
@@ -1254,7 +1260,7 @@ index cd47944..023eab6 100644
          final Map<String, Float> variables = actorVariables(entity, state, false);
          final var pose = actor.sample(
                  (System.nanoTime() - appearance.started) / 1_000_000_000F,
-@@ -422,6 +423,7 @@ public final class BedrockPlayerSkins {
+@@ -421,6 +422,7 @@ public final class BedrockPlayerSkins {
                  new BedrockActorAnimation.Frame(queries, actorVariables(player, state, true), Map.of("is_first_person", 1)),
                  itemAnimation(player, items.mainHandItem, items.offHandItem), items.oldMainHandHeight,
                  items.mainHandHeight, items.oldOffHandHeight, items.offHandHeight, partialTick);
