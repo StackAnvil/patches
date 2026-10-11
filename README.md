@@ -80,6 +80,19 @@ Use `bun run stack status <project>` to see its pinned upstream commit and patch
 
 Use the [Quickemu platform guide](docs/platform-testing.md) for manual Windows and macOS launcher tests from Linux. Start with `bun run lab vm doctor`. The VM commands provide private installation media, guest input, screenshots, artifact transfer, and graceful shutdown.
 
+## Showcase videos
+
+The `video/` submodule contains the Remotion editor for recorded gameplay showcases. It supports narration, aligned captions, overlays, transitions, original music, and YouTube exports.
+
+```bash
+git submodule update --init video
+cd video
+bun install --frozen-lockfile
+bun run dev
+```
+
+Read the [video production guide](video/README.md) for recording and export commands. Gameplay uses the private capture lab. Raw recordings, account data, and licensed pack exports remain private.
+
 ## Contribute a patch
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [patch workflow](docs/patch-workflow.md) for the edit and conflict workflow. The patch workflow also explains what StackAnvil takes from Paper's old scripts and current paperweight tooling. The common path is:
