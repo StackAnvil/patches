@@ -48,7 +48,9 @@ export async function targetIds(): Promise<string[]> {
 }
 
 export async function getSeries(id: string): Promise<Series> {
-  const series = JSON.parse(await readFile(join(root, "patches", id, "series.json"), "utf8")) as Series;
+  const series = JSON.parse(
+    await readFile(join(root, "patches", id, "series.json"), "utf8"),
+  ) as Series;
   const files = [
     ...series.setup.map((file) => join("setup", file)),
     ...series.upstreamable.map(({ file }) => join("upstreamable", file)),
@@ -58,11 +60,15 @@ export async function getSeries(id: string): Promise<Series> {
   for (const file of files) {
     if (!file.endsWith(".patch")) throw new Error(`Invalid patch name: ${file}`);
     const patch = await readFile(join(root, "patches", id, file), "utf8");
-    const upstreamable = series.upstreamable.find(({ file: name }) => file === join("upstreamable", name));
+    const upstreamable = series.upstreamable.find(
+      ({ file: name }) => file === join("upstreamable", name),
+    );
     if (upstreamable) {
       const message = parsePatchMessage(patch);
-      if (upstreamable.title !== message.title) throw new Error(`${file} subject differs from its title in ${id}/series.json`);
-      if (!message.description) throw new Error(`${file} needs a commit body describing the change`);
+      if (upstreamable.title !== message.title)
+        throw new Error(`${file} subject differs from its title in ${id}/series.json`);
+      if (!message.description)
+        throw new Error(`${file} needs a commit body describing the change`);
     }
   }
   for (const deferred of series.deferred) {

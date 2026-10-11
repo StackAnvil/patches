@@ -1,16 +1,26 @@
 import { createConnection } from "node:net";
 
 /** One connection per operation. QMP events can arrive between replies. */
-export async function withQmp<T>(path: string, operation: (command: QmpCommand) => Promise<T>, timeoutMs = 5000): Promise<T> {
+export async function withQmp<T>(
+  path: string,
+  operation: (command: QmpCommand) => Promise<T>,
+  timeoutMs = 5000,
+): Promise<T> {
   const socket = createConnection(path);
   socket.setEncoding("utf8");
   let buffer = "";
   let nextId = 0;
   let failure: Error | undefined;
-  const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  const pending = new Map<
+    number,
+    { resolve: (value: unknown) => void; reject: (error: Error) => void }
+  >();
   let greet!: () => void;
   let rejectGreeting!: (error: Error) => void;
-  const greeting = new Promise<void>((resolve, reject) => { greet = resolve; rejectGreeting = reject; });
+  const greeting = new Promise<void>((resolve, reject) => {
+    greet = resolve;
+    rejectGreeting = reject;
+  });
   const fail = (error: Error) => {
     failure = error;
     rejectGreeting(error);
@@ -23,44 +33,71 @@ export async function withQmp<T>(path: string, operation: (command: QmpCommand) 
   socket.on("end", () => fail(new Error("QMP disconnected.")));
   socket.on("data", (data) => {
     buffer += data;
-    if (buffer.length > 1024 * 1024) { fail(new Error("QMP reply exceeds the size limit.")); return; }
+    if (buffer.length > 1024 * 1024) {
+      fail(new Error("QMP reply exceeds the size limit."));
+      return;
+    }
     let newline: number;
     while ((newline = buffer.indexOf("\n")) >= 0) {
       const line = buffer.slice(0, newline).trim();
       buffer = buffer.slice(newline + 1);
       if (!line) continue;
       try {
-        const message = JSON.parse(line) as { QMP?: unknown; id?: number; return?: unknown; error?: { desc?: string } };
+        const message = JSON.parse(line) as {
+          QMP?: unknown;
+          id?: number;
+          return?: unknown;
+          error?: { desc?: string };
+        };
         if (message.QMP) greet();
         if (message.id === undefined) continue;
         const request = pending.get(message.id);
         if (!request) continue;
         pending.delete(message.id);
-        if (message.error) request.reject(new Error(message.error.desc ?? "QMP rejected the command."));
+        if (message.error)
+          request.reject(new Error(message.error.desc ?? "QMP rejected the command."));
         else request.resolve(message.return);
-      } catch (cause) { fail(new Error("Invalid QMP reply.", { cause })); return; }
+      } catch (cause) {
+        fail(new Error("Invalid QMP reply.", { cause }));
+        return;
+      }
     }
   });
-  const command: QmpCommand = (execute, args) => new Promise((resolve, reject) => {
-    if (failure) { reject(failure); return; }
-    const id = ++nextId;
-    pending.set(id, { resolve, reject });
-    socket.write(`${JSON.stringify({ execute, arguments: args, id })}\n`);
-  });
-  const deadline = setTimeout(() => fail(new Error("QMP operation timed out. The guest was left running.")), timeoutMs);
+  const command: QmpCommand = (execute, args) =>
+    new Promise((resolve, reject) => {
+      if (failure) {
+        reject(failure);
+        return;
+      }
+      const id = ++nextId;
+      pending.set(id, { resolve, reject });
+      socket.write(`${JSON.stringify({ execute, arguments: args, id })}\n`);
+    });
+  const deadline = setTimeout(
+    () => fail(new Error("QMP operation timed out. The guest was left running.")),
+    timeoutMs,
+  );
   try {
     await greeting;
     await command("qmp_capabilities");
     return await operation(command);
-  } finally { clearTimeout(deadline); socket.destroy(); }
+  } finally {
+    clearTimeout(deadline);
+    socket.destroy();
+  }
 }
 
 export type QmpCommand = (execute: string, args?: Record<string, unknown>) => Promise<unknown>;
 
-export function withNamedQmp<T>(path: string, name: string, operation: (command: QmpCommand) => Promise<T>): Promise<T> {
+export function withNamedQmp<T>(
+  path: string,
+  name: string,
+  operation: (command: QmpCommand) => Promise<T>,
+): Promise<T> {
   return withQmp(path, async (command) => {
-    const identity = await command("query-name") as { name?: string };
-    if (identity.name !== name) throw new Error("QMP VM identity does not match this lab profile. No guest action was sent.");
+    const identity = (await command("query-name")) as { name?: string };
+    if (identity.name !== name)
+      throw new Error("QMP VM identity does not match this lab profile. No guest action was sent.");
     return operation(command);
   });
 }
@@ -77,7 +114,8 @@ export function pointerEvents(x: number, y: number, button: string): Record<stri
   if (![x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) {
     throw new Error("Pointer coordinates must be fractions from 0 to 1.");
   }
-  if (button !== "left" && button !== "right" && button !== "middle") throw new Error("Use left, right, or middle.");
+  if (button !== "left" && button !== "right" && button !== "middle")
+    throw new Error("Use left, right, or middle.");
   return [
     { type: "abs", data: { axis: "x", value: Math.round(x * 32767) } },
     { type: "abs", data: { axis: "y", value: Math.round(y * 32767) } },
@@ -85,7 +123,13 @@ export function pointerEvents(x: number, y: number, button: string): Record<stri
   ];
 }
 
-export async function clickPointer(command: QmpCommand, x: number, y: number, button: string, holdMs = 100): Promise<void> {
+export async function clickPointer(
+  command: QmpCommand,
+  x: number,
+  y: number,
+  button: string,
+  holdMs = 100,
+): Promise<void> {
   validateHoldMs(holdMs);
   const events = pointerEvents(x, y, button);
   await command("input-send-event", { events: events.slice(0, 2) });

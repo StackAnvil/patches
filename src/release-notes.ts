@@ -6,11 +6,19 @@ import { parsePatchMessage } from "./patch-message.ts";
 import { releaseDownloadSection } from "./release-downloads.ts";
 
 const repository = process.env.GITHUB_REPOSITORY ?? "StackAnvil/patches";
-const commit = process.env.GITHUB_SHA ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const commit =
+  process.env.GITHUB_SHA ??
+  execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 const groupTitles = { setup: "Setup", upstreamable: "Upstreamable", deferred: "Deferred" } as const;
-const tag = process.argv[2] ?? (process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME
-  : process.env.GITHUB_RUN_NUMBER ? `stack-v0.0.${process.env.GITHUB_RUN_NUMBER}` : undefined);
-if (!tag) throw new Error("Usage: bun src/release-notes.ts <release-tag> [release-assets-directory]");
+const tag =
+  process.argv[2] ??
+  (process.env.GITHUB_REF_TYPE === "tag"
+    ? process.env.GITHUB_REF_NAME
+    : process.env.GITHUB_RUN_NUMBER
+      ? `stack-v0.0.${process.env.GITHUB_RUN_NUMBER}`
+      : undefined);
+if (!tag)
+  throw new Error("Usage: bun src/release-notes.ts <release-tag> [release-assets-directory]");
 const assets = await readdir(process.argv[3] ?? join(root, "release"));
 
 function patchUrl(id: string, group: string, file: string): string {
@@ -24,38 +32,67 @@ async function patchTitle(id: string, group: string, file: string): Promise<stri
 }
 
 const lines = [
-  "# StackAnvil builds", "",
+  "# StackAnvil builds",
+  "",
   ...releaseDownloadSection(repository, tag, assets),
-  "The StackAnvil JARs contain experimental patch stacks. The ViaFabricPlus JAR is an unchanged, pinned upstream Jenkins build.", "",
-  "Setup patches prepare StackAnvil builds. Upstreamable patches can become our PRs. Deferred patches track work that another contributor already owns upstream.", "",
-  "## Play from Java Edition", "",
-  "### Bedrock client modpack", "",
-  "Import `StackAnvil-26.3.mrpack` into a launcher that supports Modrinth modpacks, such as Modrinth App, Prism Launcher, or ATLauncher. The pack contains this release's exact ViaFabricPlus and Bedrock add-on JARs. It selects Minecraft 26.3 with Fabric Loader 0.19.5. Sign in with your own Java Edition account.", "",
-  "### ViaProxy", "",
-  "Download the `ViaProxy-...-StackAnvil.jar` file. Run it beside your regular Java client, enter the Bedrock server address and version, and select Start. Join the address shown by ViaProxy from Java Edition. The JAR includes the patched ViaBedrock build; no client mods are needed.", "",
-  "### ViaFabricPlus + Bedrock add-on", "",
-  "**Bedrock add-on downloads:** [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus).", "",
-  "For Minecraft Java Edition 26.3 with Fabric Loader 0.19.5, install the `ViaFabricPlus-...jar` and `viafabricplus-bedrock-...-StackAnvil.jar` files from this release in the same client's mods folder. The ViaFabricPlus JAR is a copy of the pinned upstream Jenkins artifact. The add-on includes the patched ViaBedrock and CubeConverter libraries, so do not install those JARs as separate Fabric mods.", "",
-  "See the [player guide](https://stackanvil.pistonmaster.net/getting-started/) for connection and sign-in steps for both setups.", "",
-  "## Libraries for developers", "",
-  "The CubeConverter and ViaBedrock JARs are also available for projects that use those libraries. The [StackAnvil Maven repository](https://github.com/StackAnvil/maven) publishes the four StackAnvil builds under the matching release version.", "",
+  "The StackAnvil JARs contain experimental patch stacks. The ViaFabricPlus JAR is an unchanged, pinned upstream Jenkins build.",
+  "",
+  "Setup patches prepare StackAnvil builds. Upstreamable patches can become our PRs. Deferred patches track work that another contributor already owns upstream.",
+  "",
+  "## Play from Java Edition",
+  "",
+  "### Bedrock client modpack",
+  "",
+  "Import `StackAnvil-26.3.mrpack` into a launcher that supports Modrinth modpacks, such as Modrinth App, Prism Launcher, or ATLauncher. The pack contains this release's exact ViaFabricPlus and Bedrock add-on JARs. It selects Minecraft 26.3 with Fabric Loader 0.19.5. Sign in with your own Java Edition account.",
+  "",
+  "### ViaProxy",
+  "",
+  "Download the `ViaProxy-...-StackAnvil.jar` file. Run it beside your regular Java client, enter the Bedrock server address and version, and select Start. Join the address shown by ViaProxy from Java Edition. The JAR includes the patched ViaBedrock build; no client mods are needed.",
+  "",
+  "### ViaFabricPlus + Bedrock add-on",
+  "",
+  "**Bedrock add-on downloads:** [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus).",
+  "",
+  "For Minecraft Java Edition 26.3 with Fabric Loader 0.19.5, install the `ViaFabricPlus-...jar` and `viafabricplus-bedrock-...-StackAnvil.jar` files from this release in the same client's mods folder. The ViaFabricPlus JAR is a copy of the pinned upstream Jenkins artifact. The add-on includes the patched ViaBedrock and CubeConverter libraries, so do not install those JARs as separate Fabric mods.",
+  "",
+  "See the [player guide](https://stackanvil.pistonmaster.net/getting-started/) for connection and sign-in steps for both setups.",
+  "",
+  "## Libraries for developers",
+  "",
+  "The CubeConverter and ViaBedrock JARs are also available for projects that use those libraries. The [StackAnvil Maven repository](https://github.com/StackAnvil/maven) publishes the four StackAnvil builds under the matching release version.",
+  "",
 ];
-const viaFabricPlusPin = JSON.parse(await readFile(join(root, "viafabricplus.json"), "utf8")) as { build: number; commit: string; version: string };
-lines.push("## ViaFabricPlus", "", `- Upstream Jenkins build: [#${viaFabricPlusPin.build}](https://ci.viaversion.com/job/ViaFabricPlus/${viaFabricPlusPin.build}/)`,
+const viaFabricPlusPin = JSON.parse(await readFile(join(root, "viafabricplus.json"), "utf8")) as {
+  build: number;
+  commit: string;
+  version: string;
+};
+lines.push(
+  "## ViaFabricPlus",
+  "",
+  `- Upstream Jenkins build: [#${viaFabricPlusPin.build}](https://ci.viaversion.com/job/ViaFabricPlus/${viaFabricPlusPin.build}/)`,
   `- Upstream commit: [${viaFabricPlusPin.commit.slice(0, 12)}](https://github.com/ViaVersion/ViaFabricPlus/commit/${viaFabricPlusPin.commit})`,
-  `- Version: ${viaFabricPlusPin.version}`, "");
+  `- Version: ${viaFabricPlusPin.version}`,
+  "",
+);
 for (const id of await targetIds()) {
   const target = await getTarget(id);
   const series = await getSeries(id);
-  lines.push(`## ${id}`, "", `Upstream base: [${target.baseSha.slice(0, 12)}](https://github.com/${target.upstream}/commit/${target.baseSha})`, "");
+  lines.push(
+    `## ${id}`,
+    "",
+    `Upstream base: [${target.baseSha.slice(0, 12)}](https://github.com/${target.upstream}/commit/${target.baseSha})`,
+    "",
+  );
   for (const group of ["setup", "upstreamable", "deferred"] as const) {
-    const patches = group === "setup" ? series.setup.map((file) => ({ file })) : series[group];
+    const patches: readonly { file: string; title?: string; reason?: string }[] =
+      group === "setup" ? series.setup.map((file) => ({ file })) : series[group];
     if (!patches.length) continue;
     lines.push(`### ${groupTitles[group]}`, "");
     for (const patch of patches) {
-      const title = "title" in patch ? patch.title : await patchTitle(id, group, patch.file);
+      const title = patch.title ?? (await patchTitle(id, group, patch.file));
       lines.push(`- ${title} ([view patch](${patchUrl(id, group, patch.file)}))`);
-      if ("reason" in patch) lines.push(`  - Reason: ${patch.reason}`);
+      if (patch.reason !== undefined) lines.push(`  - Reason: ${patch.reason}`);
     }
     lines.push("");
   }

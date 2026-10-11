@@ -9,17 +9,33 @@ const archiveLimit = 48 * 1024 * 1024;
 const fileLimit = 32 * 1024 * 1024;
 const totalLimit = 256 * 1024 * 1024;
 const libraryDirectories = new Set([
-  "models", "animations", "animation_controllers", "render_controllers",
-  "entity", "attachables", "materials", "sounds", "particles", "texts", "textures",
+  "models",
+  "animations",
+  "animation_controllers",
+  "render_controllers",
+  "entity",
+  "attachables",
+  "materials",
+  "sounds",
+  "particles",
+  "texts",
+  "textures",
 ]);
 
 function validPath(name: string) {
-  return !/[\\:\0]/.test(name) && name.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+  return (
+    !/[\\:\0]/.test(name) &&
+    name.split("/").every((part) => part !== "" && part !== "." && part !== "..")
+  );
 }
 
 export function readBedrockArchive(data: Uint8Array): Map<string, Buffer> {
   const bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-  if (bytes.length < 16 || bytes.readBigUInt64LE(0) !== 0x267052a0b125277dn || bytes.readUInt32LE(12) !== 1) {
+  if (
+    bytes.length < 16 ||
+    bytes.readBigUInt64LE(0) !== 0x267052a0b125277dn ||
+    bytes.readUInt32LE(12) !== 1
+  ) {
     throw new Error("Invalid Bedrock archive header");
   }
   const count = bytes.readUInt32LE(8);
@@ -31,11 +47,19 @@ export function readBedrockArchive(data: Uint8Array): Map<string, Buffer> {
     const record = 16 + index * 256;
     const length = bytes[record]!;
     if (length === 0 || length > 247) throw new Error("Invalid Bedrock archive name");
-    const name = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(record + 1, record + 1 + length));
+    const name = new TextDecoder("utf-8", { fatal: true }).decode(
+      bytes.subarray(record + 1, record + 1 + length),
+    );
     const offset = bytes.readUInt32LE(record + 248);
     const size = bytes.readUInt32LE(record + 252);
     expanded += size;
-    if (!validPath(name) || result.has(name) || size > fileLimit || expanded > totalLimit || content + offset + size > bytes.length) {
+    if (
+      !validPath(name) ||
+      result.has(name) ||
+      size > fileLimit ||
+      expanded > totalLimit ||
+      content + offset + size > bytes.length
+    ) {
       throw new Error("Invalid Bedrock archive entry");
     }
     result.set(name, bytes.subarray(content + offset, content + offset + size));
@@ -95,7 +119,9 @@ export function assetZip(files: ReadonlyMap<string, Uint8Array>): Buffer {
 }
 
 async function* walk(root: string): AsyncGenerator<string> {
-  for (const entry of (await readdir(root, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name, "en"))) {
+  for (const entry of (await readdir(root, { withFileTypes: true })).sort((a, b) =>
+    a.name.localeCompare(b.name, "en"),
+  )) {
     const path = join(root, entry.name);
     if (entry.isSymbolicLink()) throw new Error("Bedrock assets contain a symbolic link");
     if (entry.isDirectory()) yield* walk(path);
@@ -104,11 +130,15 @@ async function* walk(root: string): AsyncGenerator<string> {
 }
 
 export async function bundleBedrockAssets(game: string, version: string, destination: string) {
-  if (!/^\d+\.\d+\.\d+\.\d+$/.test(version)) throw new Error("Expected a four-part Bedrock version");
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(version))
+    throw new Error("Expected a four-part Bedrock version");
   const protocolVersion = version.split(".").slice(0, 3).join(".");
   const source = join(game, "data", "resource_packs");
-  const latest = JSON.parse(await readFile(join(source, `vanilla_${protocolVersion}`, "manifest.json"), "utf8"));
-  if (latest.header.version.join(".") !== protocolVersion) throw new Error("Bedrock resource version mismatch");
+  const latest = JSON.parse(
+    await readFile(join(source, `vanilla_${protocolVersion}`, "manifest.json"), "utf8"),
+  );
+  if (latest.header.version.join(".") !== protocolVersion)
+    throw new Error("Bedrock resource version mismatch");
   const files = new Map<string, Buffer>();
   let expandedBytes = 0;
   for (const pack of (await readdir(source)).sort()) {
@@ -119,8 +149,16 @@ export async function bundleBedrockAssets(game: string, version: string, destina
       const archived = path.startsWith("__brarchive/") && path.endsWith(".brarchive");
       const logical = archived ? path.slice("__brarchive/".length, -".brarchive".length) : path;
       if (path.endsWith(".bol-orig")) continue;
-      if (pack !== "persona" && !(path === "manifest.json" || path === "sounds.json"
-        || libraryDirectories.has(logical.split("/")[0]!) && (archived || /\.(json|material|lang|fsb|ogg|wav|png|jpg|tga)$/.test(path)))) continue;
+      if (
+        pack !== "persona" &&
+        !(
+          path === "manifest.json" ||
+          path === "sounds.json" ||
+          (libraryDirectories.has(logical.split("/")[0]!) &&
+            (archived || /\.(json|material|lang|fsb|ogg|wav|png|jpg|tga)$/.test(path)))
+        )
+      )
+        continue;
       const saved = `${original}.bol-orig`;
       const stat = await lstat(saved).catch(() => null);
       if (stat?.isSymbolicLink()) throw new Error("Original Bedrock asset is a symbolic link");
@@ -133,16 +171,19 @@ export async function bundleBedrockAssets(game: string, version: string, destina
         if (!validPath(key)) throw new Error("Invalid Bedrock asset path");
         // UI definitions and font data have their own required, independently verified core bundle.
         // Ignore archive placeholders and unsupported source formats rather than publish empty assets.
-        if (pack !== "persona" && !/\.(json|material|lang|fsb|ogg|wav|png|jpg|tga)$/.test(name)) continue;
+        if (pack !== "persona" && !/\.(json|material|lang|fsb|ogg|wav|png|jpg|tga)$/.test(name))
+          continue;
         if (sourceBytes.length === 0) continue;
         // Native materials allow comments and trailing commas; Gson's object reader does not.
         const contents = name.endsWith(".material")
           ? Buffer.from(`${JSON.stringify(JSON5.parse(sourceBytes.toString("utf8")))}\n`)
           : sourceBytes;
         const previous = files.get(key);
-        if (previous && !previous.equals(contents)) throw new Error(`Conflicting Bedrock assets: ${key}`);
+        if (previous && !previous.equals(contents))
+          throw new Error(`Conflicting Bedrock assets: ${key}`);
         if (!previous) expandedBytes += contents.length;
-        if (expandedBytes > totalLimit || files.size >= 32768) throw new Error("Bedrock bundle exceeds limits");
+        if (expandedBytes > totalLimit || files.size >= 32768)
+          throw new Error("Bedrock bundle exceeds limits");
         files.set(key, contents);
       }
     }
@@ -162,21 +203,25 @@ export async function bundleBedrockAssets(game: string, version: string, destina
   }
   const definitions = join(game, "data", "definitions", "attachables");
   const definitionsStat = await lstat(definitions).catch(() => null);
-  if (definitionsStat?.isSymbolicLink()) throw new Error("Bedrock attachable definitions contain a symbolic link");
-  if (definitionsStat?.isDirectory()) for await (const original of walk(definitions)) {
-    const path = relative(definitions, original).replaceAll("\\", "/");
-    if (!path.endsWith(".json")) continue;
-    const bytes = await readFile(original);
-    if (bytes.length > fileLimit) throw new Error(`Bedrock asset exceeds file limit: ${path}`);
-    const identifier = attachableIdentifier(bytes);
-    if (!identifier || attachableIdentifiers.has(identifier)) continue;
-    const key = `library/vanilla_base/attachables/definitions/${path}`;
-    if (!validPath(key) || files.has(key)) throw new Error("Invalid built-in attachable definition path");
-    expandedBytes += bytes.length;
-    if (expandedBytes > totalLimit || files.size >= 32768) throw new Error("Bedrock bundle exceeds limits");
-    files.set(key, bytes);
-    attachableIdentifiers.add(identifier);
-  }
+  if (definitionsStat?.isSymbolicLink())
+    throw new Error("Bedrock attachable definitions contain a symbolic link");
+  if (definitionsStat?.isDirectory())
+    for await (const original of walk(definitions)) {
+      const path = relative(definitions, original).replaceAll("\\", "/");
+      if (!path.endsWith(".json")) continue;
+      const bytes = await readFile(original);
+      if (bytes.length > fileLimit) throw new Error(`Bedrock asset exceeds file limit: ${path}`);
+      const identifier = attachableIdentifier(bytes);
+      if (!identifier || attachableIdentifiers.has(identifier)) continue;
+      const key = `library/vanilla_base/attachables/definitions/${path}`;
+      if (!validPath(key) || files.has(key))
+        throw new Error("Invalid built-in attachable definition path");
+      expandedBytes += bytes.length;
+      if (expandedBytes > totalLimit || files.size >= 32768)
+        throw new Error("Bedrock bundle exceeds limits");
+      files.set(key, bytes);
+      attachableIdentifiers.add(identifier);
+    }
   const staging = `${destination}.staging`;
   await rm(staging, { force: true, recursive: true });
   await mkdir(staging, { recursive: true });
@@ -188,7 +233,12 @@ export async function bundleBedrockAssets(game: string, version: string, destina
     const name = `builtin-${String(archives.length + 1).padStart(2, "0")}.zip`;
     const bytes = assetZip(batch);
     await writeFile(join(staging, name), bytes);
-    archives.push({ name, sha256: createHash("sha256").update(bytes).digest("hex"), files: batch.size, expandedBytes: batchBytes });
+    archives.push({
+      name,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      files: batch.size,
+      expandedBytes: batchBytes,
+    });
     batch = new Map();
     batchBytes = 0;
   }
@@ -198,8 +248,14 @@ export async function bundleBedrockAssets(game: string, version: string, destina
     batchBytes += bytes.length;
   }
   await flush();
-  await writeFile(join(staging, "manifest.json"), `${JSON.stringify({ format: 1, version, protocolVersion, files: files.size, expandedBytes, archives }, null, 2)}\n`);
-  await writeFile(join(staging, "NOTICE.txt"), `Minecraft: Bedrock Edition ${version} built-in resource data.\nCopyright Mojang AB and Microsoft.\nExtracted from the installed game package. Material documents retain native fields and values in JSON syntax. Other file contents are unchanged.\n`);
+  await writeFile(
+    join(staging, "manifest.json"),
+    `${JSON.stringify({ format: 1, version, protocolVersion, files: files.size, expandedBytes, archives }, null, 2)}\n`,
+  );
+  await writeFile(
+    join(staging, "NOTICE.txt"),
+    `Minecraft: Bedrock Edition ${version} built-in resource data.\nCopyright Mojang AB and Microsoft.\nExtracted from the installed game package. Material documents retain native fields and values in JSON syntax. Other file contents are unchanged.\n`,
+  );
   await mkdir(dirname(destination), { recursive: true });
   await rm(destination, { force: true, recursive: true });
   await rename(staging, destination);
@@ -208,7 +264,21 @@ export async function bundleBedrockAssets(game: string, version: string, destina
 
 if (import.meta.main) {
   const [game, version] = process.argv.slice(2);
-  if (!game || !version) throw new Error("Usage: bun scripts/bundle-bedrock-assets.ts <game-directory> <version>");
-  const destination = join(import.meta.dir, "..", "assets", "bedrock", version, "assets", "viafabricplus-bedrock", "builtin");
-  console.log(await Effect.runPromise(Effect.tryPromise(() => bundleBedrockAssets(game, version, destination))));
+  if (!game || !version)
+    throw new Error("Usage: bun scripts/bundle-bedrock-assets.ts <game-directory> <version>");
+  const destination = join(
+    import.meta.dir,
+    "..",
+    "assets",
+    "bedrock",
+    version,
+    "assets",
+    "viafabricplus-bedrock",
+    "builtin",
+  );
+  console.log(
+    await Effect.runPromise(
+      Effect.tryPromise(() => bundleBedrockAssets(game, version, destination)),
+    ),
+  );
 }

@@ -14,22 +14,32 @@ interface ArtifactManifest {
   artifacts: { file: string; sha256: string }[];
 }
 
-export async function prepareReleaseAssets(artifactsDir: string, outputDir: string, projects: readonly string[], viaFabricPlusPin?: ViaFabricPlusPin): Promise<string[]> {
+export async function prepareReleaseAssets(
+  artifactsDir: string,
+  outputDir: string,
+  projects: readonly string[],
+  viaFabricPlusPin?: ViaFabricPlusPin,
+): Promise<string[]> {
   await rm(outputDir, { recursive: true, force: true });
   await mkdir(outputDir, { recursive: true });
   const names = new Set<string>();
 
   for (const project of [...projects, "viafabricplus"]) {
     const projectDir = join(artifactsDir, project);
-    const manifest = JSON.parse(await readFile(join(projectDir, "manifest.json"), "utf8")) as ArtifactManifest;
+    const manifest = JSON.parse(
+      await readFile(join(projectDir, "manifest.json"), "utf8"),
+    ) as ArtifactManifest;
     if (manifest.target !== project || manifest.artifacts.length !== 1) {
       throw new Error(`Expected one ${project} release JAR in its build manifest`);
     }
     if (project === "viafabricplus") await verifyPinnedManifest(manifest, viaFabricPlusPin);
     const artifact = manifest.artifacts[0]!;
-    if (basename(artifact.file) !== artifact.file || (project === "viafabricplus"
-      ? !/^ViaFabricPlus-[^/]+\.jar$/.test(artifact.file)
-      : !artifact.file.endsWith("-StackAnvil.jar"))) {
+    if (
+      basename(artifact.file) !== artifact.file ||
+      (project === "viafabricplus"
+        ? !/^ViaFabricPlus-[^/]+\.jar$/.test(artifact.file)
+        : !artifact.file.endsWith("-StackAnvil.jar"))
+    ) {
       throw new Error(`Invalid ${project} release JAR name: ${artifact.file}`);
     }
     const bytes = await readFile(join(projectDir, artifact.file));
@@ -46,7 +56,9 @@ export async function prepareReleaseAssets(artifactsDir: string, outputDir: stri
   }
 
   // Rebuild from this release's verified JARs, never copy a stale local pack.
-  names.add(basename(await Effect.runPromise(bundleModpack(artifactsDir, outputDir, viaFabricPlusPin))));
+  names.add(
+    basename(await Effect.runPromise(bundleModpack(artifactsDir, outputDir, viaFabricPlusPin))),
+  );
   return [...names];
 }
 

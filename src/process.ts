@@ -4,7 +4,12 @@ import { Effect } from "effect";
 
 const execFileAsync = promisify(execFile);
 
-export const command = Effect.fn("command")(function* (program: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env) {
+export const command = Effect.fn("command")(function* (
+  program: string,
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+) {
   return yield* Effect.tryPromise({
     try: async (signal) => {
       const { stdout, stderr } = await execFileAsync(program, args, {
@@ -20,7 +25,9 @@ export const command = Effect.fn("command")(function* (program: string, args: st
     catch: (cause) => {
       const error = cause as Error & { stdout?: string; stderr?: string };
       const output = [error.stdout, error.stderr].filter((value) => value?.trim()).join("\n");
-      return new Error(`${program} ${args.join(" ")} failed: ${output || error.message}`, { cause });
+      return new Error(`${program} ${args.join(" ")} failed: ${output || error.message}`, {
+        cause,
+      });
     },
   });
 });

@@ -19,14 +19,22 @@ async function pactl(args: string[]): Promise<string> {
 
 async function mute(): Promise<void> {
   const sinks = await pactl(["list", "sinks", "short"]);
-  const sinkId = Number(sinks.split("\n").find((line) => line.split("\t")[1] === sink)?.split("\t")[0]);
+  const sinkId = Number(
+    sinks
+      .split("\n")
+      .find((line) => line.split("\t")[1] === sink)
+      ?.split("\t")[0],
+  );
   if (!Number.isInteger(sinkId)) throw new Error("StackAnvil silent sink is missing.");
   const inputs = JSON.parse(await pactl(["-f", "json", "list", "sink-inputs"])) as Input[];
   for (const input of inputs) {
     const properties = input.properties;
     if (properties["window.x11.display"] !== display) continue;
-    if (properties["application.name"] !== "Minecraft"
-      && properties["pipewire.access.portal.app_id"] !== "org.prismlauncher.PrismLauncher") continue;
+    if (
+      properties["application.name"] !== "Minecraft" &&
+      properties["pipewire.access.portal.app_id"] !== "org.prismlauncher.PrismLauncher"
+    )
+      continue;
     const id = String(input.index);
     if (input.sink !== sinkId) await pactl(["move-sink-input", id, sink]);
     if (Object.values(input.volume ?? {}).some(({ value_percent }) => value_percent !== "0%")) {
@@ -38,6 +46,10 @@ async function mute(): Promise<void> {
 
 if (!display) throw new Error("Supply the lab display.");
 for (;;) {
-  try { await mute(); } catch (error) { console.error(error); }
+  try {
+    await mute();
+  } catch (error) {
+    console.error(error);
+  }
   await Bun.sleep(500);
 }

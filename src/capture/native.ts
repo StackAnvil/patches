@@ -17,15 +17,21 @@ export function createCaptureX11Builder(build: NativeBuild, directory = root) {
 
   async function sourceDigest(): Promise<string> {
     async function rustSources(path: string): Promise<string[]> {
-      const files = await Promise.all((await readdir(path, { withFileTypes: true })).map(async entry => {
-        const selected = join(path, entry.name);
-        if (entry.isDirectory()) return rustSources(selected);
-        return entry.isFile() && entry.name.endsWith(".rs") ? [selected] : [];
-      }));
+      const files = await Promise.all(
+        (await readdir(path, { withFileTypes: true })).map(async (entry) => {
+          const selected = join(path, entry.name);
+          if (entry.isDirectory()) return rustSources(selected);
+          return entry.isFile() && entry.name.endsWith(".rs") ? [selected] : [];
+        }),
+      );
       return files.flat();
     }
-    const files = [join(source, "Cargo.toml"), join(source, "Cargo.lock"), ...await rustSources(join(source, "src"))].sort();
-    const contents = await Promise.all(files.map(file => readFile(file)));
+    const files = [
+      join(source, "Cargo.toml"),
+      join(source, "Cargo.lock"),
+      ...(await rustSources(join(source, "src"))),
+    ].sort();
+    const contents = await Promise.all(files.map((file) => readFile(file)));
     const digest = createHash("sha256");
     for (const [index, file] of files.entries()) {
       digest.update(relative(source, file)).update("\0").update(contents[index]!).update("\0");
@@ -41,7 +47,19 @@ export function createCaptureX11Builder(build: NativeBuild, directory = root) {
     });
     if (previous === digest && existsSync(binary)) return binary;
     await mkdir(tools, { recursive: true });
-    await build(["build", "--locked", "--release", "--manifest-path", join(source, "Cargo.toml"), "--target-dir", target], directory, env);
+    await build(
+      [
+        "build",
+        "--locked",
+        "--release",
+        "--manifest-path",
+        join(source, "Cargo.toml"),
+        "--target-dir",
+        target,
+      ],
+      directory,
+      env,
+    );
     const staging = `${binary}.${randomUUID()}.tmp`;
     const stagingReceipt = `${staging}.sha256`;
     try {
@@ -55,5 +73,8 @@ export function createCaptureX11Builder(build: NativeBuild, directory = root) {
     return binary;
   }
 
-  return (env: NodeJS.ProcessEnv): Promise<string> => preparing ??= prepare(env).finally(() => { preparing = undefined; });
+  return (env: NodeJS.ProcessEnv): Promise<string> =>
+    (preparing ??= prepare(env).finally(() => {
+      preparing = undefined;
+    }));
 }

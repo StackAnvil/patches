@@ -10,13 +10,23 @@ export function verifyBuiltinUiContents(bytes: Buffer): void {
   let expanded = 0;
   for (const read of entries.values()) {
     expanded += read().length;
-    if (expanded > 64 * 1024 * 1024) throw new Error("Bundled Bedrock UI exceeds the expanded size limit");
+    if (expanded > 64 * 1024 * 1024)
+      throw new Error("Bundled Bedrock UI exceeds the expanded size limit");
   }
-  for (const path of ["ui/server_form.json", "ui/ui_common.json", "ui/chest_screen.json", "ui/inventory_screen.json", "ui/settings_sections/settings_common.json", "ui/_global_variables.json", "ui/_ui_defs.json"]) {
+  for (const path of [
+    "ui/server_form.json",
+    "ui/ui_common.json",
+    "ui/chest_screen.json",
+    "ui/inventory_screen.json",
+    "ui/settings_sections/settings_common.json",
+    "ui/_global_variables.json",
+    "ui/_ui_defs.json",
+  ]) {
     const contents = entries.get(path)?.();
     if (!contents?.length) throw new Error(`Bundled Bedrock UI is missing ${path}`);
     const document: unknown = JSON.parse(contents.toString("utf8"));
-    if (typeof document !== "object" || document === null || Array.isArray(document)) throw new Error(`Invalid bundled UI definition: ${path}`);
+    if (typeof document !== "object" || document === null || Array.isArray(document))
+      throw new Error(`Invalid bundled UI definition: ${path}`);
   }
   if (![...entries.keys()].some((path) => /^textures\/ui\/.+\.(png|jpg|tga)$/.test(path))) {
     throw new Error("Bundled Bedrock UI textures are missing");
@@ -24,7 +34,12 @@ export function verifyBuiltinUiContents(bytes: Buffer): void {
   const metadata = entries.get("font/font_metadata.json")?.();
   if (!metadata?.length) throw new Error("Bundled Bedrock UI font metadata is missing");
   const fonts: unknown = JSON.parse(metadata.toString("utf8"));
-  if (typeof fonts !== "object" || fonts === null || !("fonts" in fonts) || !Array.isArray(fonts.fonts)) {
+  if (
+    typeof fonts !== "object" ||
+    fonts === null ||
+    !("fonts" in fonts) ||
+    !Array.isArray(fonts.fonts)
+  ) {
     throw new Error("Invalid bundled Bedrock UI font metadata");
   }
   for (const font of fonts.fonts) {
@@ -36,7 +51,12 @@ export function verifyBuiltinUiContents(bytes: Buffer): void {
 }
 
 export function builtinUiManifest(version: string, bytes: Uint8Array) {
-  return { format: 1, version, size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+  return {
+    format: 1,
+    version,
+    size: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
 }
 
 /** Checks an acquired versioned bundle before Gradle embeds it in the core JAR. */
@@ -50,7 +70,10 @@ export async function verifyBuiltinUi(path: string, version: string): Promise<st
   const bytes = await readFile(path);
   const actual = builtinUiManifest(version, bytes);
   const declared = metadata as Record<string, unknown>;
-  if (actual.size > 64 * 1024 * 1024 || Object.entries(actual).some(([key, value]) => declared[key] !== value)) {
+  if (
+    actual.size > 64 * 1024 * 1024 ||
+    Object.entries(actual).some(([key, value]) => declared[key] !== value)
+  ) {
     throw new Error("Bundled Bedrock UI identity mismatch");
   }
   verifyBuiltinUiContents(bytes);
@@ -58,12 +81,20 @@ export async function verifyBuiltinUi(path: string, version: string): Promise<st
 }
 
 /** Checks the actual distributable, including the core nested inside the Fabric add-on. */
-export async function verifyEmbeddedBuiltinUi(artifact: string, project: string, bundle: string, version: string): Promise<void> {
+export async function verifyEmbeddedBuiltinUi(
+  artifact: string,
+  project: string,
+  bundle: string,
+  version: string,
+): Promise<void> {
   await verifyBuiltinUi(bundle, version);
   let entries = zipEntries(await readFile(artifact));
   if (project === "viafabricplus-bedrock") {
-    const cores = [...entries.keys()].filter((path) => /^META-INF\/jars\/ViaBedrock-[^/]+\.jar$/.test(path));
-    if (cores.length !== 1) throw new Error("The Bedrock add-on must embed exactly one ViaBedrock JAR");
+    const cores = [...entries.keys()].filter((path) =>
+      /^META-INF\/jars\/ViaBedrock-[^/]+\.jar$/.test(path),
+    );
+    if (cores.length !== 1)
+      throw new Error("The Bedrock add-on must embed exactly one ViaBedrock JAR");
     entries = zipEntries(entries.get(cores[0]!)!());
   }
   const embedded = entries.get(builtinUiResource)?.();

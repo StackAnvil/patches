@@ -9,8 +9,16 @@ import { requirePrivateCopySpace } from "../copy-space.ts";
 const execute = promisify(execFile);
 const dependencyEntries = ["bedrock_server", "definitions"];
 const installationEntries = [
-  "bedrock_server", "behavior_packs", "resource_packs", "definitions", "config", "data",
-  "profanity_filter.wlist", "packetlimitconfig.json", "allowlist.json", "permissions.json",
+  "bedrock_server",
+  "behavior_packs",
+  "resource_packs",
+  "definitions",
+  "config",
+  "data",
+  "profanity_filter.wlist",
+  "packetlimitconfig.json",
+  "allowlist.json",
+  "permissions.json",
 ];
 
 interface InstallationCopyIo {
@@ -19,7 +27,7 @@ interface InstallationCopyIo {
 }
 
 const filesystemIo: InstallationCopyIo = {
-  availableBytes: async path => {
+  availableBytes: async (path) => {
     const filesystem = await statfs(path);
     return filesystem.bavail * filesystem.bsize;
   },
@@ -37,7 +45,8 @@ async function copyBytes(path: string): Promise<number> {
   }
   // Server probes write into these trees after copying. Do not retain links
   // that could route those writes back into the source installation.
-  if (!state.isFile() || state.isSymbolicLink()) throw new Error("Bedrock server inputs must use regular files and directories.");
+  if (!state.isFile() || state.isSymbolicLink())
+    throw new Error("Bedrock server inputs must use regular files and directories.");
   return state.size;
 }
 
@@ -64,18 +73,20 @@ async function treeDigest(path: string): Promise<string> {
 
 /** Release only unchanged copied dependencies, after every owned server process stops. */
 async function prepareDependencyCleanup(destination: string): Promise<() => Promise<void>> {
-  const paths = [...dependencyEntries.map(name => join(destination, name))];
+  const paths = [...dependencyEntries.map((name) => join(destination, name))];
   const parents = [dirname(destination), destination];
   for (const name of ["behavior_packs", "resource_packs"]) {
     const directory = join(destination, name);
     try {
-      paths.push(...(await readdir(directory)).map(entry => join(directory, entry)));
+      paths.push(...(await readdir(directory)).map((entry) => join(directory, entry)));
       parents.push(directory);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  const owners = await Promise.all(parents.map(async path => ({ path, identity: await lstat(path) })));
+  const owners = await Promise.all(
+    parents.map(async (path) => ({ path, identity: await lstat(path) })),
+  );
   const dependencies: Array<{ path: string; identity: Stats; digest: string }> = [];
   for (const path of paths) {
     try {
@@ -87,8 +98,13 @@ async function prepareDependencyCleanup(destination: string): Promise<() => Prom
   async function validateOwners(): Promise<void> {
     for (const { path, identity } of owners) {
       const current = await lstat(path);
-      if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino
-        || await realpath(path) !== path) {
+      if (
+        !current.isDirectory() ||
+        current.isSymbolicLink() ||
+        current.dev !== identity.dev ||
+        current.ino !== identity.ino ||
+        (await realpath(path)) !== path
+      ) {
         throw new Error("Server dependency directory changed; cleanup refused.");
       }
     }
@@ -97,27 +113,41 @@ async function prepareDependencyCleanup(destination: string): Promise<() => Prom
     await validateOwners();
     for (const { path, identity, digest } of dependencies) {
       let current;
-      try { current = await lstat(path); } catch (error) {
+      try {
+        current = await lstat(path);
+      } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
         throw error;
       }
-      if (current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino) {
+      if (
+        current.isSymbolicLink() ||
+        current.dev !== identity.dev ||
+        current.ino !== identity.ino
+      ) {
         throw new Error("Server dependency changed ownership; cleanup refused.");
       }
-      if (await treeDigest(path) !== digest) continue;
+      if ((await treeDigest(path)) !== digest) continue;
       await validateOwners();
       const checked = await lstat(path);
-      if (checked.dev !== identity.dev || checked.ino !== identity.ino) throw new Error("Server dependency changed ownership; cleanup refused.");
+      if (checked.dev !== identity.dev || checked.ino !== identity.ino)
+        throw new Error("Server dependency changed ownership; cleanup refused.");
       await rm(path, { recursive: true });
     }
   };
 }
 
 /** Budget all installation files before creating a fresh, privately writable test server. */
-export async function copyBedrockServerInstallation(source: string, destination: string, io: InstallationCopyIo = filesystemIo): Promise<() => Promise<void>> {
+export async function copyBedrockServerInstallation(
+  source: string,
+  destination: string,
+  io: InstallationCopyIo = filesystemIo,
+): Promise<() => Promise<void>> {
   source = resolve(source);
   destination = resolve(destination);
-  if (await realpath(source) !== source || await realpath(dirname(destination)) !== dirname(destination)) {
+  if (
+    (await realpath(source)) !== source ||
+    (await realpath(dirname(destination))) !== dirname(destination)
+  ) {
     throw new Error("Bedrock server copies require real source and destination directories.");
   }
   const entries: string[] = [];
@@ -127,7 +157,8 @@ export async function copyBedrockServerInstallation(source: string, destination:
     try {
       await lstat(path);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT" && entry !== "bedrock_server") continue;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" && entry !== "bedrock_server")
+        continue;
       throw error;
     }
     requiredBytes += await copyBytes(path);
@@ -143,13 +174,21 @@ export async function copyBedrockServerInstallation(source: string, destination:
   } catch (error) {
     try {
       const current = await lstat(destination);
-      if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino
-        || await realpath(destination) !== destination) {
+      if (
+        !current.isDirectory() ||
+        current.isSymbolicLink() ||
+        current.dev !== identity.dev ||
+        current.ino !== identity.ino ||
+        (await realpath(destination)) !== destination
+      ) {
         throw new Error("Bedrock server copy directory changed; failed-copy cleanup refused.");
       }
       await rm(destination, { recursive: true });
     } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], "Bedrock server copy failed and its files were retained.");
+      throw new AggregateError(
+        [error, cleanupError],
+        "Bedrock server copy failed and its files were retained.",
+      );
     }
     throw error;
   }
