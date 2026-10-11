@@ -1,4 +1,4 @@
-From f7b6b2b79783f34a68e8114f21701e4f7d123243 Mon Sep 17 00:00:00 2001
+From bd4e523093bef83ca2b51be344ba18e4345b3092 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 9 Oct 2026 16:10:14 +0200
 Subject: [PATCH] feat(render): use supported native world actor definitions
@@ -16,13 +16,21 @@ key and every removed actor's playback. The regression checks immutable
 frame values and captured references directly, avoiding unreliable GC
 assertions. This fixes the same lifecycle error already removed from the
 player renderer for world actors and end crystals.
+
+Bind shulker attachment face and interpolated peek amount into the native
+authored animation graph. The target 1.26.51.1 bundled definitions read
+variable.Shulker.FacingDirection and PeekAmount; omitted values render the
+lid closed and the actor facing down.
+
+Production resource-merging and bundled graph tests cover all six faces
+and lid motion. Live server rendering remains a separate verification.
 ---
  .../BedrockWorldActorAppearance.java          |  71 ++++++
  .../render/MixinEntityRenderDispatcher.java   |  16 ++
- .../render/BedrockWorldActorRenderer.java     | 222 ++++++++++++++++++
- .../BedrockWorldActorAppearanceTest.java      |  86 +++++++
- .../render/BedrockWorldActorQueryTest.java    |  47 ++++
- 5 files changed, 442 insertions(+)
+ .../render/BedrockWorldActorRenderer.java     | 231 ++++++++++++++++++
+ .../BedrockWorldActorAppearanceTest.java      | 117 +++++++++
+ .../render/BedrockWorldActorQueryTest.java    |  62 +++++
+ 5 files changed, 497 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
@@ -158,10 +166,10 @@ index 94877d4..7b5265c 100644
              return;
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
 new file mode 100644
-index 0000000..14d4600
+index 0000000..527989a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,231 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -202,6 +210,7 @@ index 0000000..14d4600
 +import net.minecraft.world.entity.EquipmentSlot;
 +import net.minecraft.world.entity.LivingEntity;
 +import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
++import net.minecraft.world.entity.monster.Shulker;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +
 +/** Keeps Java gameplay entities while using supported native definitions for their appearance. */
@@ -283,7 +292,7 @@ index 0000000..14d4600
 +        try {
 +            actor.playback.commands(BedrockActorState.animations(entity.getUUID()));
 +            actor.shadowRadius = original.createRenderState(entity, partial).shadowRadius;
-+            actor.frame = actor.playback.sample(age / 20F, new BedrockActorAnimation.Frame(queries, Map.of()));
++            actor.frame = actor.playback.sample(age / 20F, new BedrockActorAnimation.Frame(queries, actorVariables(entity, partial)));
 +            actor.yaw = yaw; actor.scale = snapshot.scale();
 +            if (actor.frame == null) { actor.failed = true; return false; }
 +            // Complete texture registration before selecting the renderer, so missing images keep Java visible.
@@ -292,6 +301,14 @@ index 0000000..14d4600
 +        } catch (IOException | RuntimeException unsupported) {
 +            actor.failed = true; actor.frame = null; return false;
 +        }
++    }
++
++    static Map<String, Float> actorVariables(final Entity entity, final float partial) {
++        if (entity instanceof Shulker shulker) {
++            return Map.of("shulker.peekamount", shulker.getClientPeekAmount(partial),
++                    "shulker.facingdirection", (float) shulker.getAttachFace().get3DDataValue());
++        }
++        return Map.of();
 +    }
 +
 +    static BedrockActorAnimation.Query positionDeltaQuery(final Entity entity) {
@@ -386,10 +403,10 @@ index 0000000..14d4600
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
 new file mode 100644
-index 0000000..00b033e
+index 0000000..cf6893d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,117 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -475,13 +492,44 @@ index 0000000..00b033e
 +            assertNull(actor.sample(0, new BedrockActorAnimation.Frame(Map.of("show_bottom", true), Map.of())));
 +        }
 +    }
++    @Test
++    void bundledShulkerUsesAttachmentAndPeekVariablesForEveryFace() throws Exception {
++        Assumptions.assumeTrue(BedrockWorldActorAppearance.class.getResource("/assets/viafabricplus-bedrock/builtin/manifest.json") != null);
++        final var packs = BedrockEntityResources.merge(BedrockBuiltinAssets.load().library(), List.of(), "minecraft:shulker");
++        final var definition = new BedrockWorldActorAppearance(packs, "minecraft:shulker");
++        final var queries = Map.<String, Object>of("variant", 0, "life_time", 0F,
++                "modified_distance_moved", 0F, "target_x_rotation", 0F, "target_y_rotation", 0F);
++        final float[][] positions = {{0, 0, 0}, {0, 16, 0}, {0, 7.99F, 7.99F},
++                {0, 7.99F, -7.99F}, {-7.99F, 7.99F, 0}, {7.99F, 7.99F, 0}};
++        final float[][] rotations = {{0, 0, 0}, {180, 0, 0}, {90, 0, 180},
++                {-90, 0, 0}, {0, 0, 90}, {0, 0, -90}};
++        for (int face = 0; face < 6; face++) {
++            final var actor = definition.playback();
++            final var closed = actor.sample(0, new BedrockActorAnimation.Frame(queries,
++                    Map.of("shulker.facingdirection", (float) face, "shulker.peekamount", 0F)));
++            final var opened = actor.sample(.05F, new BedrockActorAnimation.Frame(queries,
++                    Map.of("shulker.facingdirection", (float) face, "shulker.peekamount", 1F)));
++            assertNotNull(closed);
++            assertNotNull(opened);
++            assertEquals(1, opened.draws().size());
++            final var base = opened.pose().get("base");
++            assertEquals(positions[face][0], base.position().x(), .001F);
++            assertEquals(positions[face][1], base.position().y(), .001F);
++            assertEquals(positions[face][2], base.position().z(), .001F);
++            assertEquals(rotations[face][0], base.rotation().x(), .001F);
++            assertEquals(rotations[face][1], base.rotation().y(), .001F);
++            assertEquals(rotations[face][2], base.rotation().z(), .001F);
++            assertNotEquals(closed.pose().get("lid"), opened.pose().get("lid"));
++        }
++    }
++
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java
 new file mode 100644
-index 0000000..8938e49
+index 0000000..be6ac6b
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,62 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -493,7 +541,9 @@ index 0000000..8938e49
 +import java.util.List;
 +import net.minecraft.SharedConstants;
 +import net.minecraft.server.Bootstrap;
++import net.minecraft.core.Direction;
 +import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.monster.Shulker;
 +import org.junit.jupiter.api.BeforeAll;
 +import org.junit.jupiter.api.Test;
 +import static org.junit.jupiter.api.Assertions.*;
@@ -528,6 +578,19 @@ index 0000000..8938e49
 +            assertFalse(field.get(delta) instanceof Entity);
 +        }
 +    }
++    @Test
++    void bindsShulkerVariablesToInterpolatedPeekAndAttachmentMetadata() {
++        final var shulker = mock(Shulker.class);
++        when(shulker.getClientPeekAmount(.25F)).thenReturn(.375F);
++        for (final var face : Direction.values()) {
++            when(shulker.getAttachFace()).thenReturn(face);
++            final var variables = BedrockWorldActorRenderer.actorVariables(shulker, .25F);
++            assertEquals(.375F, variables.get("shulker.peekamount"));
++            assertEquals((float) face.get3DDataValue(), variables.get("shulker.facingdirection"));
++        }
++        assertTrue(BedrockWorldActorRenderer.actorVariables(mock(Entity.class), 0).isEmpty());
++    }
++
 +}
 -- 
 2.56.0

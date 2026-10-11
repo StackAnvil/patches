@@ -1,13 +1,42 @@
-From 6069373d8668aa0c72e8e175856f07e16262b9f1 Mon Sep 17 00:00:00 2001
+From 5e3af4f22aaf270216dd28efae4002f914da50c8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 13:41:31 +0200
 Subject: [PATCH] fix(books): forward Java book edits to Bedrock
 
 Translate page replacement, insertion, deletion, and signing into Bedrock BookEdit operations. Keep the local book pages current so consecutive Java saves do not insert duplicate pages before the server inventory update arrives.
----
- .../protocol/packet/InventoryPackets.java     | 85 +++++++++++++++++++
- 1 file changed, 85 insertions(+)
 
+Open the Java reader when the selected native item is a signed book. Bedrock
+opens signed books locally, while Java 26.3 requires OPEN_BOOK from its
+server. Live BDS 1.26.51.1 testing confirmed that signing and dropping the
+book succeeds but right-clicking never opens the reader. Packet tests
+cover selected hotbar slots and verify that reading does not mutate items.
+---
+ .../protocol/packet/InteractionPackets.java   |   9 ++
+ .../protocol/packet/InventoryPackets.java     |  85 ++++++++++++++
+ .../packet/WrittenBookUsePacketTest.java      | 110 ++++++++++++++++++
+ 3 files changed, 204 insertions(+)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/WrittenBookUsePacketTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+index 1db7752e0..9a22ebb11 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+@@ -240,6 +240,15 @@ public final class InteractionPackets {
+             final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+             final String itemIdentifier = itemRewriter.getItems().inverse().get(usedItem.identifier());
++            if (hand == InteractionHand.MAIN_HAND && !usedItem.isEmpty()
++                    && "minecraft:written_book".equals(itemIdentifier)) {
++                wrapper.cancel();
++                // Bedrock opens signed books locally; Java waits for its server to open the reading screen.
++                final PacketWrapper openBook = PacketWrapper.create(ClientboundPackets26_3.OPEN_BOOK, wrapper.user());
++                openBook.write(Types.VAR_INT, javaHand);
++                openBook.send(BedrockProtocol.class);
++                return;
++            }
+             final BedrockInventoryTransaction transaction = beginItemUse(clientPlayer, hand,
+                     inventoryContainer.getSelectedHotbarSlot(), usedItem, itemIdentifier);
+             if (transaction == null) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 index 9be115b5f..1136f9f42 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
@@ -125,5 +154,121 @@ index 9be115b5f..1136f9f42 100644
      private static void addTextToDialog(final UserConnection userConnection, final Dialog dialog, final String text) {
          if (dialog.getInputs().isEmpty()) {
              for (String line : BedrockTextUtils.split(text, "\n")) {
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/WrittenBookUsePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/WrittenBookUsePacketTest.java
+new file mode 100644
+index 000000000..e9f3965d9
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/WrittenBookUsePacketTest.java
+@@ -0,0 +1,110 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.google.common.collect.HashBiMap;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import java.util.HashMap;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class WrittenBookUsePacketTest {
++
++    @ParameterizedTest
++    @ValueSource(ints = {0, 2, 8})
++    void signedBookUseOpensTheJavaReadingScreenWithoutInventoryMutation(final int slot) throws Exception {
++        final UserConnection user = mock(UserConnection.class);
++        final Map<Class<?>, Object> stores = new HashMap<>();
++        when(user.get(any())).thenAnswer(call -> stores.get(call.getArgument(0)));
++        final InventoryTracker inventory = mock(InventoryTracker.class);
++        final InventoryContainer container = mock(InventoryContainer.class);
++        final BedrockItem held = new BedrockItem(522);
++        held.setAmount(1);
++        when(inventory.getInventoryContainer()).thenReturn(container);
++        when(container.getSelectedHotbarSlot()).thenReturn((byte) slot);
++        when(container.getSelectedHotbarItem()).thenReturn(held);
++        stores.put(InventoryTracker.class, inventory);
++        stores.put(EntityTracker.class, mock(EntityTracker.class));
++        stores.put(InventoryTransactionRewriter.class, mock(InventoryTransactionRewriter.class));
++        final ItemRewriter items = mock(ItemRewriter.class);
++        final var identifiers = HashBiMap.<String, Integer>create();
++        identifiers.put("minecraft:written_book", held.identifier());
++        when(items.getItems()).thenReturn(identifiers);
++        stores.put(ItemRewriter.class, items);
++        final var sent = new AtomicInteger();
++        try (var wrappers = mockStatic(PacketWrapper.class)) {
++            wrappers.when(() -> PacketWrapper.create(ClientboundPackets26_3.OPEN_BOOK, user)).thenAnswer(call -> {
++                final var open = spy(new PacketWrapperImpl(ClientboundPackets26_3.OPEN_BOOK, null, user));
++                doAnswer(send -> {
++                    final var output = Unpooled.buffer();
++                    try {
++                        open.writeToBuffer(output);
++                        assertEquals(ClientboundPackets26_3.OPEN_BOOK.getId(), Types.VAR_INT.readPrimitive(output));
++                        assertEquals(0, Types.VAR_INT.readPrimitive(output));
++                        assertFalse(output.isReadable());
++                        sent.incrementAndGet();
++                    } finally {
++                        output.release();
++                    }
++                    return null;
++                }).when(open).send(BedrockProtocol.class);
++                return open;
++            });
++            final var input = Unpooled.buffer();
++            try {
++                Types.VAR_INT.writePrimitive(input, 0);
++                Types.VAR_INT.writePrimitive(input, 7);
++                input.writeFloat(45F);
++                input.writeFloat(-30F);
++                final var use = new PacketWrapperImpl(ServerboundPackets26_3.USE_ITEM, input, user);
++                final var protocol = new TestProtocol();
++                protocol.translate(use);
++                assertTrue(use.isCancelled());
++                assertFalse(input.isReadable());
++                assertEquals(1, sent.get());
++                assertEquals(1, held.amount());
++                verifyNoInteractions(stores.get(InventoryTransactionRewriter.class));
++            } finally {
++                input.release();
++            }
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++
++        private TestProtocol() {
++            InteractionPackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.serverboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++
++    }
++
++}
 -- 
 2.56.0

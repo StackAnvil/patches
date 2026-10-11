@@ -1,4 +1,4 @@
-From 470c9b67e24dc2ca0762d6c41881a705fe25f440 Mon Sep 17 00:00:00 2001
+From 216f4329abf2d81b969df9b815223be54a991a42 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 17:35:43 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -19,15 +19,22 @@ acknowledgment ordering across GUI close. No Geyser changes are required.
 Open the native player inventory before sending creative requests and wait for its acknowledgement. Preserve writes across delayed OPEN responses and local Java GUI closure. Writes arriving during a pending native CLOSE remain queued and reopen the inventory after the acknowledgement, rather than disappearing between native windows. Packet-handler tests cover rapid writes with distinct slots and quantities during that close.
 
 Retain exact creative entry identity and complete native item snapshots; reject ambiguous same-Java-item fallbacks rather than choosing arbitrary potion/custom variants. Enforce the native creative stack maximum. Catalog and transfer tests cover exact markers, component differences and oversized selections.
+
+Translate Java creative-menu drops from slot -1 into native creative
+craft/results/drop actions without replacing held inventory. Java 26.3
+bytecode emits this slot for creative-menu Q. Geyser
+PlayerInventoryTranslator documents the same native created-output slot
+50 flow since Bedrock 1.18.2. Actual packet tests cover plate and stone
+counts, pending-close queuing, and invalid stack bounds.
 ---
- .../protocol/model/CreativeCatalog.java       | 142 +++++++++++++
- .../protocol/packet/InventoryPackets.java     | 190 +++++++++++------
- .../protocol/rewriter/ItemRewriter.java       |  31 +--
- .../storage/InventoryRequestTracker.java      |  24 +++
- .../protocol/model/CreativeCatalogTest.java   | 109 ++++++++++
- .../protocol/packet/InventoryPacketsTest.java | 196 +++++++++++++-----
- .../storage/InventoryRequestTrackerTest.java  |  83 ++++++++
- 7 files changed, 636 insertions(+), 139 deletions(-)
+ .../protocol/model/CreativeCatalog.java       | 142 ++++++++++
+ .../protocol/packet/InventoryPackets.java     | 198 ++++++++-----
+ .../protocol/rewriter/ItemRewriter.java       |  31 +-
+ .../storage/InventoryRequestTracker.java      |  24 ++
+ .../protocol/model/CreativeCatalogTest.java   | 109 +++++++
+ .../protocol/packet/InventoryPacketsTest.java | 266 ++++++++++++++----
+ .../storage/InventoryRequestTrackerTest.java  |  83 ++++++
+ 7 files changed, 715 insertions(+), 138 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
 
@@ -180,7 +187,7 @@ index 000000000..fcbaa4e46
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index fa2d16f31..8f1b522ab 100644
+index fa2d16f31..53ef3dc7c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -90,14 +90,19 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransa
@@ -304,7 +311,7 @@ index fa2d16f31..8f1b522ab 100644
                                          }
                                          wrapper.cancel();
                                          return;
-@@ -1756,31 +1739,108 @@ public final class InventoryPackets {
+@@ -1756,31 +1739,116 @@ public final class InventoryPackets {
          return "container." + name;
      }
  
@@ -341,19 +348,21 @@ index fa2d16f31..8f1b522ab 100644
 +    public static boolean handleCreativeSlot(final UserConnection user, final int javaSlot, final Item javaItem) {
 +        final InventoryTracker tracker = user.get(InventoryTracker.class);
 +        final InventoryContainer inventory = tracker.getInventoryContainer();
-+        if (javaSlot < 5 || javaSlot > 45 || tracker.getPendingCloseContainer() != null
++        final boolean dropping = javaSlot == -1;
++        if ((!dropping && (javaSlot < 5 || javaSlot > 45)) || dropping && javaItem.isEmpty()
++                || tracker.getPendingCloseContainer() != null
 +                || user.get(EntityTracker.class).getClientPlayer().javaGameMode() != GameMode.CREATIVE) {
 +            return false;
 +        }
-+        final Container target = javaSlot < 9 ? tracker.getArmorContainer()
++        final Container target = dropping ? inventory : javaSlot < 9 ? tracker.getArmorContainer()
 +                : javaSlot == 45 ? tracker.getOffhandContainer() : inventory;
-+        final int slot = target.bedrockSlot(javaSlot);
++        final int slot = dropping ? -1 : target.bedrockSlot(javaSlot);
 +        final CreativeCatalog.Entry entry = javaItem.isEmpty() ? null
 +                : user.get(ItemRewriter.class).creativeCatalog().creativeEntry(javaItem);
 +        if (!javaItem.isEmpty() && (entry == null || javaItem.amount() < 1 || javaItem.amount() > Math.min(255,
 +                user.get(ItemRewriter.class).maxStackSize(entry.bedrockItem())))) {
 +            return false;
-+        }
+         }
 +        if (tracker.getCurrentContainer() == null) {
 +            final InventoryRequestTracker requests = user.get(InventoryRequestTracker.class);
 +            if (!requests.queueCreativeSlot(inventory, javaSlot, javaItem)) {
@@ -370,7 +379,7 @@ index fa2d16f31..8f1b522ab 100644
 +        }
 +        if (!(tracker.getCurrentContainer() instanceof InventoryContainer)) {
 +            return false;
-         }
++        }
 +        final BedrockItem creativeItem = javaItem.isEmpty() ? BedrockItem.empty() : entry.bedrockItem().copy();
          if (!creativeItem.isEmpty()) {
 -            actions.add(new InventoryActionData(
@@ -387,7 +396,7 @@ index fa2d16f31..8f1b522ab 100644
 -                0, null, actions,
 -                ComplexInventoryTransaction_Type.NormalTransaction,
 -                new InventoryTransactionData.NormalTransactionData());
-+        final BedrockItem previous = target.getItem(slot);
++        final BedrockItem previous = dropping ? BedrockItem.empty() : target.getItem(slot);
 +        if (creativeItem.isEmpty() && previous.isEmpty()) {
 +            return true;
 +        }
@@ -402,11 +411,13 @@ index fa2d16f31..8f1b522ab 100644
 +                List.of(), TextProcessingEventOrigin.unknown);
 +        requests.addRequest(new InventoryRequestStorage(request, 0,
 +                tracker.getHudContainer().copy(), List.of(target.copy())));
-+        requests.setPredictingClick(true);
-+        try {
-+            target.setItem(slot, creativeItem.copy());
-+        } finally {
-+            requests.setPredictingClick(false);
++        if (!dropping) {
++            requests.setPredictingClick(true);
++            try {
++                target.setItem(slot, creativeItem.copy());
++            } finally {
++                requests.setPredictingClick(false);
++            }
 +        }
 +        PacketFactory.sendBedrockInventoryRequest(user, new ItemStackRequestInfo[] {request});
 +        PacketFactory.sendJavaContainerSetContent(user, inventory);
@@ -426,10 +437,14 @@ index fa2d16f31..8f1b522ab 100644
 +                    container.requestSlotInfo(slot, previous.netId())));
 +        }
 +        if (!creativeItem.isEmpty()) {
-+            actions.add(new ItemStackRequestAction.PlaceAction(creativeItem.amount(),
-+                    new ItemStackRequestSlotInfo(new FullContainerName(ContainerEnumName.CreatedOutputContainer, null),
-+                            (byte) 50, requestId),
-+                    container.requestSlotInfo(slot, 0)));
++            final ItemStackRequestSlotInfo output = new ItemStackRequestSlotInfo(
++                    new FullContainerName(ContainerEnumName.CreatedOutputContainer, null), (byte) 50, requestId);
++            if (slot == -1) {
++                actions.add(new ItemStackRequestAction.DropAction(creativeItem.amount(), output, false));
++            } else {
++                actions.add(new ItemStackRequestAction.PlaceAction(creativeItem.amount(), output,
++                        container.requestSlotInfo(slot, 0)));
++            }
 +        }
 +        return actions;
      }
@@ -666,10 +681,10 @@ index 000000000..dfb8c95ff
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
-index 6cf158244..d9192fba9 100644
+index 6cf158244..8281f2e79 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
-@@ -17,14 +17,21 @@ package net.raphimc.viabedrock.protocol.packet;
+@@ -17,15 +17,25 @@ package net.raphimc.viabedrock.protocol.packet;
  import com.viaversion.nbt.tag.CompoundTag;
  import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
@@ -689,9 +704,13 @@ index 6cf158244..d9192fba9 100644
  import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 +import net.raphimc.viabedrock.api.model.container.player.OffhandContainer;
  import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.model.CreativeCatalog;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
-@@ -33,6 +40,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySou
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
+@@ -33,6 +43,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySou
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
  import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
  import net.raphimc.viabedrock.protocol.model.inventory.InventoryActionData;
@@ -699,7 +718,7 @@ index 6cf158244..d9192fba9 100644
  import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
  import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
-@@ -40,7 +48,9 @@ import org.junit.jupiter.api.Test;
+@@ -40,7 +51,9 @@ import org.junit.jupiter.api.Test;
  import org.junit.jupiter.api.BeforeAll;
  
  import java.lang.reflect.Proxy;
@@ -709,7 +728,15 @@ index 6cf158244..d9192fba9 100644
  import java.util.Map;
  import java.util.UUID;
  
-@@ -57,6 +67,31 @@ class InventoryPacketsTest {
+@@ -49,6 +62,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
+ import static org.junit.jupiter.api.Assertions.assertNull;
+ import static org.junit.jupiter.api.Assertions.assertSame;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.Mockito.*;
+ 
+ class InventoryPacketsTest {
+ 
+@@ -57,6 +71,31 @@ class InventoryPacketsTest {
          Class.forName(StructuredDataKey.class.getName());
      }
  
@@ -722,8 +749,8 @@ index 6cf158244..d9192fba9 100644
 +        assertFalse(fixture.requests.hasPending());
 +        assertFalse(fixture.requests.isWaitingForInventoryOpen());
 +
-+        final int[] slots = {36, 9, 36};
-+        final int[] quantities = {64, 64, 16};
++        final int[] slots = {36, -1, 9, 36};
++        final int[] quantities = {64, 1, 64, 16};
 +        for (int index = 0; index < slots.length; index++) {
 +            final PacketWrapper packet = new PacketWrapperImpl(0, Unpooled.buffer(), fixture.user);
 +            packet.write(Types.SHORT, (short) slots[index]);
@@ -733,15 +760,15 @@ index 6cf158244..d9192fba9 100644
 +            InventoryPackets.handleCreativeSlotPacket(packet);
 +            assertTrue(packet.isCancelled());
 +        }
-+        assertEquals(List.of(36, 9, 36), fixture.requests.creativeSlots);
-+        assertEquals(List.of(64, 64, 16), fixture.requests.creativeItems.stream().map(Item::amount).toList());
++        assertEquals(List.of(36, -1, 9, 36), fixture.requests.creativeSlots);
++        assertEquals(List.of(64, 1, 64, 16), fixture.requests.creativeItems.stream().map(Item::amount).toList());
 +        assertSame(inventory, fixture.inventory.getPendingCloseContainer());
 +    }
 +
      @Test
      void nativePlayerInventoryCloseAcknowledgementDoesNotCloseTheJavaCreativeScreen() {
          final CloseFixture fixture = new CloseFixture();
-@@ -219,65 +254,107 @@ class InventoryPacketsTest {
+@@ -219,62 +258,172 @@ class InventoryPacketsTest {
      }
  
      @Test
@@ -810,19 +837,6 @@ index 6cf158244..d9192fba9 100644
 -        final BedrockItem oldItem = new BedrockItem(1);
 -        final BedrockInventoryTransaction transaction =
 -                InventoryPackets.creativeSlotTransaction(ContainerID.CONTAINER_ID_INVENTORY.getValue(), 12, oldItem, BedrockItem.empty());
--
--        assertEquals(2, transaction.actions().size());
--        final InventoryActionData delete = transaction.actions().get(0);
--        assertEquals(InventorySourceType.Creative_Inventory, delete.source().type());
--        assertEquals(0, delete.slot());
--        assertSame(oldItem, delete.toItem());
--
--        final InventoryActionData clear = transaction.actions().get(1);
--        assertEquals(InventorySourceType.Container_Inventory, clear.source().type());
--        assertEquals(ContainerID.CONTAINER_ID_INVENTORY.getValue(), clear.source().containerId());
--        assertEquals(12, clear.slot());
--        assertSame(oldItem, clear.fromItem());
--        assertTrue(clear.toItem().isEmpty());
 +    void clearingCreativeSlotOnlyDestroysItsAuthoritativeStack() {
 +        final BedrockItem previous = new BedrockItem(1);
 +        previous.setAmount(12);
@@ -837,17 +851,21 @@ index 6cf158244..d9192fba9 100644
 +        assertEquals(29, destroy.item().stackNetworkId());
 +        assertEquals(inventory.getFullContainerName(12), destroy.item().container());
 +        assertEquals(12, destroy.item().slot());
-     }
++    }
  
-     @Test
--    void creativeTransactionsAddressArmorAndOffhandContainers() {
--        for (int containerId : new int[]{ContainerID.CONTAINER_ID_ARMOR.getValue(), ContainerID.CONTAINER_ID_OFFHAND.getValue()}) {
--            final BedrockInventoryTransaction transaction = InventoryPackets.creativeSlotTransaction(
--                    containerId, 0, BedrockItem.empty(), new BedrockItem(1));
--            final InventoryActionData target = transaction.actions().get(transaction.actions().size() - 1);
--            assertEquals(InventorySourceType.Container_Inventory, target.source().type());
--            assertEquals(containerId, target.source().containerId());
--            assertEquals(0, target.slot());
+-        assertEquals(2, transaction.actions().size());
+-        final InventoryActionData delete = transaction.actions().get(0);
+-        assertEquals(InventorySourceType.Creative_Inventory, delete.source().type());
+-        assertEquals(0, delete.slot());
+-        assertSame(oldItem, delete.toItem());
+-
+-        final InventoryActionData clear = transaction.actions().get(1);
+-        assertEquals(InventorySourceType.Container_Inventory, clear.source().type());
+-        assertEquals(ContainerID.CONTAINER_ID_INVENTORY.getValue(), clear.source().containerId());
+-        assertEquals(12, clear.slot());
+-        assertSame(oldItem, clear.fromItem());
+-        assertTrue(clear.toItem().isEmpty());
++    @Test
 +    void creativeRequestsUseArmorAndOffhandWireSlots() {
 +        for (final Container container : List.of(new ArmorContainer(null), new OffhandContainer(null))) {
 +            final BedrockItem selected = new BedrockItem(1);
@@ -870,10 +888,18 @@ index 6cf158244..d9192fba9 100644
 +            assertEquals(container.getFullContainerName(0), destroy.item().container());
 +            assertEquals(container instanceof OffhandContainer ? 1 : 0, destroy.item().slot());
 +            assertEquals(19, destroy.item().stackNetworkId());
-         }
++        }
      }
  
-+    @Test
+     @Test
+-    void creativeTransactionsAddressArmorAndOffhandContainers() {
+-        for (int containerId : new int[]{ContainerID.CONTAINER_ID_ARMOR.getValue(), ContainerID.CONTAINER_ID_OFFHAND.getValue()}) {
+-            final BedrockInventoryTransaction transaction = InventoryPackets.creativeSlotTransaction(
+-                    containerId, 0, BedrockItem.empty(), new BedrockItem(1));
+-            final InventoryActionData target = transaction.actions().get(transaction.actions().size() - 1);
+-            assertEquals(InventorySourceType.Container_Inventory, target.source().type());
+-            assertEquals(containerId, target.source().containerId());
+-            assertEquals(0, target.slot());
 +    void rejectsOverstackedCreativeWeaponsBeforeOpeningInventory() {
 +        final CloseFixture fixture = new CloseFixture();
 +        final var entities = org.mockito.Mockito.mock(net.raphimc.viabedrock.protocol.storage.EntityTracker.class);
@@ -891,15 +917,80 @@ index 6cf158244..d9192fba9 100644
 +        org.mockito.Mockito.when(rewriter.maxStackSize(nativeWeapon)).thenReturn(1);
 +        fixture.storage.put(net.raphimc.viabedrock.protocol.rewriter.ItemRewriter.class, rewriter);
 +        assertFalse(InventoryPackets.handleCreativeSlot(fixture.user, 36, weapon));
++        assertFalse(InventoryPackets.handleCreativeSlot(fixture.user, -1, weapon));
 +        assertFalse(fixture.requests.hasPending());
 +        assertFalse(fixture.requests.isWaitingForInventoryOpen());
 +        assertTrue(fixture.inventory.getInventoryContainer().getItem(0).isEmpty());
 +    }
 +
-     private static final class CloseFixture {
++    @Test
++    void creativeMenuDropPacketsCraftAndDropWithoutReplacingTheHeldStack() throws Exception {
++        for (final int nativeId : new int[]{1, -295}) {
++            for (final int count : new int[]{1, 64}) {
++                final CloseFixture fixture = new CloseFixture();
++                final var entities = mock(net.raphimc.viabedrock.protocol.storage.EntityTracker.class);
++                final var player = mock(net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity.class);
++                when(entities.getClientPlayer()).thenReturn(player);
++                when(player.javaGameMode()).thenReturn(net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode.CREATIVE);
++                fixture.storage.put(net.raphimc.viabedrock.protocol.storage.EntityTracker.class, entities);
++                final var rewriter = mock(net.raphimc.viabedrock.protocol.rewriter.ItemRewriter.class);
++                final var catalog = mock(CreativeCatalog.class);
++                final Item javaItem = new StructuredItem(nativeId == 1 ? 1 : 872, count, new StructuredDataContainer());
++                final BedrockItem nativeItem = new BedrockItem(nativeId);
++                nativeItem.setAmount(1);
++                when(rewriter.creativeCatalog()).thenReturn(catalog);
++                when(catalog.creativeEntry(any())).thenReturn(new CreativeCatalog.Entry(1852, 0, nativeItem, javaItem, false, true));
++                when(rewriter.maxStackSize(nativeItem)).thenReturn(64);
++                fixture.storage.put(net.raphimc.viabedrock.protocol.rewriter.ItemRewriter.class, rewriter);
++                final InventoryContainer inventory = fixture.inventory.getInventoryContainer();
++                fixture.inventory.setCurrentContainer(inventory);
++                final BedrockItem held = new BedrockItem(363);
++                held.setAmount(5);
++                held.setNetId(19);
++                fixture.requests.setPredictingClick(true);
++                inventory.setItem(0, held);
++                fixture.requests.setPredictingClick(false);
++                final List<ItemStackRequestInfo> sent = new ArrayList<>();
++                try (var packets = mockStatic(PacketFactory.class)) {
++                    packets.when(() -> PacketFactory.sendBedrockInventoryRequest(eq(fixture.user), any())).thenAnswer(call -> {
++                        sent.addAll(List.of(call.getArgument(1, ItemStackRequestInfo[].class)));
++                        return null;
++                    });
++                    final var input = Unpooled.buffer();
++                    try {
++                        input.writeShort(-1);
++                        VersionedTypes.V26_3.lengthPrefixedItem.write(input, javaItem);
++                        final PacketWrapper drop = new PacketWrapperImpl(0, input, fixture.user);
++                        InventoryPackets.handleCreativeSlotPacket(drop);
++                        assertTrue(drop.isCancelled());
++                        assertFalse(input.isReadable());
++                    } finally {
++                        input.release();
++                    }
++                    assertEquals(1, sent.size());
++                    final ItemStackRequestInfo request = sent.getFirst();
++                    assertEquals(3, request.actions().size());
++                    assertEquals(new ItemStackRequestAction.CraftCreativeAction(1852, 1), request.actions().get(0));
++                    final var result = (ItemStackRequestAction.CraftResultsDeprecatedAction) request.actions().get(1);
++                    assertEquals(nativeId, result.resultItems().getFirst().identifier());
++                    assertEquals(count, result.resultItems().getFirst().amount());
++                    final var action = (ItemStackRequestAction.DropAction) request.actions().get(2);
++                    assertEquals(count, action.count());
++                    assertEquals(ContainerEnumName.CreatedOutputContainer, action.item().container().name());
++                    assertEquals(50, action.item().slot());
++                    assertEquals(request.requestId(), action.item().stackNetworkId());
++                    assertFalse(action.randomly());
++                    assertTrue(fixture.requests.hasPending());
++                    assertEquals(363, inventory.getItem(0).identifier());
++                    assertEquals(5, inventory.getItem(0).amount());
++                    assertEquals(19, inventory.getItem(0).netId());
++                    assertEquals(1, nativeItem.amount());
++                }
++            }
+         }
+     }
  
-         private final Map<Class<?>, Object> storage = new HashMap<>();
-@@ -285,7 +362,7 @@ class InventoryPacketsTest {
+@@ -285,7 +434,7 @@ class InventoryPacketsTest {
                  UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
                  (proxy, method, args) -> method.getName().equals("get") ? this.storage.get(args[0]) : null);
          private final ClosingInventoryTracker inventory = new ClosingInventoryTracker(this.user);
@@ -908,7 +999,7 @@ index 6cf158244..d9192fba9 100644
  
          private CloseFixture() {
              this.storage.put(InventoryTracker.class, this.inventory);
-@@ -317,4 +394,21 @@ class InventoryPacketsTest {
+@@ -317,4 +466,21 @@ class InventoryPacketsTest {
          }
      }
  

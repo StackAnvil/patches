@@ -1377,3 +1377,19 @@ No installed artifacts or runtime processes change during these checks.
 Suppress Java's block-escape push when a known native actor snapshot omits `PUSH_TOWARDS_CLOSEST_SPACE` (flag 109). The matching 1.26.51.1 system at `14901c270` checks this flag before creating its escape request. Three saved CubeCraft actor snapshots omit the flag. Unknown native state keeps Java's existing behavior.
 
 This removes an unsupported source of sideways velocity during block overlap. The supplied log has no movement-correction diagnostics. Pillars of Fortune jumping and block-placement falls still need a live gameplay comparison; this gate alone does not establish movement parity.
+
+## Exact block contacts and edge support
+
+Native collision queries use float coordinates. Java stores player boxes in double coordinates. Applying the rounded native displacement can put the Java box inside a block face.
+
+Use the native contact predicate to find the face, then clamp movement to the exact Java gap. Use the same predicate for edge support. Visit shape boxes directly to avoid temporary lists and boxes.
+
+Behavioral tests cover both directions on all axes, elevated coordinates, and negative coordinates. Two new contact regressions fail with the previous adapter. The revised adapter passes both controls.
+
+A private allocation probe measures reductions of 43% for full blocks and 80% for a 24-box shape. These measurements describe the collision query, not game frame times.
+
+Native overlap recovery, stepping, and correction replay remain separate gaps. These controls do not establish complete CubeCraft movement parity.
+
+The updated Java client starts with the new movement hooks on ViaProxy. A live BDS 1.26.51.1 control jumps on an elevated bedrock platform, then holds sneak and forward at the edge. Java reports exact Y 250 and holds Z 2.738. BDS confirms the player remains on the platform.
+
+A read-only runtime sampler captures 750 client frames around the elevated jump, edge, and fall controls. Both actual landings reach exactly `Y = AABB.minY = 250.0`. All 31 shift frames stay at that height. No sampled player box penetrates below the platform.

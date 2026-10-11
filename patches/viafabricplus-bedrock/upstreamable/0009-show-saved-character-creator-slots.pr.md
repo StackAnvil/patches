@@ -2950,3 +2950,11 @@ The crouching root error is corrected. The reported low standing hand only on Cu
 Classic skins now use the bundled target player graph for bodies and dressing-room previews. Preview playback keeps its own animation clock and variables. Body models apply the graph's visibility rules. The Java hand preference affects first-person rendering only.
 
 Equipment setup runs after the owner's per-frame resets and before its animations. A numerical regression covers repeated setup and removal on unequip. Missing-query tracking also reaches nested bone evaluation without changing Molang's existing zero defaults.
+
+## Native entity selection and external variables
+
+Select the highest compatible `min_engine_version` for each client entity in a pack. Cap compatibility at the pack engine and target Bedrock version. Preserve entity inheritance across pack layers. Reject conflicting definitions only at the selected version.
+
+[Microsoft documents this version selection](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/cliententitydocumentation/cliententitydocumentationintroduction?view=minecraft-bedrock-stable). Tests cover all six candidate orders and preserve rejection of conflicting selected definitions.
+
+Build mutable member structures for dotted external Molang variables. The target shulker graph reads `variable.Shulker.PeekAmount` and `variable.Shulker.FacingDirection`. Tests cover those reads and authored writes to sibling members.

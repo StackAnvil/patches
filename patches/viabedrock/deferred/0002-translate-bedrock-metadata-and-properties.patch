@@ -1,4 +1,4 @@
-From 28ff8c541be381afb335e2a6a018b298a6a0aa4b Mon Sep 17 00:00:00 2001
+From 52a9c52c1a4217587edad0e8d879da9b090e3236 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:27:08 +0200
 Subject: [PATCH] feat(entities): translate Bedrock metadata and properties
@@ -153,6 +153,11 @@ the translation and retains the ordinary crystal animation.
 Reference: https://github.com/GeyserMC/Geyser/blob/master/core/src/main/java/org/geysermc/geyser/entity/type/EnderCrystalEntity.java
 
 Target BDS 1.26.51.1 sulfur behavior variants small=1 and medium=2 use the Java shared cube SIZE metadata rather than a baby flag. Reconstruct thrown potion item data from native flags/AUX_VALUE_DATA and preserve cloud DATA_PARTICLE/EFFECT_COLOR so lingering trial potions retain appearance. Targeted actor metadata tests verify size and potion/cloud data.
+
+Translate shulker dye variants from Bedrock black-to-white order into Java
+white-to-black order, preserving the undyed variant. The native 1.26.51.1
+shulker render controller establishes all seventeen variant textures.
+Actual metadata rewrite tests cover each color and the undyed state.
 ---
  .../api/model/NativeActorHitboxes.java        |  91 +++
  .../api/model/NativeActorPickingMessage.java  | 111 +++
@@ -168,7 +173,7 @@ Target BDS 1.26.51.1 sulfur behavior variants small=1 and medium=2 use the Java 
  .../protocol/packet/JoinPackets.java          |   2 +-
  .../protocol/packet/MultiStatePackets.java    |   6 +
  .../protocol/packet/OtherPlayerPackets.java   |   5 +-
- .../rewriter/EntityMetadataRewriter.java      | 713 ++++++++++++++++--
+ .../rewriter/EntityMetadataRewriter.java      | 715 ++++++++++++++++--
  .../storage/EntityPropertyTracker.java        |  61 ++
  .../protocol/storage/EntityTracker.java       |  75 ++
  .../storage/InteractionHitboxProxies.java     | 171 +++++
@@ -181,11 +186,11 @@ Target BDS 1.26.51.1 sulfur behavior variants small=1 and medium=2 use the Java 
  .../model/entity/EntityPropertyListTest.java  |  92 +++
  .../ArmorStandMarkerMetadataTest.java         | 177 +++++
  .../rewriter/EntityBodyVisibilityTest.java    | 253 +++++++
- .../rewriter/EntityMetadataRewriterTest.java  | 294 ++++++++
+ .../rewriter/EntityMetadataRewriterTest.java  | 318 ++++++++
  .../rewriter/EntityNameFormattingTest.java    | 256 +++++++
  .../rewriter/PotionActorMetadataTest.java     | 107 +++
  .../storage/InteractionHitboxProxiesTest.java | 251 ++++++
- 31 files changed, 3328 insertions(+), 75 deletions(-)
+ 31 files changed, 3353 insertions(+), 76 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityProperty.java
@@ -1093,7 +1098,7 @@ index 04eb4f2e1..55811996e 100644
                  entityTracker.applyEntityLink(link);
              }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-index 8a71196b8..315c143be 100644
+index 8a71196b8..f5d5a44af 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 @@ -17,56 +17,93 @@
@@ -1357,7 +1362,7 @@ index 8a71196b8..315c143be 100644
                      case WOLF -> {
                          final int javaVariant = switch (variant) {
                              case 0 -> 4; // PALE
-@@ -245,8 +315,7 @@ public final class EntityMetadataRewriter {
+@@ -245,13 +315,12 @@ public final class EntityMetadataRewriter {
                          javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_3.entityDataTypes().frogVariantType, javaVariant));
                      }
                      case TROPICAL_FISH -> {
@@ -1367,6 +1372,12 @@ index 8a71196b8..315c143be 100644
                      }
                      case PUFFERFISH -> {
                      } // For some reason bedrock sends the puffed state here as well as in the PUFFED_STATE Actor ID so we ignore this one
+                     case SHULKER -> {
+-                        final byte color = (byte) variant;
++                        final byte color = (byte) (variant >= 0 && variant < 16 ? 15 - variant : 16);
+                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.COLOR), VersionedTypes.V26_3.entityDataTypes().byteType, color));
+                     }
+                     case AXOLOTL -> {
 @@ -268,6 +337,17 @@ public final class EntityMetadataRewriter {
                          };
                          javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_3.entityDataTypes().varIntType, javaVariant));
@@ -3403,10 +3414,10 @@ index 000000000..670144802
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
 new file mode 100644
-index 000000000..f479b49a5
+index 000000000..53a142844
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
-@@ -0,0 +1,294 @@
+@@ -0,0 +1,318 @@
 +package net.raphimc.viabedrock.protocol.rewriter;
 +
 +import com.viaversion.viaversion.api.connection.UserConnection;
@@ -3698,6 +3709,30 @@ index 000000000..f479b49a5
 +                new EntityData(ActorDataIds.CUSTOM_DISPLAY.getValue(), EntityDataTypesBedrock.BYTE, (byte) 1));
 +        assertEquals(142, EntityMetadataRewriter.minecartDisplayBlockState(minecart, id -> id + 100));
 +        assertEquals(0, EntityMetadataRewriter.minecartDisplayBlockState(minecart, id -> -1));
++    }
++
++    @Test
++    void reversesNativeShulkerDyesAndKeepsTheUndyedVariant() throws Exception {
++        Class.forName("com.viaversion.viaversion.api.minecraft.data.StructuredDataKey");
++        final var field = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("javaEntityDataFields");
++        field.setAccessible(true);
++        final Object previous = field.get(BedrockProtocol.MAPPINGS);
++        try {
++            field.set(BedrockProtocol.MAPPINGS, Map.of(EntityTypes26_3.SHULKER, List.of(EntityDataFields.COLOR)));
++            final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                    new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
++            final Entity shulker = new Entity(user, 1, 1, "minecraft:shulker", 1, null, EntityTypes26_3.SHULKER);
++            for (int nativeColor = 0; nativeColor <= 16; nativeColor++) {
++                final List<EntityData> translated = new ArrayList<>();
++                EntityMetadataRewriter.rewrite(user, shulker, ActorDataIds.VARIANT,
++                        new EntityData(ActorDataIds.VARIANT.getValue(), EntityDataTypesBedrock.INT, nativeColor), translated);
++                assertEquals(1, translated.size());
++                assertEquals((byte) (nativeColor == 16 ? 16 : 15 - nativeColor), (byte) translated.getFirst().value());
++                assertEquals(VersionedTypes.V26_3.entityDataTypes().byteType, translated.getFirst().dataType());
++            }
++        } finally {
++            field.set(BedrockProtocol.MAPPINGS, previous);
++        }
 +    }
 +
 +}

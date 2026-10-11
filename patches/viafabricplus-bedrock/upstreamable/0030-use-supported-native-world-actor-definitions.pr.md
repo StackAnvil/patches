@@ -16,3 +16,11 @@ Additional crystal regressions sample the bundled animation at 20, 60 and 144 fr
 Each nested bone retains the authored rate of minus 60 degrees per second.
 The bob uses the authored 230-degree-per-second sine input, and the random phase remains stable for the playback lifetime.
 These tests pass without a speed adjustment and do not establish live native screenshot parity.
+
+## Shulker attachment and lid variables
+
+Pass the Java shulker attachment direction and interpolated lid opening into the native graph. The licensed Bedrock 1.26.51.1 shulker definition reads both values during pre-animation.
+
+Production graph tests cover all six attachment directions and lid motion through the normal resource resolver. These tests verify authored transforms without claiming native attack or teleport parity.
+
+The updated Java client joins BDS 1.26.51.1 through ViaProxy and renders a summoned shulker with visible lid motion. This scene does not verify attacks or teleport behavior.

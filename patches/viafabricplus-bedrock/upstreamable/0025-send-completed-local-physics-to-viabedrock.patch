@@ -1,4 +1,4 @@
-From 077724a85b0b79904638fa63d3a5df4cd0d8d9c6 Mon Sep 17 00:00:00 2001
+From 359893c290f2c5893f5b90e9baad33482ebbf81c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -411,6 +411,15 @@ This gate does not establish full Pillars of Fortune movement parity.
 Matching official Bedrock 1.26.51.1/protocol 2193 survival captures show twisting/weeping vines apply 0.2 jump velocity before movement, cap descent at -0.2, hold downward motion while sneaking, and apply ladder wall velocity 0.2 after gravity. A stone ceiling stops jumping at final velocity -0.0784 rather than replacing collision-resolved velocity with a later impulse. Adjacent feet cells fall normally and leaving the vine top restores gravity.
 
 Java's pre-stage -0.15 cap and late jump impulse produce mismatched displacement. Port the captured stages while retaining collision results and excluding flight, gliding, liquids, swimming and ordinary Java connections. Targeted climbing, posture and native collision tests pass. Flat-floor native crouching held eye Y unchanged, and the rare ground clipping report remains unreproduced.
+
+Preserve exact Java block-face boundaries when applying native float contact
+results. Applying a rounded displacement to double bounds can land inside
+full blocks, and Java edge support must use the same contact tolerance.
+Visit shape boxes directly to reduce allocations while falling.
+
+The matching Bedrock 1.26.51.1 contact kernel remains unchanged. Regression
+tests cover all axes, both movement directions, map coordinates and edge
+support; the old adapter fails the new contact controls.
 ---
  build.gradle.kts                              |   1 +
  .../bedrock/ViaFabricPlusBedrock.java         |   8 +
@@ -423,7 +432,7 @@ Java's pre-stage -0.15 cap and late jump impulse produce mismatched displacement
  .../movement/MixinFireworkRocketEntity.java   |  28 ++
  .../features/movement/MixinLivingEntity.java  | 140 +++++++++
  .../features/movement/MixinLocalPlayer.java   | 230 ++++++++++++++-
- .../mixin/features/movement/MixinPlayer.java  | 119 ++++++--
+ .../mixin/features/movement/MixinPlayer.java  | 128 +++++++--
  .../MixinPlayerCorrectionPacketListener.java  |  23 ++
  .../MixinPotentSulfurBlockEntity.java         |  44 +++
  .../features/movement/MixinVoxelShape.java    |  28 ++
@@ -439,7 +448,7 @@ Java's pre-stage -0.15 cap and late jump impulse produce mismatched displacement
  .../input/VehiclePredictionPayload.java       |  24 ++
  .../input/VehiclePredictionSession.java       |  84 ++++++
  .../movement/BedrockClimbingPhysics.java      |  43 +++
- .../movement/BedrockCollisionContacts.java    |  50 ++++
+ .../movement/BedrockCollisionContacts.java    | 102 +++++++
  .../movement/BedrockFlightPhysics.java        |  61 ++++
  .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++
  .../movement/BedrockGeyserPhysics.java        |  70 +++++
@@ -449,12 +458,12 @@ Java's pre-stage -0.15 cap and late jump impulse produce mismatched displacement
  .../input/VehiclePredictionPayloadTest.java   |  75 +++++
  .../input/VehiclePredictionSessionTest.java   | 266 ++++++++++++++++++
  .../movement/BedrockClimbingPhysicsTest.java  |  53 ++++
- .../BedrockCollisionContactsTest.java         |  39 +++
+ .../BedrockCollisionContactsTest.java         |  95 +++++++
  .../movement/BedrockFlightPhysicsTest.java    | 130 +++++++++
  .../movement/BedrockFluidPhysicsTest.java     | 121 ++++++++
  .../movement/BedrockGeyserPhysicsTest.java    | 101 +++++++
  .../movement/BedrockPlayerPostureTest.java    |  45 +++
- 42 files changed, 2497 insertions(+), 67 deletions(-)
+ 42 files changed, 2614 insertions(+), 67 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
@@ -1233,10 +1242,10 @@ index e5a8167..c15ef5e 100644
  
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
-index 49a37ac..f18d263 100644
+index 49a37ac..b71f6de 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
-@@ -22,36 +22,97 @@
+@@ -22,36 +22,106 @@
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
  import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
@@ -1245,6 +1254,7 @@ index 49a37ac..f18d263 100644
 +import com.llamalad7.mixinextras.injector.ModifyReturnValue;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockFlightMotion;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockCollisionContacts;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockFlightPhysics;
 +import net.raphimc.viabedrock.api.model.FlightMovement;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
@@ -1271,6 +1281,7 @@ index 49a37ac..f18d263 100644
  import org.spongepowered.asm.mixin.injection.Inject;
  import org.spongepowered.asm.mixin.injection.Redirect;
  import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  
  @Mixin(Player.class)
 -public abstract class MixinPlayer extends Avatar {
@@ -1284,12 +1295,12 @@ index 49a37ac..f18d263 100644
 +
 +    @Unique
 +    private float viaFabricPlusBedrock$flightInputX;
++
++    @Unique
++    private float viaFabricPlusBedrock$flightInputZ;
  
      @Unique
 -    private int viaFabricPlusBedrock$ticksSinceSwimming;
-+    private float viaFabricPlusBedrock$flightInputZ;
-+
-+    @Unique
 +    private boolean viaFabricPlusBedrock$flightInputPrepared;
 +
 +    @Override
@@ -1328,6 +1339,13 @@ index 49a37ac..f18d263 100644
 +        return BedrockFlightPhysics.retainSwimming((Player) (Object) this, swimming, super.isSwimming());
 +    }
 +
++    @Inject(method = "canFallAtLeast", at = @At("HEAD"), cancellable = true)
++    private void useNativeEdgeContacts(final double x, final double z, final double distance, final CallbackInfoReturnable<Boolean> cir) {
++        if ((Object) this instanceof LocalPlayer && BedrockInputPermissions.isBedrockConnection()) {
++            cir.setReturnValue(BedrockCollisionContacts.canFallAtLeast((Player) (Object) this, x, z, distance));
++        }
++    }
++
 +    @Shadow
 +    protected abstract boolean canPlayerFitWithinBlocksAndEntitiesWhen(Pose pose);
 +
@@ -1341,7 +1359,7 @@ index 49a37ac..f18d263 100644
      @Redirect(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/core/BlockPos;containing(DDD)Lnet/minecraft/core/BlockPos;"))
      private BlockPos modifyWaterAbovePosition(final double x, final double y, final double z) {
          if (BedrockInputPermissions.isBedrockConnection()) {
-@@ -63,21 +124,16 @@ public abstract class MixinPlayer extends Avatar {
+@@ -63,21 +133,16 @@ public abstract class MixinPlayer extends Avatar {
  
      @WrapWithCondition(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;setDeltaMovement(Lnet/minecraft/world/phys/Vec3;)V", ordinal = 0))
      private boolean preventSwimmingMotionWhenJumping(final Player instance, final Vec3 movement) {
@@ -1368,7 +1386,7 @@ index 49a37ac..f18d263 100644
              this.setDeltaMovement(this.getDeltaMovement().x(), 0, this.getDeltaMovement().z());
          }
      }
-@@ -88,9 +144,20 @@ public abstract class MixinPlayer extends Avatar {
+@@ -88,9 +153,20 @@ public abstract class MixinPlayer extends Avatar {
              return instance.isSwimming();
          }
  
@@ -1392,7 +1410,7 @@ index 49a37ac..f18d263 100644
              instance.setDeltaMovement(instance.getDeltaMovement().x(), 0, instance.getDeltaMovement().z());
              return false;
          }
-@@ -99,12 +166,18 @@ public abstract class MixinPlayer extends Avatar {
+@@ -99,12 +175,18 @@ public abstract class MixinPlayer extends Avatar {
      }
  
      @Redirect(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;setDeltaMovement(Lnet/minecraft/world/phys/Vec3;)V", ordinal = 1))
@@ -2079,10 +2097,10 @@ index 0000000..14ff9c2
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContacts.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContacts.java
 new file mode 100644
-index 0000000..9f16513
+index 0000000..cf98df7
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContacts.java
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,102 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2091,12 +2109,16 @@ index 0000000..9f16513
 +package com.viaversion.viafabricplus.bedrock.movement;
 +
 +import net.minecraft.core.Direction;
++import net.minecraft.world.entity.player.Player;
 +import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.shapes.Shapes;
 +import net.minecraft.world.phys.shapes.VoxelShape;
 +import net.raphimc.viabedrock.api.model.CollisionContact;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
 +
 +public final class BedrockCollisionContacts {
++
++    private static final double CONTACT_EPSILON = 0.000001F;
 +
 +    private BedrockCollisionContacts() {
 +    }
@@ -2105,33 +2127,81 @@ index 0000000..9f16513
 +        if (distance == 0 || shape.isEmpty()) {
 +            return distance;
 +        }
-+        final CollisionContact.Box moving = nativeBox(box);
-+        double result = distance;
-+        for (final AABB obstacle : shape.toAabbs()) {
-+            final Position3f requested = switch (axis) {
-+                case X -> new Position3f((float) result, 0F, 0F);
-+                case Y -> new Position3f(0F, (float) result, 0F);
-+                case Z -> new Position3f(0F, 0F, (float) result);
-+            };
-+            final Position3f clipped = CollisionContact.clip(nativeBox(obstacle), moving, requested);
-+            if (clipped != requested) {
-+                result = switch (axis) {
-+                    case X -> clipped.x();
-+                    case Y -> clipped.y();
-+                    case Z -> clipped.z();
-+                };
-+                if (result == 0) {
-+                    break;
-+                }
++        final AxisCollision collision = new AxisCollision(axis, box, distance);
++        shape.forAllBoxes(collision);
++        return collision.distance;
++    }
++
++    public static boolean canFallAtLeast(final Player player, final double x, final double z, final double distance) {
++        final AABB body = player.getBoundingBox().move(x, 0, z);
++        final AABB probe = new AABB(body.minX, body.minY - distance - Shapes.EPSILON, body.minZ,
++                body.maxX, body.minY, body.maxZ);
++        return canFallAtLeast(player.level().getCollisions(player, probe), body, distance);
++    }
++
++    static boolean canFallAtLeast(final Iterable<VoxelShape> shapes, final AABB body, final double distance) {
++        final double requested = -distance;
++        for (final VoxelShape shape : shapes) {
++            if (collide(shape, Direction.Axis.Y, body, requested) != requested) {
++                return false;
 +            }
 +        }
-+        return result;
++        return true;
 +    }
 +
 +    private static CollisionContact.Box nativeBox(final AABB box) {
 +        return new CollisionContact.Box((float) box.minX, (float) box.minY, (float) box.minZ, (float) box.maxX, (float) box.maxY, (float) box.maxZ);
 +    }
 +
++    private static final class AxisCollision implements Shapes.DoubleLineConsumer {
++
++        private final Direction.Axis axis;
++        private final AABB box;
++        private final CollisionContact.Box moving;
++        private final Position3f probe;
++        private double distance;
++
++        private AxisCollision(final Direction.Axis axis, final AABB box, final double distance) {
++            this.axis = axis;
++            this.box = box;
++            this.moving = nativeBox(box);
++            this.distance = distance;
++            // Find the native contact face independently of rounding the Java request to float.
++            final float direction = distance > 0 ? Float.MAX_VALUE : -Float.MAX_VALUE;
++            this.probe = switch (axis) {
++                case X -> new Position3f(direction, 0F, 0F);
++                case Y -> new Position3f(0F, direction, 0F);
++                case Z -> new Position3f(0F, 0F, direction);
++            };
++        }
++
++        @Override
++        public void consume(final double minX, final double minY, final double minZ,
++                            final double maxX, final double maxY, final double maxZ) {
++            if (this.distance == 0) {
++                return;
++            }
++            final Position3f clipped = CollisionContact.clip(new CollisionContact.Box((float) minX, (float) minY, (float) minZ,
++                    (float) maxX, (float) maxY, (float) maxZ), this.moving, this.probe);
++            if (clipped == this.probe) {
++                return;
++            }
++            final double gap = this.distance > 0 ? switch (this.axis) {
++                case X -> minX - this.box.maxX;
++                case Y -> minY - this.box.maxY;
++                case Z -> minZ - this.box.maxZ;
++            } : switch (this.axis) {
++                case X -> maxX - this.box.minX;
++                case Y -> maxY - this.box.minY;
++                case Z -> maxZ - this.box.minZ;
++            };
++            // Native stores a rounded box after clipping. Java retains double bounds, so
++            // applying the native float gap can put it through the contact face.
++            final double contact = Math.abs(gap) <= CONTACT_EPSILON ? 0 : gap;
++            this.distance = this.distance > 0 ? Math.min(this.distance, Math.max(0, contact))
++                    : Math.max(this.distance, Math.min(0, contact));
++        }
++    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysics.java
 new file mode 100644
@@ -3034,10 +3104,10 @@ index 0000000..b1d54e6
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java
 new file mode 100644
-index 0000000..6094186
+index 0000000..9d86f6c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,95 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3051,7 +3121,11 @@ index 0000000..6094186
 +import net.minecraft.world.phys.shapes.VoxelShape;
 +import org.junit.jupiter.api.Test;
 +
++import java.util.List;
++
 +import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
 +
 +class BedrockCollisionContactsTest {
 +
@@ -3072,10 +3146,62 @@ index 0000000..6094186
 +        final AABB throughGap = new AABB(0.3, 0, -1, 0.7, 0.8, -0.1);
 +        assertEquals(0.5, BedrockCollisionContacts.collide(posts, Direction.Axis.Z, throughGap, 0.5));
 +        final AABB intoPost = new AABB(0.05, 0, -1, 0.2, 0.8, -0.1);
-+        assertEquals((double) 0.1F, BedrockCollisionContacts.collide(posts, Direction.Axis.Z, intoPost, 0.5));
++        assertEquals(0.1, BedrockCollisionContacts.collide(posts, Direction.Axis.Z, intoPost, 0.5));
 +        assertEquals(0.5, BedrockCollisionContacts.collide(Shapes.empty(), Direction.Axis.Z, intoPost, 0.5));
 +    }
 +
++    @Test
++    void landsExactlyOnFullBlockFacesWithUnroundedJavaBounds() {
++        for (final Direction.Axis axis : Direction.Axis.values()) {
++            for (final double origin : new double[]{0, 250, 608, 8192, -8192}) {
++                final VoxelShape block = Shapes.box(origin, origin, origin, origin + 1, origin + 1, origin + 1);
++                for (final double gap : new double[]{0.014, 0.137, 0.499}) {
++                    final double[] lower = {origin + 0.2, origin + 0.2, origin + 0.2};
++                    final double[] upper = {origin + 0.8, origin + 0.8, origin + 0.8};
++                    final int component = axis.ordinal();
++                    lower[component] = origin - gap - 0.6;
++                    upper[component] = origin - gap;
++                    final AABB approachingPositive = new AABB(lower[0], lower[1], lower[2], upper[0], upper[1], upper[2]);
++                    final double positive = BedrockCollisionContacts.collide(block, axis, approachingPositive, 1);
++                    assertEquals(origin, approachingPositive.max(axis) + positive, 0D);
++                    assertEquals(-1, BedrockCollisionContacts.collide(block, axis, approachingPositive, -1));
++
++                    lower[component] = origin + 1 + gap;
++                    upper[component] = origin + 1 + gap + 0.6;
++                    final AABB approachingNegative = new AABB(lower[0], lower[1], lower[2], upper[0], upper[1], upper[2]);
++                    final double negative = BedrockCollisionContacts.collide(block, axis, approachingNegative, -1);
++                    assertEquals(origin + 1, approachingNegative.min(axis) + negative, 0D);
++                    assertEquals(1, BedrockCollisionContacts.collide(block, axis, approachingNegative, 1));
++                }
++            }
++        }
++    }
++
++    @Test
++    void clipsRequestsThatReachTheFaceBeforeTheirFloatRoundedDistance() {
++        final VoxelShape floor = Shapes.box(0, 249, 0, 1, 250, 1);
++        final AABB body = new AABB(0.2, 250.014, 0.2, 0.8, 251.814, 0.8);
++        final double requested = -(body.minY - 250) - 0.000001;
++        final double clipped = BedrockCollisionContacts.collide(floor, Direction.Axis.Y, body, requested);
++        assertEquals(250, body.minY + clipped, 0D);
++        assertTrue(clipped > requested);
++    }
++
++    @Test
++    void edgeGuardRequiresTheSameSupportAsVerticalCollision() {
++        final VoxelShape floor = Shapes.block();
++        for (final double origin : new double[]{0, 608, -608, 8192, -8192}) {
++            final VoxelShape translated = floor.move(origin, 0, 0);
++            final AABB touchingEdge = new AABB(origin + 0.9999995, 1, 0.2, origin + 1.5999995, 2.8, 0.8);
++            assertTrue(BedrockCollisionContacts.canFallAtLeast(List.of(translated), touchingEdge, 0.6));
++            assertEquals(-0.6, BedrockCollisionContacts.collide(translated, Direction.Axis.Y, touchingEdge, -0.6));
++
++            final AABB supported = touchingEdge.move(-0.05, 0, 0);
++            assertFalse(BedrockCollisionContacts.canFallAtLeast(List.of(translated), supported, 0.6));
++            assertEquals(0, BedrockCollisionContacts.collide(translated, Direction.Axis.Y, supported, -0.6));
++        }
++        assertTrue(BedrockCollisionContacts.canFallAtLeast(List.of(), new AABB(0, 1, 0, 0.6, 2.8, 0.6), 0.6));
++    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysicsTest.java
 new file mode 100644

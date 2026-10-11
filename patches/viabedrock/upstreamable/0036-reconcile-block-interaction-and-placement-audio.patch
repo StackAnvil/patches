@@ -1,4 +1,4 @@
-From 40a6c15c25637805ce50b8e6569cdb52ed01a488 Mon Sep 17 00:00:00 2001
+From f3bc1e2d6160f546e1a790bcc9d204558a7e4cc7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 11:37:29 +0200
 Subject: [PATCH] fix(sound): reconcile locally predicted interaction and
@@ -7,17 +7,27 @@ Subject: [PATCH] fix(sound): reconcile locally predicted interaction and
 Java already plays closeable, placement, and mining hit sounds from local prediction. Track the local actions and omit matching Bedrock echoes while keeping events from other actors and positions. Ignore a no-damage attack echo only when it belongs to the player currently mining.
 
 Treat silent Bedrock block destruction events as silent and avoid replaying sounds already predicted by the Java client. Keep placement and mining audio in the same reconciliation path.
+
+Reconcile legacy LEVEL_EVENT SoundOpenDoor alongside named level sounds.
+Track the two server packet sources independently for each local door,
+trapdoor or gate prediction so either echo order remains silent while
+remote, expired and further same-source events stay audible.
+
+Registered protocol-handler tests exercise raw legacy and named sound
+packets. The supplied Discord log does not contain their wire sequence.
 ---
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/data/enums/java/LevelEvent.java  |   1 +
  .../protocol/packet/ClientPlayerPackets.java  |   3 +
  .../protocol/packet/InteractionPackets.java   |  11 +-
- .../protocol/packet/WorldEffectPackets.java   |  41 +++--
- .../storage/BlockInteractionSoundTracker.java | 174 ++++++++++++++++++
+ .../protocol/packet/WorldEffectPackets.java   |  46 ++--
+ .../storage/BlockInteractionSoundTracker.java | 196 ++++++++++++++++++
  .../data/custom/level_event_mappings.json     |   2 +-
- .../BlockInteractionSoundTrackerTest.java     | 146 +++++++++++++++
- 8 files changed, 360 insertions(+), 19 deletions(-)
+ .../protocol/packet/DoorSoundPacketsTest.java | 106 ++++++++++
+ .../BlockInteractionSoundTrackerTest.java     | 182 ++++++++++++++++
+ 9 files changed, 529 insertions(+), 19 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTracker.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/DoorSoundPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTrackerTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -100,7 +110,7 @@ index c7cc1c7a7..1db7752e0 100644
          });
          protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_TRANSACTION, null, wrapper -> {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
-index b54936e55..a354fd322 100644
+index b54936e55..07af1babc 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
 @@ -31,6 +31,7 @@ import com.viaversion.viaversion.util.Key;
@@ -176,7 +186,19 @@ index b54936e55..a354fd322 100644
  
              wrapper.write(Types.SOUND_EVENT, Holder.of(javaSound.id())); // sound id
              wrapper.write(Types.VAR_INT, javaSound.category().ordinal()); // category
-@@ -364,7 +366,12 @@ public final class WorldEffectPackets {
+@@ -306,6 +308,11 @@ public final class WorldEffectPackets {
+                 wrapper.cancel();
+                 return;
+             }
++            if (levelEvent == LevelEvent.SoundOpenDoor
++                    && wrapper.user().get(BlockInteractionSoundTracker.class).consumeLocallyPlayedDoorEvent(position)) {
++                wrapper.cancel();
++                return;
++            }
+             switch (levelEvent) {
+                 case ParticleSoundGuardianGhost -> {
+                     PacketFactory.sendJavaGameEvent(wrapper.user(), GameEventType.GUARDIAN_ELDER_EFFECT, 1F);
+@@ -364,7 +371,12 @@ public final class WorldEffectPackets {
                          }
                      }
                      if (levelEventMapping instanceof BedrockMappingData.JavaLevelEvent javaLevelEvent) {
@@ -192,10 +214,10 @@ index b54936e55..a354fd322 100644
                              case ParticlesShoot, ParticlesShootWhiteSmoke -> switch (data % 9) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTracker.java
 new file mode 100644
-index 000000000..e3fbdc46f
+index 000000000..6a00163aa
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTracker.java
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,196 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -214,6 +236,7 @@ index 000000000..e3fbdc46f
 +
 +import java.util.ArrayDeque;
 +import java.util.Iterator;
++import java.util.EnumSet;
 +import java.util.function.LongSupplier;
 +
 +/** Tracks block interaction sounds already played by the Java client's prediction. */
@@ -320,7 +343,7 @@ index 000000000..e3fbdc46f
 +        if (this.pending.size() == MAX_PENDING) {
 +            this.pending.removeFirst();
 +        }
-+        this.pending.addLast(new PendingSound(position, alternatePosition, event, now));
++        this.pending.addLast(new PendingSound(position, alternatePosition, event, now, EnumSet.noneOf(InteractionSoundSource.class)));
 +    }
 +
 +    private static String toggledEvent(final String prefix, final BlockState state) {
@@ -331,15 +354,30 @@ index 000000000..e3fbdc46f
 +    }
 +
 +    public boolean consumeLocallyPlayed(final String event, final Position3f position) {
++        return this.consumeLocallyPlayed(event, position, InteractionSoundSource.LEVEL_SOUND_EVENT);
++    }
++
++    public boolean consumeLocallyPlayedDoorEvent(final Position3f position) {
++        return this.consumeLocallyPlayed(null, position, InteractionSoundSource.LEVEL_EVENT);
++    }
++
++    private boolean consumeLocallyPlayed(final String event, final Position3f position, final InteractionSoundSource source) {
 +        if (position == null || !Float.isFinite(position.x()) || !Float.isFinite(position.y()) || !Float.isFinite(position.z())) {
 +            return false;
 +        }
 +        this.removeExpired(this.clock.getAsLong());
 +        for (final Iterator<PendingSound> iterator = this.pending.iterator(); iterator.hasNext(); ) {
 +            final PendingSound sound = iterator.next();
-+            if (sound.event().equals(event) && (matches(position, sound.position())
-+                    || sound.alternatePosition() != null && matches(position, sound.alternatePosition()))) {
-+                iterator.remove();
++            final boolean closeable = sound.event().startsWith("door.") || sound.event().startsWith("trapdoor.")
++                    || sound.event().startsWith("fence_gate.");
++            if ((event == null ? closeable : sound.event().equals(event))
++                    && (matches(position, sound.position())
++                    || sound.alternatePosition() != null && matches(position, sound.alternatePosition()))
++                    && sound.consumedSources().add(source)) {
++                // Both Bedrock packet forms can echo the same predicted action, in either order.
++                if (!closeable || sound.consumedSources().size() == InteractionSoundSource.values().length) {
++                    iterator.remove();
++                }
 +                return true;
 +            }
 +        }
@@ -358,7 +396,13 @@ index 000000000..e3fbdc46f
 +        }
 +    }
 +
-+    private record PendingSound(BlockPosition position, BlockPosition alternatePosition, String event, long createdAt) {
++    private record PendingSound(BlockPosition position, BlockPosition alternatePosition, String event, long createdAt,
++                                EnumSet<InteractionSoundSource> consumedSources) {
++    }
++
++    private enum InteractionSoundSource {
++        LEVEL_EVENT,
++        LEVEL_SOUND_EVENT
 +    }
 +
 +    private record PendingBreakSound(BlockPosition position, int blockState, BreakSoundSource source, long createdAt) {
@@ -383,12 +427,124 @@ index be58e0d33..ba8d6b5ee 100644
    "ParticlesKnockbackRoar": {
      "particle": "minecraft:poof",
      "speed": 0.25,
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/DoorSoundPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/DoorSoundPacketsTest.java
+new file mode 100644
+index 000000000..475ff9545
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/DoorSoundPacketsTest.java
+@@ -0,0 +1,106 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.protocol.remapper.PacketHandler;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import io.netty.buffer.ByteBuf;
++import java.util.Map;
++import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.LevelEvent;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.SoundSource;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.BlockInteractionSoundTracker;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.mockito.ArgumentCaptor;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class DoorSoundPacketsTest {
++
++    @Test
++    void registeredDoorPacketFormsSuppressBothLocalEchoesAndKeepOtherPlayersAudible() throws Exception {
++        final var protocol = mock(BedrockProtocol.class);
++        WorldEffectPackets.register(protocol);
++        final var legacy = ArgumentCaptor.forClass(PacketHandler.class);
++        final var named = ArgumentCaptor.forClass(PacketHandler.class);
++        verify(protocol).registerClientbound(eq(ClientboundBedrockPackets.LEVEL_EVENT),
++                eq(ClientboundPackets26_3.LEVEL_EVENT), legacy.capture());
++        verify(protocol).registerClientbound(eq(ClientboundBedrockPackets.LEVEL_SOUND_EVENT),
++                eq(ClientboundPackets26_3.SOUND), named.capture());
++        final var mappings = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("bedrockToJavaLevelEvents");
++        mappings.setAccessible(true);
++        final var previous = mappings.get(BedrockProtocol.MAPPINGS);
++        try {
++            mappings.set(BedrockProtocol.MAPPINGS, Map.of(LevelEvent.SoundOpenDoor,
++                    new BedrockMappingData.JavaSound(42, "minecraft:block.wooden_door.open", SoundSource.BLOCKS)));
++            for (final boolean legacyFirst : new boolean[]{false, true}) {
++                final var user = mock(UserConnection.class);
++                final var sounds = new BlockInteractionSoundTracker();
++                when(user.get(BlockInteractionSoundTracker.class)).thenReturn(sounds);
++                when(user.get(EntityTracker.class)).thenReturn(mock(EntityTracker.class));
++                sounds.recordInteraction(new BlockPosition(10, 64, 20),
++                        new BlockState("oak_door", Map.of("open", "false")));
++                final var legacyBuffer = Unpooled.buffer();
++                final var namedBuffer = Unpooled.buffer();
++                final var otherBuffer = Unpooled.buffer();
++                try {
++                    final var legacyPacket = legacyPacket(legacyBuffer, user);
++                    final var namedPacket = namedPacket(namedBuffer, user);
++                    if (legacyFirst) {
++                        legacy.getValue().handle(legacyPacket);
++                        named.getValue().handle(namedPacket);
++                    } else {
++                        named.getValue().handle(namedPacket);
++                        legacy.getValue().handle(legacyPacket);
++                    }
++                    assertTrue(legacyPacket.isCancelled());
++                    assertTrue(namedPacket.isCancelled());
++                    final var otherPlayerSound = legacyPacket(otherBuffer, user);
++                    legacy.getValue().handle(otherPlayerSound);
++                    assertFalse(otherPlayerSound.isCancelled());
++                    assertEquals(ClientboundPackets26_3.SOUND, otherPlayerSound.getPacketType());
++                    assertEquals(42, otherPlayerSound.get(Types.SOUND_EVENT, 0).id());
++                } finally {
++                    legacyBuffer.release();
++                    namedBuffer.release();
++                    otherBuffer.release();
++                }
++            }
++        } finally {
++            mappings.set(BedrockProtocol.MAPPINGS, previous);
++        }
++    }
++
++    private static PacketWrapperImpl legacyPacket(final ByteBuf buffer, final UserConnection user) throws Exception {
++        BedrockTypes.VAR_INT.writePrimitive(buffer, LevelEvent.SoundOpenDoor.getValue());
++        BedrockTypes.POSITION_3F.write(buffer, new Position3f(10.5F, 64.5F, 20.5F));
++        BedrockTypes.VAR_INT.writePrimitive(buffer, 1000);
++        return new PacketWrapperImpl(ClientboundBedrockPackets.LEVEL_EVENT, buffer, user);
++    }
++
++    private static PacketWrapperImpl namedPacket(final ByteBuf buffer, final UserConnection user) throws Exception {
++        BedrockTypes.STRING.write(buffer, "door.open");
++        BedrockTypes.POSITION_3F.write(buffer, new Position3f(10.5F, 64.5F, 20.5F));
++        BedrockTypes.VAR_INT.writePrimitive(buffer, 0);
++        BedrockTypes.STRING.write(buffer, "");
++        buffer.writeBoolean(false).writeBoolean(false).writeLongLE(0);
++        BedrockTypes.OPTIONAL_POSITION_3F.write(buffer, null);
++        return new PacketWrapperImpl(ClientboundBedrockPackets.LEVEL_SOUND_EVENT, buffer, user);
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTrackerTest.java
 new file mode 100644
-index 000000000..b247b6302
+index 000000000..653af93e4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTrackerTest.java
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,182 @@
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -534,6 +690,42 @@ index 000000000..b247b6302
 +        assertFalse(tracker.consumeLocallyPlayed("place", new Position3f(10.5F, 64.5F, 20.5F)));
 +    }
 +
++    @Test
++    void consumesBothDoorPacketFormsOnceInEitherOrder() {
++        for (final boolean legacyFirst : new boolean[]{false, true}) {
++            final BlockInteractionSoundTracker tracker = new BlockInteractionSoundTracker();
++            final Position3f position = new Position3f(10.5F, 64.5F, 20.5F);
++            tracker.recordInteraction(new BlockPosition(10, 64, 20),
++                    new BlockState("oak_door", Map.of("open", "false")));
++            if (legacyFirst) {
++                assertTrue(tracker.consumeLocallyPlayedDoorEvent(position));
++                assertFalse(tracker.consumeLocallyPlayedDoorEvent(position));
++                assertTrue(tracker.consumeLocallyPlayed("door.open", position));
++            } else {
++                assertTrue(tracker.consumeLocallyPlayed("door.open", position));
++                assertFalse(tracker.consumeLocallyPlayed("door.open", position));
++                assertTrue(tracker.consumeLocallyPlayedDoorEvent(position));
++            }
++            assertFalse(tracker.consumeLocallyPlayedDoorEvent(position));
++            assertFalse(tracker.consumeLocallyPlayed("door.open", position));
++        }
++    }
++
++    @Test
++    void legacyDoorSoundsLeaveOtherActionsAndExpiredPredictionsAlone() {
++        final AtomicLong clock = new AtomicLong();
++        final BlockInteractionSoundTracker tracker = new BlockInteractionSoundTracker(clock::get);
++        final Position3f position = new Position3f(10.5F, 64.5F, 20.5F);
++        final BlockPosition block = new BlockPosition(10, 64, 20);
++        tracker.recordPlacement(block, block);
++        assertFalse(tracker.consumeLocallyPlayedDoorEvent(position));
++        assertTrue(tracker.consumeLocallyPlayed("place", position));
++        tracker.recordInteraction(block, new BlockState("oak_door", Map.of("open", "true")));
++        assertFalse(tracker.consumeLocallyPlayedDoorEvent(new Position3f(11.5F, 64.5F, 20.5F)));
++        clock.set(2_000_000_001L);
++        assertFalse(tracker.consumeLocallyPlayedDoorEvent(position));
++    }
++
 +}
 -- 
-2.55.0
+2.56.0

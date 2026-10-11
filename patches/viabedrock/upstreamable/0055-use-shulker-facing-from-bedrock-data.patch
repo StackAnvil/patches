@@ -1,14 +1,24 @@
-From 77d9ac0eefaeb7bcb768377452e703dd3b87e99f Mon Sep 17 00:00:00 2001
+From ea0d103e2979bf8993252bb29baf9fe94c205e72 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 13:41:10 +0200
 Subject: [PATCH] fix(block-entities): use shulker facing from Bedrock data
 
 Bedrock stores the placed shulker facing in its block entity. Apply that value to the Java block state so boxes placed on walls and ceilings render and open in the correct direction.
+
+Retain tile facing in ChunkTracker state reads used by prediction correction
+and forced refreshes. Those reads formerly restored baseline facing=down
+after the tile-oriented state was sent. Resolve tile rewrites from the raw
+runtime mapping to retain each new facing update without recursion.
+
+The actual state getter test covers absent and null tile data, retained west
+facing, and subsequent down-facing updates.
 ---
  .../rewriter/BlockEntityRewriter.java         |  2 +-
- .../ShulkerBoxBlockEntityRewriter.java        | 55 +++++++++++++++++++
+ .../ShulkerBoxBlockEntityRewriter.java        | 56 +++++++++++++++++++
+ .../protocol/storage/ChunkTracker.java        |  8 +++
  .../ShulkerBoxBlockEntityRewriterTest.java    | 22 ++++++++
- 3 files changed, 78 insertions(+), 1 deletion(-)
+ .../protocol/storage/ChunkTrackerTest.java    | 48 ++++++++++++++--
+ 5 files changed, 131 insertions(+), 5 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/ShulkerBoxBlockEntityRewriter.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/ShulkerBoxBlockEntityRewriterTest.java
 
@@ -27,10 +37,10 @@ index e903b7de4..c7202129c 100644
          BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.SMOKER, new FurnaceBlockEntityRewriter());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/ShulkerBoxBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/ShulkerBoxBlockEntityRewriter.java
 new file mode 100644
-index 000000000..670094908
+index 000000000..e3b7072cb
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/ShulkerBoxBlockEntityRewriter.java
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,56 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -58,6 +68,7 @@ index 000000000..670094908
 +import net.raphimc.viabedrock.api.model.BlockState;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.data.enums.Direction;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 +import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 +
 +import java.util.Locale;
@@ -67,7 +78,7 @@ index 000000000..670094908
 +    @Override
 +    public BlockEntity toJava(final UserConnection user, final BedrockBlockEntity bedrockBlockEntity) {
 +        final BlockEntity javaBlockEntity = super.toJava(user, bedrockBlockEntity);
-+        final int originalId = user.get(ChunkTracker.class).getJavaBlockState(bedrockBlockEntity.position());
++        final int originalId = user.get(BlockStateRewriter.class).javaId(user.get(ChunkTracker.class).getBlockState(bedrockBlockEntity.position()));
 +        final BlockState original = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(originalId);
 +        final BlockState facing = withFacing(original, bedrockBlockEntity.tag());
 +        if (facing == original) {
@@ -77,8 +88,8 @@ index 000000000..670094908
 +        return javaId == null ? javaBlockEntity : new BlockEntityWithBlockState(javaBlockEntity, javaId);
 +    }
 +
-+    static BlockState withFacing(final BlockState state, final CompoundTag tag) {
-+        if (state == null || tag.get("facing") == null) {
++    public static BlockState withFacing(final BlockState state, final CompoundTag tag) {
++        if (state == null || tag == null || tag.get("facing") == null) {
 +            return state;
 +        }
 +        final Direction direction = Direction.getFromVerticalId(tag.getByte("facing", (byte) -1));
@@ -86,6 +97,32 @@ index 000000000..670094908
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+index cc98d2d41..069082da5 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+@@ -63,6 +63,7 @@ import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
+ import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
+ import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.blockentity.ShulkerBoxBlockEntityRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
+@@ -262,6 +263,13 @@ public class ChunkTracker extends StoredObject {
+     public int getJavaBlockState(final BlockPosition blockPosition) {
+         final int javaId = this.getUnconnectedJavaBlockState(blockPosition);
+         final BlockState state = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaId);
++        if (state != null && state.identifier().endsWith("shulker_box")) {
++            final BedrockBlockEntity blockEntity = this.getBlockEntity(blockPosition);
++            if (blockEntity != null) {
++                final BlockState facing = ShulkerBoxBlockEntityRewriter.withFacing(state, blockEntity.tag());
++                return BedrockProtocol.MAPPINGS.getJavaBlockStates().getOrDefault(facing, javaId);
++            }
++        }
+         if (isUpperDoor(state)) {
+             final BlockPosition lowerPosition = new BlockPosition(blockPosition.x(), blockPosition.y() - 1, blockPosition.z());
+             final BlockState lowerState = this.getUnconnectedJavaBlockStateModel(lowerPosition);
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/ShulkerBoxBlockEntityRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/ShulkerBoxBlockEntityRewriterTest.java
 new file mode 100644
 index 000000000..c4956e2dc
@@ -114,5 +151,90 @@ index 000000000..c4956e2dc
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
+index f3e303f03..025c5a839 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
+@@ -9,18 +9,23 @@
+  */
+ package net.raphimc.viabedrock.protocol.storage;
+ 
+-import net.raphimc.viabedrock.api.model.CustomBlockOffset;
+-import net.raphimc.viabedrock.api.chunk.light.ChunkLight;
++import com.google.common.collect.HashBiMap;
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
+ import com.viaversion.viaversion.api.minecraft.chunks.PaletteType;
+ import com.viaversion.viaversion.libs.fastutil.longs.LongLinkedOpenHashSet;
++import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
+ import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
++import net.raphimc.viabedrock.api.chunk.light.ChunkLight;
+ import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
+ import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.api.model.CustomBlockOffset;
+ import net.raphimc.viabedrock.api.model.CustomBlockVisual;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import org.junit.jupiter.api.Test;
+ 
+-import java.util.List;
+ import java.util.ArrayDeque;
++import java.util.List;
+ import java.util.Queue;
+ import java.util.concurrent.Executor;
+ import java.util.concurrent.RejectedExecutionException;
+@@ -31,10 +36,13 @@ import java.util.concurrent.atomic.AtomicInteger;
+ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
+-import static org.junit.jupiter.api.Assertions.assertTrue;
+ import static org.junit.jupiter.api.Assertions.assertNull;
+ import static org.junit.jupiter.api.Assertions.assertSame;
+ import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.Mockito.doCallRealMethod;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
+ 
+ class ChunkTrackerTest {
+ 
+@@ -223,6 +231,38 @@ class ChunkTrackerTest {
+         return section;
+     }
+ 
++    @Test
++    void predictionCorrectionsRetainShulkerBoxTileFacing() throws Exception {
++        final var mappings = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("javaBlockStates");
++        mappings.setAccessible(true);
++        final Object previous = mappings.get(BedrockProtocol.MAPPINGS);
++        final var down = BlockState.fromString("minecraft:red_shulker_box[facing=down]");
++        final var west = down.withProperty("facing", "west");
++        try {
++            mappings.set(BedrockProtocol.MAPPINGS, HashBiMap.create(java.util.Map.of(down, 10, west, 11)));
++            final var chunks = mock(ChunkTracker.class);
++            final var position = new BlockPosition(2, 64, 3);
++            final var section = new BedrockChunkSectionImpl();
++            final var palette = new BedrockDataPalette();
++            palette.addId(7);
++            section.addPalette(PaletteType.BLOCKS, palette);
++            when(chunks.getChunkSection(position)).thenReturn(section);
++            when(chunks.getJavaBlockState(section, 2, 0, 3)).thenReturn(10);
++            doCallRealMethod().when(chunks).getJavaBlockState(position);
++            assertEquals(10, chunks.getJavaBlockState(position));
++            when(chunks.getBlockEntity(position)).thenReturn(new BedrockBlockEntity(position, null));
++            assertEquals(10, chunks.getJavaBlockState(position));
++            final var tag = new CompoundTag();
++            tag.putByte("facing", (byte) 4);
++            when(chunks.getBlockEntity(position)).thenReturn(new BedrockBlockEntity(position, tag));
++            assertEquals(11, chunks.getJavaBlockState(position));
++            tag.putByte("facing", (byte) 0);
++            assertEquals(10, chunks.getJavaBlockState(position));
++        } finally {
++            mappings.set(BedrockProtocol.MAPPINGS, previous);
++        }
++    }
++
+     private static final class ManualExecutor implements Executor {
+ 
+         private final Queue<Runnable> tasks = new ArrayDeque<>();
 -- 
-2.55.0
+2.56.0

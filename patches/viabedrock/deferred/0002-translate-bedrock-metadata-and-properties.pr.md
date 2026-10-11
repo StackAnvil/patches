@@ -65,3 +65,9 @@ It checks the emitted field, serializer, and value.
 The complete 99-patch core build passes 1,027 tests: 997 passed and 30 optional skips, with no failures or errors.
 Main, test, and tool Checkstyle pass.
 The reported server disconnect still requires a live retest.
+
+## Shulker dye order
+
+Bedrock 1.26.51.1 indexes shulker dyes from black to white. Java indexes them from white to black. Translate values 0 through 15 with `15 - value`. Preserve the undyed value 16.
+
+The licensed target render controller establishes the native order. Tests exercise the actual metadata rewriter for all 17 values.

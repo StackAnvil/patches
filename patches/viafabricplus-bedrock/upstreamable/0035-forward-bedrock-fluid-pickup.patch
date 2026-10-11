@@ -1,0 +1,215 @@
+From 104c4a5eb4a46dff865d343ecf7410622ee57c3f Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 11 Oct 2026 10:30:55 +0200
+Subject: [PATCH] fix(interaction): forward Bedrock fluid pickup
+
+Java empty buckets send use-in-air, but Bedrock fluid pickup requires the
+source-fluid block hit. Route empty main-hand bucket use through the normal
+block-use path on direct and negotiated ViaProxy Bedrock sessions. Preserve
+Java reach, source-fluid ray tracing, occlusion, selected-slot synchronization
+and prediction sequencing.
+
+Target evidence is the Java 26.3 BucketItem implementation and Geyser's
+BedrockInventoryTransactionTranslator source-fluid bucket handling. Tests
+exercise water and lava targets, flowing fluid rejection, reach and solid
+occlusion. Ordinary Java sessions retain their existing behavior.
+---
+ .../inventory/MixinBucketInteraction.java     | 44 ++++++++++
+ .../inventory/BedrockBucketInteraction.java   | 33 ++++++++
+ .../viafabricplus-bedrock.mixins.json         |  1 +
+ .../BedrockBucketInteractionTest.java         | 81 +++++++++++++++++++
+ 4 files changed, 159 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBucketInteraction.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/inventory/BedrockBucketInteraction.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/inventory/BedrockBucketInteractionTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBucketInteraction.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBucketInteraction.java
+new file mode 100644
+index 0000000..c3bdaec
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBucketInteraction.java
+@@ -0,0 +1,44 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.inventory;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.inventory.BedrockBucketInteraction;
++import net.minecraft.client.multiplayer.MultiPlayerGameMode;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.world.InteractionHand;
++import net.minecraft.world.InteractionResult;
++import net.minecraft.world.entity.player.Player;
++import net.minecraft.world.item.Items;
++import net.minecraft.world.phys.Vec3;
++import net.minecraft.world.phys.shapes.CollisionContext;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++@Mixin(MultiPlayerGameMode.class)
++public abstract class MixinBucketInteraction {
++
++    @Inject(method = "useItem", at = @At("HEAD"), cancellable = true)
++    private void collectBedrockFluid(final Player player, final InteractionHand hand,
++                                    final CallbackInfoReturnable<InteractionResult> cir) {
++        if (!BedrockInputPermissions.isBedrockConnection()
++                || hand != InteractionHand.MAIN_HAND || !player.getItemInHand(hand).is(Items.BUCKET)
++                || !(player instanceof LocalPlayer localPlayer) || player.isSpectator()) {
++            return;
++        }
++        final Vec3 eye = player.getEyePosition();
++        final Vec3 end = eye.add(player.getViewVector(1F).scale(player.blockInteractionRange()));
++        final var hit = BedrockBucketInteraction.sourceHit(player.level(), eye, end, CollisionContext.of(player));
++        if (hit == null) {
++            return;
++        }
++        // Java sends fluid pickup as use-in-air. Bedrock requires the source block hit.
++        ((MultiPlayerGameMode) (Object) this).useItemOn(localPlayer, hand, hit);
++        cir.setReturnValue(InteractionResult.SUCCESS);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/BedrockBucketInteraction.java b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/BedrockBucketInteraction.java
+new file mode 100644
+index 0000000..d3c7c2d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/BedrockBucketInteraction.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.inventory;
++
++import net.minecraft.world.level.BlockGetter;
++import net.minecraft.world.level.ClipContext;
++import net.minecraft.world.level.material.Fluids;
++import net.minecraft.world.phys.BlockHitResult;
++import net.minecraft.world.phys.HitResult;
++import net.minecraft.world.phys.Vec3;
++import net.minecraft.world.phys.shapes.CollisionContext;
++import org.jspecify.annotations.Nullable;
++
++public final class BedrockBucketInteraction {
++
++    private BedrockBucketInteraction() {
++    }
++
++    public static @Nullable BlockHitResult sourceHit(final BlockGetter level, final Vec3 start, final Vec3 end,
++                                                     final CollisionContext context) {
++        final var hit = level.clip(new ClipContext(start, end,
++                ClipContext.Block.OUTLINE, ClipContext.Fluid.SOURCE_ONLY, context));
++        if (hit.getType() != HitResult.Type.BLOCK) {
++            return null;
++        }
++        final var fluid = level.getFluidState(hit.getBlockPos());
++        return fluid.isSource() && (fluid.getType() == Fluids.WATER || fluid.getType() == Fluids.LAVA)
++                ? hit : null;
++    }
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index ff9bfee..4c60850 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -70,6 +70,7 @@
+     "features.creative.MixinCreativeModeTab_ItemDisplayBuilder",
+     "features.creative.MixinCreativeModeTabs",
+     "features.inventory.MixinNativeContainerGeometry",
++    "features.inventory.MixinBucketInteraction",
+     "features.inventory.MixinCartographyTableMenu",
+     "features.inventory.MixinCartographyPacketListener",
+     "features.inventory.MixinBedrockCartographyScreen",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/BedrockBucketInteractionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/BedrockBucketInteractionTest.java
+new file mode 100644
+index 0000000..53f7ac0
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/BedrockBucketInteractionTest.java
+@@ -0,0 +1,81 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.inventory;
++
++import net.minecraft.SharedConstants;
++import net.minecraft.core.BlockPos;
++import net.minecraft.core.Direction;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.level.BlockGetter;
++import net.minecraft.world.level.block.Blocks;
++import net.minecraft.world.level.block.entity.BlockEntity;
++import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.level.block.state.properties.BlockStateProperties;
++import net.minecraft.world.level.material.FluidState;
++import net.minecraft.world.phys.Vec3;
++import net.minecraft.world.phys.shapes.CollisionContext;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class BedrockBucketInteractionTest {
++
++    @BeforeAll
++    static void initializeBlocks() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void findsTheSourceFaceForBothLiquids() {
++        for (final var block : new net.minecraft.world.level.block.Block[]{Blocks.WATER, Blocks.LAVA}) {
++            final var hit = BedrockBucketInteraction.sourceHit(level(Map.of(BlockPos.ZERO, block.defaultBlockState())),
++                    new Vec3(0.5, 2, 0.5), new Vec3(0.5, -1, 0.5), CollisionContext.empty());
++            assertNotNull(hit);
++            assertEquals(BlockPos.ZERO, hit.getBlockPos());
++            assertEquals(Direction.UP, hit.getDirection());
++        }
++    }
++
++    @Test
++    void flowingWaterAndSourcesOutsideReachDoNotBecomeBlockInteractions() {
++        assertNull(BedrockBucketInteraction.sourceHit(level(Map.of(BlockPos.ZERO,
++                        Blocks.WATER.defaultBlockState().setValue(BlockStateProperties.LEVEL, 1))),
++                new Vec3(0.5, 2, 0.5), new Vec3(0.5, -1, 0.5), CollisionContext.empty()));
++        assertNull(BedrockBucketInteraction.sourceHit(level(Map.of(BlockPos.ZERO, Blocks.WATER.defaultBlockState())),
++                new Vec3(0.5, 2, 0.5), new Vec3(0.5, 1, 0.5), CollisionContext.empty()));
++    }
++
++    @Test
++    void anOccludingBlockPreventsPickingTheSourceBehindIt() {
++        assertNull(BedrockBucketInteraction.sourceHit(level(Map.of(
++                        BlockPos.ZERO, Blocks.WATER.defaultBlockState(),
++                        BlockPos.ZERO.above(), Blocks.STONE.defaultBlockState())),
++                new Vec3(0.5, 3, 0.5), new Vec3(0.5, -1, 0.5), CollisionContext.empty()));
++    }
++
++    private static BlockGetter level(final Map<BlockPos, BlockState> blocks) {
++        return new BlockGetter() {
++            @Override
++            public BlockEntity getBlockEntity(final BlockPos position) { return null; }
++            @Override
++            public BlockState getBlockState(final BlockPos position) {
++                return blocks.getOrDefault(position, Blocks.AIR.defaultBlockState());
++            }
++            @Override
++            public FluidState getFluidState(final BlockPos position) { return this.getBlockState(position).getFluidState(); }
++            @Override
++            public int getHeight() { return 384; }
++            @Override
++            public int getMinY() { return -64; }
++        };
++    }
++}
+-- 
+2.56.0
