@@ -1,0 +1,1023 @@
+From b79cc761a4d572f97bf954dd9631bff4aa42c8ed Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 16:55:35 +0200
+Subject: [PATCH] fix(models): export complete asset pairs and empty item
+ fallbacks
+
+Java rejects a select model with no cases. Emit minecraft:empty when no
+geometry was converted and preserve selectors for actual alternatives.
+Only export complete geometry/texture pairs and bind their particle sprite
+so Java does not bake dangling texture references.
+
+Server declarations can include unused variants whose images are omitted.
+Retain their missing-asset reasons as converter metadata and report an
+actively selected custom actor model. An omitted inactive variant does
+not prevent joining. Native rendering performs its own active lookup.
+
+Saved Geyser and CubeCraft pack audits contain no dangling sprite or
+particle bindings. Semantic tests cover empty and populated item exports,
+resolved and unresolved model pairs, and inactive versus active failures.
+
+Keep attachable variant keys relative to their item identifier. The item
+content already namespaces model paths by identifier; repeating it in
+the variant breaks both the default custom-model selector and readiness
+lookup used for equipped items. A recorded Bedrock 1.26.51.1 Hive player
+wears angel wings in the chest slot, exposing this mismatch. Semantic
+conversion tests resolve both default and folded equipment selectors to
+real geometry and matching converter readiness.
+
+Apply resolved attachable models after vanilla and custom item mapping.
+A server can override existing armor with an attachable without defining a
+new item. Preserve the Java item's type, gameplay components, and native
+identity while assigning the converted model selector only after pack
+acceptance and successful default geometry/texture conversion. Targeted
+tests cover both item families, rejected and missing assets, and preserved
+gameplay data. Direct and ViaProxy equipment playback verify the full path.
+
+Retain item-to-attachable binding expressions separately from geometry
+conversion. Explicit bindings select a wearer-specific definition before
+legacy item-identifier lookup. The pinned 1.26.51.1 definitions distinguish
+iron_chestplate from iron_chestplate.player using query.owner_identifier.
+The complete actor archive retains these associations for the frontend.
+Owner queries remain the renderer's responsibility; additional competing
+bindings and default native assets still need broader comparisons.
+
+Reuse compiled geometry across resolved entity texture variants and
+attachable aliases within each conversion. Each task owns its model root,
+texture bindings and display transforms; shared geometry stays read-only.
+Concurrent maps coalesce compilation without retaining models across
+connections or introducing a process-wide asset cache.
+
+The matching CubeCraft fixture preserves all 15,823 output entries after
+normalizing existing object-hash names, JSON order and equivalent particle
+aliases. Warm entity-generation CPU falls from 856 to 664 ms and allocated
+bytes from 2201 to 1136 MiB. Overall rewrite time is unchanged in this
+fixture, so this reduces CPU and memory pressure without claiming faster
+joins. Tests cover concurrent bindings, model groups and coordinates,
+scale metadata, repeated conversion and unchanged source geometry.
+
+Export each compiled geometry once as a content-addressed Java parent.
+Children retain independent texture bindings and attachable display
+transforms. Hash serialized parent bytes instead of a sanitized Bedrock
+identifier so distinct geometry cannot overwrite another parent. Keep
+texture bindings out of parents so Java resolves each child independently.
+The output uses standard model inheritance and works with ordinary Java
+clients through ViaProxy without additional client integration.
+
+The five-pack CubeCraft profile retains every original resource and model
+selection. Resolving parent chains reproduces all 12,789 changed models;
+786 shared parents reduce model JSON from 87.5 to 15.9 MB and the complete
+archive from 91.8 to 78.2 MB. In eight conversions with two warm-ups,
+entity task CPU falls from 712 to 167 ms and allocations from 1136 to
+350 MiB. Rewrite plus ZIP falls from 1739 to 1632 ms. These figures exclude
+acquisition, network downloads and client reloads. Parent export tests
+cover geometry reuse, distinct parents, source immutability, concurrent
+texture bindings, retained model selection, scale and display transforms.
+
+The actual Java 26.3 model parser and inheritance resolver preserve all
+changed children, including geometry, texture materials, display
+transforms, lighting and ambient occlusion. In a separate nine-iteration
+model parsing benchmark with two warm-ups, median parsing falls from
+1274 to 254 ms and allocation from 4949 to 786 MiB. This isolates parsing
+rather than claiming complete reload or joining improvements.
+
+Use native inventory atlas icons in GUI, ground, fixed and shelf contexts while retaining held attachable geometry. Target item schemas and model tests cover the native spear icon and complete display-context routing.
+---
+ .../api/model/entity/CustomEntity.java        |   9 +
+ .../definition/AttachableDefinitions.java     |  41 ++-
+ .../protocol/rewriter/ItemRewriter.java       |   6 +-
+ .../CustomAttachableResourceRewriter.java     |  77 +++--
+ .../CustomEntityResourceRewriter.java         |  37 +--
+ .../ItemModelResourceRewriter.java            | 127 +++++++-
+ .../ItemModelResourceRewriterTest.java        | 123 ++++++++
+ .../resourcepack/ModelResourceAssetsTest.java | 290 ++++++++++++++++++
+ 8 files changed, 651 insertions(+), 59 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
+index 1431bc51d..57e1a7138 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
+@@ -43,6 +43,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
+ import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourceRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.ItemModelResourceRewriter;
+ import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+@@ -341,6 +342,14 @@ public class CustomEntity extends Entity {
+             }
+         }
+ 
++        if (!this.models.equals(newModels)) {
++            for (EvaluatedModel model : newModels) {
++                final String failure = ItemModelResourceRewriter.unresolvedModelAssets(resourcePackStorage, "entities", this.entityDefinition.identifier(), model.key());
++                if (failure != null) {
++                    ViaBedrock.getPlatform().getLogger().warning("Selected unresolved custom entity model " + this.entityDefinition.identifier() + '/' + model.key() + ": " + failure);
++                }
++            }
++        }
+         return replaceModels(this.models, newModels) || scaleChanged;
+     }
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/AttachableDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/AttachableDefinitions.java
+index 2989d7b33..9f4d7b708 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/AttachableDefinitions.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/AttachableDefinitions.java
+@@ -25,14 +25,15 @@ import org.cube.converter.data.bedrock.BedrockAttachableData;
+ import org.cube.converter.parser.bedrock.data.impl.BedrockAttachableParser;
+ 
+ import java.util.Collections;
+-import java.util.HashMap;
++import java.util.LinkedHashMap;
+ import java.util.Map;
+ import java.util.logging.Level;
++import java.util.function.Predicate;
+ 
+ // https://wiki.bedrock.dev/items/attachables.html
+ public class AttachableDefinitions {
+ 
+-    private final Map<String, AttachableDefinition> attachables = new HashMap<>();
++    private final Map<String, AttachableDefinition> attachables = new LinkedHashMap<>();
+ 
+     public AttachableDefinitions(final ResourcePackStorage resourcePackStorage) {
+         for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
+@@ -40,7 +41,15 @@ public class AttachableDefinitions {
+                 try {
+                     final BedrockAttachableData attachableData = BedrockAttachableParser.parse(pack.content().getString(attachablePath));
+                     final String identifier = Key.namespaced(attachableData.getIdentifier());
+-                    this.attachables.put(identifier, new AttachableDefinition(identifier, attachableData));
++                    final Map<String, String> items = new LinkedHashMap<>();
++                    final var description = pack.content().getJson(attachablePath).getAsJsonObject("minecraft:attachable").getAsJsonObject("description");
++                    if (description.has("item")) {
++                        for (final var entry : description.getAsJsonObject("item").entrySet()) {
++                            items.put(Key.namespaced(entry.getKey()), entry.getValue().getAsString());
++                        }
++                    }
++                    this.attachables.remove(identifier);
++                    this.attachables.put(identifier, new AttachableDefinition(identifier, attachableData, items));
+                 } catch (final Throwable e) {
+                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse attachable definition " + attachablePath + " in pack " + pack.key(), e);
+                 }
+@@ -52,7 +61,31 @@ public class AttachableDefinitions {
+         return Collections.unmodifiableMap(this.attachables);
+     }
+ 
+-    public record AttachableDefinition(String identifier, BedrockAttachableData attachableData) {
++    /** Explicit item bindings take precedence over the legacy item-identifier definition. */
++    public AttachableDefinition selectItem(final String item, final Predicate<String> condition) {
++        final String identifier = Key.namespaced(item);
++        AttachableDefinition selected = null;
++        for (final AttachableDefinition definition : this.attachables.values()) {
++            final String expression = definition.itemCondition(identifier);
++            if (expression != null && condition.test(expression)) {
++                selected = definition;
++            }
++        }
++        if (selected != null) {
++            return selected;
++        }
++        final AttachableDefinition generic = this.attachables.get(identifier);
++        return generic != null && generic.itemBindings().isEmpty() ? generic : null;
++    }
++
++    public record AttachableDefinition(String identifier, BedrockAttachableData attachableData, Map<String, String> itemBindings) {
++        public AttachableDefinition {
++            itemBindings = Map.copyOf(itemBindings);
++        }
++
++        public String itemCondition(final String item) {
++            return this.itemBindings.get(Key.namespaced(item));
++        }
+     }
+ 
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+index de4633e5a..a0c902311 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+@@ -197,10 +197,7 @@ public class ItemRewriter extends StoredObject {
+                     data.set(StructuredDataKey.ITEM_NAME, TextUtil.stringToNbt(resourcePackStorage.getTexts().get("item." + Key.stripMinecraftNamespace(identifier) + ".name")));
+                 }
+ 
+-                if (resourcePackStorage.getAttachables().attachables().containsKey(identifier) && resourcePackStorage.isLoadedOnJavaClient() && resourcePackStorage.getConverterData().containsKey("ca_" + identifier + "_default")) {
+-                    data.set(StructuredDataKey.ITEM_MODEL, CustomAttachableResourceRewriter.getItemModel(identifier));
+-                    data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomAttachableResourceRewriter.getCustomModelData("default"));
+-                } else if (itemDefinition.iconComponent() != null && resourcePackStorage.isLoadedOnJavaClient()) {
++                if (itemDefinition.iconComponent() != null && resourcePackStorage.isLoadedOnJavaClient()) {
+                     data.set(StructuredDataKey.ITEM_MODEL, CustomItemTextureResourceRewriter.getItemModel(itemDefinition.iconComponent()));
+                     data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomItemTextureResourceRewriter.getCustomModelData("0"));
+                 } else {
+@@ -232,6 +229,7 @@ public class ItemRewriter extends StoredObject {
+             ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
+         }
+ 
++        CustomAttachableResourceRewriter.applyItemModel(this.user().get(ResourcePackStorage.class), identifier, javaItem);
+         return javaItem;
+     }
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
+index 400839521..fcc26eee9 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
+@@ -17,20 +17,21 @@
+  */
+ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
+ 
++import com.viaversion.viaversion.api.minecraft.item.Item;
+ import com.viaversion.viaversion.api.minecraft.item.data.ItemModel;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
+ import com.viaversion.viaversion.libs.gson.JsonArray;
+ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import com.viaversion.viaversion.util.Key;
+-import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.api.resourcepack.content.Content;
+ import net.raphimc.viabedrock.api.resourcepack.definition.AttachableDefinitions;
+ import net.raphimc.viabedrock.api.util.StringUtil;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+-import org.cube.converter.converter.enums.RotationType;
+ import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
+-import org.cube.converter.model.impl.java.JavaItemModel;
+ 
+ import java.util.Map;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
+ import java.util.function.Consumer;
+ import java.util.function.Supplier;
+ 
+@@ -42,46 +43,69 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
+         return new ItemModel(Key.of("viabedrock", SUB_FOLDER + '/' + StringUtil.makeIdentifierValueSafe(attachableIdentifier)));
+     }
+ 
++    /** Resolved pack models override both mapped vanilla items and custom items after their gameplay data is translated. */
++    public static void applyItemModel(final ResourcePackStorage packs, final String identifier, final Item item) {
++        if (!packs.isLoadedOnJavaClient() || !packs.getAttachables().attachables().containsKey(identifier)
++                || !Boolean.TRUE.equals(packs.getConverterData().get("ca_" + identifier + "_default"))) {
++            return;
++        }
++        item.dataContainer().set(StructuredDataKey.ITEM_MODEL, getItemModel(identifier));
++        item.dataContainer().set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, getCustomModelData("default"));
++    }
++
+     public CustomAttachableResourceRewriter() {
+         super(SUB_FOLDER);
+     }
+ 
+     @Override
+     public void submitTasks(final ResourcePackStorage resourcePackStorage, final Consumer<Supplier<Content>> submitter) {
++        final Map<BedrockGeometryModel, CompiledGeometry> geometries = new ConcurrentHashMap<>();
+         for (AttachableDefinitions.AttachableDefinition attachableDefinition : resourcePackStorage.getAttachables().attachables().values()) {
+-            submitter.accept(() -> this.handleAttachableDefinition(resourcePackStorage, attachableDefinition));
++            submitter.accept(() -> this.handleAttachableDefinition(resourcePackStorage, attachableDefinition, geometries));
+         }
+     }
+ 
+-    private Content handleAttachableDefinition(final ResourcePackStorage resourcePackStorage, final AttachableDefinitions.AttachableDefinition attachableDefinition) {
+-        final ItemModelContent javaContent = new ItemModelContent(attachableDefinition.identifier());
+-        for (String bedrockPath : attachableDefinition.attachableData().getTextures().values()) {
+-            for (ResourcePack pack : resourcePackStorage.getPackStackTopToBottom()) {
+-                final Content.LazyImage texture = pack.content().getShortnameImage(bedrockPath);
+-                if (texture != null) {
+-                    javaContent.putPngImage("assets/viabedrock/textures/" + this.getJavaTexturePath(bedrockPath) + ".png", texture);
+-                    break;
+-                }
+-            }
++    private static JsonObject inventoryIcon(final ResourcePackStorage packs, final String identifier) {
++        final var definition = packs.getItems().get(identifier);
++        final String icon = definition != null && definition.iconComponent() != null
++                ? definition.iconComponent() : Key.stripMinecraftNamespace(identifier);
++        final var textures = packs.getTextures().itemTextures().get(icon);
++        if (textures == null || textures.isEmpty()) {
++            return null;
++        }
++        final String path = textures.getFirst().texturePath();
++        if (packs.getPackStackTopToBottom().stream().noneMatch(pack -> pack.content().getShortnameImage(path) != null)) {
++            return null;
+         }
++        final JsonObject model = new JsonObject();
++        model.addProperty("type", "minecraft:model");
++        model.addProperty("model", "viabedrock:item_textures/" + StringUtil.makeIdentifierValueSafe(icon) + "/0");
++        return model;
++    }
++
++    private Content handleAttachableDefinition(final ResourcePackStorage resourcePackStorage, final AttachableDefinitions.AttachableDefinition attachableDefinition,
++                                              final Map<BedrockGeometryModel, CompiledGeometry> geometries) {
++        final ItemModelContent javaContent = new ItemModelContent(attachableDefinition.identifier());
++        final Set<String> textures = this.copyTextures(resourcePackStorage, attachableDefinition.attachableData().getTextures().values(), javaContent);
+         for (Map.Entry<String, String> modelEntry : attachableDefinition.attachableData().getGeometries().entrySet()) {
+             final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
+-            if (bedrockGeometry == null) {
++            final String bedrockTexturePath = attachableDefinition.attachableData().getTextures().get(modelEntry.getKey());
++            final String modelKey = modelEntry.getKey();
++            final boolean hasTexture = textures.contains(bedrockTexturePath);
++            this.recordMissingAssets(resourcePackStorage, attachableDefinition.identifier(), modelKey, modelEntry.getValue(), bedrockTexturePath, bedrockGeometry != null, hasTexture);
++            if (bedrockGeometry == null || !hasTexture) {
+                 continue;
+             }
+-            if (!attachableDefinition.attachableData().getTextures().containsKey(modelEntry.getKey())) {
+-                continue;
+-            }
+-
+-            final String javaTexturePath = this.getJavaTexturePath(attachableDefinition.attachableData().getTextures().get(modelEntry.getKey()));
+-            final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + javaTexturePath, RotationType.POST_1_21_11);
+-            final JsonObject itemModel = itemModelData.compile();
++            final String javaTexturePath = this.getJavaTexturePath(bedrockTexturePath);
++            final CompiledGeometry geometry = geometries.computeIfAbsent(bedrockGeometry, CompiledGeometry::compile);
++            javaContent.putGeometry(geometry);
++            final JsonObject itemModel = geometry.withTexture("viabedrock:" + javaTexturePath);
+ 
+             final JsonObject display = new JsonObject();
+             final JsonArray scaling = new JsonArray();
+-            scaling.add(itemModelData.getScale());
+-            scaling.add(itemModelData.getScale());
+-            scaling.add(itemModelData.getScale());
++            scaling.add(geometry.scale());
++            scaling.add(geometry.scale());
++            scaling.add(geometry.scale());
+ 
+             final JsonObject value = new JsonObject();
+             value.add("scale", scaling);
+@@ -97,11 +121,10 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
+ 
+             itemModel.add("display", display);
+ 
+-            final String modelKey = attachableDefinition.identifier() + "_" + modelEntry.getKey();
+             javaContent.putModel(modelKey, itemModel);
+             resourcePackStorage.getConverterData().put("ca_" + attachableDefinition.identifier() + '_' + modelKey, true);
+         }
+-        javaContent.generateItemDefinition();
++        javaContent.generateItemDefinition(inventoryIcon(resourcePackStorage, attachableDefinition.identifier()));
+         return javaContent;
+     }
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
+index 600703503..e68258a94 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
+@@ -19,16 +19,15 @@ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
+ 
+ import com.viaversion.viaversion.api.minecraft.item.data.ItemModel;
+ import com.viaversion.viaversion.util.Key;
+-import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.api.resourcepack.content.Content;
+ import net.raphimc.viabedrock.api.resourcepack.definition.EntityDefinitions;
+ import net.raphimc.viabedrock.api.util.StringUtil;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+-import org.cube.converter.converter.enums.RotationType;
+ import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
+-import org.cube.converter.model.impl.java.JavaItemModel;
+ 
+ import java.util.Map;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
+ import java.util.function.Consumer;
+ import java.util.function.Supplier;
+ 
+@@ -46,31 +45,29 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
+ 
+     @Override
+     public void submitTasks(final ResourcePackStorage resourcePackStorage, final Consumer<Supplier<Content>> submitter) {
++        final Map<BedrockGeometryModel, CompiledGeometry> geometries = new ConcurrentHashMap<>();
+         for (EntityDefinitions.EntityDefinition entityDefinition : resourcePackStorage.getEntities().entities().values()) {
+-            submitter.accept(() -> this.handleEntityDefinition(resourcePackStorage, entityDefinition));
++            submitter.accept(() -> this.handleEntityDefinition(resourcePackStorage, entityDefinition, geometries));
+         }
+     }
+ 
+-    private Content handleEntityDefinition(final ResourcePackStorage resourcePackStorage, final EntityDefinitions.EntityDefinition entityDefinition) {
++    private Content handleEntityDefinition(final ResourcePackStorage resourcePackStorage, final EntityDefinitions.EntityDefinition entityDefinition,
++                                          final Map<BedrockGeometryModel, CompiledGeometry> geometries) {
+         final ItemModelContent javaContent = new ItemModelContent(entityDefinition.identifier());
+-        for (String bedrockPath : entityDefinition.entityData().getTextures().values()) {
+-            for (ResourcePack pack : resourcePackStorage.getPackStackTopToBottom()) {
+-                final Content.LazyImage texture = pack.content().getShortnameImage(bedrockPath);
+-                if (texture != null) {
+-                    javaContent.putPngImage("assets/viabedrock/textures/" + this.getJavaTexturePath(bedrockPath) + ".png", texture);
+-                    break;
+-                }
+-            }
+-        }
++        final Set<String> textures = this.copyTextures(resourcePackStorage, entityDefinition.entityData().getTextures().values(), javaContent);
+         for (Map.Entry<String, String> modelEntry : entityDefinition.entityData().getGeometries().entrySet()) {
+             final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
+-            if (bedrockGeometry != null) {
+-                for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
+-                    final String modelKey = modelEntry.getKey() + "_" + textureEntry.getKey();
+-                    final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + this.getJavaTexturePath(textureEntry.getValue()), RotationType.POST_1_21_11);
+-                    javaContent.putModel(modelKey, itemModelData.compile());
+-                    resourcePackStorage.getConverterData().put("ce_" + entityDefinition.identifier() + '_' + modelKey + "_scale", itemModelData.getScale());
++            for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
++                final String modelKey = modelEntry.getKey() + "_" + textureEntry.getKey();
++                final boolean hasTexture = textures.contains(textureEntry.getValue());
++                this.recordMissingAssets(resourcePackStorage, entityDefinition.identifier(), modelKey, modelEntry.getValue(), textureEntry.getValue(), bedrockGeometry != null, hasTexture);
++                if (bedrockGeometry == null || !hasTexture) {
++                    continue;
+                 }
++                final CompiledGeometry geometry = geometries.computeIfAbsent(bedrockGeometry, CompiledGeometry::compile);
++                javaContent.putGeometry(geometry);
++                javaContent.putModel(modelKey, geometry.withTexture("viabedrock:" + this.getJavaTexturePath(textureEntry.getValue())));
++                resourcePackStorage.getConverterData().put("ce_" + entityDefinition.identifier() + '_' + modelKey + "_scale", geometry.scale());
+             }
+         }
+         javaContent.generateItemDefinition();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
+index 799413e57..4deef2b98 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
+@@ -20,11 +20,26 @@ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
+ import com.viaversion.viaversion.api.minecraft.item.data.CustomModelData1_21_4;
+ import com.viaversion.viaversion.libs.gson.JsonArray;
+ import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.util.GsonUtil;
+ import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ import net.raphimc.viabedrock.api.util.StringUtil;
+ import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
+ 
++import org.cube.converter.converter.enums.RotationType;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++
++import java.nio.charset.StandardCharsets;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.HexFormat;
++import java.util.List;
+ import java.util.HashMap;
++import java.util.HashSet;
++import java.util.Collection;
++import java.util.Set;
+ import java.util.Map;
+ 
+ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.Rewriter {
+@@ -43,6 +58,76 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
+         return "item/" + this.subFolder + '/' + StringUtil.makeIdentifierValueSafe(bedrockPath.replace("textures/", ""));
+     }
+ 
++    public static String unresolvedModelAssets(final ResourcePackStorage storage, final String folder, final String identifier, final String model) {
++        final Object failure = storage.getConverterData().get("model_missing_" + folder + '/' + identifier + '/' + model);
++        return failure instanceof String message ? message : null;
++    }
++
++    public static void requireModelAssets(final ResourcePackStorage storage, final String folder, final String identifier, final String model) {
++        final String failure = unresolvedModelAssets(storage, folder, identifier, model);
++        if (failure != null) {
++            throw new IllegalStateException("Unresolved model " + identifier + '/' + model + ": " + failure);
++        }
++    }
++
++    protected void recordMissingAssets(final ResourcePackStorage storage, final String identifier, final String model, final String geometry, final String texture,
++                                       final boolean hasGeometry, final boolean hasTexture) {
++        final String key = "model_missing_" + this.subFolder + '/' + identifier + '/' + model;
++        if (hasGeometry && hasTexture) {
++            storage.getConverterData().remove(key);
++            return;
++        }
++        final String reason = (!hasGeometry ? "missing geometry " + geometry : "")
++                + (!hasGeometry && !hasTexture ? "; " : "") + (!hasTexture ? "missing texture " + texture : "");
++        storage.getConverterData().put(key, reason);
++    }
++
++    protected Set<String> copyTextures(final ResourcePackStorage storage, final Collection<String> paths, final ItemModelContent content) {
++        final Set<String> resolved = new HashSet<>();
++        for (String path : paths) {
++            if (resolved.contains(path)) {
++                continue;
++            }
++            for (ResourcePack pack : storage.getPackStackTopToBottom()) {
++                final Content.LazyImage image = pack.content().getShortnameImage(path);
++                if (image != null) {
++                    content.putPngImage("assets/viabedrock/textures/" + this.getJavaTexturePath(path) + ".png", image);
++                    resolved.add(path);
++                    break;
++                }
++            }
++        }
++        return resolved;
++    }
++
++    /** A serialized parent is shared; each child owns its texture bindings and display transforms. */
++    protected record CompiledGeometry(String path, byte[] data, List<String> textureKeys, float scale) {
++
++        protected static CompiledGeometry compile(final BedrockGeometryModel geometry) {
++            final var converted = geometry.toJavaItemModel("", RotationType.POST_1_21_11);
++            final JsonObject model = converted.compile();
++            final List<String> textureKeys = model.getAsJsonObject("textures").keySet().stream().sorted().toList();
++            model.remove("textures");
++            final byte[] data = GsonUtil.getGson().toJson(model).getBytes(StandardCharsets.UTF_8);
++            try {
++                final String path = "geometry/" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data));
++                return new CompiledGeometry(path, data, textureKeys, converted.getScale());
++            } catch (final NoSuchAlgorithmException impossible) {
++                throw new IllegalStateException(impossible);
++            }
++        }
++
++        protected JsonObject withTexture(final String texture) {
++            final JsonObject variant = new JsonObject();
++            variant.addProperty("parent", "viabedrock:" + this.path);
++            final JsonObject textures = new JsonObject();
++            this.textureKeys.forEach(direction -> textures.addProperty(direction, texture));
++            variant.add("textures", textures);
++            return variant;
++        }
++
++    }
++
+     protected class ItemModelContent extends InMemoryContent {
+ 
+         private final Map<String, String> modelDefinitions = new HashMap<>();
+@@ -52,13 +137,25 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
+             this.itemPath = ItemModelResourceRewriter.this.subFolder + '/' + StringUtil.makeIdentifierValueSafe(itemName);
+         }
+ 
++        protected void putGeometry(final CompiledGeometry geometry) {
++            this.put("assets/viabedrock/models/" + geometry.path() + ".json", geometry.data());
++        }
++
+         protected void putModel(final String name, final JsonObject json) {
++            final JsonObject textures = json.getAsJsonObject("textures");
++            if (textures != null && !textures.isEmpty() && !textures.has("particle")) {
++                textures.addProperty("particle", "#" + textures.keySet().iterator().next());
++            }
+             final String modelPath = this.itemPath + '/' + StringUtil.makeIdentifierValueSafe(name);
+             this.modelDefinitions.put(name, modelPath);
+             this.putJson("assets/viabedrock/models/" + modelPath + ".json", json);
+         }
+ 
+         protected void generateItemDefinition() {
++            this.generateItemDefinition(null);
++        }
++
++        protected void generateItemDefinition(final JsonObject inventoryModel) {
+             final JsonArray modelCases = new JsonArray();
+             for (Map.Entry<String, String> modelDefinition : this.modelDefinitions.entrySet()) {
+                 final JsonObject model = new JsonObject();
+@@ -72,11 +169,33 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
+             }
+ 
+             final JsonObject model = new JsonObject();
+-            model.addProperty("type", "minecraft:select");
+-            model.addProperty("property", "minecraft:custom_model_data");
+-            model.add("cases", modelCases);
++            if (modelCases.isEmpty()) {
++                model.addProperty("type", "minecraft:empty");
++            } else {
++                model.addProperty("type", "minecraft:select");
++                model.addProperty("property", "minecraft:custom_model_data");
++                model.add("cases", modelCases);
++            }
+             final JsonObject itemDefinitionObj = new JsonObject();
+-            itemDefinitionObj.add("model", model);
++            if (inventoryModel == null) {
++                itemDefinitionObj.add("model", model);
++            } else {
++                final JsonArray contexts = new JsonArray();
++                for (final String context : List.of("gui", "ground", "fixed", "on_shelf")) {
++                    contexts.add(context);
++                }
++                final JsonObject inventory = new JsonObject();
++                inventory.add("when", contexts);
++                inventory.add("model", inventoryModel);
++                final JsonArray cases = new JsonArray();
++                cases.add(inventory);
++                final JsonObject displayModel = new JsonObject();
++                displayModel.addProperty("type", "minecraft:select");
++                displayModel.addProperty("property", "minecraft:display_context");
++                displayModel.add("cases", cases);
++                displayModel.add("fallback", model);
++                itemDefinitionObj.add("model", displayModel);
++            }
+             this.putJson("assets/viabedrock/items/" + this.itemPath + ".json", itemDefinitionObj);
+         }
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
+new file mode 100644
+index 000000000..84c8e7df5
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
+@@ -0,0 +1,123 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.cube.converter.util.element.Direction;
++import org.cube.converter.util.element.Position2V;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.Executors;
++import java.util.concurrent.Future;
++import java.util.function.Consumer;
++import java.util.function.Supplier;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ItemModelResourceRewriterTest {
++
++    @Test
++    void rendersAnEmptyDefinitionWhenNoGeometryWasConverted() {
++        final Content content = new TestRewriter().convert(Map.of());
++        final JsonObject model = content.getJson("assets/viabedrock/items/entities/example/actor.json").getAsJsonObject("model");
++        assertEquals("minecraft:empty", model.get("type").getAsString());
++        assertFalse(model.has("cases"));
++        assertTrue(content.getFilesDeep("assets/viabedrock/models/", ".json").isEmpty());
++    }
++
++    @Test
++    void preservesEveryModelSelectionAndItsGeometry() {
++        final JsonObject firstGeometry = new JsonObject();
++        firstGeometry.addProperty("parent", "minecraft:item/generated");
++        final JsonObject secondGeometry = new JsonObject();
++        secondGeometry.addProperty("parent", "minecraft:block/cube_all");
++        final Map<String, JsonObject> geometries = Map.of("adult", firstGeometry, "baby", secondGeometry);
++        final Content content = new TestRewriter().convert(geometries);
++        final JsonObject model = content.getJson("assets/viabedrock/items/entities/example/actor.json").getAsJsonObject("model");
++
++        assertEquals("minecraft:select", model.get("type").getAsString());
++        assertEquals(geometries.size(), model.getAsJsonArray("cases").size());
++        for (var entry : model.getAsJsonArray("cases")) {
++            final JsonObject selected = entry.getAsJsonObject();
++            final String key = selected.get("when").getAsString();
++            final String path = selected.getAsJsonObject("model").get("model").getAsString().substring("viabedrock:".length());
++            assertEquals(geometries.get(key), content.getJson("assets/viabedrock/models/" + path + ".json"));
++        }
++    }
++
++    @Test
++    void keepsConcurrentVariantBindingsSeparateFromTheSharedGeometry() throws Exception {
++        final var geometry = new BedrockGeometryModel(
++                "geometry.test", new Position2V(64, 64));
++        final var compiled = ItemModelResourceRewriter.CompiledGeometry.compile(geometry);
++        final byte[] original = compiled.data().clone();
++        final List<Future<JsonObject>> variants = new ArrayList<>();
++        try (var executor = Executors.newFixedThreadPool(4)) {
++            for (int index = 0; index < 32; index++) {
++                final String texture = "viabedrock:variant/" + index;
++                variants.add(executor.submit(() -> {
++                    final JsonObject model = compiled.withTexture(texture);
++                    new TestRewriter().convert(Map.of(texture, model));
++                    return model;
++                }));
++            }
++            for (int index = 0; index < variants.size(); index++) {
++                final var textures = variants.get(index).get().getAsJsonObject("textures");
++                for (var direction : Direction.values()) {
++                    assertEquals("viabedrock:variant/" + index, textures.get(direction.name()).getAsString());
++                }
++                assertTrue(textures.has(textures.get("particle").getAsString().substring(1)));
++            }
++        }
++        assertArrayEquals(original, compiled.data());
++    }
++
++    @Test
++    void separatesInventoryIconsFromNativeHeldGeometry() {
++        final JsonObject icon = new JsonObject();
++        icon.addProperty("type", "minecraft:model");
++        icon.addProperty("model", "viabedrock:item_textures/spear/0");
++        final TestRewriter rewriter = new TestRewriter();
++        final var content = rewriter.new ItemModelContent("spear");
++        final JsonObject geometry = new JsonObject();
++        geometry.addProperty("parent", "minecraft:item/generated");
++        content.putModel("default", geometry);
++        content.generateItemDefinition(icon);
++        final var model = content.getJson("assets/viabedrock/items/entities/spear.json").getAsJsonObject("model");
++        assertEquals("minecraft:display_context", model.get("property").getAsString());
++        final var inventory = model.getAsJsonArray("cases").get(0).getAsJsonObject();
++        assertEquals(icon, inventory.get("model"));
++        assertEquals(4, inventory.getAsJsonArray("when").size());
++        assertEquals("minecraft:custom_model_data", model.getAsJsonObject("fallback").get("property").getAsString());
++        assertEquals("default", model.getAsJsonObject("fallback").getAsJsonArray("cases").get(0)
++                .getAsJsonObject().get("when").getAsString());
++    }
++
++    private static final class TestRewriter extends ItemModelResourceRewriter {
++
++        private TestRewriter() {
++            super("entities");
++        }
++
++        @Override
++        public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
++        }
++
++        private Content convert(final Map<String, JsonObject> models) {
++            final ItemModelContent content = new ItemModelContent("example:actor");
++            models.forEach(content::putModel);
++            content.generateItemDefinition();
++            return content;
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
+new file mode 100644
+index 000000000..5d513b681
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
+@@ -0,0 +1,290 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.cube.converter.converter.enums.RotationType;
++import org.cube.converter.util.element.Direction;
++import org.junit.jupiter.api.Test;
++
++import java.awt.image.BufferedImage;
++import java.io.ByteArrayInputStream;
++import java.io.IOException;
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ModelResourceAssetsTest {
++
++    @Test
++    void exportsOnlyResolvedVanillaEntityVariantsWithValidParticleBindings() {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack("minecraft:player", false)));
++        final Content result = convert(storage, new CustomEntityResourceRewriter());
++        final var cases = result.getJson("assets/viabedrock/items/entities/minecraft/player.json").getAsJsonObject("model").getAsJsonArray("cases");
++        assertEquals(1, cases.size());
++        final String modelPath = cases.get(0).getAsJsonObject().getAsJsonObject("model").get("model").getAsString().substring("viabedrock:".length());
++        final JsonObject textures = result.getJson("assets/viabedrock/models/" + modelPath + ".json").getAsJsonObject("textures");
++        final String particle = textures.get("particle").getAsString();
++        assertTrue(particle.startsWith("#"));
++        final String sprite = textures.get(particle.substring(1)).getAsString();
++        assertNotNull(result.getImage("assets/viabedrock/textures/" + sprite.substring("viabedrock:".length()) + ".png"));
++        assertNull(ItemModelResourceRewriter.unresolvedModelAssets(storage, "entities", "minecraft:player", "default_resolved"));
++        assertNotNull(ItemModelResourceRewriter.unresolvedModelAssets(storage, "entities", "minecraft:player", "default_default"));
++    }
++
++    @Test
++    void preservesGeometryAndScaleAcrossTextureVariantsAndRepeatedConversions() {
++        final ResourcePack pack = pack("example:actor", false);
++        pack.content().put("textures/omitted.png", pack.content().get("textures/present.png"));
++        final var document = pack.content().getJson("entity/test.json");
++        document.getAsJsonObject("minecraft:client_entity").getAsJsonObject("description")
++                .getAsJsonObject("geometry").addProperty("alias", "geometry.test");
++        pack.content().putJson("entity/test.json", document);
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack));
++        final var geometry = storage.getModels().entityModels().get("geometry.test");
++        final var sourcePosition = geometry.getParents().getFirst().getCubes().values().iterator().next().getPosition().clone();
++        final var converted = geometry.toJavaItemModel("", RotationType.POST_1_21_11);
++        final JsonObject expected = converted.compile();
++        expected.getAsJsonArray("elements").forEach(element -> element.getAsJsonObject().remove("name"));
++
++        for (int iteration = 0; iteration < 2; iteration++) {
++            final Content content = convert(storage, new CustomEntityResourceRewriter());
++            final var cases = content.getJson("assets/viabedrock/items/entities/example/actor.json")
++                    .getAsJsonObject("model").getAsJsonArray("cases");
++            assertEquals(4, cases.size());
++            final var parents = content.getFilesDeep("assets/viabedrock/models/geometry/", ".json");
++            assertEquals(1, parents.size());
++            final JsonObject parent = content.getJson(parents.getFirst());
++            parent.getAsJsonArray("elements").forEach(element -> element.getAsJsonObject().remove("name"));
++            assertEquals(expected.get("elements"), parent.get("elements"));
++            assertEquals(expected.get("groups"), parent.get("groups"));
++            assertFalse(parent.has("textures"));
++            for (var entry : cases) {
++                final var selected = entry.getAsJsonObject();
++                final String key = selected.get("when").getAsString();
++                final String path = selected.getAsJsonObject("model").get("model").getAsString().substring("viabedrock:".length());
++                final JsonObject model = content.getJson("assets/viabedrock/models/" + path + ".json");
++                assertFalse(model.has("elements"));
++                assertFalse(model.has("groups"));
++                assertEquals(parents.getFirst(), "assets/viabedrock/models/"
++                        + model.get("parent").getAsString().substring("viabedrock:".length()) + ".json");
++                assertEquals(converted.getScale(), storage.getConverterData().get("ce_example:actor_" + key + "_scale"));
++                final String texture = key.endsWith("_resolved") ? "present" : "omitted";
++                final JsonObject bindings = model.getAsJsonObject("textures");
++                for (var direction : Direction.values()) {
++                    assertEquals("viabedrock:item/entities/" + texture, bindings.get(direction.name()).getAsString());
++                }
++                assertTrue(bindings.has(bindings.get("particle").getAsString().substring(1)));
++            }
++        }
++        final var position = geometry.getParents().getFirst().getCubes().values().iterator().next().getPosition();
++        assertEquals(sourcePosition.getX(), position.getX());
++        assertEquals(sourcePosition.getY(), position.getY());
++        assertEquals(sourcePosition.getZ(), position.getZ());
++    }
++
++    @Test
++    void givesDistinctGeometriesSeparateParents() {
++        final ResourcePack pack = pack("example:actor", false);
++        final JsonObject source = pack.content().getJson("models/entity/test.json");
++        final var geometries = source.getAsJsonArray("minecraft:geometry");
++        final JsonObject alternate = geometries.get(0).getAsJsonObject().deepCopy();
++        alternate.getAsJsonObject("description").addProperty("identifier", "geometry.alternate");
++        alternate.getAsJsonArray("bones").get(0).getAsJsonObject().getAsJsonArray("cubes")
++                .get(0).getAsJsonObject().getAsJsonArray("size").set(0,
++                        new JsonPrimitive(8));
++        geometries.add(alternate);
++        pack.content().putJson("models/entity/test.json", source);
++        final JsonObject actor = pack.content().getJson("entity/test.json");
++        actor.getAsJsonObject("minecraft:client_entity").getAsJsonObject("description")
++                .getAsJsonObject("geometry").addProperty("alternate", "geometry.alternate");
++        pack.content().putJson("entity/test.json", actor);
++
++        final Content result = convert(new ResourcePackStorage(List.of(pack)), new CustomEntityResourceRewriter());
++        final var parents = result.getFilesDeep("assets/viabedrock/models/geometry/", ".json");
++        assertEquals(2, parents.size());
++        parents.forEach(path -> {
++            final JsonObject model = result.getJson(path);
++            model.getAsJsonArray("elements").forEach(element -> element.getAsJsonObject().remove("name"));
++            result.putJson(path, model);
++        });
++        assertNotEquals(result.getJson(parents.get(0)).get("elements"), result.getJson(parents.get(1)).get("elements"));
++    }
++
++    @Test
++    void resolvesEquippedAttachableVariantsToTheirConvertedModels() {
++        final String identifier = "example:wings";
++        final ResourcePack pack = pack(identifier, true);
++        pack.content().put("textures/omitted.png", pack.content().get("textures/present.png"));
++        final JsonObject definition = pack.content().getJson("attachables/test.json");
++        final JsonObject description = definition.getAsJsonObject("minecraft:attachable").getAsJsonObject("description");
++        description.getAsJsonObject("geometry").addProperty("folded", "geometry.test");
++        description.getAsJsonObject("textures").addProperty("folded", "textures/present");
++        pack.content().putJson("attachables/test.json", definition);
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack));
++        final Content result = convert(storage, new CustomAttachableResourceRewriter());
++        final var cases = result.getJson("assets/viabedrock/items/attachables/example/wings.json")
++                .getAsJsonObject("model").getAsJsonArray("cases");
++        assertEquals(2, cases.size());
++        for (String variant : List.of("default", "folded")) {
++            assertEquals(true, storage.getConverterData().get("ca_" + identifier + '_' + variant));
++            assertNull(ItemModelResourceRewriter.unresolvedModelAssets(storage, "attachables", identifier, variant));
++            final var selected = java.util.stream.StreamSupport.stream(cases.spliterator(), false)
++                    .map(element -> element.getAsJsonObject())
++                    .filter(model -> variant.equals(model.get("when").getAsString())).findFirst().orElseThrow();
++            final String modelPath = selected.getAsJsonObject("model").get("model").getAsString()
++                    .substring("viabedrock:".length());
++            final JsonObject model = result.getJson("assets/viabedrock/models/" + modelPath + ".json");
++            final JsonObject parent = result.getJson("assets/viabedrock/models/"
++                    + model.get("parent").getAsString().substring("viabedrock:".length()) + ".json");
++            assertFalse(model.has("elements"));
++            assertEquals(1, parent.getAsJsonArray("elements").size());
++            final float scale = storage.getModels().entityModels().get("geometry.test")
++                    .toJavaItemModel("", RotationType.POST_1_21_11).getScale();
++            final JsonObject display = model.getAsJsonObject("display");
++            assertEquals(8, display.size());
++            display.entrySet().forEach(entry -> {
++                final var scaling = entry.getValue().getAsJsonObject().getAsJsonArray("scale");
++                assertEquals(3, scaling.size());
++                scaling.forEach(value -> assertEquals(scale, value.getAsFloat()));
++            });
++        }
++    }
++
++    @Test
++    void appliesResolvedPackModelsAfterVanillaOrCustomItemMappingWithoutReplacingGameplayComponents() throws ReflectiveOperationException {
++        for (String identifier : List.of("minecraft:iron_chestplate", "example:wings")) {
++            final ResourcePack pack = pack(identifier, true);
++            pack.content().put("textures/omitted.png", pack.content().get("textures/present.png"));
++            final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack));
++            convert(storage, new CustomAttachableResourceRewriter());
++            final var components = components();
++            components.set(StructuredDataKey.DAMAGE, 17);
++            final var item = new StructuredItem(312, 1, components);
++            CustomAttachableResourceRewriter.applyItemModel(storage, identifier, item);
++            assertNull(components.get(StructuredDataKey.ITEM_MODEL));
++            storage.setLoadedOnJavaClient();
++            CustomAttachableResourceRewriter.applyItemModel(storage, "example:other", item);
++            assertNull(components.get(StructuredDataKey.ITEM_MODEL));
++            CustomAttachableResourceRewriter.applyItemModel(storage, identifier, item);
++            assertEquals(CustomAttachableResourceRewriter.getItemModel(identifier), components.get(StructuredDataKey.ITEM_MODEL));
++            assertArrayEquals(CustomAttachableResourceRewriter.getCustomModelData("default").strings(),
++                    components.get(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4).strings());
++            assertEquals(312, item.identifier());
++            assertEquals(17, components.get(StructuredDataKey.DAMAGE));
++        }
++        final String identifier = "minecraft:iron_chestplate";
++        final ResourcePackStorage missing = new ResourcePackStorage(List.of(pack(identifier, true)));
++        missing.setLoadedOnJavaClient();
++        final var item = new StructuredItem(312, 1, components());
++        CustomAttachableResourceRewriter.applyItemModel(missing, identifier, item);
++        assertNull(item.dataContainer().get(StructuredDataKey.ITEM_MODEL));
++    }
++
++    @Test
++    void retainsOwnerSpecificItemBindingsAcrossResolvedPackLayers() throws IOException {
++        final String item = "minecraft:iron_chestplate";
++        final String alias = item + ".player";
++        final ResourcePack generic = pack(item, true);
++        final ResourcePack player = pack(alias, true);
++        final var document = player.content().getJson("attachables/test.json");
++        final JsonObject bindings = new JsonObject();
++        bindings.addProperty(item, "query.owner_identifier == 'minecraft:player'");
++        document.getAsJsonObject("minecraft:attachable").getAsJsonObject("description").add("item", bindings);
++        player.content().putJson("attachables/test.json", document);
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(player, generic));
++        final var definitions = storage.getAttachables().attachables();
++        assertTrue(definitions.get(item).itemBindings().isEmpty());
++        assertSame(definitions.get(alias), storage.getAttachables().selectItem(item, expression -> true));
++        assertSame(definitions.get(item), storage.getAttachables().selectItem(item, expression -> false));
++        assertNull(storage.getAttachables().selectItem("minecraft:apple", expression -> true));
++        assertEquals(bindings.get(item).getAsString(), definitions.get(alias).itemCondition(item));
++        assertNull(definitions.get(alias).itemCondition("minecraft:apple"));
++        assertThrows(UnsupportedOperationException.class, () -> definitions.get(alias).itemBindings().clear());
++        final var restored = ResourcePackStorage.nativeActors(net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.decode(
++                new ByteArrayInputStream(net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.encode(
++                        storage.getPackStackBottomToTop(), storage::isServerPack))));
++        assertEquals(definitions.get(alias).itemBindings(), restored.getAttachables().attachables().get(alias).itemBindings());
++    }
++
++    @Test
++    void exportsAnEmptyVanillaAttachableWhenItsTextureIsOmitted() {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack("minecraft:armor", true)));
++        final Content result = convert(storage, new CustomAttachableResourceRewriter());
++        final var model = result.getJson("assets/viabedrock/items/attachables/minecraft/armor.json").getAsJsonObject("model");
++        assertEquals("minecraft:empty", model.get("type").getAsString());
++        assertTrue(result.getFilesDeep("assets/viabedrock/models/", ".json").isEmpty());
++        assertNotNull(ItemModelResourceRewriter.unresolvedModelAssets(storage, "attachables", "minecraft:armor", "default"));
++    }
++
++    @Test
++    void retainsUnresolvedUnusedVariantsAndRejectsTheirActiveSelection() {
++        for (boolean attachable : new boolean[]{false, true}) {
++            final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack("example:actor", attachable)));
++            final ResourcePackRewriter.Rewriter rewriter = attachable ? new CustomAttachableResourceRewriter() : new CustomEntityResourceRewriter();
++            assertDoesNotThrow(() -> convert(storage, rewriter));
++            final String folder = attachable ? "attachables" : "entities";
++            final String model = attachable ? "default" : "default_default";
++            assertThrows(IllegalStateException.class, () -> ItemModelResourceRewriter.requireModelAssets(storage, folder, "example:actor", model));
++            if (!attachable) {
++                assertDoesNotThrow(() -> ItemModelResourceRewriter.requireModelAssets(storage, folder, "example:actor", "default_resolved"));
++            }
++        }
++    }
++
++    private static StructuredDataContainer components() throws ReflectiveOperationException {
++        final StructuredDataContainer data = new StructuredDataContainer();
++        final var lookup = StructuredDataContainer.class.getDeclaredField("lookup");
++        lookup.setAccessible(true);
++        final var mappings = java.lang.reflect.Proxy.newProxyInstance(
++                com.viaversion.viaversion.api.data.FullMappings.class.getClassLoader(),
++                new Class<?>[]{com.viaversion.viaversion.api.data.FullMappings.class}, (proxy, method, arguments) -> 0);
++        lookup.set(data, mappings);
++        return data;
++    }
++
++    private static Content convert(final ResourcePackStorage storage, final ResourcePackRewriter.Rewriter rewriter) {
++        final Content result = new InMemoryContent();
++        rewriter.submitTasks(storage, task -> result.putAll(task.get()));
++        return result;
++    }
++
++    private static ResourcePack pack(final String identifier, final boolean attachable) {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
++        final JsonObject description = new JsonObject();
++        description.addProperty("identifier", identifier);
++        final JsonObject textures = new JsonObject();
++        textures.addProperty("default", "textures/omitted");
++        if (!attachable) {
++            textures.addProperty("resolved", "textures/present");
++        }
++        description.add("textures", textures);
++        final JsonObject geometry = new JsonObject();
++        geometry.addProperty("default", "geometry.test");
++        description.add("geometry", geometry);
++        final JsonObject definition = new JsonObject();
++        definition.add("description", description);
++        final JsonObject root = new JsonObject();
++        root.addProperty("format_version", "1.10.0");
++        root.add(attachable ? "minecraft:attachable" : "minecraft:client_entity", definition);
++        content.putJson((attachable ? "attachables/" : "entity/") + "test.json", root);
++        content.putPngImage("textures/present.png", new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB));
++        content.putString("models/entity/test.json", "{\"format_version\":\"1.12.0\",\"minecraft:geometry\":[{\"description\":{\"identifier\":\"geometry.test\",\"texture_width\":64,\"texture_height\":64},\"bones\":[{\"name\":\"root\",\"pivot\":[0,0,0],\"cubes\":[{\"origin\":[-8,0,-8],\"size\":[16,8,16],\"uv\":[0,0]}]}]}]}");
++        return new ResourcePack(content);
++    }
++
++}
+-- 
+2.56.0

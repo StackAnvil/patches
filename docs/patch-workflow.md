@@ -49,6 +49,30 @@ bun run pr body viabedrock --patch 0085-resolve-server-effects-relative-to-their
 bun run pr sync viabedrock --patch 0085-resolve-server-effects-relative-to-their-actor.patch
 ```
 
+A successful `pr check` proves that the selected patch applies. Use `pr build` to compile it and run its tests. PR builds select the target JDK from `targets.json`, just like full builds. Set `STACKANVIL_JAVA_<version>` to select an installed JDK explicitly.
+
+If a patch requires an API from another unmerged patch, record that dependency in its `upstreamable` entry:
+
+```json
+{
+  "file": "0001-use-shared-http-signaling-for-bds-connections.patch",
+  "title": "fix(bedrock): use shared HTTP signaling for BDS connections",
+  "prerequisites": [
+    {
+      "project": "viabedrock",
+      "patch": "0090-accept-bds-http-capability-responses.patch",
+      "reason": "Land the shared signaling and identity API, then update the upstream ViaProxy dependency."
+    }
+  ]
+}
+```
+
+The prerequisite file must exist in the named project's upstreamable directory. Full builds still apply the complete local stacks. If the selected patch has recorded prerequisites, PR preparation stops before it resets a checkout.
+
+After the required API reaches the pinned upstream base or dependency, remove the resolved prerequisite. Then run both `pr check` and `pr build`. A local build against StackAnvil artifacts does not establish standalone upstream compatibility.
+
+Keep shared runtime APIs before their feature consumers. Keep account state and catalog writes in the appearance feature. Keep scene evaluation separate from form and inventory presentation. A semantic filename change must also update the sidecar, series entry, and references. Numeric prefixes do not determine patch order.
+
 Use the same `--patch` option with `pr build` and `pr assign`. If a selected patch conflicts with upstream, use `bun run stack continue <project> --pr --patch <file>` after you resolve and stage the conflict. Use `stack abort` with the same options to discard that apply.
 
 ## PR assignees and reviewers

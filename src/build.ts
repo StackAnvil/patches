@@ -59,6 +59,11 @@ async function javaHome(version: string): Promise<string> {
   return selected;
 }
 
+export async function buildEnvironment(version: string): Promise<NodeJS.ProcessEnv> {
+  const jdk = await javaHome(version);
+  return { ...process.env, JAVA_HOME: jdk, PATH: `${join(jdk, "bin")}:${process.env.PATH ?? ""}` };
+}
+
 function pomValue(pom: string, tag: string): string {
   const value = new RegExp(`<${tag}>([^<]+)</${tag}>`).exec(pom)?.[1];
   if (!value) throw new Error(`Generated POM has no ${tag}`);
@@ -89,7 +94,7 @@ async function publishLocal(artifact: string, pom: string, coordinate: Coordinat
 const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string, Coordinates>) {
   const target = yield* Effect.promise(() => getTarget(id));
   const dir = yield* sync(id);
-  const jdk = yield* Effect.promise(() => javaHome(target.java));
+  const environment = yield* Effect.promise(() => buildEnvironment(target.java));
   const builtinAssets = yield* Effect.promise(() => builtinAssetArguments(id));
   const viaFabricPlusVersion =
     id === "viafabricplus-bedrock" ? built.get("viafabricplus")?.version : undefined;
@@ -112,7 +117,7 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
       `generatePomFileFor${target.publication}Publication`,
     ],
     dir,
-    { ...process.env, JAVA_HOME: jdk, PATH: `${join(jdk, "bin")}:${process.env.PATH ?? ""}` },
+    environment,
   );
   const artifacts = yield* Effect.promise(() => listArtifacts(dir));
   if (artifacts.length !== 1)
@@ -218,10 +223,12 @@ export const buildPr = Effect.fn("buildPr")(function* (id: string, patchFile?: s
   const target = yield* Effect.promise(() => getTarget(id));
   const dir = yield* sync(id, "pr", patchFile);
   const builtinAssets = yield* Effect.promise(() => builtinAssetArguments(id));
+  const environment = yield* Effect.promise(() => buildEnvironment(target.java));
   yield* command(
     "bash",
     ["./gradlew", "--no-daemon", "--stacktrace", ...builtinAssets, "clean", target.buildTask],
     dir,
+    environment,
   );
   const artifacts = yield* Effect.promise(() => listArtifacts(dir));
   if (!artifacts.length)

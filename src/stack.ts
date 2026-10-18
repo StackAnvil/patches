@@ -2,7 +2,15 @@ import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { getSeries, getTarget, patchPaths, root, type Series, type Target } from "./model.ts";
+import {
+  assertPrReady,
+  getSeries,
+  getTarget,
+  patchPaths,
+  root,
+  type Series,
+  type Target,
+} from "./model.ts";
 import { parsePatchMessage } from "./patch-message.ts";
 import { command, git } from "./process.ts";
 
@@ -164,6 +172,15 @@ export const sync = Effect.fn("sync")(function* (
     return yield* Effect.fail(
       new Error(`No upstreamable patch ${patchFile ?? "at the front of the series"} for ${id}`),
     );
+  }
+  if (mode === "pr") {
+    const selected = patchFile
+      ? series.upstreamable.find(({ file }) => file === patchFile)!
+      : series.upstreamable[0]!;
+    yield* Effect.try({
+      try: () => assertPrReady(selected),
+      catch: (cause) => cause as Error,
+    });
   }
   const dir = yield* cloneIfMissing(id, target, modeKey);
   yield* resetToBase(dir, target, modeKey);

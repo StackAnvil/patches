@@ -41,3 +41,7 @@ The actual SDP token and key match the game-login token and key; offline and ski
 The loaded `AuthData` class comes from the reviewed shaded proxy artifact.
 The owned client, proxy, and server stop normally; shared services remain unchanged.
 Full transfer reconnects, online accounts, platform acceptance, and broader movement parity remain to verify.
+
+## Upstream prerequisites
+
+- [viabedrock patch](../../viabedrock/upstreamable/0090-accept-bds-http-capability-responses.pr.md): Land the shared HTTP signaling and self-signed identity API in ViaBedrock and update the upstream ViaProxy dependency first.

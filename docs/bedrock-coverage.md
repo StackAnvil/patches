@@ -189,9 +189,9 @@ Paper doll, touch controls, and native control hints still lack renderers.
 Ordinary Java has no standard packet for individual HUD restrictions.
 These results do not complete U2.
 
-The [camera instruction patch](../patches/viabedrock/upstreamable/0089-decode-camera-instructions-and-transport-native-fades.pr.md) decodes all instruction fields for protocol 2193.
+The [camera instruction patch](../patches/viabedrock/upstreamable/0089-resolve-and-transport-native-camera-instructions.pr.md) decodes all instruction fields for protocol 2193.
 Core applies fade behavior and shared FOV transition rules, with elapsed snapshots and sequenced live commands.
-The [camera renderer](../patches/viafabricplus-bedrock/upstreamable/0023-render-core-resolved-server-fade-snapshots.pr.md) draws fades before the HUD and applies FOV before world projection and culling.
+The [camera renderer](../patches/viafabricplus-bedrock/upstreamable/0023-render-core-resolved-camera-movement.pr.md) draws fades before the HUD and applies FOV before world projection and culling.
 Native timelines and opaque overlays have comparison evidence below.
 Other instruction fields remain decoded but unapplied. Local FOV modifiers and broader lifecycle behavior still need native comparisons.
 These results do not complete U1.
@@ -249,7 +249,7 @@ A native 1.26.51.1 session on protocol 2193 plays a sound at `(-4.125, 70.875, -
 Its PlaySound packet sends `(-33, 567, -18)`, which already uses the Java packet's fixed-point units.
 The corrected core handler preserves those integers.
 The typed decoder also preserves signed loop counts, handle bits, and optional playback position.
-The [owning patch notes](../patches/viabedrock/upstreamable/0015-scale-play-sound-coordinates.pr.md) contain the source comparisons and tests.
+The [owning patch notes](../patches/viabedrock/upstreamable/0015-transport-native-resources-and-sound-commands.pr.md) contain the source comparisons and tests.
 
 The same target's beta script API successfully sends volume, pitch, fade, seek, pause, resume, and stop controls.
 Its UPDATE_SOUND_DATA payload carries a little-endian 64-bit handle, then seven tagged variants.
@@ -396,7 +396,7 @@ Both clients land at Y=120.5 on the fixture at Y=120.
 ViaProxy resource reload preserves these properties, and disconnect clears the client mapping.
 Core reads both observed target wire forms for light filtering.
 Its cache identity now changes with physical properties.
-The [block converter notes](../patches/viabedrock/upstreamable/0054-render-textured-bedrock-full-cubes.pr.md) record the fixture and limits.
+The [block converter notes](../patches/viabedrock/upstreamable/0054-render-native-block-state-geometry-and-materials.pr.md) record the fixture and limits.
 
 Core retains packet 337's 288 voxel grids, 221 names, and one custom shape from the target fixture.
 ViaProxy retains these during configuration while its supplemental pack queues up to 233 world packets.
@@ -1072,7 +1072,7 @@ These counts establish model delivery and draw submission, without proving nativ
 The captured opaque particle chain is addressed in [the particle carrier update](#invisible-particle-carriers-and-opaque-descendants).
 Other material families, dynamic geometry selection, additional queries, and named actor events remain incomplete.
 Server animation commands also remain part of the full coverage goal.
-See [the owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0014-animate-numeric-looping-bedrock-bones.pr.md) for target evidence and scope.
+See [the owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0014-evaluate-custom-actors-with-shared-animation-graphs.pr.md) for target evidence and scope.
 
 
 ### Server animation commands: native alias and timing capture
@@ -1131,7 +1131,7 @@ Both owning patches pass their targeted suites and Checkstyle tasks before the r
 The standalone profile excludes runtime custom-block visuals, licensed acquisition, network downloads, and Java client reloads.
 These phase improvements do not establish joining-time gains or prevent every possible timeout.
 macOS, Windows, concurrent conversions, and larger pack stacks still need performance measurements.
-See the [cache notes](../patches/viabedrock/upstreamable/0001-cache-converted-resource-packs.pr.md) and [native archive notes](../patches/viabedrock/upstreamable/0015-scale-play-sound-coordinates.pr.md).
+See the [cache notes](../patches/viabedrock/upstreamable/0001-cache-converted-resource-packs.pr.md) and [native archive notes](../patches/viabedrock/upstreamable/0015-transport-native-resources-and-sound-commands.pr.md).
 
 
 The first cold ViaProxy replay exposed a metadata type mismatch during custom entity spawning.
@@ -1227,7 +1227,7 @@ Active emote composition, complete effect timing, and dynamic visible comparison
 The current native command fixture covers player bodies and does not establish custom-actor command drawing through either route.
 These results supersede the earlier statement that the client does not advertise the animation channel.
 See the [core notes](../patches/viabedrock/upstreamable/0086-transport-native-actor-animation-commands.pr.md),
-[graph notes](../patches/viafabricplus-bedrock/upstreamable/0014-animate-numeric-looping-bedrock-bones.pr.md),
+[graph notes](../patches/viafabricplus-bedrock/upstreamable/0014-evaluate-custom-actors-with-shared-animation-graphs.pr.md),
 and [player notes](../patches/viafabricplus-bedrock/upstreamable/0016-render-server-player-costumes.pr.md).
 
 
@@ -1247,7 +1247,7 @@ The initial matching runs passed submission checks while the arm remained offscr
 The query snapshot now follows the native parser's ASCII name folding while query names remain literal.
 These results verify client drawing on both routes, not account acquisition or native pixel parity.
 Server costume selection, global actor transforms, native held-item placement, and visible native timing remain incomplete.
-See the [first-person implementation notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md#native-first-person-actor-drawing).
+See the [first-person implementation notes](../patches/viafabricplus-bedrock/upstreamable/0009-manage-character-creator-accounts-and-wardrobes.pr.md#native-first-person-actor-drawing).
 
 ## First-person authored actor scale
 
@@ -1375,7 +1375,7 @@ The result reduces CPU and allocation pressure without establishing faster joins
 
 All 15,823 output entries remain semantically equivalent after normalization of existing generated names, property order, and equivalent particle aliases.
 Targeted tests cover concurrent variants, preserved geometry, scale metadata, and unchanged source models.
-See the [model export notes](../patches/viabedrock/upstreamable/0066-export-empty-item-models.pr.md) for the comparison.
+See the [model export notes](../patches/viabedrock/upstreamable/0066-preserve-complete-native-appearance-assets.pr.md) for the comparison.
 
 **Unverified:** macOS, Windows, simultaneous connections, end-to-end joining gains, licensed acquisition, and larger pack stacks still need measurements.
 
@@ -1981,7 +1981,7 @@ It excludes model baking, texture stitching, full reloads, and joining times.
 **Verified:** The actual Java 26.3 parser and resolver preserve geometry, textures, lighting, ambient occlusion, and display transforms for every changed child.
 Core tests cover shared and distinct parents, concurrent variants, source immutability, selectors, scale metadata, and attachable transforms.
 The full stack build passes 1014 Java tests, with no failures or errors and 115 optional skips.
-See the [parent model notes](../patches/viabedrock/upstreamable/0066-export-empty-item-models.pr.md#export-shared-geometry-as-java-parents).
+See the [parent model notes](../patches/viabedrock/upstreamable/0066-preserve-complete-native-appearance-assets.pr.md#export-shared-geometry-as-java-parents).
 
 **Remaining:** macOS, Windows, concurrent conversions, larger stacks, full reload timing, and end-to-end joining gains remain unverified.
 These improvements do not prevent every timeout. Transport liveness remains necessary while acquisition or other phases wait.
@@ -2212,7 +2212,7 @@ Two simultaneous conversions improve from 1924 ms to 1473 ms per pair, about 23 
 The complete output retains 15,823 original entries and 786 shared parents with equivalent resolved Java models.
 Targeted tests cover header placement, large archive decoding, empty layers, determinism, and concurrent language lookup.
 All four projects build with 1,026 passing Java tests, no failures or errors, and 118 optional skips.
-See the [library compression notes](../patches/viabedrock/upstreamable/0015-scale-play-sound-coordinates.pr.md#compress-entries-within-large-native-libraries).
+See the [library compression notes](../patches/viabedrock/upstreamable/0015-transport-native-resources-and-sound-commands.pr.md#compress-entries-within-large-native-libraries).
 
 **Remaining:** Larger stacks, macOS, Windows, full reloads, and complete joining-time measurements remain unverified.
 Each large library uses at most four workers and temporary compressed storage.
@@ -5840,7 +5840,7 @@ This restores correct numeric decoding for existing Java status translations.
 **Verified within scope:** Target BDS emits compound rocket data, explosion event 25, charge-complete event 74, and subsequent rocket removal.
 The matching native rocket code reads the same data field and emits 25.
 Numeric tests cover both sparse ranges; metadata tests cover conversion, source immutability, clearing, and type separation.
-See the [gameplay evidence](bedrock-complex-gameplay.md), [event notes](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.pr.md), and [metadata notes](../patches/viabedrock/deferred/0002-translate-bedrock-metadata-and-properties.pr.md).
+See the [gameplay evidence](bedrock-complex-gameplay.md), [event notes](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.pr.md), and [metadata notes](../patches/viabedrock/upstreamable/0002-preserve-sparse-properties-and-composed-metadata.pr.md).
 
 **Unverified:** Remaining event effects, data and position handling, rocket direction and attachment, flight simulation, boost timing, and visible particles/audio remain required.
 Full direct and ViaProxy gameplay comparisons remain open.
@@ -6674,7 +6674,7 @@ Independent native execution supplies 240 scheduling frames and 72 float appeara
 The existing 180 position cases now exercise the production interpolation helper.
 The full add-on build passes 601 tests, with zero failures or errors and 69 optional skips.
 All 30 add-on patches replay, and the reference patch applies alone upstream.
-The [owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md#native-particle-frame-scheduling-october-7-2026) retain target addresses and fixture boundaries.
+The [owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-manage-character-creator-accounts-and-wardrobes.pr.md#native-particle-frame-scheduling-october-7-2026) retain target addresses and fixture boundaries.
 
 Fresh Linux strict BDS runs exercise actual rod input through direct and ViaProxy connections.
 The observer records 667 particle render frames directly and 942 through ViaProxy.
@@ -8412,8 +8412,8 @@ Private evidence is `.stackanvil/research/inventory-bundle/live/proxy-edge/evide
 
 ### Authored server forms and actor menus
 
-The [core form resolver](../patches/viabedrock/upstreamable/0095-resolve-authored-bedrock-server-form-scenes.pr.md) uses the accepted pack stack and versioned built-in UI assets.
-The [client renderer](../patches/viafabricplus-bedrock/upstreamable/0029-render-authored-bedrock-server-forms.pr.md) preserves authored textures and response indices, with Java focus and narration.
+The [core form resolver](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md) uses the accepted pack stack and versioned built-in UI assets.
+The [client renderer](../patches/viafabricplus-bedrock/upstreamable/0029-render-authored-forms-and-npc-dialogs.pr.md) preserves authored textures and response indices, with Java focus and narration.
 Supported scenes travel through the same custom payload on direct and ViaProxy routes.
 Ordinary Java clients receive a readable projection through standard dialogs.
 These paths do not establish complete JSON UI or native visual parity.

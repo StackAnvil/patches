@@ -19,6 +19,17 @@ export interface Target {
 export interface UpstreamablePatch {
   file: string;
   title: string;
+  prerequisites?: { project: string; patch: string; reason: string }[];
+}
+
+export function assertPrReady(patch: UpstreamablePatch): void {
+  if (!patch.prerequisites?.length) return;
+  const prerequisites = patch.prerequisites
+    .map(({ project, patch: file, reason }) => `${project}/${file}: ${reason}`)
+    .join("\n");
+  throw new Error(
+    `${patch.file} requires upstream prerequisites before a standalone PR:\n${prerequisites}`,
+  );
 }
 
 export interface DeferredPatch {
@@ -74,6 +85,21 @@ export async function getSeries(id: string): Promise<Series> {
   for (const deferred of series.deferred) {
     if (typeof deferred.reason !== "string" || !deferred.reason.trim()) {
       throw new Error(`${id}/deferred/${deferred.file} needs a reason in series.json`);
+    }
+  }
+  const targets = await getTargets();
+  for (const patch of series.upstreamable) {
+    for (const prerequisite of patch.prerequisites ?? []) {
+      if (
+        !targets[prerequisite.project] ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.patch$/.test(prerequisite.patch) ||
+        !prerequisite.reason?.trim()
+      ) {
+        throw new Error(`Invalid prerequisite for ${id}/${patch.file}`);
+      }
+      await readFile(
+        join(root, "patches", prerequisite.project, "upstreamable", prerequisite.patch),
+      );
     }
   }
   return series;

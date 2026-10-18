@@ -289,7 +289,7 @@ Both emit explosion event 25 and then disappear; crossbow charging emits event 7
 Matching native rocket code reads field 16 and emits 25.
 The target protocol page’s sequential values contradict these observations.
 The [event notes](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.pr.md) record that conflict.
-The [metadata notes](../patches/viabedrock/deferred/0002-translate-bedrock-metadata-and-properties.pr.md) describe conversion and limits.
+The [metadata notes](../patches/viabedrock/upstreamable/0002-preserve-sparse-properties-and-composed-metadata.pr.md) describe conversion and limits.
 
 **Unverified:** Direction field 17, attachment field 18, complete rocket flight and boost behavior, and visible particle/audio comparisons remain required.
 Live translated direct and ViaProxy comparisons remain open.
@@ -806,7 +806,7 @@ Coverage includes elder guardians, independent wither heads, owner reassignment,
 The full core build passes with 749 tests, zero failures, and 19 skips.
 The patch applies independently to pinned upstream without setup.
 Its three tests pass with an external init script that supplies the test classpath already present in the full stack.
-See the [entity reference evidence](../patches/viabedrock/upstreamable/0094-clear-authoritative-entity-references.pr.md).
+See the [entity reference evidence](../patches/viabedrock/upstreamable/0094-synchronize-authoritative-entity-references.pr.md).
 
 The rebuilt add-on and ViaProxy pass actual initialization, spawn, and movement controls against strict BDS, one run through each route.
 Both recorders exit successfully, and the owned server stops.
@@ -835,7 +835,7 @@ Assertions serialize and decode Java 26.3 metadata.
 All nine regressions pass independently on pinned upstream with an external test-classpath init script.
 The full core build passes with 755 tests, zero failures, and 19 skips.
 Checkstyle also passes.
-The [entity reference record](../patches/viabedrock/upstreamable/0094-clear-authoritative-entity-references.pr.md) retains target evidence and verification limits.
+The [entity reference record](../patches/viabedrock/upstreamable/0094-synchronize-authoritative-entity-references.pr.md) retains target evidence and verification limits.
 
 The rebuilt add-on and ViaProxy each pass a real strict-BDS join and movement control.
 Both recorders exit successfully, and the owned server stops.
@@ -892,7 +892,7 @@ These six controls verify the sampled update and integration through both routes
 They do not establish native visible parity or an ordinary Java client without the add-on.
 Nine reviewed artifact replacements preserve 26 unrelated distribution and Maven files, with rollback copies outside those directories.
 
-The [core reference record](../patches/viabedrock/upstreamable/0094-clear-authoritative-entity-references.pr.md) and [client owner record](../patches/viafabricplus-bedrock/upstreamable/0027-apply-authoritative-projectile-owner-changes.pr.md) retain architecture and evidence.
+The [core reference record](../patches/viabedrock/upstreamable/0094-synchronize-authoritative-entity-references.pr.md) and [client owner record](../patches/viafabricplus-bedrock/upstreamable/0027-apply-authoritative-projectile-owner-changes.pr.md) retain architecture and evidence.
 Raw traffic, client observations, and bytecode inspection remain private.
 
 **Remaining:** Native visible ownership and fishing comparisons, pickup, return, and complete projectile action behavior remain required.
@@ -1189,7 +1189,7 @@ It preserves newborn initialization, current UVs, float tint precision, and nati
 Short-lived particles retain the extra forced appearance preparation.
 
 Native execution covers 240 scheduling frames, 72 appearance cases, and 180 position cases.
-The [owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md#native-particle-frame-scheduling-october-7-2026) record target addresses, supplied boundaries, and runtime sequences.
+The [owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-manage-character-creator-accounts-and-wardrobes.pr.md#native-particle-frame-scheduling-october-7-2026) record target addresses, supplied boundaries, and runtime sequences.
 The full add-on build passes 601 tests, with zero failures or errors and 69 optional skips.
 
 Fresh Linux strict BDS runs exercise actual rod input through direct and ViaProxy connections.

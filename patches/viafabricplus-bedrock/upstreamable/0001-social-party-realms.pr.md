@@ -45,3 +45,7 @@ Live owner mutations, screenshot publication, a second-account party transfer, a
 Minecraft 26.3 numbers the left mouse button as 1. Shared action lists use `InputConstants.MOUSE_BUTTON_LEFT` so double-click activation works across social and Realm lists.
 
 The patch follows upstream convention plugins, version catalogs, and `jarInJar`. SignalR uses a current MessagePack adapter with aligned Jackson 2 dependencies to avoid loading the older bundled annotations on Jackson 3 hosts.
+
+## Skin provider boundary
+
+Enrich party login claims through the registered skin provider override. The shared helper retains account-key matching, leader detection and absent-account guards. The friend-world provider calls it before adding its nonce; the later appearance provider uses the same helper. The global SkinProvider mixin is removed. The social patch still compiles independently on the pinned upstream base.

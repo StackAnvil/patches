@@ -27,3 +27,7 @@ malformed neighbors, and defaults without implicit controllers.
 Equipped native models also require ordered `part_visibility` declarations and `scripts.parent_setup`. Preserve repeated and wildcard bone rules without collapsing them into a map. Keep setup expressions in their owner scope, separate from initialization and animation scripts. The declarations are immutable; existing constructor forms remain available.
 
 The recorded Bedrock 1.26.51.1 Hive angel wings use a wildcard visibility expression that excludes first-person and invisible rendering. Their attachable also supplies owner setup. Parser tests cover scalar and array setup, rule ordering, duplicate patterns, missing fields and defensive ownership. All 16 converter tests pass with no failures or skips. The renderer evaluates these declarations; the parser does not choose a binding or rendering policy.
+
+## Visibility parser API
+
+Expose the ordered part-visibility declaration parser to client adapters. The parser preserves declared expressions and rule order. Renderer selection, variable scope and client-specific fallback values remain with the consumer. This public helper is a local extension to the pinned upstream API.
