@@ -1,4 +1,4 @@
-From 84ca643e72ab9df4a2117de0e239c658bca815e3 Mon Sep 17 00:00:00 2001
+From fad60c50cf0449179edb6f5671db0b60baeeb11e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:52:24 +0200
 Subject: [PATCH] perf(resource-packs): cache converted packs by content
@@ -141,7 +141,7 @@ Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.gith
  .../viabedrock/api/util/FileSystemUtil.java   |  18 +
  .../packet/ResourcePackClientResponse.java    |  52 +++
  .../ResourcePackDownloadCompletion.java       |  38 ++
- .../protocol/packet/ResourcePackPackets.java  | 358 ++++++++++------
+ .../protocol/packet/ResourcePackPackets.java  | 356 ++++++++++------
  .../packet/ResourcePackPreparation.java       |  38 ++
  .../provider/ResourcePackProvider.java        |   8 +-
  .../impl/DiskResourcePackProvider.java        |  47 ++-
@@ -158,7 +158,7 @@ Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.gith
  .../packet/ResourcePackPreparationTest.java   | 140 ++++++
  .../ResourcePackDownloadTrackerTest.java      | 116 +++++
  .../ResourcePackLoadStateTrackerTest.java     | 116 +++++
- 31 files changed, 2838 insertions(+), 311 deletions(-)
+ 31 files changed, 2837 insertions(+), 310 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackExecutor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
@@ -1364,7 +1364,7 @@ index 000000000..a6f6e14a2
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index 1d51a6165..1d836bedc 100644
+index dca2f9e71..507e1f895 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 @@ -19,13 +19,13 @@ package net.raphimc.viabedrock.protocol.packet;
@@ -1464,7 +1464,12 @@ index 1d51a6165..1d836bedc 100644
 -                if (ViaBedrock.getConfig().shouldTranslateResourcePacks() && wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolConstants.JAVA_VERSION)) {
 -                    final UUID httpToken = UUID.randomUUID();
 -                    ViaBedrock.getResourcePackServer().addConnection(httpToken, wrapper.user());
--
++                infos[i] = new ResourcePackLoadStateTracker.Info(new ResourcePack.Key(id, version), contentKey, contentId, cdnUrl);
++            }
++            final UserConnection user = wrapper.user();
++            final ResourcePackLoadStateTracker loadStateTracker = new ResourcePackLoadStateTracker(user, infos);
++            user.put(loadStateTracker);
+ 
 -                    wrapper.write(Types.UUID, UUID.randomUUID()); // id
 -                    wrapper.write(Types.STRING, ViaBedrock.getResourcePackServer().getUrl() + "?token=" + httpToken); // url
 -                    wrapper.write(Types.STRING, ""); // hash
@@ -1483,12 +1488,6 @@ index 1d51a6165..1d836bedc 100644
 -                }
 -            }, State.PLAY, (PacketHandler) PacketWrapper::cancel // Bedrock client ignores resource packs after the initial info packet
 -        );
-+                infos[i] = new ResourcePackLoadStateTracker.Info(new ResourcePack.Key(id, version), contentKey, contentId, cdnUrl);
-+            }
-+            final UserConnection user = wrapper.user();
-+            final ResourcePackLoadStateTracker loadStateTracker = new ResourcePackLoadStateTracker(user, infos);
-+            user.put(loadStateTracker);
-+
 +            if (shouldTranslate(user)) {
 +                loadStateTracker.loadRequestedResourcePacks().thenRun(() -> {
 +                    user.getChannel().eventLoop().execute(() -> {
@@ -1608,11 +1607,13 @@ index 1d51a6165..1d836bedc 100644
              }
          });
          protocol.registerClientbound(ClientboundBedrockPackets.RESOURCE_PACK_DATA_INFO, null, wrapper -> {
-@@ -187,20 +196,14 @@ public final class ResourcePackPackets {
+@@ -187,21 +196,15 @@ public final class ResourcePackPackets {
  
              final ResourcePackDownloadTracker downloadTracker = wrapper.user().get(ResourcePackDownloadTracker.class);
              final ResourcePackDownloadTracker.Download download = downloadTracker.get(key);
 -            if (download != null) {
++            if (download != null && !download.isComplete()) {
+                 ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Downloading resource pack chunk " + chunk + "/" + download.chunkSize() + " for " + key);
 -                final ResourcePack resourcePack = download.processDataChunk(chunk, data);
 -                if (resourcePack != null) {
 -                    downloadTracker.remove(key);
@@ -1622,7 +1623,6 @@ index 1d51a6165..1d836bedc 100644
 -                            loadStateTracker.addRemoteResourcePack(resourcePack);
 -                        }
 -                    }
-+            if (download != null && !download.isComplete()) {
 +                if (download.acceptDataChunk(chunk, data)) {
 +                    finishDownload(wrapper.user(), downloadTracker, key, download);
                  }
@@ -1633,7 +1633,7 @@ index 1d51a6165..1d836bedc 100644
          });
  
          protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.RESOURCE_PACK, ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, wrapper -> {
-@@ -212,44 +215,127 @@ public final class ResourcePackPackets {
+@@ -213,44 +216,127 @@ public final class ResourcePackPackets {
                      if (resourcePackStorage != null) {
                          resourcePackStorage.setLoadedOnJavaClient();
                      }
@@ -2143,7 +2143,7 @@ index 199d10fd2..62030195f 100644
  
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
-index f7f550941..5bc485dc8 100644
+index b0357f63f..5bc485dc8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
 @@ -23,24 +23,29 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -2252,7 +2252,7 @@ index f7f550941..5bc485dc8 100644
                  final PacketWrapper resourcePackClientResponse = PacketWrapper.create(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, this.user());
 -                resourcePackClientResponse.write(BedrockTypes.UNSIGNED_VAR_INT, ResourcePackResponse.Downloading.getValue()); // status
 -                resourcePackClientResponse.write(BedrockTypes.STRING, "downloading"); // #blameMojang
--                resourcePackClientResponse.write(BedrockTypes.SHORT_LE_STRING_ARRAY, downloadList.stream().map(ResourcePack.Key::toString).toArray(String[]::new)); // downloading packs
+-                resourcePackClientResponse.write(BedrockTypes.STRING_ARRAY, downloadList.stream().map(ResourcePack.Key::toString).toArray(String[]::new)); // downloading packs
 +                ResourcePackClientResponse.writeDownloading(resourcePackClientResponse, downloadList.stream().map(ResourcePack.Key::toString).toArray(String[]::new));
                  resourcePackClientResponse.scheduleSendToServer(BedrockProtocol.class);
              } else {
