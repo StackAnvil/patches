@@ -1,0 +1,2186 @@
+From 4dbecb07378868a39f7e4fa125ffa3aa40e6148f Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 11:31:03 +0200
+Subject: [PATCH] feat(chunks): restore the lighting and scheduling foundation
+
+Retain computed chunk lighting, nearest-first request scheduling and complete-column sends after upstream reverted their implementation. The connected-shape, incremental-lighting and subchunk-response patches depend on these caches and queues. Later patches add bounded jobs, compact snapshots, native light filtering and regression coverage.
+
+Restore the upstream foundation as an explicit prerequisite while preserving the new upstream palette validation, block-state upgrade data and chunk-loading fixes.
+---
+ Data Asset Sources.md                         |   5 +
+ .../api/chunk/light/ChunkLight.java           |  94 ++
+ .../api/chunk/light/LightEngine.java          | 403 ++++++++
+ .../protocol/data/BedrockMappingData.java     | 149 +++
+ .../protocol/packet/WorldPackets.java         |   6 +-
+ .../protocol/storage/ChunkTracker.java        | 454 ++++++++-
+ .../data/java/block_light_properties.json     | 863 ++++++++++++++++++
+ 7 files changed, 1921 insertions(+), 53 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/light/ChunkLight.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java
+ create mode 100644 src/main/resources/assets/viabedrock/data/java/block_light_properties.json
+
+diff --git a/Data Asset Sources.md b/Data Asset Sources.md
+index 584d6fedd..b458c554b 100644
+--- a/Data Asset Sources.md	
++++ b/Data Asset Sources.md	
+@@ -71,6 +71,11 @@ This file has been generated using `./gradlew generateBedrockSoundLists` from th
+ 
+ Run `./gradlew syncDerivedMappings` after updating the Bedrock palette and Java registry. It adds sign and shelf tags and directly named potted blocks. Other entries in these files remain curated.
+ 
++### data/java/block_light_properties.json
++
++This file has been created manually using the light emission and light-filtering block tables from [minecraft.wiki](https://minecraft.wiki/w/Light). State dependent light emission is implemented in
++`BedrockMappingData#loadBlockLightProperties`.
++
+ ### data/java/effects.json
+ 
+ This file can be dumped with the Fabric mod in `generator`.
+diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/light/ChunkLight.java b/src/main/java/net/raphimc/viabedrock/api/chunk/light/ChunkLight.java
+new file mode 100644
+index 000000000..29a933358
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/chunk/light/ChunkLight.java
+@@ -0,0 +1,94 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.chunk.light;
++
++import java.util.Arrays;
++
++/**
++ * Computed light data of a whole chunk column. Stores one 2048 byte nibble array per chunk section
++ * for sky light and block light. The array indices include the two out of world sections, so they
++ * can be used directly as light mask indices: index {@code 0} is the section below the world and
++ * index {@code sectionCount + 1} is the section above the world.
++ * <p>
++ * A {@code null} array means that the light value of the whole section is zero. Sections with a
++ * uniform light value of 15 use the shared {@link #FULL} array. Returned arrays must never be modified.
++ */
++public final class ChunkLight {
++
++    /**
++     * Shared read only array for sections with a uniform light value of 15.
++     */
++    public static final byte[] FULL = createFull();
++
++    private final byte[][] skyLight;
++    private final byte[][] blockLight;
++
++    public ChunkLight(final int sectionCount, final boolean skyLight) {
++        this.skyLight = new byte[sectionCount + 2][];
++        this.blockLight = new byte[sectionCount + 2][];
++
++        if (skyLight) { // Sections outside of the world bounds are always fully sky lit
++            this.skyLight[0] = FULL;
++            this.skyLight[sectionCount + 1] = FULL;
++        }
++    }
++
++    /**
++     * @return The amount of sections covered by the light data (chunk sections + 2 out of world sections)
++     */
++    public int skyLightLength() {
++        return this.skyLight.length;
++    }
++
++    /**
++     * @return The packed sky light nibble array of the given light mask index, or {@code null} if the whole section has a light value of zero
++     */
++    public byte[] skyLight(final int lightMaskIndex) {
++        return this.skyLight[lightMaskIndex];
++    }
++
++    /**
++     * @return The packed block light nibble array of the given light mask index, or {@code null} if the whole section has a light value of zero
++     */
++    public byte[] blockLight(final int lightMaskIndex) {
++        return this.blockLight[lightMaskIndex];
++    }
++
++    /**
++     * Replaces the packed sky light nibble array of the given light mask index.
++     * Only intended for use by the light engine.
++     */
++    public void setSkyLight(final int lightMaskIndex, final byte[] data) {
++        this.skyLight[lightMaskIndex] = data;
++    }
++
++    /**
++     * Replaces the packed block light nibble array of the given light mask index.
++     * Only intended for use by the light engine.
++     */
++    public void setBlockLight(final int lightMaskIndex, final byte[] data) {
++        this.blockLight[lightMaskIndex] = data;
++    }
++
++    private static byte[] createFull() {
++        final byte[] data = new byte[2048];
++        Arrays.fill(data, (byte) 0xFF);
++        return data;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java b/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java
+new file mode 100644
+index 000000000..7083d9305
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java
+@@ -0,0 +1,403 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.chunk.light;
++
++import java.util.Arrays;
++
++/**
++ * Computes Minecraft style sky and block light for a chunk using the block data of the chunk and
++ * its eight neighbors. The propagation algorithm is a breadth first flood fill, based on the light
++ * engine of Minestom (https://github.com/Minestom/Minestom, Apache License 2.0).
++ * <p>
++ * Light behaves like on the Java Edition client: light entering a block loses a level of
++ * {@code max(1, opacity)} of that block. Sky light of level 15 travels downwards without losing
++ * level as long as it does not enter a light filtering block. Blocks with an opacity of 15 or
++ * above fully block light.
++ */
++public final class LightEngine {
++
++    public static final int LIGHT_LENGTH = 2048;
++
++    private static final int REGION_SIZE = 48; // 3x3 chunks
++    private static final int REGION_SIZE_SQUARED = REGION_SIZE * REGION_SIZE;
++    private static final int MAX_HEIGHT = 1 << 12;
++    private static final int[][] DIRECTIONS = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
++    private static final int DOWN = 2; // Index of the {0, -1, 0} direction in DIRECTIONS
++
++    private LightEngine() {
++    }
++
++    /**
++     * Computes the light of all chunks of a 3x3 chunk region. The lighting needs of every chunk in
++     * the region are fully covered by the region, as light travels at most 15 blocks.
++     *
++     * @param regionStates  The java block states of the region, indexed as
++     *                      {@code [chunkIndex][sectionIndex][blockIndex]} where
++     *                      {@code chunkIndex = (chunkZOffset + 1) * 3 + (chunkXOffset + 1)} and
++     *                      {@code blockIndex = y * 256 | z * 16 | x}. Chunks and sections that have
++     *                      not been loaded are {@code null} and are treated as fully opaque.
++     * @param sectionCount  The amount of chunk sections of a chunk column
++     * @param skyLight      Whether the dimension has sky light
++     * @param emissionTable Light emission (0-15) per java block state id
++     * @param opacityTable  Light opacity (0-15) per java block state id
++     * @return The light data of all loaded chunks of the region; {@code null} for unloaded chunks
++     */
++    public static ChunkLight[] computeRegionLight(final int[][][] regionStates, final int sectionCount, final boolean skyLight, final byte[] emissionTable, final byte[] opacityTable) {
++        if (regionStates.length != 9) {
++            throw new IllegalArgumentException("Region must contain exactly 9 chunks");
++        }
++        if (sectionCount << 4 > MAX_HEIGHT) {
++            throw new IllegalArgumentException("World height exceeds light engine limit");
++        }
++
++        final int height = sectionCount << 4;
++        // Block index scheme: (y * REGION_SIZE + z) * REGION_SIZE + x
++        final byte[] opacity = new byte[REGION_SIZE * REGION_SIZE * height];
++        final byte[] emission = new byte[opacity.length];
++        Arrays.fill(opacity, (byte) 15); // Unloaded chunks are treated as fully opaque
++        fillRegion(regionStates, opacity, emission, emissionTable, opacityTable, height);
++
++        final byte[] skyLightData = skyLight ? new byte[opacity.length] : null;
++        final byte[] blockLightData = new byte[opacity.length];
++
++        final IntQueue queue = new IntQueue();
++        if (skyLightData != null) {
++            final short[] skyCutoff = new short[REGION_SIZE * REGION_SIZE]; // Topmost block of each column that is not fully sky lit
++            seedSkyLight(skyLightData, opacity, skyCutoff, height);
++            enqueueSkyLightFrontier(skyLightData, opacity, skyCutoff, queue, height);
++            propagate(skyLightData, opacity, queue, height, true);
++            queue.clear();
++        }
++        seedBlockLight(blockLightData, emission, queue, height);
++        propagate(blockLightData, opacity, queue, height, false);
++
++        final ChunkLight[] results = new ChunkLight[9];
++        for (int chunkIndex = 0; chunkIndex < 9; chunkIndex++) {
++            if (regionStates[chunkIndex] == null) {
++                continue;
++            }
++
++            final ChunkLight light = results[chunkIndex] = new ChunkLight(sectionCount, skyLight);
++            final int baseX = (chunkIndex % 3) * 16;
++            final int baseZ = (chunkIndex / 3) * 16;
++            for (int sectionIndex = 0; sectionIndex < sectionCount; sectionIndex++) {
++                if (skyLightData != null) {
++                    light.setSkyLight(sectionIndex + 1, extractSection(skyLightData, baseX, baseZ, sectionIndex, height));
++                }
++                light.setBlockLight(sectionIndex + 1, extractSection(blockLightData, baseX, baseZ, sectionIndex, height));
++            }
++        }
++        return results;
++    }
++
++    /**
++     * Fills the opacity and emission arrays of the 3x3 chunk region from the java block states.
++     */
++    private static void fillRegion(final int[][][] regionStates, final byte[] opacity, final byte[] emission, final byte[] emissionTable, final byte[] opacityTable, final int height) {
++        for (int chunkIndex = 0; chunkIndex < 9; chunkIndex++) {
++            final int[][] chunkStates = regionStates[chunkIndex];
++            if (chunkStates == null) {
++                continue;
++            }
++
++            final int baseX = (chunkIndex % 3) << 4;
++            final int baseZ = (chunkIndex / 3) << 4;
++            for (int sectionIndex = 0; sectionIndex < chunkStates.length; sectionIndex++) {
++                final int[] states = chunkStates[sectionIndex];
++                if (states == null) {
++                    continue;
++                }
++
++                final int javaId0 = states[0];
++                boolean singleState = true;
++                for (int i = 1; i < states.length; i++) {
++                    if (states[i] != javaId0) {
++                        singleState = false;
++                        break;
++                    }
++                }
++                if (singleState) { // Fast path for uniform sections, e.g. all air
++                    final byte opacityValue = opacityTable[javaId0];
++                    final byte emissionValue = emissionTable[javaId0];
++                    for (int y = 0; y < 16; y++) {
++                        final int layerBase = ((sectionIndex << 4) + y) * REGION_SIZE_SQUARED;
++                        for (int z = 0; z < 16; z++) {
++                            final int rowBase = layerBase + (baseZ + z) * REGION_SIZE + baseX;
++                            Arrays.fill(opacity, rowBase, rowBase + 16, opacityValue);
++                            Arrays.fill(emission, rowBase, rowBase + 16, emissionValue);
++                        }
++                    }
++                    continue;
++                }
++
++                for (int y = 0; y < 16; y++) {
++                    final int layerBase = ((sectionIndex << 4) + y) * REGION_SIZE_SQUARED;
++                    final int statesBase = y << 8;
++                    for (int z = 0; z < 16; z++) {
++                        final int regionIndex = layerBase + (baseZ + z) * REGION_SIZE + baseX;
++                        final int statesIndex = statesBase | (z << 4);
++                        for (int x = 0; x < 16; x++) {
++                            final int stateId = states[statesIndex + x];
++                            opacity[regionIndex + x] = opacityTable[stateId];
++                            emission[regionIndex + x] = emissionTable[stateId];
++                        }
++                    }
++                }
++            }
++        }
++    }
++
++    /**
++     * Scans every column of the region from the top and assigns sky light to all blocks that are
++     * directly lit by the sky.
++     */
++    private static void seedSkyLight(final byte[] skyLight, final byte[] opacity, final short[] skyCutoff, final int height) {
++        for (int z = 0; z < REGION_SIZE; z++) {
++            for (int x = 0; x < REGION_SIZE; x++) {
++                int level = 15;
++                short cutoff = -1; // Topmost block of the column that is not fully sky lit
++                for (int y = height - 1; y >= 0; y--) {
++                    final int index = (y * REGION_SIZE + z) * REGION_SIZE + x;
++                    if (level == 15 && opacity[index] == 0) { // Sky light travels downwards without losing level
++                        skyLight[index] = 15;
++                        continue;
++                    }
++                    level = Math.max(0, level - Math.max(1, opacity[index] & 0xFF));
++                    if (cutoff == -1) {
++                        skyCutoff[z * REGION_SIZE + x] = cutoff = (short) y;
++                    }
++                    if (level == 0) {
++                        break;
++                    }
++                    skyLight[index] = (byte) level;
++                }
++            }
++        }
++    }
++
++    /**
++     * Enqueues all directly sky lit blocks that are able to brighten one of their neighbors. Cells
++     * that cannot brighten any neighbor are skipped, as light values never decrease again during
++     * propagation. Fully sky lit cells above the terrain of all neighboring columns are skipped
++     * upfront, as all their neighbors are fully sky lit as well.
++     */
++    private static void enqueueSkyLightFrontier(final byte[] skyLight, final byte[] opacity, final short[] skyCutoff, final IntQueue queue, final int height) {
++        for (int y = height - 1; y >= 0; y--) {
++            for (int z = 0; z < REGION_SIZE; z++) {
++                for (int x = 0; x < REGION_SIZE; x++) {
++                    final int index = (y * REGION_SIZE + z) * REGION_SIZE + x;
++                    final int level = skyLight[index] & 0xFF;
++                    if (level <= 1) {
++                        continue;
++                    }
++
++                    if (level == 15) { // Cheap check whether any horizontal neighbor column is taller than this cell
++                        boolean neighborColumnTaller = false;
++                        if (x > 0 && skyCutoff[z * REGION_SIZE + x - 1] >= y) {
++                            neighborColumnTaller = true;
++                        } else if (x < REGION_SIZE - 1 && skyCutoff[z * REGION_SIZE + x + 1] >= y) {
++                            neighborColumnTaller = true;
++                        } else if (z > 0 && skyCutoff[(z - 1) * REGION_SIZE + x] >= y) {
++                            neighborColumnTaller = true;
++                        } else if (z < REGION_SIZE - 1 && skyCutoff[(z + 1) * REGION_SIZE + x] >= y) {
++                            neighborColumnTaller = true;
++                        }
++                        if (!neighborColumnTaller) {
++                            continue;
++                        }
++                    }
++
++                    if (canBrightenNeighbor(skyLight, opacity, x, y, z, level, height, true)) {
++                        queue.enqueue(pack(x, y, z));
++                    }
++                }
++            }
++        }
++    }
++
++    private static void seedBlockLight(final byte[] blockLight, final byte[] emission, final IntQueue queue, final int height) {
++        for (int index = 0; index < emission.length; index++) {
++            final int level = emission[index] & 0xFF;
++            if (level == 0) {
++                continue;
++            }
++
++            blockLight[index] = (byte) level;
++            if (level > 1) {
++                final int y = index / REGION_SIZE_SQUARED;
++                final int remainder = index % REGION_SIZE_SQUARED;
++                queue.enqueue(pack(remainder % REGION_SIZE, y, remainder / REGION_SIZE));
++            }
++        }
++    }
++
++    private static void propagate(final byte[] light, final byte[] opacity, final IntQueue queue, final int height, final boolean skyLight) {
++        while (!queue.isEmpty()) {
++            final int packed = queue.dequeueInt();
++            final int x = packed & 0x3F;
++            final int z = (packed >>> 6) & 0x3F;
++            final int y = packed >>> 12;
++            final int index = (y * REGION_SIZE + z) * REGION_SIZE + x;
++            final int level = light[index] & 0xFF;
++            if (level <= 1) {
++                continue;
++            }
++
++            for (int[] direction : DIRECTIONS) {
++                spread(light, opacity, queue, x + direction[0], y + direction[1], z + direction[2], direction[1] == -1, level, height, skyLight);
++            }
++        }
++    }
++
++    private static void spread(final byte[] light, final byte[] opacity, final IntQueue queue, final int x, final int y, final int z, final boolean downwards, final int level, final int height, final boolean skyLight) {
++        if (x < 0 || x >= REGION_SIZE || z < 0 || z >= REGION_SIZE || y < 0 || y >= height) {
++            return;
++        }
++
++        final int neighborIndex = (y * REGION_SIZE + z) * REGION_SIZE + x;
++        final int neighborOpacity = opacity[neighborIndex] & 0xFF;
++        if (neighborOpacity >= 15) {
++            return; // Fully opaque blocks receive no light
++        }
++
++        final int targetLevel;
++        if (skyLight && downwards && level == 15 && neighborOpacity == 0) {
++            targetLevel = 15; // Sky light of level 15 travels downwards without losing level
++        } else {
++            targetLevel = level - Math.max(1, neighborOpacity);
++        }
++        if (targetLevel > (light[neighborIndex] & 0xFF)) {
++            light[neighborIndex] = (byte) targetLevel;
++            if (targetLevel > 1) {
++                queue.enqueue(pack(x, y, z));
++            }
++        }
++    }
++
++    private static boolean canBrightenNeighbor(final byte[] light, final byte[] opacity, final int x, final int y, final int z, final int level, final int height, final boolean skyLight) {
++        for (int direction = 0; direction < DIRECTIONS.length; direction++) {
++            final int nx = x + DIRECTIONS[direction][0];
++            final int ny = y + DIRECTIONS[direction][1];
++            final int nz = z + DIRECTIONS[direction][2];
++            if (nx < 0 || nx >= REGION_SIZE || nz < 0 || nz >= REGION_SIZE || ny < 0 || ny >= height) {
++                continue;
++            }
++
++            final int neighborIndex = (ny * REGION_SIZE + nz) * REGION_SIZE + nx;
++            final int neighborOpacity = opacity[neighborIndex] & 0xFF;
++            if (neighborOpacity >= 15) {
++                continue;
++            }
++
++            final int targetLevel;
++            if (skyLight && direction == DOWN && level == 15 && neighborOpacity == 0) {
++                targetLevel = 15;
++            } else {
++                targetLevel = level - Math.max(1, neighborOpacity);
++            }
++            if (targetLevel > (light[neighborIndex] & 0xFF)) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    /**
++     * Packs the light of a section of a chunk of the region into a protocol nibble array. A
++     * {@code null} return value means the whole section is unlit; the shared full array is
++     * returned for fully lit sections.
++     */
++    private static byte[] extractSection(final byte[] light, final int baseX, final int baseZ, final int sectionIndex, final int height) {
++        final byte[] data = new byte[LIGHT_LENGTH];
++        boolean allZero = true;
++        boolean allFifteen = true;
++
++        for (int y = 0; y < 16; y++) {
++            final int layerBase = ((sectionIndex << 4) + y) * REGION_SIZE_SQUARED;
++            for (int z = 0; z < 16; z++) {
++                int index = layerBase + (baseZ + z) * REGION_SIZE + baseX;
++                for (int x = 0; x < 16; x++, index++) {
++                    final int level = light[index] & 0xFF;
++                    final int byteIndex = (y << 7) | (z << 3) | (x >> 1);
++                    if ((x & 1) == 0) {
++                        data[byteIndex] |= (byte) level;
++                    } else {
++                        data[byteIndex] |= (byte) (level << 4);
++                    }
++                    if (level != 0) {
++                        allZero = false;
++                    }
++                    if (level != 15) {
++                        allFifteen = false;
++                    }
++                }
++            }
++        }
++
++        if (allZero) {
++            return null;
++        }
++        if (allFifteen) {
++            return ChunkLight.FULL;
++        }
++        return data;
++    }
++
++    private static int pack(final int x, final int y, final int z) {
++        return (y << 12) | (z << 6) | x;
++    }
++
++    /**
++     * Simple growable int first in first out queue.
++     */
++    private static final class IntQueue {
++
++        private int[] array = new int[4096];
++        private int head;
++        private int tail;
++
++        public boolean isEmpty() {
++            return this.head == this.tail;
++        }
++
++        public void enqueue(final int value) {
++            if (this.tail == this.array.length) {
++                final int size = this.tail - this.head;
++                if (this.head >= this.array.length / 2) {
++                    System.arraycopy(this.array, this.head, this.array, 0, size);
++                    this.head = 0;
++                    this.tail = size;
++                } else {
++                    this.array = Arrays.copyOf(this.array, this.array.length * 2);
++                }
++            }
++            this.array[this.tail++] = value;
++        }
++
++        public int dequeueInt() {
++            return this.array[this.head++];
++        }
++
++        public void clear() {
++            this.head = 0;
++            this.tail = 0;
++        }
++
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java b/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
+index b7330220e..c0d73df3c 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
+@@ -102,6 +102,8 @@ public class BedrockMappingData extends MappingDataBase {
+     private IntSet javaFluidBlockStates;
+     private Int2IntMap javaPottedBlockStates;
+     private Map<String, IntSet> javaHeightMapBlockStates;
++    private byte[] javaBlockLightEmission;
++    private byte[] javaBlockOpacity;
+ 
+     // Biomes
+     private CompoundTag bedrockBiomeDefinitions;
+@@ -352,6 +354,8 @@ public class BedrockMappingData extends MappingDataBase {
+                 }
+                 this.javaHeightMapBlockStates.put(entry.getKey(), blockStates);
+             }
++
++            this.loadBlockLightProperties();
+         }
+ 
+         { // Biomes
+@@ -1021,6 +1025,136 @@ public class BedrockMappingData extends MappingDataBase {
+         DataValues.validate();
+     }
+ 
++    private void loadBlockLightProperties() {
++        final JsonObject lightPropertiesJson = this.readJson("java/block_light_properties.json");
++
++        final Map<String, Integer> emissionByIdentifier = new HashMap<>();
++        for (Map.Entry<String, JsonElement> entry : lightPropertiesJson.getAsJsonObject("emission").entrySet()) {
++            final String identifier = Key.namespaced(entry.getKey());
++            if (!this.javaBlocks.containsKey(identifier)) {
++                throw new RuntimeException("Unknown java block in light emission data: " + identifier);
++            }
++            emissionByIdentifier.put(identifier, entry.getValue().getAsInt());
++        }
++        final Map<String, Integer> opacityByIdentifier = new HashMap<>();
++        for (Map.Entry<String, JsonElement> entry : lightPropertiesJson.getAsJsonObject("opacity").entrySet()) {
++            final String identifier = Key.namespaced(entry.getKey());
++            if (!this.javaBlocks.containsKey(identifier)) {
++                throw new RuntimeException("Unknown java block in light opacity data: " + identifier);
++            }
++            opacityByIdentifier.put(identifier, entry.getValue().getAsInt());
++        }
++
++        final int stateCount = this.javaBlockStates.size();
++        this.javaBlockLightEmission = new byte[stateCount];
++        this.javaBlockOpacity = new byte[stateCount];
++        Arrays.fill(this.javaBlockOpacity, (byte) 15); // Blocks that are not listed are treated as full opaque cubes
++        for (Map.Entry<BlockState, Integer> entry : this.javaBlockStates.entrySet()) {
++            final BlockState blockState = entry.getKey();
++            final int stateId = entry.getValue();
++            final String identifier = blockState.namespacedIdentifier();
++
++            final Integer opacity = opacityByIdentifier.get(identifier);
++            this.javaBlockOpacity[stateId] = opacity != null ? opacity.byteValue() : (byte) 15;
++
++            // State dependent emission rules take precedence over the static values from the data asset
++            final int stateEmission = this.getStateLightEmission(blockState);
++            if (stateEmission != -1) {
++                this.javaBlockLightEmission[stateId] = (byte) stateEmission;
++            } else {
++                final Integer emission = emissionByIdentifier.get(identifier);
++                this.javaBlockLightEmission[stateId] = emission != null ? emission.byteValue() : 0;
++            }
++        }
++    }
++
++    /**
++     * Light emission of a java block state that depends on its block state properties.
++     * Returns -1 if the block has no state dependent emission rule.
++     */
++    private int getStateLightEmission(final BlockState blockState) {
++        final String identifier = blockState.identifier();
++        switch (identifier) {
++            case "campfire" -> {
++                return blockState.hasProperty("lit", "true") ? 15 : 0;
++            }
++            case "soul_campfire" -> {
++                return blockState.hasProperty("lit", "true") ? 13 : 0;
++            }
++            case "furnace", "blast_furnace", "smoker" -> {
++                return blockState.hasProperty("lit", "true") ? 13 : 0;
++            }
++            case "redstone_lamp" -> {
++                return blockState.hasProperty("lit", "true") ? 15 : 0;
++            }
++            case "redstone_torch", "redstone_wall_torch" -> {
++                return blockState.hasProperty("lit", "true") ? 7 : 0;
++            }
++            case "redstone_wire" -> {
++                return Math.max(0, Math.min(15, this.parseBlockStateInt(blockState, "power", 0)));
++            }
++            case "light" -> {
++                return Math.max(0, Math.min(15, this.parseBlockStateInt(blockState, "level", 15)));
++            }
++            case "cave_vines", "cave_vines_plant" -> {
++                return blockState.hasProperty("berries", "true") ? 14 : 0;
++            }
++            case "sea_pickle" -> {
++                return blockState.hasProperty("waterlogged", "true") ? 3 + 3 * this.parseBlockStateInt(blockState, "pickles", 1) : 0;
++            }
++            case "respawn_anchor" -> {
++                return Math.max(0, 4 * this.parseBlockStateInt(blockState, "charges", 0) - 1);
++            }
++            case "vault" -> {
++                return blockState.hasProperty("vault_state", "inactive") ? 6 : 12;
++            }
++            case "trial_spawner" -> {
++                if (blockState.hasProperty("trial_spawner_state", "active") || blockState.hasProperty("trial_spawner_state", "ejecting_reward")) {
++                    return 8;
++                }
++                if (blockState.hasProperty("trial_spawner_state", "waiting")) {
++                    return 4;
++                }
++                return 0;
++            }
++            case "sculk_sensor", "calibrated_sculk_sensor" -> {
++                return blockState.hasProperty("sculk_sensor_phase", "active") ? 1 : 0;
++            }
++            default -> {
++                if (identifier.equals("candle") || identifier.endsWith("_candle")) {
++                    return blockState.hasProperty("lit", "true") ? 3 * this.parseBlockStateInt(blockState, "candles", 1) : 0;
++                }
++                if (identifier.equals("candle_cake") || identifier.endsWith("_candle_cake")) {
++                    return blockState.hasProperty("lit", "true") ? 3 : 0;
++                }
++                if (identifier.equals("copper_bulb") || identifier.endsWith("_copper_bulb")) {
++                    if (!blockState.hasProperty("lit", "true")) {
++                        return 0;
++                    }
++                    if (identifier.contains("oxidized")) {
++                        return 4;
++                    }
++                    if (identifier.contains("weathered")) {
++                        return 8;
++                    }
++                    if (identifier.contains("exposed")) {
++                        return 12;
++                    }
++                    return 15;
++                }
++                return -1;
++            }
++        }
++    }
++
++    private int parseBlockStateInt(final BlockState blockState, final String property, final int fallback) {
++        try {
++            return Integer.parseInt(blockState.properties().getOrDefault(property, String.valueOf(fallback)));
++        } catch (final NumberFormatException e) {
++            return fallback;
++        }
++    }
++
+     public Map<ResourcePack.Key, ResourcePack> getBedrockResourcePacks() {
+         return this.bedrockResourcePacks;
+     }
+@@ -1101,6 +1235,21 @@ public class BedrockMappingData extends MappingDataBase {
+         return this.javaHeightMapBlockStates;
+     }
+ 
++    /**
++     * Light emission (0-15) of every java block state, indexed by java block state id.
++     */
++    public byte[] getJavaBlockLightEmission() {
++        return this.javaBlockLightEmission;
++    }
++
++    /**
++     * Light opacity (0-15) of every java block state, indexed by java block state id.
++     * Values of 15 or above fully block light propagation.
++     */
++    public byte[] getJavaBlockOpacity() {
++        return this.javaBlockOpacity;
++    }
++
+     public CompoundTag getBedrockBiomeDefinitions() {
+         return this.bedrockBiomeDefinitions;
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index d1a25e7f0..4f7a3e57b 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -277,9 +277,9 @@ public final class WorldPackets {
+                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error reading chunk data", e);
+                     }
+ 
+-                    if (!chunk.isRequestSubChunks()) {
+-                        chunkTracker.sendChunk(chunkX, chunkZ);
+-                    }
++                    // Requested subchunks may still be missing; the tracker queues the Java chunk
++                    // only after all required Bedrock sections have arrived.
++                    chunkTracker.sendChunkInNextTick(chunkX, chunkZ);
+                 } catch (final Throwable e) {
+                     throw new RuntimeException("Error handling chunk data", e);
+                 }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+index 19922179c..644192dfb 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+@@ -45,6 +45,8 @@ import net.raphimc.viabedrock.api.chunk.BedrockChunk;
+ import net.raphimc.viabedrock.api.chunk.BlockEntityWithBlockState;
+ import net.raphimc.viabedrock.api.chunk.datapalette.BedrockBlockArray;
+ import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
++import net.raphimc.viabedrock.api.chunk.light.ChunkLight;
++import net.raphimc.viabedrock.api.chunk.light.LightEngine;
+ import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSection;
+ import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
+ import net.raphimc.viabedrock.api.model.BedrockBlockState;
+@@ -61,28 +63,43 @@ import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.util.*;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++import java.util.concurrent.Semaphore;
+ import java.util.logging.Level;
+-import java.util.stream.Collectors;
+ 
+ // TODO: Feature: Block connections
+-// TODO: Feature: Lighting
++// TODO: Feature: Incremental light updates instead of whole section recomputations
+ public class ChunkTracker extends StoredObject {
+ 
+-    private static final byte[] FULL_LIGHT = new byte[ChunkSectionLight.LIGHT_LENGTH];
+-
+-    static {
+-        Arrays.fill(FULL_LIGHT, (byte) 0xFF);
+-    }
++    private static final int MAX_SUB_CHUNK_REQUEST_OFFSETS_PER_PACKET = 256;
++    private static final long SUB_CHUNK_REQUEST_BUDGET_NANOS = 5_000_000L;
+ 
+     private final Dimension dimension;
+     private final int minY;
+     private final int worldHeight;
++    private final boolean skyLight;
+     private final Type<Chunk> chunkType;
+ 
+     private final Long2ObjectMap<BedrockChunk> chunks = new Long2ObjectOpenHashMap<>();
+-    private final LongSet dirtyChunks = new LongOpenHashSet();
+-
+-    private final Set<SubChunkPosition> subChunkRequests = new HashSet<>();
++    private final Set<Long> dirtyChunks = new LinkedHashSet<>();
++
++    private final Long2ObjectMap<int[][]> javaBlockStateCache = new Long2ObjectOpenHashMap<>(); // chunk key -> per section java block states
++    private final Long2ObjectMap<ChunkLight> chunkLight = new Long2ObjectOpenHashMap<>(); // Only chunks sent to the client have cached light
++    private final LongSet lightDirtyChunks = new LongOpenHashSet();
++    private final LongSet pendingLightComputations = new LongOpenHashSet();
++    private final Map<Long, Long> lightVersions = new HashMap<>();
++
++    private static final int LIGHT_WORKERS = Math.min(2, Runtime.getRuntime().availableProcessors());
++    private static final Semaphore LIGHT_SLOTS = new Semaphore(LIGHT_WORKERS);
++    private static final ExecutorService LIGHT_EXECUTOR = Executors.newFixedThreadPool(LIGHT_WORKERS, target -> {
++        final Thread thread = new Thread(target, "ViaBedrock Light Worker");
++        thread.setDaemon(true);
++        return thread;
++    });
++
++    private final PriorityQueue<SubChunkPosition> subChunkRequests = new PriorityQueue<>(this::compareSubChunkRequests);
++    private final Set<SubChunkPosition> queuedSubChunkRequests = new HashSet<>();
+     private final Set<SubChunkPosition> pendingSubChunks = new HashSet<>();
+ 
+     private int centerX = 0;
+@@ -101,6 +118,7 @@ public class ChunkTracker extends StoredObject {
+         final CompoundTag dimensionTag = dimensionRegistry.getCompoundTag(dimensionKey);
+         this.minY = dimensionTag.getNumberTag("min_y").asInt();
+         this.worldHeight = dimensionTag.getNumberTag("height").asInt();
++        this.skyLight = dimensionTag.getNumberTag("has_skylight") != null && dimensionTag.getNumberTag("has_skylight").asByte() != 0;
+         this.chunkType = new ChunkType26_1(this.worldHeight >> 4, MathUtil.ceilLog2(BedrockProtocol.MAPPINGS.getJavaBlockStates().size()), MathUtil.ceilLog2(biomeRegistry.size()));
+ 
+         final ChunkTracker oldChunkTracker = user.get(ChunkTracker.class);
+@@ -108,8 +126,14 @@ public class ChunkTracker extends StoredObject {
+     }
+ 
+     public void setCenter(final int x, final int z) {
+-        this.centerX = x;
+-        this.centerZ = z;
++        if (this.centerX != x || this.centerZ != z) {
++            this.centerX = x;
++            this.centerZ = z;
++            // Queue priorities depend on the center, so rebuild the heap after it moves.
++            final List<SubChunkPosition> requests = new ArrayList<>(this.subChunkRequests);
++            this.subChunkRequests.clear();
++            this.subChunkRequests.addAll(requests);
++        }
+         this.removeOutOfLoadDistanceChunks();
+     }
+ 
+@@ -141,11 +165,19 @@ public class ChunkTracker extends StoredObject {
+             }
+         }
+         this.chunks.put(ChunkPosition.chunkKey(chunk.getX(), chunk.getZ()), chunk);
++
+         return chunk;
+     }
+ 
+     public void unloadChunk(final ChunkPosition chunkPos) {
+-        this.chunks.remove(chunkPos.chunkKey());
++        final long chunkKey = chunkPos.chunkKey();
++        this.chunks.remove(chunkKey);
++        this.dirtyChunks.remove(chunkKey);
++        this.javaBlockStateCache.remove(chunkKey);
++        this.chunkLight.remove(chunkKey);
++        this.lightDirtyChunks.remove(chunkKey);
++        this.lightVersions.remove(chunkKey);
++        this.invalidateNearbyLight(chunkPos.chunkX(), chunkPos.chunkZ());
+         this.user().get(EntityTracker.class).removeItemFrame(chunkPos);
+ 
+         final PacketWrapper unloadChunk = PacketWrapper.create(ClientboundPackets26_3.FORGET_LEVEL_CHUNK, this.user());
+@@ -320,7 +352,10 @@ public class ChunkTracker extends StoredObject {
+         if (!this.isInLoadDistance(chunkX, chunkZ)) {
+             return;
+         }
+-        this.subChunkRequests.add(new SubChunkPosition(chunkX, subChunkY, chunkZ));
++        final SubChunkPosition position = new SubChunkPosition(chunkX, subChunkY, chunkZ);
++        if (this.queuedSubChunkRequests.add(position)) {
++            this.subChunkRequests.add(position);
++        }
+     }
+ 
+     public boolean mergeSubChunk(final int chunkX, final int subChunkY, final int chunkZ, final BedrockChunkSection other, final List<BedrockBlockEntity> blockEntities) {
+@@ -344,6 +379,7 @@ public class ChunkTracker extends StoredObject {
+         final BedrockChunkSection section = chunk.getSections()[subChunkY + Math.abs(this.minY >> 4)];
+         section.mergeWith(this.handleBlockPalette(other));
+         section.applyPendingBlockUpdates(this.bedrockAirId());
++        this.invalidateJavaBlockStates(chunkX, subChunkY, chunkZ);
+         blockEntities.forEach(blockEntity -> chunk.removeBlockEntityAt(blockEntity.position()));
+         chunk.blockEntities().addAll(blockEntities);
+         return true;
+@@ -384,6 +420,16 @@ public class ChunkTracker extends StoredObject {
+         }
+ 
+         if (prevBlockState != blockState) {
++            this.invalidateJavaBlockStates(blockPosition.x() >> 4, blockPosition.y() >> 4, blockPosition.z() >> 4);
++            final int chunkX = blockPosition.x() >> 4;
++            final int chunkZ = blockPosition.z() >> 4;
++            final long chunkKey = ChunkPosition.chunkKey(chunkX, chunkZ);
++            if (this.chunkLight.containsKey(chunkKey)) {
++                this.lightVersions.merge(chunkKey, 1L, Long::sum);
++                this.lightDirtyChunks.add(chunkKey);
++            }
++            this.invalidateNearbyLight(chunkX, chunkZ);
++
+             if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
+                 entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState));
+             } else if (BlockEntityRewriter.isBlockEntity(tag)) {
+@@ -415,31 +461,282 @@ public class ChunkTracker extends StoredObject {
+     }
+ 
+     public void sendChunkInNextTick(final int chunkX, final int chunkZ) {
++        final BedrockChunk chunk = this.getChunk(chunkX, chunkZ);
++        if (chunk == null || !isChunkFullyLoaded(chunk)) {
++            return;
++        }
+         this.dirtyChunks.add(ChunkPosition.chunkKey(chunkX, chunkZ));
+     }
+ 
+     public void sendChunk(final int chunkX, final int chunkZ) {
+         final BedrockChunk chunk = this.getChunk(chunkX, chunkZ);
+-        if (chunk == null) {
++        if (chunk == null || !isChunkFullyLoaded(chunk)) {
+             return;
+         }
+ 
+         final Chunk remappedChunk = this.remapChunk(chunk);
++        final ChunkLight light = this.computeChunkLight(chunkX, chunkZ);
+ 
+         final PacketWrapper levelChunkWithLight = PacketWrapper.create(ClientboundPackets26_3.LEVEL_CHUNK_WITH_LIGHT, this.user());
+-        final BitSet lightMask = new BitSet();
+-        lightMask.set(0, remappedChunk.getSections().length + 2);
+         levelChunkWithLight.write(this.chunkType, remappedChunk); // chunk
+-        levelChunkWithLight.write(Types.BIT_SET, lightMask); // sky light mask
+-        levelChunkWithLight.write(Types.BIT_SET, new BitSet()); // block light mask
+-        levelChunkWithLight.write(Types.BIT_SET, new BitSet()); // empty sky light mask
+-        levelChunkWithLight.write(Types.BIT_SET, lightMask); // empty block light mask
+-        levelChunkWithLight.write(Types.VAR_INT, remappedChunk.getSections().length + 2); // sky light length
+-        for (int i = 0; i < remappedChunk.getSections().length + 2; i++) {
+-            levelChunkWithLight.write(Types.BYTE_ARRAY_PRIMITIVE, FULL_LIGHT.clone()); // sky light
+-        }
+-        levelChunkWithLight.write(Types.VAR_INT, 0); // block light length
++        this.writeLightData(levelChunkWithLight, buildFullLightPacketData(light));
+         levelChunkWithLight.send(BedrockProtocol.class);
++        final long chunkKey = ChunkPosition.chunkKey(chunkX, chunkZ);
++        this.chunkLight.put(chunkKey, light);
++        this.lightVersions.merge(chunkKey, 1L, Long::sum);
++        // Initial lighting uses this chunk alone. Refresh its borders with any loaded neighbors.
++        this.lightDirtyChunks.add(chunkKey);
++        this.invalidateNearbyLight(chunkX, chunkZ);
++    }
++
++    private static LightPacketData buildFullLightPacketData(final ChunkLight light) {
++        final int maskSize = light.skyLightLength();
++        final BitSet skyLightMask = new BitSet(maskSize);
++        final BitSet blockLightMask = new BitSet(maskSize);
++        final BitSet emptySkyLightMask = new BitSet(maskSize);
++        final BitSet emptyBlockLightMask = new BitSet(maskSize);
++        final List<byte[]> skyLightArrays = new ArrayList<>();
++        final List<byte[]> blockLightArrays = new ArrayList<>();
++        for (int i = 0; i < maskSize; i++) {
++            final byte[] skyLight = light.skyLight(i);
++            final byte[] blockLight = light.blockLight(i);
++            if (skyLight != null) {
++                skyLightMask.set(i);
++                skyLightArrays.add(skyLight);
++            } else {
++                emptySkyLightMask.set(i);
++            }
++            if (blockLight != null) {
++                blockLightMask.set(i);
++                blockLightArrays.add(blockLight);
++            } else {
++                emptyBlockLightMask.set(i);
++            }
++        }
++        return new LightPacketData(skyLightMask, blockLightMask, emptySkyLightMask, emptyBlockLightMask, skyLightArrays, blockLightArrays);
++    }
++
++    private static LightPacketData buildDiffLightPacketData(final ChunkLight light, final ChunkLight previousLight) {
++        final int maskSize = light.skyLightLength();
++        final BitSet skyLightMask = new BitSet(maskSize);
++        final BitSet blockLightMask = new BitSet(maskSize);
++        final BitSet emptySkyLightMask = new BitSet(maskSize);
++        final BitSet emptyBlockLightMask = new BitSet(maskSize);
++        final List<byte[]> skyLightArrays = new ArrayList<>();
++        final List<byte[]> blockLightArrays = new ArrayList<>();
++        for (int i = 0; i < maskSize; i++) {
++            final byte[] skyLight = light.skyLight(i);
++            final byte[] blockLight = light.blockLight(i);
++            if (!Arrays.equals(skyLight, previousLight.skyLight(i))) {
++                if (skyLight != null) {
++                    skyLightMask.set(i);
++                    skyLightArrays.add(skyLight);
++                } else {
++                    emptySkyLightMask.set(i);
++                }
++            }
++            if (!Arrays.equals(blockLight, previousLight.blockLight(i))) {
++                if (blockLight != null) {
++                    blockLightMask.set(i);
++                    blockLightArrays.add(blockLight);
++                } else {
++                    emptyBlockLightMask.set(i);
++                }
++            }
++        }
++        return new LightPacketData(skyLightMask, blockLightMask, emptySkyLightMask, emptyBlockLightMask, skyLightArrays, blockLightArrays);
++    }
++
++    /**
++     * Writes sky and block light masks and arrays in the format shared by
++     * LEVEL_CHUNK_WITH_LIGHT and LIGHT_UPDATE.
++     */
++    private void writeLightData(final PacketWrapper wrapper, final LightPacketData lightData) {
++        wrapper.write(Types.BIT_SET, lightData.skyLightMask()); // sky light mask
++        wrapper.write(Types.BIT_SET, lightData.blockLightMask()); // block light mask
++        wrapper.write(Types.BIT_SET, lightData.emptySkyLightMask()); // empty sky light mask
++        wrapper.write(Types.BIT_SET, lightData.emptyBlockLightMask()); // empty block light mask
++        wrapper.write(Types.VAR_INT, lightData.skyLightArrays().size()); // sky light length
++        for (byte[] skyLight : lightData.skyLightArrays()) {
++            wrapper.write(Types.BYTE_ARRAY_PRIMITIVE, skyLight); // sky light
++        }
++        wrapper.write(Types.VAR_INT, lightData.blockLightArrays().size()); // block light length
++        for (byte[] blockLight : lightData.blockLightArrays()) {
++            wrapper.write(Types.BYTE_ARRAY_PRIMITIVE, blockLight); // block light
++        }
++    }
++
++    private void invalidateNearbyLight(final int chunkX, final int chunkZ) {
++        for (int dz = -1; dz <= 1; dz++) {
++            for (int dx = -1; dx <= 1; dx++) {
++                if (dx == 0 && dz == 0) {
++                    continue;
++                }
++                final long neighborKey = ChunkPosition.chunkKey(chunkX + dx, chunkZ + dz);
++                if (!this.chunkLight.containsKey(neighborKey)) {
++                    continue;
++                }
++                this.lightVersions.merge(neighborKey, 1L, Long::sum);
++                this.lightDirtyChunks.add(neighborKey);
++            }
++        }
++    }
++
++    private static boolean isChunkFullyLoaded(final BedrockChunk chunk) {
++        // Sections requested from Bedrock keep pending updates until their subchunk response arrives.
++        for (final BedrockChunkSection section : chunk.getSections()) {
++            if (section.hasPendingBlockUpdates()) {
++                return false;
++            }
++        }
++        return true;
++    }
++
++    private ChunkLight computeChunkLight(final int chunkX, final int chunkZ) {
++        final int[][][] regionStates = new int[9][][];
++        regionStates[4] = this.snapshotChunkStates(this.chunks.get(ChunkPosition.chunkKey(chunkX, chunkZ)));
++        return LightEngine.computeRegionLight(regionStates, this.worldHeight >> 4, this.skyLight,
++            BedrockProtocol.MAPPINGS.getJavaBlockLightEmission(), BedrockProtocol.MAPPINGS.getJavaBlockOpacity())[4];
++    }
++
++    /**
++     * Copies the section references on the event loop. Each built section array is immutable, so
++     * workers can read this snapshot while later subchunk merges replace cached sections.
++     */
++    private int[][][] snapshotRegionStates(final int chunkX, final int chunkZ) {
++        final int[][][] regionStates = new int[9][][];
++        for (int dz = -1; dz <= 1; dz++) {
++            for (int dx = -1; dx <= 1; dx++) {
++                final BedrockChunk neighbor = this.chunks.get(ChunkPosition.chunkKey(chunkX + dx, chunkZ + dz));
++                if (neighbor == null) {
++                    continue;
++                }
++
++                final int chunkIndex = (dz + 1) * 3 + (dx + 1);
++                regionStates[chunkIndex] = this.snapshotChunkStates(neighbor);
++            }
++        }
++        return regionStates;
++    }
++
++    private int[][] snapshotChunkStates(final BedrockChunk chunk) {
++        final int[][] states = this.getJavaBlockStates(chunk);
++        for (int sectionIndex = 0; sectionIndex < states.length; sectionIndex++) {
++            this.getJavaBlockStates(chunk, sectionIndex);
++        }
++        return states.clone();
++    }
++
++    private void submitLightUpdate(final long chunkKey) {
++        final ChunkPosition position = new ChunkPosition(chunkKey);
++        final BedrockChunk chunk = this.chunks.get(chunkKey);
++        final long version = this.lightVersions.getOrDefault(chunkKey, 0L);
++        final int[][][] regionStates = this.snapshotRegionStates(position.chunkX(), position.chunkZ());
++        this.pendingLightComputations.add(chunkKey);
++        LIGHT_EXECUTOR.execute(() -> {
++            ChunkLight light = null;
++            Throwable failure = null;
++            try {
++                light = LightEngine.computeRegionLight(regionStates, this.worldHeight >> 4, this.skyLight,
++                    BedrockProtocol.MAPPINGS.getJavaBlockLightEmission(), BedrockProtocol.MAPPINGS.getJavaBlockOpacity())[4];
++            } catch (final Throwable e) {
++                failure = e;
++            } finally {
++                LIGHT_SLOTS.release();
++            }
++
++            final ChunkLight result = light;
++            final Throwable error = failure;
++            this.user().getChannel().eventLoop().execute(() -> {
++                this.pendingLightComputations.remove(chunkKey);
++                if (!this.user().getChannel().isActive()) {
++                    return;
++                }
++                if (error != null) {
++                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Could not update chunk light", error);
++                    return;
++                }
++                if (this.chunks.get(chunkKey) != chunk || !this.chunkLight.containsKey(chunkKey)) {
++                    return;
++                }
++                if (this.lightVersions.getOrDefault(chunkKey, 0L) != version) {
++                    this.lightDirtyChunks.add(chunkKey);
++                    return;
++                }
++
++                final ChunkLight previousLight = this.chunkLight.put(chunkKey, result);
++                final LightPacketData lightData = buildDiffLightPacketData(result, previousLight);
++                if (lightData.skyLightArrays().isEmpty() && lightData.blockLightArrays().isEmpty()
++                    && lightData.emptySkyLightMask().isEmpty() && lightData.emptyBlockLightMask().isEmpty()) {
++                    return;
++                }
++
++                final PacketWrapper lightUpdate = PacketWrapper.create(ClientboundPackets26_3.LIGHT_UPDATE, this.user());
++                lightUpdate.write(Types.VAR_INT, position.chunkX());
++                lightUpdate.write(Types.VAR_INT, position.chunkZ());
++                this.writeLightData(lightUpdate, lightData);
++                lightUpdate.send(BedrockProtocol.class);
++            });
++        });
++    }
++
++    private int[][] getJavaBlockStates(final BedrockChunk chunk) {
++        return this.javaBlockStateCache.computeIfAbsent(ChunkPosition.chunkKey(chunk.getX(), chunk.getZ()), key -> new int[this.worldHeight >> 4][]);
++    }
++
++    private int[] getJavaBlockStates(final BedrockChunk chunk, final int sectionIndex) {
++        final int[][] chunkStates = this.getJavaBlockStates(chunk);
++        int[] states = chunkStates[sectionIndex];
++        if (states == null) {
++            states = chunkStates[sectionIndex] = this.buildJavaBlockStates(chunk.getSections()[sectionIndex]);
++        }
++        return states;
++    }
++
++    /**
++     * Converts the bedrock block states of a chunk section into java block states, indexed with
++     * {@code y * 256 | z * 16 | x}.
++     */
++    private int[] buildJavaBlockStates(final BedrockChunkSection section) {
++        final int[] states = new int[ChunkSection.SIZE];
++        final List<DataPalette> blockPalettes = section.palettes(PaletteType.BLOCKS);
++        if (blockPalettes.isEmpty()) {
++            return states; // All air
++        }
++
++        final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
++        final DataPalette layer0 = blockPalettes.get(0);
++        final int[] entryJavaIds = new int[layer0.size()];
++        for (int i = 0; i < entryJavaIds.length; i++) {
++            final int javaId = blockStateRewriter.javaId(layer0.idByIndex(i));
++            entryJavaIds[i] = javaId != -1 ? javaId : ProtocolConstants.JAVA_AIR_ID;
++        }
++        if (layer0.size() == 1) {
++            if (entryJavaIds[0] != ProtocolConstants.JAVA_AIR_ID) {
++                Arrays.fill(states, entryJavaIds[0]);
++            }
++        } else {
++            for (int y = 0; y < 16; y++) {
++                for (int z = 0; z < 16; z++) {
++                    for (int x = 0; x < 16; x++) {
++                        states[(y << 8) | (z << 4) | x] = entryJavaIds[layer0.paletteIndexAt(layer0.index(x, y, z))];
++                    }
++                }
++            }
++        }
++        return states;
++    }
++
++    private void invalidateJavaBlockStates(final int chunkX, final int subChunkY, final int chunkZ) {
++        final int[][] chunkStates = this.javaBlockStateCache.get(ChunkPosition.chunkKey(chunkX, chunkZ));
++        if (chunkStates == null) {
++            return;
++        }
++
++        final int sectionIndex = subChunkY + Math.abs(this.minY >> 4);
++        if (sectionIndex >= 0 && sectionIndex < chunkStates.length) {
++            chunkStates[sectionIndex] = null;
++        }
+     }
+ 
+     public Dimension getDimension() {
+@@ -470,37 +767,91 @@ public class ChunkTracker extends StoredObject {
+     }
+ 
+     public void tick() {
+-        for (long dirtyChunk : this.dirtyChunks) {
+-            final ChunkPosition chunkPos = new ChunkPosition(dirtyChunk);
+-            this.sendChunk(chunkPos.chunkX(), chunkPos.chunkZ());
++        // Keep request preparation and Java chunk sends within the same per-tick time budget.
++        final long deadline = System.nanoTime() + 30_000_000L;
++        if (this.user().get(EntityTracker.class) != null && this.user().get(EntityTracker.class).getClientPlayer().isInitiallySpawned()) {
++            this.subChunkRequests.removeIf(s -> !this.isInLoadDistance(s.chunkX, s.chunkZ));
++            this.queuedSubChunkRequests.removeIf(s -> !this.isInLoadDistance(s.chunkX, s.chunkZ));
++            final long requestDeadline = Math.min(deadline, System.nanoTime() + SUB_CHUNK_REQUEST_BUDGET_NANOS);
++            if (!this.subChunkRequests.isEmpty()) {
++                final BlockPosition basePosition = new BlockPosition(this.centerX, 0, this.centerZ);
++                while (!this.subChunkRequests.isEmpty() && System.nanoTime() < requestDeadline) {
++                    final List<SubChunkPosition> requests = new ArrayList<>(Math.min(MAX_SUB_CHUNK_REQUEST_OFFSETS_PER_PACKET, this.subChunkRequests.size()));
++                    do {
++                        final SubChunkPosition position = this.subChunkRequests.remove();
++                        this.queuedSubChunkRequests.remove(position);
++                        requests.add(position);
++                    } while (requests.size() < MAX_SUB_CHUNK_REQUEST_OFFSETS_PER_PACKET && !this.subChunkRequests.isEmpty() && System.nanoTime() < requestDeadline);
++                    this.pendingSubChunks.addAll(requests);
++
++                    final PacketWrapper subChunkRequest = PacketWrapper.create(ServerboundBedrockPackets.SUB_CHUNK_REQUEST, this.user());
++                    subChunkRequest.write(BedrockTypes.VAR_INT, this.dimension.ordinal()); // dimension id
++                    subChunkRequest.write(BedrockTypes.UNSIGNED_VAR_INT, requests.size()); // sub chunk offset count
++                    for (SubChunkPosition position : requests) {
++                        final BlockPosition offset = new BlockPosition(position.chunkX - basePosition.x(), position.subChunkY, position.chunkZ - basePosition.z());
++                        subChunkRequest.write(BedrockTypes.SUB_CHUNK_OFFSET, offset); // offset
++                    }
++                    subChunkRequest.write(BedrockTypes.INT_LE, basePosition.x());
++                    subChunkRequest.write(BedrockTypes.INT_LE, basePosition.y());
++                    subChunkRequest.write(BedrockTypes.INT_LE, basePosition.z());
++                    subChunkRequest.sendToServer(BedrockProtocol.class);
++                }
++            }
+         }
+-        this.dirtyChunks.clear();
+ 
+-        if (this.user().get(EntityTracker.class) == null || !this.user().get(EntityTracker.class).getClientPlayer().isInitiallySpawned()) {
+-            return;
++        // Leave remaining chunk data queued when the tick budget is exhausted.
++        // Send ready chunks outward from the current center, even when replies arrive out of order.
++        final List<Long> readyChunks = new ArrayList<>(this.dirtyChunks);
++        readyChunks.sort(Comparator.comparingLong(chunkKey -> {
++            final ChunkPosition position = new ChunkPosition(chunkKey);
++            return this.distanceToCenterSquared(position.chunkX(), position.chunkZ());
++        }));
++        for (long chunkKey : readyChunks) {
++            if (System.nanoTime() >= deadline) {
++                break;
++            }
++            this.dirtyChunks.remove(chunkKey);
++            final ChunkPosition chunkPos = new ChunkPosition(chunkKey);
++            this.sendChunk(chunkPos.chunkX(), chunkPos.chunkZ());
+         }
+ 
+-        this.subChunkRequests.removeIf(s -> !this.isInLoadDistance(s.chunkX, s.chunkZ));
+-        final BlockPosition basePosition = new BlockPosition(this.centerX, 0, this.centerZ);
+-        while (!this.subChunkRequests.isEmpty()) {
+-            final Set<SubChunkPosition> group = this.subChunkRequests.stream().limit(256).collect(Collectors.toSet());
+-            this.subChunkRequests.removeAll(group);
+-            this.pendingSubChunks.addAll(group);
+-
+-            final PacketWrapper subChunkRequest = PacketWrapper.create(ServerboundBedrockPackets.SUB_CHUNK_REQUEST, this.user());
+-            subChunkRequest.write(BedrockTypes.VAR_INT, this.dimension.ordinal()); // dimension id
+-            subChunkRequest.write(BedrockTypes.UNSIGNED_VAR_INT, group.size()); // sub chunk offset count
+-            for (SubChunkPosition subChunkPosition : group) {
+-                final BlockPosition offset = new BlockPosition(subChunkPosition.chunkX - basePosition.x(), subChunkPosition.subChunkY, subChunkPosition.chunkZ - basePosition.z());
+-                subChunkRequest.write(BedrockTypes.SUB_CHUNK_OFFSET, offset); // offset
++        while (!this.lightDirtyChunks.isEmpty() && System.nanoTime() < deadline && LIGHT_SLOTS.tryAcquire()) {
++            final long chunkKey = this.lightDirtyChunks.iterator().nextLong();
++            this.lightDirtyChunks.remove(chunkKey);
++            if (!this.chunkLight.containsKey(chunkKey) || this.pendingLightComputations.contains(chunkKey)) {
++                LIGHT_SLOTS.release();
++                continue;
+             }
+-            // base position
+-            subChunkRequest.write(BedrockTypes.INT_LE, basePosition.x()); // x
+-            subChunkRequest.write(BedrockTypes.INT_LE, basePosition.y()); // y
+-            subChunkRequest.write(BedrockTypes.INT_LE, basePosition.z()); // z
++            try {
++                this.submitLightUpdate(chunkKey);
++            } catch (final RuntimeException e) {
++                this.pendingLightComputations.remove(chunkKey);
++                LIGHT_SLOTS.release();
++                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Could not submit chunk light update", e);
++            }
++        }
++    }
++
++    private long distanceToCenterSquared(final int chunkX, final int chunkZ) {
++        final long dx = (long) chunkX - this.centerX;
++        final long dz = (long) chunkZ - this.centerZ;
++        return dx * dx + dz * dz;
++    }
+ 
+-            subChunkRequest.sendToServer(BedrockProtocol.class);
++    private int compareSubChunkRequests(final SubChunkPosition first, final SubChunkPosition second) {
++        int result = Long.compare(this.distanceToCenterSquared(first.chunkX, first.chunkZ), this.distanceToCenterSquared(second.chunkX, second.chunkZ));
++        if (result != 0) {
++            return result;
++        }
++        result = Integer.compare(first.chunkX, second.chunkX);
++        if (result != 0) {
++            return result;
+         }
++        result = Integer.compare(first.chunkZ, second.chunkZ);
++        if (result != 0) {
++            return result;
++        }
++        return Integer.compare(first.subChunkY, second.subChunkY);
+     }
+ 
+     private Chunk remapChunk(final BedrockChunk chunk) {
+@@ -770,6 +1121,9 @@ public class ChunkTracker extends StoredObject {
+     private record SubChunkPosition(int chunkX, int subChunkY, int chunkZ) {
+     }
+ 
++    private record LightPacketData(BitSet skyLightMask, BitSet blockLightMask, BitSet emptySkyLightMask, BitSet emptyBlockLightMask, List<byte[]> skyLightArrays, List<byte[]> blockLightArrays) {
++    }
++
+     private static final class BiomeAggregator {
+ 
+         private int[] biome;
+diff --git a/src/main/resources/assets/viabedrock/data/java/block_light_properties.json b/src/main/resources/assets/viabedrock/data/java/block_light_properties.json
+new file mode 100644
+index 000000000..51fd2b7b6
+--- /dev/null
++++ b/src/main/resources/assets/viabedrock/data/java/block_light_properties.json
+@@ -0,0 +1,863 @@
++{
++  "emission": {
++    "minecraft:amethyst_cluster": 5,
++    "minecraft:beacon": 15,
++    "minecraft:brewing_stand": 1,
++    "minecraft:brown_mushroom": 1,
++    "minecraft:conduit": 15,
++    "minecraft:copper_lantern": 15,
++    "minecraft:copper_torch": 14,
++    "minecraft:copper_wall_torch": 14,
++    "minecraft:crying_obsidian": 10,
++    "minecraft:dragon_egg": 1,
++    "minecraft:enchanting_table": 7,
++    "minecraft:end_gateway": 15,
++    "minecraft:end_portal": 15,
++    "minecraft:end_portal_frame": 1,
++    "minecraft:end_rod": 14,
++    "minecraft:ender_chest": 7,
++    "minecraft:fire": 15,
++    "minecraft:firefly_bush": 2,
++    "minecraft:glow_lichen": 7,
++    "minecraft:glowstone": 15,
++    "minecraft:jack_o_lantern": 15,
++    "minecraft:lantern": 15,
++    "minecraft:large_amethyst_bud": 4,
++    "minecraft:lava": 15,
++    "minecraft:lava_cauldron": 15,
++    "minecraft:magma_block": 3,
++    "minecraft:medium_amethyst_bud": 2,
++    "minecraft:nether_portal": 11,
++    "minecraft:ochre_froglight": 15,
++    "minecraft:pearlescent_froglight": 15,
++    "minecraft:sculk_catalyst": 6,
++    "minecraft:sea_lantern": 15,
++    "minecraft:shroomlight": 15,
++    "minecraft:soul_fire": 10,
++    "minecraft:soul_lantern": 10,
++    "minecraft:soul_torch": 10,
++    "minecraft:soul_wall_torch": 10,
++    "minecraft:torch": 14,
++    "minecraft:verdant_froglight": 15,
++    "minecraft:wall_torch": 14
++  },
++  "opacity": {
++    "minecraft:acacia_button": 0,
++    "minecraft:acacia_door": 0,
++    "minecraft:acacia_fence": 0,
++    "minecraft:acacia_fence_gate": 0,
++    "minecraft:acacia_hanging_sign": 0,
++    "minecraft:acacia_leaves": 1,
++    "minecraft:acacia_pressure_plate": 0,
++    "minecraft:acacia_sapling": 0,
++    "minecraft:acacia_shelf": 0,
++    "minecraft:acacia_sign": 0,
++    "minecraft:acacia_slab": 0,
++    "minecraft:acacia_stairs": 0,
++    "minecraft:acacia_trapdoor": 0,
++    "minecraft:acacia_wall_hanging_sign": 0,
++    "minecraft:acacia_wall_sign": 0,
++    "minecraft:activator_rail": 0,
++    "minecraft:air": 0,
++    "minecraft:allium": 0,
++    "minecraft:andesite_slab": 0,
++    "minecraft:andesite_stairs": 0,
++    "minecraft:andesite_wall": 0,
++    "minecraft:anvil": 0,
++    "minecraft:attached_melon_stem": 0,
++    "minecraft:attached_pumpkin_stem": 0,
++    "minecraft:azalea": 0,
++    "minecraft:azalea_leaves": 1,
++    "minecraft:azure_bluet": 0,
++    "minecraft:bamboo": 0,
++    "minecraft:bamboo_button": 0,
++    "minecraft:bamboo_door": 0,
++    "minecraft:bamboo_fence": 0,
++    "minecraft:bamboo_fence_gate": 0,
++    "minecraft:bamboo_hanging_sign": 0,
++    "minecraft:bamboo_mosaic_slab": 0,
++    "minecraft:bamboo_mosaic_stairs": 0,
++    "minecraft:bamboo_pressure_plate": 0,
++    "minecraft:bamboo_sapling": 0,
++    "minecraft:bamboo_shelf": 0,
++    "minecraft:bamboo_sign": 0,
++    "minecraft:bamboo_slab": 0,
++    "minecraft:bamboo_stairs": 0,
++    "minecraft:bamboo_trapdoor": 0,
++    "minecraft:bamboo_wall_hanging_sign": 0,
++    "minecraft:bamboo_wall_sign": 0,
++    "minecraft:beacon": 1,
++    "minecraft:beetroots": 0,
++    "minecraft:bell": 0,
++    "minecraft:big_dripleaf": 0,
++    "minecraft:big_dripleaf_stem": 0,
++    "minecraft:birch_button": 0,
++    "minecraft:birch_door": 0,
++    "minecraft:birch_fence": 0,
++    "minecraft:birch_fence_gate": 0,
++    "minecraft:birch_hanging_sign": 0,
++    "minecraft:birch_leaves": 1,
++    "minecraft:birch_pressure_plate": 0,
++    "minecraft:birch_sapling": 0,
++    "minecraft:birch_shelf": 0,
++    "minecraft:birch_sign": 0,
++    "minecraft:birch_slab": 0,
++    "minecraft:birch_stairs": 0,
++    "minecraft:birch_trapdoor": 0,
++    "minecraft:birch_wall_hanging_sign": 0,
++    "minecraft:birch_wall_sign": 0,
++    "minecraft:black_banner": 0,
++    "minecraft:black_bed": 0,
++    "minecraft:black_candle": 0,
++    "minecraft:black_candle_cake": 0,
++    "minecraft:black_carpet": 0,
++    "minecraft:black_shulker_box": 1,
++    "minecraft:black_stained_glass": 0,
++    "minecraft:black_stained_glass_pane": 0,
++    "minecraft:black_wall_banner": 0,
++    "minecraft:blackstone_slab": 0,
++    "minecraft:blackstone_stairs": 0,
++    "minecraft:blackstone_wall": 0,
++    "minecraft:blue_banner": 0,
++    "minecraft:blue_bed": 0,
++    "minecraft:blue_candle": 0,
++    "minecraft:blue_candle_cake": 0,
++    "minecraft:blue_carpet": 0,
++    "minecraft:blue_orchid": 0,
++    "minecraft:blue_shulker_box": 1,
++    "minecraft:blue_stained_glass": 0,
++    "minecraft:blue_stained_glass_pane": 0,
++    "minecraft:blue_wall_banner": 0,
++    "minecraft:brain_coral": 0,
++    "minecraft:brain_coral_fan": 0,
++    "minecraft:brain_coral_wall_fan": 0,
++    "minecraft:brewing_stand": 0,
++    "minecraft:brick_slab": 0,
++    "minecraft:brick_stairs": 0,
++    "minecraft:brick_wall": 0,
++    "minecraft:brown_banner": 0,
++    "minecraft:brown_bed": 0,
++    "minecraft:brown_candle": 0,
++    "minecraft:brown_candle_cake": 0,
++    "minecraft:brown_carpet": 0,
++    "minecraft:brown_mushroom": 0,
++    "minecraft:brown_shulker_box": 1,
++    "minecraft:brown_stained_glass": 0,
++    "minecraft:brown_stained_glass_pane": 0,
++    "minecraft:brown_wall_banner": 0,
++    "minecraft:bubble_column": 1,
++    "minecraft:bubble_coral": 0,
++    "minecraft:bubble_coral_fan": 0,
++    "minecraft:bubble_coral_wall_fan": 0,
++    "minecraft:bush": 0,
++    "minecraft:cactus": 0,
++    "minecraft:cactus_flower": 0,
++    "minecraft:cake": 0,
++    "minecraft:calibrated_sculk_sensor": 0,
++    "minecraft:campfire": 0,
++    "minecraft:candle": 0,
++    "minecraft:candle_cake": 0,
++    "minecraft:carrots": 0,
++    "minecraft:cauldron": 0,
++    "minecraft:cave_air": 0,
++    "minecraft:cave_vines": 0,
++    "minecraft:cave_vines_plant": 0,
++    "minecraft:cherry_button": 0,
++    "minecraft:cherry_door": 0,
++    "minecraft:cherry_fence": 0,
++    "minecraft:cherry_fence_gate": 0,
++    "minecraft:cherry_hanging_sign": 0,
++    "minecraft:cherry_leaves": 1,
++    "minecraft:cherry_pressure_plate": 0,
++    "minecraft:cherry_sapling": 0,
++    "minecraft:cherry_shelf": 0,
++    "minecraft:cherry_sign": 0,
++    "minecraft:cherry_slab": 0,
++    "minecraft:cherry_stairs": 0,
++    "minecraft:cherry_trapdoor": 0,
++    "minecraft:cherry_wall_hanging_sign": 0,
++    "minecraft:cherry_wall_sign": 0,
++    "minecraft:chest": 0,
++    "minecraft:chipped_anvil": 0,
++    "minecraft:chiseled_bookshelf": 0,
++    "minecraft:chorus_flower": 1,
++    "minecraft:chorus_plant": 1,
++    "minecraft:cinnabar_brick_slab": 0,
++    "minecraft:cinnabar_brick_stairs": 0,
++    "minecraft:cinnabar_brick_wall": 0,
++    "minecraft:cinnabar_slab": 0,
++    "minecraft:cinnabar_stairs": 0,
++    "minecraft:cinnabar_wall": 0,
++    "minecraft:closed_eyeblossom": 0,
++    "minecraft:cobbled_deepslate_slab": 0,
++    "minecraft:cobbled_deepslate_stairs": 0,
++    "minecraft:cobbled_deepslate_wall": 0,
++    "minecraft:cobblestone_slab": 0,
++    "minecraft:cobblestone_stairs": 0,
++    "minecraft:cobblestone_wall": 0,
++    "minecraft:cobweb": 1,
++    "minecraft:cocoa": 0,
++    "minecraft:comparator": 0,
++    "minecraft:composter": 0,
++    "minecraft:conduit": 0,
++    "minecraft:copper_bars": 0,
++    "minecraft:copper_chain": 0,
++    "minecraft:copper_chest": 0,
++    "minecraft:copper_door": 0,
++    "minecraft:copper_golem_statue": 0,
++    "minecraft:copper_grate": 0,
++    "minecraft:copper_lantern": 0,
++    "minecraft:copper_torch": 0,
++    "minecraft:copper_trapdoor": 0,
++    "minecraft:copper_wall_torch": 0,
++    "minecraft:cornflower": 0,
++    "minecraft:creeper_head": 0,
++    "minecraft:creeper_wall_head": 0,
++    "minecraft:crimson_button": 0,
++    "minecraft:crimson_door": 0,
++    "minecraft:crimson_fence": 0,
++    "minecraft:crimson_fence_gate": 0,
++    "minecraft:crimson_fungus": 0,
++    "minecraft:crimson_hanging_sign": 0,
++    "minecraft:crimson_pressure_plate": 0,
++    "minecraft:crimson_roots": 0,
++    "minecraft:crimson_shelf": 0,
++    "minecraft:crimson_sign": 0,
++    "minecraft:crimson_slab": 0,
++    "minecraft:crimson_stairs": 0,
++    "minecraft:crimson_stem": 0,
++    "minecraft:crimson_trapdoor": 0,
++    "minecraft:crimson_wall_hanging_sign": 0,
++    "minecraft:crimson_wall_sign": 0,
++    "minecraft:cut_copper_slab": 0,
++    "minecraft:cut_copper_stairs": 0,
++    "minecraft:cut_red_sandstone_slab": 0,
++    "minecraft:cut_sandstone_slab": 0,
++    "minecraft:cyan_banner": 0,
++    "minecraft:cyan_bed": 0,
++    "minecraft:cyan_candle": 0,
++    "minecraft:cyan_candle_cake": 0,
++    "minecraft:cyan_carpet": 0,
++    "minecraft:cyan_shulker_box": 1,
++    "minecraft:cyan_stained_glass": 0,
++    "minecraft:cyan_stained_glass_pane": 0,
++    "minecraft:cyan_wall_banner": 0,
++    "minecraft:damaged_anvil": 0,
++    "minecraft:dandelion": 0,
++    "minecraft:dark_oak_button": 0,
++    "minecraft:dark_oak_door": 0,
++    "minecraft:dark_oak_fence": 0,
++    "minecraft:dark_oak_fence_gate": 0,
++    "minecraft:dark_oak_hanging_sign": 0,
++    "minecraft:dark_oak_leaves": 1,
++    "minecraft:dark_oak_pressure_plate": 0,
++    "minecraft:dark_oak_sapling": 0,
++    "minecraft:dark_oak_shelf": 0,
++    "minecraft:dark_oak_sign": 0,
++    "minecraft:dark_oak_slab": 0,
++    "minecraft:dark_oak_stairs": 0,
++    "minecraft:dark_oak_trapdoor": 0,
++    "minecraft:dark_oak_wall_hanging_sign": 0,
++    "minecraft:dark_oak_wall_sign": 0,
++    "minecraft:dark_prismarine_slab": 0,
++    "minecraft:dark_prismarine_stairs": 0,
++    "minecraft:daylight_detector": 0,
++    "minecraft:dead_brain_coral": 0,
++    "minecraft:dead_brain_coral_fan": 0,
++    "minecraft:dead_brain_coral_wall_fan": 0,
++    "minecraft:dead_bubble_coral": 0,
++    "minecraft:dead_bubble_coral_fan": 0,
++    "minecraft:dead_bubble_coral_wall_fan": 0,
++    "minecraft:dead_bush": 0,
++    "minecraft:dead_fire_coral": 0,
++    "minecraft:dead_fire_coral_fan": 0,
++    "minecraft:dead_fire_coral_wall_fan": 0,
++    "minecraft:dead_horn_coral": 0,
++    "minecraft:dead_horn_coral_fan": 0,
++    "minecraft:dead_horn_coral_wall_fan": 0,
++    "minecraft:dead_tube_coral": 0,
++    "minecraft:dead_tube_coral_fan": 0,
++    "minecraft:dead_tube_coral_wall_fan": 0,
++    "minecraft:decorated_pot": 0,
++    "minecraft:deepslate_brick_slab": 0,
++    "minecraft:deepslate_brick_stairs": 0,
++    "minecraft:deepslate_brick_wall": 0,
++    "minecraft:deepslate_tile_slab": 0,
++    "minecraft:deepslate_tile_stairs": 0,
++    "minecraft:deepslate_tile_wall": 0,
++    "minecraft:detector_rail": 0,
++    "minecraft:diorite_slab": 0,
++    "minecraft:diorite_stairs": 0,
++    "minecraft:diorite_wall": 0,
++    "minecraft:dirt_path": 0,
++    "minecraft:dragon_egg": 0,
++    "minecraft:dragon_head": 0,
++    "minecraft:dragon_wall_head": 0,
++    "minecraft:dried_ghast": 0,
++    "minecraft:enchanting_table": 0,
++    "minecraft:end_gateway": 1,
++    "minecraft:end_portal": 0,
++    "minecraft:end_portal_frame": 0,
++    "minecraft:end_stone_brick_slab": 0,
++    "minecraft:end_stone_brick_stairs": 0,
++    "minecraft:end_stone_brick_wall": 0,
++    "minecraft:ender_chest": 0,
++    "minecraft:exposed_copper_bars": 0,
++    "minecraft:exposed_copper_chain": 0,
++    "minecraft:exposed_copper_chest": 0,
++    "minecraft:exposed_copper_door": 0,
++    "minecraft:exposed_copper_golem_statue": 0,
++    "minecraft:exposed_copper_grate": 0,
++    "minecraft:exposed_copper_lantern": 0,
++    "minecraft:exposed_copper_trapdoor": 0,
++    "minecraft:exposed_cut_copper_slab": 0,
++    "minecraft:exposed_cut_copper_stairs": 0,
++    "minecraft:exposed_lightning_rod": 0,
++    "minecraft:farmland": 0,
++    "minecraft:fern": 0,
++    "minecraft:fire": 0,
++    "minecraft:fire_coral": 0,
++    "minecraft:fire_coral_fan": 0,
++    "minecraft:fire_coral_wall_fan": 0,
++    "minecraft:firefly_bush": 0,
++    "minecraft:flower_pot": 0,
++    "minecraft:flowering_azalea": 0,
++    "minecraft:flowering_azalea_leaves": 1,
++    "minecraft:frogspawn": 0,
++    "minecraft:frosted_ice": 1,
++    "minecraft:glass": 0,
++    "minecraft:glass_pane": 0,
++    "minecraft:glow_lichen": 0,
++    "minecraft:golden_dandelion": 0,
++    "minecraft:granite_slab": 0,
++    "minecraft:granite_stairs": 0,
++    "minecraft:granite_wall": 0,
++    "minecraft:gray_banner": 0,
++    "minecraft:gray_bed": 0,
++    "minecraft:gray_candle": 0,
++    "minecraft:gray_candle_cake": 0,
++    "minecraft:gray_carpet": 0,
++    "minecraft:gray_shulker_box": 1,
++    "minecraft:gray_stained_glass": 0,
++    "minecraft:gray_stained_glass_pane": 0,
++    "minecraft:gray_wall_banner": 0,
++    "minecraft:green_banner": 0,
++    "minecraft:green_bed": 0,
++    "minecraft:green_candle": 0,
++    "minecraft:green_candle_cake": 0,
++    "minecraft:green_carpet": 0,
++    "minecraft:green_shulker_box": 1,
++    "minecraft:green_stained_glass": 0,
++    "minecraft:green_stained_glass_pane": 0,
++    "minecraft:green_wall_banner": 0,
++    "minecraft:grindstone": 0,
++    "minecraft:hanging_roots": 0,
++    "minecraft:heavy_core": 0,
++    "minecraft:heavy_weighted_pressure_plate": 0,
++    "minecraft:honey_block": 1,
++    "minecraft:hopper": 0,
++    "minecraft:horn_coral": 0,
++    "minecraft:horn_coral_fan": 0,
++    "minecraft:horn_coral_wall_fan": 0,
++    "minecraft:ice": 1,
++    "minecraft:iron_bars": 0,
++    "minecraft:iron_chain": 0,
++    "minecraft:iron_door": 0,
++    "minecraft:iron_trapdoor": 0,
++    "minecraft:jack_o_lantern": 0,
++    "minecraft:jungle_button": 0,
++    "minecraft:jungle_door": 0,
++    "minecraft:jungle_fence": 0,
++    "minecraft:jungle_fence_gate": 0,
++    "minecraft:jungle_hanging_sign": 0,
++    "minecraft:jungle_leaves": 1,
++    "minecraft:jungle_pressure_plate": 0,
++    "minecraft:jungle_sapling": 0,
++    "minecraft:jungle_shelf": 0,
++    "minecraft:jungle_sign": 0,
++    "minecraft:jungle_slab": 0,
++    "minecraft:jungle_stairs": 0,
++    "minecraft:jungle_trapdoor": 0,
++    "minecraft:jungle_wall_hanging_sign": 0,
++    "minecraft:jungle_wall_sign": 0,
++    "minecraft:kelp": 0,
++    "minecraft:kelp_plant": 0,
++    "minecraft:ladder": 0,
++    "minecraft:lantern": 0,
++    "minecraft:large_amethyst_bud": 0,
++    "minecraft:large_fern": 0,
++    "minecraft:lava": 1,
++    "minecraft:lava_cauldron": 0,
++    "minecraft:leaf_litter": 0,
++    "minecraft:lectern": 0,
++    "minecraft:lever": 0,
++    "minecraft:light": 0,
++    "minecraft:light_blue_banner": 0,
++    "minecraft:light_blue_bed": 0,
++    "minecraft:light_blue_candle": 0,
++    "minecraft:light_blue_candle_cake": 0,
++    "minecraft:light_blue_carpet": 0,
++    "minecraft:light_blue_shulker_box": 1,
++    "minecraft:light_blue_stained_glass": 0,
++    "minecraft:light_blue_stained_glass_pane": 0,
++    "minecraft:light_blue_wall_banner": 0,
++    "minecraft:light_gray_banner": 0,
++    "minecraft:light_gray_bed": 0,
++    "minecraft:light_gray_candle": 0,
++    "minecraft:light_gray_candle_cake": 0,
++    "minecraft:light_gray_carpet": 0,
++    "minecraft:light_gray_shulker_box": 1,
++    "minecraft:light_gray_stained_glass": 0,
++    "minecraft:light_gray_stained_glass_pane": 0,
++    "minecraft:light_gray_wall_banner": 0,
++    "minecraft:light_weighted_pressure_plate": 0,
++    "minecraft:lightning_rod": 0,
++    "minecraft:lilac": 0,
++    "minecraft:lily_of_the_valley": 0,
++    "minecraft:lily_pad": 0,
++    "minecraft:lime_banner": 0,
++    "minecraft:lime_bed": 0,
++    "minecraft:lime_candle": 0,
++    "minecraft:lime_candle_cake": 0,
++    "minecraft:lime_carpet": 0,
++    "minecraft:lime_shulker_box": 1,
++    "minecraft:lime_stained_glass": 0,
++    "minecraft:lime_stained_glass_pane": 0,
++    "minecraft:lime_wall_banner": 0,
++    "minecraft:magenta_banner": 0,
++    "minecraft:magenta_bed": 0,
++    "minecraft:magenta_candle": 0,
++    "minecraft:magenta_candle_cake": 0,
++    "minecraft:magenta_carpet": 0,
++    "minecraft:magenta_shulker_box": 1,
++    "minecraft:magenta_stained_glass": 0,
++    "minecraft:magenta_stained_glass_pane": 0,
++    "minecraft:magenta_wall_banner": 0,
++    "minecraft:mangrove_button": 0,
++    "minecraft:mangrove_door": 0,
++    "minecraft:mangrove_fence": 0,
++    "minecraft:mangrove_fence_gate": 0,
++    "minecraft:mangrove_hanging_sign": 0,
++    "minecraft:mangrove_leaves": 1,
++    "minecraft:mangrove_pressure_plate": 0,
++    "minecraft:mangrove_propagule": 0,
++    "minecraft:mangrove_roots": 0,
++    "minecraft:mangrove_shelf": 0,
++    "minecraft:mangrove_sign": 0,
++    "minecraft:mangrove_slab": 0,
++    "minecraft:mangrove_stairs": 0,
++    "minecraft:mangrove_trapdoor": 0,
++    "minecraft:mangrove_wall_hanging_sign": 0,
++    "minecraft:mangrove_wall_sign": 0,
++    "minecraft:medium_amethyst_bud": 0,
++    "minecraft:melon_stem": 0,
++    "minecraft:moss_carpet": 0,
++    "minecraft:mossy_cobblestone_slab": 0,
++    "minecraft:mossy_cobblestone_stairs": 0,
++    "minecraft:mossy_cobblestone_wall": 0,
++    "minecraft:mossy_stone_brick_slab": 0,
++    "minecraft:mossy_stone_brick_stairs": 0,
++    "minecraft:mossy_stone_brick_wall": 0,
++    "minecraft:moving_piston": 0,
++    "minecraft:mud_brick_slab": 0,
++    "minecraft:mud_brick_stairs": 0,
++    "minecraft:mud_brick_wall": 0,
++    "minecraft:mushroom_stem": 0,
++    "minecraft:nether_brick_fence": 0,
++    "minecraft:nether_brick_slab": 0,
++    "minecraft:nether_brick_stairs": 0,
++    "minecraft:nether_brick_wall": 0,
++    "minecraft:nether_portal": 0,
++    "minecraft:nether_sprouts": 0,
++    "minecraft:nether_wart": 0,
++    "minecraft:oak_button": 0,
++    "minecraft:oak_door": 0,
++    "minecraft:oak_fence": 0,
++    "minecraft:oak_fence_gate": 0,
++    "minecraft:oak_hanging_sign": 0,
++    "minecraft:oak_leaves": 1,
++    "minecraft:oak_pressure_plate": 0,
++    "minecraft:oak_sapling": 0,
++    "minecraft:oak_shelf": 0,
++    "minecraft:oak_sign": 0,
++    "minecraft:oak_slab": 0,
++    "minecraft:oak_stairs": 0,
++    "minecraft:oak_trapdoor": 0,
++    "minecraft:oak_wall_hanging_sign": 0,
++    "minecraft:oak_wall_sign": 0,
++    "minecraft:open_eyeblossom": 0,
++    "minecraft:orange_banner": 0,
++    "minecraft:orange_bed": 0,
++    "minecraft:orange_candle": 0,
++    "minecraft:orange_candle_cake": 0,
++    "minecraft:orange_carpet": 0,
++    "minecraft:orange_shulker_box": 1,
++    "minecraft:orange_stained_glass": 0,
++    "minecraft:orange_stained_glass_pane": 0,
++    "minecraft:orange_tulip": 0,
++    "minecraft:orange_wall_banner": 0,
++    "minecraft:oxeye_daisy": 0,
++    "minecraft:oxidized_copper_bars": 0,
++    "minecraft:oxidized_copper_chain": 0,
++    "minecraft:oxidized_copper_chest": 0,
++    "minecraft:oxidized_copper_door": 0,
++    "minecraft:oxidized_copper_golem_statue": 0,
++    "minecraft:oxidized_copper_grate": 0,
++    "minecraft:oxidized_copper_lantern": 0,
++    "minecraft:oxidized_copper_trapdoor": 0,
++    "minecraft:oxidized_cut_copper_slab": 0,
++    "minecraft:oxidized_cut_copper_stairs": 0,
++    "minecraft:oxidized_lightning_rod": 0,
++    "minecraft:pale_hanging_moss": 0,
++    "minecraft:pale_moss_carpet": 0,
++    "minecraft:pale_oak_button": 0,
++    "minecraft:pale_oak_door": 0,
++    "minecraft:pale_oak_fence": 0,
++    "minecraft:pale_oak_fence_gate": 0,
++    "minecraft:pale_oak_hanging_sign": 0,
++    "minecraft:pale_oak_leaves": 1,
++    "minecraft:pale_oak_pressure_plate": 0,
++    "minecraft:pale_oak_sapling": 0,
++    "minecraft:pale_oak_shelf": 0,
++    "minecraft:pale_oak_sign": 0,
++    "minecraft:pale_oak_slab": 0,
++    "minecraft:pale_oak_stairs": 0,
++    "minecraft:pale_oak_trapdoor": 0,
++    "minecraft:pale_oak_wall_hanging_sign": 0,
++    "minecraft:pale_oak_wall_sign": 0,
++    "minecraft:peony": 0,
++    "minecraft:petrified_oak_slab": 0,
++    "minecraft:piglin_head": 0,
++    "minecraft:piglin_wall_head": 0,
++    "minecraft:pink_banner": 0,
++    "minecraft:pink_bed": 0,
++    "minecraft:pink_candle": 0,
++    "minecraft:pink_candle_cake": 0,
++    "minecraft:pink_carpet": 0,
++    "minecraft:pink_petals": 0,
++    "minecraft:pink_shulker_box": 1,
++    "minecraft:pink_stained_glass": 0,
++    "minecraft:pink_stained_glass_pane": 0,
++    "minecraft:pink_tulip": 0,
++    "minecraft:pink_wall_banner": 0,
++    "minecraft:piston_head": 0,
++    "minecraft:pitcher_crop": 0,
++    "minecraft:pitcher_plant": 0,
++    "minecraft:player_head": 0,
++    "minecraft:player_wall_head": 0,
++    "minecraft:pointed_dripstone": 0,
++    "minecraft:polished_andesite_slab": 0,
++    "minecraft:polished_andesite_stairs": 0,
++    "minecraft:polished_blackstone_brick_slab": 0,
++    "minecraft:polished_blackstone_brick_stairs": 0,
++    "minecraft:polished_blackstone_brick_wall": 0,
++    "minecraft:polished_blackstone_button": 0,
++    "minecraft:polished_blackstone_pressure_plate": 0,
++    "minecraft:polished_blackstone_slab": 0,
++    "minecraft:polished_blackstone_stairs": 0,
++    "minecraft:polished_blackstone_wall": 0,
++    "minecraft:polished_cinnabar_slab": 0,
++    "minecraft:polished_cinnabar_stairs": 0,
++    "minecraft:polished_cinnabar_wall": 0,
++    "minecraft:polished_deepslate_slab": 0,
++    "minecraft:polished_deepslate_stairs": 0,
++    "minecraft:polished_deepslate_wall": 0,
++    "minecraft:polished_diorite_slab": 0,
++    "minecraft:polished_diorite_stairs": 0,
++    "minecraft:polished_granite_slab": 0,
++    "minecraft:polished_granite_stairs": 0,
++    "minecraft:polished_sulfur_slab": 0,
++    "minecraft:polished_sulfur_stairs": 0,
++    "minecraft:polished_sulfur_wall": 0,
++    "minecraft:polished_tuff_slab": 0,
++    "minecraft:polished_tuff_stairs": 0,
++    "minecraft:polished_tuff_wall": 0,
++    "minecraft:poppy": 0,
++    "minecraft:potatoes": 0,
++    "minecraft:potted_acacia_sapling": 0,
++    "minecraft:potted_allium": 0,
++    "minecraft:potted_azalea_bush": 0,
++    "minecraft:potted_azure_bluet": 0,
++    "minecraft:potted_bamboo": 0,
++    "minecraft:potted_birch_sapling": 0,
++    "minecraft:potted_blue_orchid": 0,
++    "minecraft:potted_brown_mushroom": 0,
++    "minecraft:potted_cactus": 0,
++    "minecraft:potted_cherry_sapling": 0,
++    "minecraft:potted_closed_eyeblossom": 0,
++    "minecraft:potted_cornflower": 0,
++    "minecraft:potted_crimson_fungus": 0,
++    "minecraft:potted_crimson_roots": 0,
++    "minecraft:potted_dandelion": 0,
++    "minecraft:potted_dark_oak_sapling": 0,
++    "minecraft:potted_dead_bush": 0,
++    "minecraft:potted_fern": 0,
++    "minecraft:potted_flowering_azalea_bush": 0,
++    "minecraft:potted_golden_dandelion": 0,
++    "minecraft:potted_jungle_sapling": 0,
++    "minecraft:potted_lily_of_the_valley": 0,
++    "minecraft:potted_mangrove_propagule": 0,
++    "minecraft:potted_oak_sapling": 0,
++    "minecraft:potted_open_eyeblossom": 0,
++    "minecraft:potted_orange_tulip": 0,
++    "minecraft:potted_oxeye_daisy": 0,
++    "minecraft:potted_pale_oak_sapling": 0,
++    "minecraft:potted_pink_tulip": 0,
++    "minecraft:potted_poppy": 0,
++    "minecraft:potted_red_mushroom": 0,
++    "minecraft:potted_red_tulip": 0,
++    "minecraft:potted_spruce_sapling": 0,
++    "minecraft:potted_torchflower": 0,
++    "minecraft:potted_warped_fungus": 0,
++    "minecraft:potted_warped_roots": 0,
++    "minecraft:potted_white_tulip": 0,
++    "minecraft:potted_wither_rose": 0,
++    "minecraft:powder_snow": 1,
++    "minecraft:powder_snow_cauldron": 0,
++    "minecraft:powered_rail": 0,
++    "minecraft:prismarine_brick_slab": 0,
++    "minecraft:prismarine_brick_stairs": 0,
++    "minecraft:prismarine_slab": 0,
++    "minecraft:prismarine_stairs": 0,
++    "minecraft:prismarine_wall": 0,
++    "minecraft:pumpkin_stem": 0,
++    "minecraft:purple_banner": 0,
++    "minecraft:purple_bed": 0,
++    "minecraft:purple_candle": 0,
++    "minecraft:purple_candle_cake": 0,
++    "minecraft:purple_carpet": 0,
++    "minecraft:purple_shulker_box": 1,
++    "minecraft:purple_stained_glass": 0,
++    "minecraft:purple_stained_glass_pane": 0,
++    "minecraft:purple_wall_banner": 0,
++    "minecraft:purpur_slab": 0,
++    "minecraft:purpur_stairs": 0,
++    "minecraft:quartz_slab": 0,
++    "minecraft:quartz_stairs": 0,
++    "minecraft:rail": 0,
++    "minecraft:red_banner": 0,
++    "minecraft:red_bed": 0,
++    "minecraft:red_candle": 0,
++    "minecraft:red_candle_cake": 0,
++    "minecraft:red_carpet": 0,
++    "minecraft:red_mushroom": 0,
++    "minecraft:red_nether_brick_slab": 0,
++    "minecraft:red_nether_brick_stairs": 0,
++    "minecraft:red_nether_brick_wall": 0,
++    "minecraft:red_sandstone_slab": 0,
++    "minecraft:red_sandstone_stairs": 0,
++    "minecraft:red_sandstone_wall": 0,
++    "minecraft:red_shulker_box": 1,
++    "minecraft:red_stained_glass": 0,
++    "minecraft:red_stained_glass_pane": 0,
++    "minecraft:red_tulip": 0,
++    "minecraft:red_wall_banner": 0,
++    "minecraft:redstone_torch": 0,
++    "minecraft:redstone_wall_torch": 0,
++    "minecraft:redstone_wire": 0,
++    "minecraft:repeater": 0,
++    "minecraft:resin_brick_slab": 0,
++    "minecraft:resin_brick_stairs": 0,
++    "minecraft:resin_brick_wall": 0,
++    "minecraft:resin_clump": 0,
++    "minecraft:respawn_anchor": 0,
++    "minecraft:rose_bush": 0,
++    "minecraft:sandstone_slab": 0,
++    "minecraft:sandstone_stairs": 0,
++    "minecraft:sandstone_wall": 0,
++    "minecraft:scaffolding": 0,
++    "minecraft:sculk_sensor": 0,
++    "minecraft:sculk_shrieker": 0,
++    "minecraft:sculk_vein": 0,
++    "minecraft:sea_lantern": 0,
++    "minecraft:sea_pickle": 0,
++    "minecraft:seagrass": 0,
++    "minecraft:short_dry_grass": 0,
++    "minecraft:short_grass": 0,
++    "minecraft:shulker_box": 0,
++    "minecraft:skeleton_skull": 0,
++    "minecraft:skeleton_wall_skull": 0,
++    "minecraft:slime_block": 1,
++    "minecraft:small_amethyst_bud": 0,
++    "minecraft:small_dripleaf": 0,
++    "minecraft:smooth_quartz_slab": 0,
++    "minecraft:smooth_quartz_stairs": 0,
++    "minecraft:smooth_red_sandstone_slab": 0,
++    "minecraft:smooth_red_sandstone_stairs": 0,
++    "minecraft:smooth_sandstone_slab": 0,
++    "minecraft:smooth_sandstone_stairs": 0,
++    "minecraft:smooth_stone_slab": 0,
++    "minecraft:sniffer_egg": 0,
++    "minecraft:snow": 0,
++    "minecraft:soul_campfire": 0,
++    "minecraft:soul_fire": 0,
++    "minecraft:soul_lantern": 0,
++    "minecraft:soul_torch": 0,
++    "minecraft:soul_wall_torch": 0,
++    "minecraft:spawner": 1,
++    "minecraft:spore_blossom": 0,
++    "minecraft:spruce_button": 0,
++    "minecraft:spruce_door": 0,
++    "minecraft:spruce_fence": 0,
++    "minecraft:spruce_fence_gate": 0,
++    "minecraft:spruce_hanging_sign": 0,
++    "minecraft:spruce_leaves": 1,
++    "minecraft:spruce_pressure_plate": 0,
++    "minecraft:spruce_sapling": 0,
++    "minecraft:spruce_shelf": 0,
++    "minecraft:spruce_sign": 0,
++    "minecraft:spruce_slab": 0,
++    "minecraft:spruce_stairs": 0,
++    "minecraft:spruce_trapdoor": 0,
++    "minecraft:spruce_wall_hanging_sign": 0,
++    "minecraft:spruce_wall_sign": 0,
++    "minecraft:stone_brick_slab": 0,
++    "minecraft:stone_brick_stairs": 0,
++    "minecraft:stone_brick_wall": 0,
++    "minecraft:stone_button": 0,
++    "minecraft:stone_pressure_plate": 0,
++    "minecraft:stone_slab": 0,
++    "minecraft:stone_stairs": 0,
++    "minecraft:stonecutter": 0,
++    "minecraft:stripped_crimson_stem": 0,
++    "minecraft:stripped_warped_stem": 0,
++    "minecraft:structure_void": 0,
++    "minecraft:sugar_cane": 0,
++    "minecraft:sulfur_brick_slab": 0,
++    "minecraft:sulfur_brick_stairs": 0,
++    "minecraft:sulfur_brick_wall": 0,
++    "minecraft:sulfur_slab": 0,
++    "minecraft:sulfur_spike": 0,
++    "minecraft:sulfur_stairs": 0,
++    "minecraft:sulfur_wall": 0,
++    "minecraft:sunflower": 0,
++    "minecraft:sweet_berry_bush": 0,
++    "minecraft:tall_dry_grass": 0,
++    "minecraft:tall_grass": 0,
++    "minecraft:tall_seagrass": 0,
++    "minecraft:torch": 0,
++    "minecraft:torchflower": 0,
++    "minecraft:torchflower_crop": 0,
++    "minecraft:trapped_chest": 0,
++    "minecraft:trial_spawner": 0,
++    "minecraft:tripwire": 0,
++    "minecraft:tripwire_hook": 0,
++    "minecraft:tube_coral": 0,
++    "minecraft:tube_coral_fan": 0,
++    "minecraft:tube_coral_wall_fan": 0,
++    "minecraft:tuff_brick_slab": 0,
++    "minecraft:tuff_brick_stairs": 0,
++    "minecraft:tuff_brick_wall": 0,
++    "minecraft:tuff_slab": 0,
++    "minecraft:tuff_stairs": 0,
++    "minecraft:tuff_wall": 0,
++    "minecraft:turtle_egg": 0,
++    "minecraft:twisting_vines": 0,
++    "minecraft:twisting_vines_plant": 0,
++    "minecraft:vault": 0,
++    "minecraft:vine": 0,
++    "minecraft:void_air": 0,
++    "minecraft:wall_torch": 0,
++    "minecraft:warped_button": 0,
++    "minecraft:warped_door": 0,
++    "minecraft:warped_fence": 0,
++    "minecraft:warped_fence_gate": 0,
++    "minecraft:warped_fungus": 0,
++    "minecraft:warped_hanging_sign": 0,
++    "minecraft:warped_pressure_plate": 0,
++    "minecraft:warped_roots": 0,
++    "minecraft:warped_shelf": 0,
++    "minecraft:warped_sign": 0,
++    "minecraft:warped_slab": 0,
++    "minecraft:warped_stairs": 0,
++    "minecraft:warped_stem": 0,
++    "minecraft:warped_trapdoor": 0,
++    "minecraft:warped_wall_hanging_sign": 0,
++    "minecraft:warped_wall_sign": 0,
++    "minecraft:water": 1,
++    "minecraft:water_cauldron": 0,
++    "minecraft:waxed_copper_bars": 0,
++    "minecraft:waxed_copper_chain": 0,
++    "minecraft:waxed_copper_chest": 0,
++    "minecraft:waxed_copper_door": 0,
++    "minecraft:waxed_copper_golem_statue": 0,
++    "minecraft:waxed_copper_grate": 0,
++    "minecraft:waxed_copper_lantern": 0,
++    "minecraft:waxed_copper_trapdoor": 0,
++    "minecraft:waxed_cut_copper_slab": 0,
++    "minecraft:waxed_cut_copper_stairs": 0,
++    "minecraft:waxed_exposed_copper_bars": 0,
++    "minecraft:waxed_exposed_copper_chain": 0,
++    "minecraft:waxed_exposed_copper_chest": 0,
++    "minecraft:waxed_exposed_copper_door": 0,
++    "minecraft:waxed_exposed_copper_golem_statue": 0,
++    "minecraft:waxed_exposed_copper_grate": 0,
++    "minecraft:waxed_exposed_copper_lantern": 0,
++    "minecraft:waxed_exposed_copper_trapdoor": 0,
++    "minecraft:waxed_exposed_cut_copper_slab": 0,
++    "minecraft:waxed_exposed_cut_copper_stairs": 0,
++    "minecraft:waxed_exposed_lightning_rod": 0,
++    "minecraft:waxed_lightning_rod": 0,
++    "minecraft:waxed_oxidized_copper_bars": 0,
++    "minecraft:waxed_oxidized_copper_chain": 0,
++    "minecraft:waxed_oxidized_copper_chest": 0,
++    "minecraft:waxed_oxidized_copper_door": 0,
++    "minecraft:waxed_oxidized_copper_golem_statue": 0,
++    "minecraft:waxed_oxidized_copper_grate": 0,
++    "minecraft:waxed_oxidized_copper_lantern": 0,
++    "minecraft:waxed_oxidized_copper_trapdoor": 0,
++    "minecraft:waxed_oxidized_cut_copper_slab": 0,
++    "minecraft:waxed_oxidized_cut_copper_stairs": 0,
++    "minecraft:waxed_oxidized_lightning_rod": 0,
++    "minecraft:waxed_weathered_copper_bars": 0,
++    "minecraft:waxed_weathered_copper_chain": 0,
++    "minecraft:waxed_weathered_copper_chest": 0,
++    "minecraft:waxed_weathered_copper_door": 0,
++    "minecraft:waxed_weathered_copper_golem_statue": 0,
++    "minecraft:waxed_weathered_copper_grate": 0,
++    "minecraft:waxed_weathered_copper_lantern": 0,
++    "minecraft:waxed_weathered_copper_trapdoor": 0,
++    "minecraft:waxed_weathered_cut_copper_slab": 0,
++    "minecraft:waxed_weathered_cut_copper_stairs": 0,
++    "minecraft:waxed_weathered_lightning_rod": 0,
++    "minecraft:weathered_copper_bars": 0,
++    "minecraft:weathered_copper_chain": 0,
++    "minecraft:weathered_copper_chest": 0,
++    "minecraft:weathered_copper_door": 0,
++    "minecraft:weathered_copper_golem_statue": 0,
++    "minecraft:weathered_copper_grate": 0,
++    "minecraft:weathered_copper_lantern": 0,
++    "minecraft:weathered_copper_trapdoor": 0,
++    "minecraft:weathered_cut_copper_slab": 0,
++    "minecraft:weathered_cut_copper_stairs": 0,
++    "minecraft:weathered_lightning_rod": 0,
++    "minecraft:weeping_vines": 0,
++    "minecraft:weeping_vines_plant": 0,
++    "minecraft:wheat": 0,
++    "minecraft:white_banner": 0,
++    "minecraft:white_bed": 0,
++    "minecraft:white_candle": 0,
++    "minecraft:white_candle_cake": 0,
++    "minecraft:white_carpet": 0,
++    "minecraft:white_shulker_box": 1,
++    "minecraft:white_stained_glass": 0,
++    "minecraft:white_stained_glass_pane": 0,
++    "minecraft:white_tulip": 0,
++    "minecraft:white_wall_banner": 0,
++    "minecraft:wildflowers": 0,
++    "minecraft:wither_rose": 0,
++    "minecraft:wither_skeleton_skull": 0,
++    "minecraft:wither_skeleton_wall_skull": 0,
++    "minecraft:yellow_banner": 0,
++    "minecraft:yellow_bed": 0,
++    "minecraft:yellow_candle": 0,
++    "minecraft:yellow_candle_cake": 0,
++    "minecraft:yellow_carpet": 0,
++    "minecraft:yellow_shulker_box": 1,
++    "minecraft:yellow_stained_glass": 0,
++    "minecraft:yellow_stained_glass_pane": 0,
++    "minecraft:yellow_wall_banner": 0,
++    "minecraft:zombie_head": 0,
++    "minecraft:zombie_wall_head": 0
++  }
++}
+-- 
+2.56.0
