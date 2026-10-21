@@ -36,12 +36,20 @@ The precise ray target was not recorded there, so this is not yet an interaction
 A separate Enchanted retry verifies the ray hitting the trader, then right-clicks it and opens the kits menu.
 That response works, while the menu still shows its internal title and malformed text.
 
-The menu trace identifies two presentation defects: its descendant factory override was
-stored but never applied, and texture validation rejected filenames containing `~`.
-Both now have targeted fixes. The captured forms reach the authored factory, then stop
-at a locally counted collection named `diagram_with_button_collection`.
-Support for those factories remains open, so this is not yet a fixed authored menu.
-Generic form responses remain available.
+The menu trace identifies three presentation defects: its descendant factory override was
+stored but never applied, texture validation rejected filenames containing `~`, and locally
+counted factories required a server controller to supply their rows.
+The path, texture, count, and binding changes now resolve all three captured forms through their
+authored layouts. The advertisement keeps visible responses 0 and 1; the kits menus keep
+responses 0 through 5. A referenced progress template is still missing.
+These checks establish resolution and response identity. Native visual parity remains open.
+
+A fresh local Java replay draws the advertisement's frame, remote image, text, and button.
+Escape closes it. The kits form draws six cards in four columns with readable labels and images.
+Clicking the third card sends form ID 2 with response index 2 in the recorded Bedrock packet.
+This verifies client dispatch through the authored scene, not public-server acceptance of that response.
+The replay's transport check passes. Its overall rendering check fails on skin geometry,
+model processing, and unresolved-resource checks; those findings remain open.
 
 ## Changes verified from this survey
 
@@ -55,9 +63,6 @@ The archive reader now uses the ZIP central directory through an in-memory seeka
 The Enchanted download contains 73 entries, including 58 stored files with data descriptors, and passes CRC validation.
 The original reader fails on that archive; the corrected reader retains all 58 files and resolves the advertised manifest.
 Regressions cover embedded ZIP signatures and corrupt payload bytes alongside the existing archive-layout cases.
-All four projects build successfully: 2,133 tests pass and 152 optional cases skip.
-The offline checks also pass, including 263 tooling tests and patch metadata validation.
 
-The follow-up UI fixes also pass all four builds: 2,139 tests pass and 152 optional cases skip.
-All 102 core patches replay cleanly, and the offline validation remains green.
-The captured Enchanted forms still require locally counted factory support.
+With the UI corrections, all four projects build successfully: 2,147 tests pass and 152 optional cases skip.
+All 102 core patches replay cleanly. Offline validation passes all 263 tooling tests and patch metadata checks.

@@ -108,14 +108,53 @@ Six new regression tests cover path scope, shared inheritance, replacement paren
 namespaces, dynamic child arrays, export/import, factory responses, and texture pixels.
 The full UI test suite passes with the bundled native definitions.
 
-The actual captured Enchanted forms now reach their authored factory. They still fail on
-`diagram_with_button_collection`, whose count comes from a local binding. Locally counted
-factory collections remain unsupported. These changes do not establish a working Enchanted
-authored menu or native visual parity; the existing generic form fallback remains available.
+The captured Enchanted forms use locally counted factories after selecting their authored
+layout. The count and binding support described below lets those factories create their rows.
 
-All 102 core patches replay cleanly. The four full builds pass with 2,139 tests passed,
+## Locally counted factory collections
+
+Collection panels can generate rows from their own bound integer length or control-ID list.
+They do not require a server controller to supply that collection. The controller declares
+which collections contain its data; generated rows keep a separate scope. Nested form buttons
+retain their original response ordinals. Missing control IDs preserve the remaining list indices,
+and rows beyond controller data have no response action. Unknown collections without a local
+count still fail, and generated rows remain subject to the existing scene limits.
+
+Twelve fixtures execute the pinned client's original property update dispatcher and verify its
+stored collection count. They cover integers, ID lists, ignored real-valued updates, and empty
+or invalid values. The factory component is absent in these fixtures. Layout notifications and
+the external dirty-event sink use observation callbacks. These checks establish count conversion,
+not the complete child-factory, scheduler, or rendering lifecycle.
+
+Eight original expression cases show that boolean arithmetic retains an integer result.
+The Java evaluator now preserves that type, so predicates such as `1 * (not condition)` can
+activate a factory. Explicit real-valued inputs retain their real type.
+
+Rendered properties come from the current control's authored fields and local bindings.
+An ancestor's binding data can still feed an explicit reference, but it no longer replaces
+a child's own rendered text or texture. Panel texture bindings remain available as data
+without being treated as panel images. Enchanted uses that pattern for button visibility.
+
+Eight added behavioral tests cover local scope isolation, export/import, typed counts, sparse
+control IDs, nested response indices, missing controller rows, and rendered-property ownership.
+Controller-supplied factory events also remain available without a local count binding.
+The full UI suite passes with the bundled native definitions.
+
+All three captured Enchanted forms now resolve authored scenes. The advertisement retains
+visible responses 0 and 1; both kits forms retain responses 0 through 5. A referenced
+`progress.form_progress_loading_bars` template is still missing. Resolution and response
+identity do not establish native visual parity.
+
+A fresh local Java replay draws the advertisement and six-card kits layout. Escape closes
+the advertisement. A real pointer click on the third kit card sends Bedrock form ID 2 with
+response index 2. Transport verification passes, and all seven owned Java/display processes
+stop normally. The overall rendering verifier still fails on skin geometry, model processing,
+and unresolved mappings. This establishes authored drawing and client response dispatch;
+it does not establish public-server acceptance or native visual parity.
+
+All 102 core patches replay cleanly. The four full builds pass with 2,147 tests passed,
 152 optional skips, and no failures or errors. Core, test, and tool Checkstyle checks pass.
-Offline validation also passes all 263 tooling tests and the four stacks' metadata checks.
+Offline validation passes all 263 tooling tests and patch metadata checks.
 
 ## Upstream prerequisites
 
