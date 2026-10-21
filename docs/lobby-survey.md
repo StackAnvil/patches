@@ -10,7 +10,7 @@ Continuous transfer verification remains open.
 
 | Server | Reached | Result |
 | --- | --- | --- |
-| CubeCraft | Main lobby, SkyWars, MinerWare, Parkour | The game selector opened and changed lobbies. Custom selector images and inventory items rendered. The animation follow-up restores the player graph in replay after a duplicate identifier stopped it loading. |
+| CubeCraft | Main lobby, SkyWars, MinerWare, Parkour | The authored selector changed live lobbies, and a verified NPC click opened the cosmetics shop. Custom selector images and inventory items rendered. The animation follow-up restores the player graph in replay and a fresh live connection. |
 | Lifeboat | Navigator, minigame selector, SkyWars description, Solo action | Forms responded through generic Java dialogs. The Solo action was followed by a biome palette exception and disconnect. The world stayed black before that action; its cause remains unresolved. |
 | Galaxite | World loading | Disconnected with `End of stream` before a playable scene. No rendering verdict. |
 | SoulSteel | Fresh catalog admission, pack negotiation, StartGame | Pack loading reported missing manifests. StartGame decoding exhausted the packet while reading a trailing string. No playable scene. |
@@ -31,8 +31,8 @@ This survey does not establish native parity for their body direction.
 - **Enchanted hub UI:** the authored screen shows `custom.hub_menu_init`, internal button labels, and repeated glyphs. A response button still initiates a transfer. Separate the presentation failure from the working action.
 - **Enchanted Box PvP:** one capture crashes while approaching the trader. Chunk compilation fails in `PistonMovingBlockEntity.getMovementDirection` because its direction is null. The captured stack reaches this through collision-shape queries during ambient-occlusion lighting.
 
-NPC clicks in the CubeCraft pass did not produce a confirmed response.
-The precise ray target was not recorded there, so this is not yet an interaction failure reproduction.
+NPC clicks in the initial CubeCraft pass did not produce a confirmed response.
+The precise ray target was not recorded there. The live follow-up below confirms a shop NPC response.
 A separate Enchanted retry verifies the ray hitting the trader, then right-clicks it and opens the kits menu.
 That response works, while the menu still shows its internal title and malformed text.
 
@@ -110,7 +110,7 @@ It supplies manager metadata and runtime seams; default Molang compilation and n
 The shared library now applies that replacement rule in accepted file order.
 It preserves file admission order when grouping bundled assets.
 Pose tests cover both orders, higher-pack overrides, discarded old bones, and retained unrelated animations.
-General animation name normalization and native file-enumeration order remain open.
+The name-handling follow-up below verifies definition conversion and reference lookup. Native file-enumeration order remains open.
 This change does not establish native parity for NPC body direction.
 
 
@@ -126,3 +126,32 @@ The seven owned test processes close normally.
 All four projects build with 2,150 passing tests and 152 optional skips.
 All 38 client patches replay cleanly. Offline validation passes 263 tooling tests and metadata checks.
 All four replay self-test groups pass.
+
+## Animation names and live CubeCraft actions
+
+Bedrock 1.26.51.1 folds ASCII uppercase bytes when it registers animation definition names.
+Its public lookup keeps each reference's exact spelling.
+An executable probe confirms 514 conversion cases and four lookup controls through the original native helpers.
+The fixture supplies manager metadata and runtime seams, including default Molang compilation.
+Whole-file admission, native file enumeration, and visual parity remain outside this probe.
+
+The client now applies that conversion before replacement in shared libraries, the legacy server factory, and direct JSON graphs.
+It preserves non-ASCII characters and reference spelling.
+Pose tests cover bundled and accepted libraries and direct JSON graphs, including complete replacements and retained unrelated animations.
+
+A fresh 180-second live connection verifies all three selector actions with the rebuilt client.
+Button responses 2, 6, and 7 reach SkyWars EU1, MinerWare EU2, and Parkour EU2, respectively.
+Each destination shows its terrain and scoreboard. This confirms live acceptance beyond the earlier timed replay transitions.
+The selector uses the protocol's 36 button elements; it is an authored form.
+
+After the Parkour switch, the observer records the ray hitting the cosmetics shop's interaction entity.
+Right-click opens its authored shop menu with images and labels.
+This verifies that NPC interaction independently of the selector actions.
+The live graph resolves 200 animations and 12 controllers, with changing sampled poses and no graph-loading errors.
+All 191 skins and supplied geometry records install, with no rejected skins.
+The audit counts 4,993 remote-player render frames and 107,666 custom-actor render frames.
+These observations confirm graph execution and renderer use. Cosmetic-preview body direction still needs a native comparison.
+
+All four projects build with 2,151 passing tests and 152 optional skips.
+All 38 client patches replay cleanly. Offline validation passes 263 tooling tests and metadata checks.
+All four replay self-test groups pass. The six owned live-test processes close normally.

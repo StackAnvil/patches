@@ -1981,7 +1981,7 @@ Tests sample bone poses after replacements and pack overrides, including discard
 Other resource catalogs keep their existing conflict policy; this fixture does not establish their native replacement rules.
 
 The probe also observes lowercase name construction in native animation registration.
-General animation reference normalization remains a separate gap.
+The definition-name follow-up below establishes the separate native rules for definition registration and reference lookup.
 The captured duplicate uses the same lowercase identifier in both files.
 
 
@@ -1995,3 +1995,28 @@ These checks establish restored graph loading and execution, not native visual p
 All four projects build with 2,150 passing tests and 152 optional skips.
 All 38 client patches replay. Offline validation passes 263 tooling tests and metadata checks.
 The four replay self-test groups pass. The seven owned test processes close normally.
+
+
+## Native animation definition names
+
+The Bedrock 1.26.51.1 definition converter folds ASCII uppercase bytes before animation registration.
+The original public group lookup keeps the reference spelling supplied by the caller.
+A private executable probe covers all 256 byte values in short and heap-sized strings, plus long ASCII and mixed Unicode input.
+All 514 conversion cases match ASCII folding. Four original group-lookup controls find the lowercase registration and leave differently cased references unresolved.
+The original registration, hash construction, lookup, reference accounting, and replacement logic execute.
+The fixture supplies manager metadata, allocation/free, uncontended mutexes, CFG, finite CRT helpers, and the default Molang compilation seam.
+File-schema admission, native file enumeration, and rendering parity remain outside this fixture.
+
+Animation registration now uses the verified conversion in shared libraries, the legacy server factory, and direct JSON graph input.
+Apply it before identifier replacement, so case-colliding definitions keep the last complete value.
+Preserve Unicode characters and reference spelling.
+Pose tests cover bundled and accepted libraries and direct JSON graphs, including replacement bones, retained unrelated animations, and unresolved differently cased references.
+
+All four projects build with 2,151 passing tests and 152 optional skips.
+All 38 client patches replay cleanly. Offline validation passes 263 tooling tests and metadata checks; all four replay self-test groups pass.
+
+A fresh 180-second live CubeCraft connection sends selector responses 2, 6, and 7 and reaches SkyWars EU1, MinerWare EU2, and Parkour EU2.
+Terrain and scoreboards appear in each destination. A verified ray hit on the cosmetics shop's interaction entity precedes an authored shop menu opening.
+The player graph resolves 200 animations and 12 controllers and produces changing sampled poses without graph-loading errors.
+All 191 skins and supplied geometry records install, with 4,993 remote-player render frames and 107,666 custom-actor render frames.
+The six owned processes close normally. Native visual parity, including cosmetic-preview facing direction, remains open.
