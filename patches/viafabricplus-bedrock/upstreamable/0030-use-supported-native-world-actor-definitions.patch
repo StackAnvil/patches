@@ -1,4 +1,4 @@
-From a012203f170d9a9bee5a3a436d15e604f99ebec0 Mon Sep 17 00:00:00 2001
+From 1c86ca93e071b8213b9551f59d88737aa1159462 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(render): use supported native world actor definitions
@@ -43,15 +43,30 @@ This world renderer now supplies the same inputs as custom actor playback.
 Targeted graph tests cover cue delivery, repeated frames, muted loops and
 resumption. Locator tests cover nonuniform script scale and directions.
 This does not establish full offscreen simulation or native scene parity.
+
+Supply native vertical_speed as float velocityY times 20, and bind
+is_in_lava to the client fluid state. Preserve the shared frame
+sitting, saddle and dash-cooldown queries. The bundled camel graph
+requires these inputs to select its authored pose. Native registrations
+link the scalar callbacks 14220edc0/14220ef60 and flag callbacks
+142217bd0/142217870/1422185f0. The complete native callbacks run
+across 672 authored contexts, including signed-zero motion and stale
+component generations. Java comparisons cover live actor inputs only.
+
+Extract the existing query assembly for direct production-path checks.
+Bundled unsaddled camel tests exercise standing and sitting graph
+selection. Mounted camera offset timing, native motion/fluid producers
+and equipped camel rendering remain separate; preserve equipment
+and unsupported-query fallback.
 ---
  .../BedrockWorldActorAppearance.java          |  74 +++++
  .../render/MixinEntityRenderDispatcher.java   |  16 +
  .../bedrock/render/BedrockAnimatedModel.java  |   7 +-
- .../render/BedrockWorldActorRenderer.java     | 299 ++++++++++++++++++
- .../BedrockWorldActorAppearanceTest.java      | 160 ++++++++++
+ .../render/BedrockWorldActorRenderer.java     | 308 ++++++++++++++++++
+ .../BedrockWorldActorAppearanceTest.java      | 187 +++++++++++
  .../render/BedrockCustomActorModelTest.java   |   7 +
- .../render/BedrockWorldActorQueryTest.java    |  62 ++++
- 7 files changed, 624 insertions(+), 1 deletion(-)
+ .../render/BedrockWorldActorQueryTest.java    | 121 +++++++
+ 7 files changed, 719 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
@@ -213,10 +228,10 @@ index fd0b735..579c780 100644
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
 new file mode 100644
-index 0000000..9f1bdcb
+index 0000000..216692d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,308 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -262,6 +277,7 @@ index 0000000..9f1bdcb
 +import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 +import net.minecraft.world.entity.monster.Shulker;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
 +
 +/** Keeps Java gameplay entities while using supported native definitions for their appearance. */
 +public final class BedrockWorldActorRenderer extends EntityRenderer<Entity, BedrockWorldActorRenderer.State> {
@@ -327,8 +343,31 @@ index 0000000..9f1bdcb
 +                : Mth.rotLerp(partial, entity.yRotO, entity.getYRot());
 +        final var camera = Minecraft.getInstance().gameRenderer.mainCamera().position().subtract(entity.getPosition(partial));
 +        final var input = new BedrockActorFrame(age / 20F, yaw, camera.x, camera.y, camera.z).input(snapshot);
-+        final Map<String, Object> queries = new HashMap<>(input.queries());
++        final var queries = actorQueries(entity, snapshot, partial, yaw, input.queries());
++        try {
++            actor.playback.commands(BedrockActorState.animations(entity.getUUID()));
++            actor.shadowRadius = original.createRenderState(entity, partial).shadowRadius;
++            actor.frame = actor.playback.sample(age / 20F, new BedrockActorAnimation.Frame(queries, actorVariables(entity, partial)),
++                    !Minecraft.getInstance().isPaused());
++            actor.yaw = yaw; actor.scale = snapshot.scale();
++            actor.queries = Map.copyOf(queries);
++            if (actor.frame == null) { actor.failed = true; return false; }
++            // Complete texture registration before selecting the renderer, so missing images keep Java visible.
++            for (final var draw : actor.frame.draws()) this.texture(packs, draw);
++            actor.active = true;
++            this.effects(entity, actor, entity.getPosition(partial));
++            return true;
++        } catch (IOException | RuntimeException unsupported) {
++            actor.failed = true; actor.frame = null; return false;
++        }
++    }
++
++    static Map<String, Object> actorQueries(final Entity entity, final NativeActorMessage.Snapshot snapshot,
++                                          final float partial, final float yaw, final Map<String, Object> input) {
++        final Map<String, Object> queries = new HashMap<>(input);
 +        queries.put("is_alive", true); queries.put("is_on_ground", entity.onGround()); queries.put("is_in_water", entity.isInWater());
++        queries.put("is_in_lava", entity.isInLava());
++        queries.put("vertical_speed", (float) entity.getDeltaMovement().y * 20F);
 +        queries.put("is_in_ui", false); queries.put("is_first_person", false);
 +        queries.put("property", (BedrockActorAnimation.Query) args -> {
 +            if (args.size() != 1 || !snapshot.properties().containsKey(String.valueOf(args.getFirst())))
@@ -346,22 +385,7 @@ index 0000000..9f1bdcb
 +            queries.put("get_equipped_item_name", (BedrockActorAnimation.Query) _ -> "");
 +            queries.put("is_item_name_any", (BedrockActorAnimation.Query) _ -> false);
 +        } else if (entity instanceof EndCrystal crystal) queries.put("show_bottom", crystal.showsBottom());
-+        try {
-+            actor.playback.commands(BedrockActorState.animations(entity.getUUID()));
-+            actor.shadowRadius = original.createRenderState(entity, partial).shadowRadius;
-+            actor.frame = actor.playback.sample(age / 20F, new BedrockActorAnimation.Frame(queries, actorVariables(entity, partial)),
-+                    !Minecraft.getInstance().isPaused());
-+            actor.yaw = yaw; actor.scale = snapshot.scale();
-+            actor.queries = Map.copyOf(queries);
-+            if (actor.frame == null) { actor.failed = true; return false; }
-+            // Complete texture registration before selecting the renderer, so missing images keep Java visible.
-+            for (final var draw : actor.frame.draws()) this.texture(packs, draw);
-+            actor.active = true;
-+            this.effects(entity, actor, entity.getPosition(partial));
-+            return true;
-+        } catch (IOException | RuntimeException unsupported) {
-+            actor.failed = true; actor.frame = null; return false;
-+        }
++        return queries;
 +    }
 +
 +    private void effects(final Entity entity, final Actor actor, final net.minecraft.world.phys.Vec3 origin) {
@@ -518,10 +542,10 @@ index 0000000..9f1bdcb
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
 new file mode 100644
-index 0000000..f8d080d
+index 0000000..8285106
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,187 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -604,6 +628,33 @@ index 0000000..f8d080d
 +        assertEquals(first.pose(), turned.pose());
 +        assertTrue(first.draws().getFirst().surface().visibility().getFirst().visible());
 +        assertFalse(turned.draws().getFirst().surface().visibility().getFirst().visible());
++    }
++
++    @Test
++    void bundledUnsaddledCamelResolvesStandingAndSittingGraphs() throws Exception {
++        Assumptions.assumeTrue(BedrockWorldActorAppearance.class.getResource("/assets/viafabricplus-bedrock/builtin/manifest.json") != null);
++        final var packs = BedrockEntityResources.merge(BedrockBuiltinAssets.load().library(), List.of(), "minecraft:camel");
++        final var definition = new BedrockWorldActorAppearance(packs, "minecraft:camel");
++        final var queries = new java.util.HashMap<String, Object>();
++        for (final var name : List.of("is_baby", "is_saddled", "is_sitting", "has_dash_cooldown", "is_in_water", "is_in_lava", "is_riding")) {
++            queries.put(name, false);
++        }
++        queries.put("is_on_ground", true);
++        for (final var name : List.of("modified_move_speed", "modified_distance_moved", "vertical_speed", "ground_speed", "target_x_rotation", "target_y_rotation")) {
++            queries.put(name, 0F);
++        }
++        final var standing = definition.playback();
++        assertNotNull(standing.sample(0, new BedrockActorAnimation.Frame(queries, Map.of()), false));
++        final var first = standing.sample(.05F, new BedrockActorAnimation.Frame(queries, Map.of()), false);
++        queries.put("is_sitting", true);
++        final var sitting = definition.playback();
++        assertNotNull(sitting.sample(0, new BedrockActorAnimation.Frame(queries, Map.of()), false));
++        final var second = sitting.sample(.05F, new BedrockActorAnimation.Frame(queries, Map.of()), false);
++        assertNotNull(first);
++        assertNotNull(second);
++        assertEquals(1, first.draws().size());
++        assertEquals(1, second.draws().size());
++        assertNotEquals(first.pose(), second.pose());
 +    }
 +
 +    @Test
@@ -701,10 +752,10 @@ index 4676741..4556267 100644
  }
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java
 new file mode 100644
-index 0000000..be6ac6b
+index 0000000..3c22585
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,121 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -712,15 +763,25 @@ index 0000000..be6ac6b
 + */
 +package com.viaversion.viafabricplus.bedrock.render;
 +
++import com.google.gson.JsonParser;
 +import java.lang.reflect.Modifier;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.EnumSet;
 +import java.util.List;
++import java.util.Map;
++import java.util.UUID;
 +import net.minecraft.SharedConstants;
 +import net.minecraft.server.Bootstrap;
 +import net.minecraft.core.Direction;
 +import net.minecraft.world.entity.Entity;
 +import net.minecraft.world.entity.monster.Shulker;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
 +import org.junit.jupiter.api.BeforeAll;
 +import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.mockito.Mockito.*;
 +
@@ -729,6 +790,55 @@ index 0000000..be6ac6b
 +    static void bootstrap() {
 +        SharedConstants.tryDetectVersion();
 +        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void capturesMotionAndFluidQueriesWithoutRetainingMutableEntityInputs() {
++        final var entity = mock(Entity.class);
++        when(entity.getDeltaMovement()).thenReturn(new Vec3(2, -0D, -3));
++        when(entity.isInLava()).thenReturn(true);
++        final var actor = actor(EnumSet.of(ActorFlags.SITTING, ActorFlags.HAS_DASH_COOLDOWN, ActorFlags.SADDLED));
++        final var input = new BedrockActorFrame(0, 0, 0, 0, 0).input(actor);
++        final var queries = BedrockWorldActorRenderer.actorQueries(entity, actor, 0, 0, input.queries());
++        when(entity.getDeltaMovement()).thenReturn(new Vec3(0, 1, 0));
++        when(entity.isInLava()).thenReturn(false);
++        assertEquals(0x80000000, Float.floatToRawIntBits((Float) queries.get("vertical_speed")));
++        assertEquals(true, queries.get("is_in_lava"));
++        assertEquals(true, queries.get("is_sitting"));
++        assertEquals(true, queries.get("has_dash_cooldown"));
++        assertEquals(true, queries.get("is_saddled"));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_ACTOR_QUERIES", matches = ".+")
++    void matchesNativeMotionAndStatusQueriesForLiveActorContexts() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_ACTOR_QUERIES"))))
++                .getAsJsonObject();
++        final var entity = mock(Entity.class);
++        for (final var value : fixture.getAsJsonArray("cases")) {
++            final var row = value.getAsJsonObject();
++            if (!row.get("bound").getAsBoolean() || row.get("generation").getAsString().equals("stale")) continue;
++            final var flags = EnumSet.noneOf(ActorFlags.class);
++            if (row.get("sitting").getAsBoolean()) flags.add(ActorFlags.SITTING);
++            if (row.get("dashCooldown").getAsBoolean()) flags.add(ActorFlags.HAS_DASH_COOLDOWN);
++            if (row.get("saddled").getAsBoolean()) flags.add(ActorFlags.SADDLED);
++            final var actor = actor(flags);
++            final var motion = row.getAsJsonArray("motion");
++            when(entity.getDeltaMovement()).thenReturn(new Vec3(motion.get(0).getAsFloat(), motion.get(1).getAsFloat(), motion.get(2).getAsFloat()));
++            when(entity.isInLava()).thenReturn(row.get("inLava").getAsBoolean());
++            final var input = new BedrockActorFrame(0, 0, 0, 0, 0).input(actor);
++            final var queries = BedrockWorldActorRenderer.actorQueries(entity, actor, 0, 0, input.queries());
++            for (final var expected : row.getAsJsonObject("queries").entrySet()) {
++                final Object result = queries.get(expected.getKey());
++                final float actual = result instanceof Boolean state ? state ? 1F : 0F : ((Number) result).floatValue();
++                assertEquals(Float.floatToRawIntBits(expected.getValue().getAsFloat()), Float.floatToRawIntBits(actual));
++            }
++        }
++    }
++
++    private static NativeActorMessage.Snapshot actor(final java.util.Set<ActorFlags> flags) {
++        return new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), false, 1,
++                "minecraft:camel", "", 1, flags, 0, 0, null, Map.of());
 +    }
 +
 +    @Test

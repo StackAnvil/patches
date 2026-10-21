@@ -56,3 +56,34 @@ Both clients and the owned server exit normally, with no retained process identi
 This fixture verifies the production bridge with authored assets.
 It does not establish audible sound parity, complete motion interpolation, offscreen simulation, or matching native screenshots.
 The CubeCraft lobby NPC comparison and mounted camera-eye bindings remain separate work.
+
+## Camel pose inputs
+
+World actor graphs now receive vertical speed and lava state.
+Vertical speed uses the target's float velocity Y multiplied by `20F`.
+The shared actor frame supplies sitting, saddle and dash-cooldown flags.
+The bundled camel graph needs these inputs before it can select its authored pose.
+
+Target registrations select vertical-speed callback `14220edc0` and lava callback `14220ef60`.
+The former reads motion component `f96968b0` and applies the native multiplier.
+The latter tests component `832a2768` with sparse generation checks.
+A private 672-context probe executes these callbacks, the three flag callbacks, and the complete native flag reader.
+It covers missing actor bindings, stale and recycled generations, motion signs, signed zero, and independent flag combinations.
+
+The Java adapter supplies current client motion and lava state.
+Comparisons cover the live actor contexts and exact scalar float bits.
+They do not establish native motion or fluid production, mount-offset timing, or complete visible parity.
+Equipment and unsupported-query fallback remain in place.
+
+The bundled camel test now resolves distinct standing and sitting poses.
+It uses the shared grouped-reference reader and the current licensed definition.
+The full four-project build passes 2,132 tests, with 152 optional skips.
+All 38 add-on patches replay. Offline tooling and patch metadata checks pass.
+
+A private BDS scene compares the previous add-on with the rebuilt add-on.
+The baseline selects the Java fallback and records no native camel submissions.
+The rebuilt client records 3,551 accepted samples and at least 3,521 native model submissions.
+The observer sees both sitting and standing flags, with one selected draw per accepted sample.
+Sitting observations are brief, so this run does not establish complete sit-down or stand-up timing.
+Both clients and BDS instances exit normally, and the original fixture script is restored.
+Raw recordings, screenshots and native assets remain private.

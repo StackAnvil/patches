@@ -1942,3 +1942,19 @@ These short replay slices verify client integration; they do not prove complete 
 All four projects build with 2,125 passing tests and 152 optional skips.
 Offline validation passes all 261 tooling tests and patch metadata checks.
 All four stack health reports contain no errors.
+
+## Grouped animation references
+
+The licensed 1.26.51.1 camel controller groups adult and baby animation aliases in one object.
+The previous reader rejects that valid object and prevents the whole graph from loading.
+Read every weighted alias in controller states and root animation entries.
+Keep declaration order and the existing total reference limit.
+
+The regression samples grouped root and controller references with conditional adult and baby weights.
+The bundled camel test uses the actual licensed controller through the ordinary world appearance resolver.
+These tests do not establish native evaluation order for object members with side effects.
+
+The grouped-reference regression and bundled camel standing/sitting tests pass.
+The complete dependency build passes 2,132 tests, with 152 optional skips.
+A private client comparison confirms native camel model submissions after the parser and query bindings are corrected together.
+The world actor patch records that runtime check and its limits.

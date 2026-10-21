@@ -1,4 +1,4 @@
-From 680b565c26b416877047a7eece5102cfff11a0d6 Mon Sep 17 00:00:00 2001
+From 5a4114655d989f2c206897a0cad0533d0d043746 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -45,11 +45,21 @@ Bind only remote Java players with native actor state. Preserve float
 position subtraction and use the existing translated swing state. These
 checks establish the body calculation and client binding, not full
 network interpolation, swing timing or visible native scene parity.
+
+Read every weighted alias in an animation-reference object. The licensed
+1.26.51.1 camel controller groups adult and baby animation aliases in a
+single object; rejecting objects with multiple members prevents its
+whole graph from loading. Apply the same reader to controller states
+and root animation entries, retaining declaration order and the existing
+aggregate reference bound. The grouped-reference regression covers both
+paths and conditional adult/baby weights without copied native assets.
+This does not establish native JSON object evaluation order for
+side-effecting weights.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
  .../bedrock/ViaFabricPlusBedrock.java         |   41 +
- .../appearance/BedrockActorAnimation.java     | 1085 +++++++++++++++++
+ .../appearance/BedrockActorAnimation.java     | 1086 +++++++++++++++++
  .../bedrock/appearance/BedrockActorScale.java |   33 +
  .../appearance/BedrockActorVisibility.java    |  110 ++
  .../appearance/BedrockAnimationParticle.java  |   70 ++
@@ -159,7 +169,7 @@ network interpolation, swing timing or visible native scene parity.
  .../licenses/vgmstream.txt                    |   23 +
  .../shaders/core/bedrock_particle.fsh         |   52 +
  .../viafabricplus-bedrock.mixins.json         |   19 +-
- .../appearance/BedrockActorAnimationTest.java |  678 ++++++++++
+ .../appearance/BedrockActorAnimationTest.java |  699 +++++++++++
  .../BedrockActorRenderSelectionTest.java      |   71 ++
  .../appearance/BedrockActorScaleTest.java     |   77 ++
  .../BedrockActorVisibilityTest.java           |  142 +++
@@ -228,7 +238,7 @@ network interpolation, swing timing or visible native scene parity.
  .../render/BedrockPlayerModelTest.java        |  104 ++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 182 files changed, 22434 insertions(+), 15 deletions(-)
+ 182 files changed, 22456 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibility.java
@@ -506,10 +516,10 @@ index bf2899a..3c2c94f 100644
          this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 new file mode 100644
-index 0000000..89c97d1
+index 0000000..ad9c257
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-@@ -0,0 +1,1085 @@
+@@ -0,0 +1,1086 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1577,12 +1587,13 @@ index 0000000..89c97d1
 +                result.add(
 +                        new Reference(element.getAsString(), BedrockMolang.Program.parse(null, 1)));
 +            else {
-+                if (element.getAsJsonObject().size() != 1)
++                if (element.getAsJsonObject().isEmpty())
 +                    throw new IOException("Invalid actor animation reference");
-+                final var entry = element.getAsJsonObject().entrySet().iterator().next();
-+                result.add(
-+                        new Reference(
-+                                entry.getKey(), BedrockMolang.Program.parse(entry.getValue(), 1)));
++                for (final var entry : element.getAsJsonObject().entrySet()) {
++                    result.add(
++                            new Reference(
++                                    entry.getKey(), BedrockMolang.Program.parse(entry.getValue(), 1)));
++                }
 +            }
 +        }
 +        if (result.size() > 256) throw new IOException("Too many actor animation references");
@@ -13087,10 +13098,10 @@ index de445f7..346c44f 100644
      "defaultRequire": 1
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java
 new file mode 100644
-index 0000000..8de1ca1
+index 0000000..8c57841
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java
-@@ -0,0 +1,678 @@
+@@ -0,0 +1,699 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -13221,6 +13232,27 @@ index 0000000..8de1ca1
 +        assertEquals(2, first.rotation().x());
 +        assertEquals(3, actor.sample(0.5F, frame).get("arm").rotation().x());
 +        assertEquals(2, graph.playback().sample(0, frame).get("arm").rotation().x());
++    }
++
++    @Test
++    void evaluatesEveryWeightedAnimationInGroupedRootAndControllerReferences() throws IOException {
++        final var graph = BedrockActorAnimation.read(json("""
++                {"animations":{"root":"controller.animation.root","a":"animation.a",
++                  "b":"animation.b","extra":"animation.extra"},
++                 "scripts":{"animate":[{"root":1,"extra":0.25}]}}
++                """), Map.of(), json("""
++                {"animation.a":{"loop":true,"bones":{"arm":{"position":[4,0,0]}}},
++                 "animation.b":{"loop":true,"bones":{"arm":{"position":[0,12,0]}}},
++                 "animation.extra":{"loop":true,"bones":{"arm":{"position":[0,0,8]}}}}
++                """), json("""
++                {"controller.animation.root":{"states":{"default":{"animations":[
++                  {"a":"query.is_baby ? 0 : 0.5","b":"query.is_baby ? 1 : 0.25"}]}}}}
++                """), "1.10.0");
++        final var actor = graph.playback();
++        final var adult = actor.sample(0, new BedrockActorAnimation.Frame(Map.of("is_baby", false), Map.of()));
++        final var baby = actor.sample(.05F, new BedrockActorAnimation.Frame(Map.of("is_baby", true), Map.of()));
++        assertEquals(new BedrockBoneAnimation.Vector(2, 3, 2), adult.get("arm").position());
++        assertEquals(new BedrockBoneAnimation.Vector(0, 12, 2), baby.get("arm").position());
 +    }
 +
 +    @Test
