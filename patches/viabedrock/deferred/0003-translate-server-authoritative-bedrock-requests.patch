@@ -1,4 +1,4 @@
-From 77d802e25334be40e5aeecaa147a3c4820503ff6 Mon Sep 17 00:00:00 2001
+From d0b4bd393eb65696b557d9aa7024f455850255a3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -299,6 +299,16 @@ Packet-handler tests cover signed boundaries, Java projection, unknown
 properties and closing; snapshot and rejection tests cover independent
 state. Native cooking scenes and direct/ViaProxy native comparisons
 remain incomplete; this state retention does not establish UI parity.
+
+Reconcile authored count-one requests from the slots reported by the server.
+The target protocol-2193 Social response can acknowledge only an empty
+cursor without confirming the predicted transfer. Restore omitted
+predictions only while their owner, opening generation, item revision and
+contents still match. Preserve newer authoritative updates and reject late
+responses to reused menus. Retire clicks queued against restored contents.
+Keep ordinary Java request prediction unchanged. Six regression cases
+cover complete and partial acknowledgments, inventory aliases, lifecycle
+reuse and newer state alongside the existing inventory tests.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   65 +-
@@ -306,7 +316,7 @@ remain incomplete; this state retention does not establish UI parity.
  .../model/container/ContainerOpenContext.java |   19 +
  .../api/model/container/HorseContainer.java   |  239 +++
  .../NativeContainerActionBackend.java         |  142 ++
- .../NativeContainerActionSession.java         |  132 ++
+ .../NativeContainerActionSession.java         |  133 ++
  .../NativeContainerAutoPlacement.java         |  150 ++
  .../model/container/block/AnvilContainer.java |  178 ++
  .../container/block/BeaconContainer.java      |  238 +++
@@ -345,8 +355,8 @@ remain incomplete; this state retention does not establish UI parity.
  .../storage/CraftedItemSynchronization.java   |  125 ++
  .../protocol/storage/CraftingDataTracker.java |  206 +++
  .../storage/InventoryRequestRecovery.java     |   80 +
- .../storage/InventoryRequestStorage.java      |  106 ++
- .../storage/InventoryRequestTracker.java      |  548 ++++++
+ .../storage/InventoryRequestStorage.java      |  185 ++
+ .../storage/InventoryRequestTracker.java      |  555 ++++++
  .../protocol/storage/InventoryTracker.java    |  239 ++-
  .../protocol/types/item/BedrockItemType.java  |   12 +-
  .../data/bedrock/item_stack_sizes.json        |  267 +++
@@ -381,8 +391,9 @@ remain incomplete; this state retention does not establish UI parity.
  .../storage/InventoryTrackerTest.java         |  124 ++
  .../NativeAutoPlacementRecoveryTest.java      |  120 ++
  .../NativeContainerActionBackendTest.java     |   95 ++
+ .../storage/NativeContainerResponseTest.java  |  215 +++
  .../storage/StonecutterRecipePacketTest.java  |   53 +
- 82 files changed, 13425 insertions(+), 804 deletions(-)
+ 83 files changed, 13727 insertions(+), 804 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionBackend.java
@@ -438,6 +449,7 @@ remain incomplete; this state retention does not establish UI parity.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryTrackerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeAutoPlacementRecoveryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeContainerActionBackendTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeContainerResponseTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/StonecutterRecipePacketTest.java
 
 diff --git a/build.gradle b/build.gradle
@@ -2165,10 +2177,10 @@ index 000000000..37c62256a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSession.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSession.java
 new file mode 100644
-index 000000000..229c14435
+index 000000000..1cddc51b5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSession.java
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,133 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2287,7 +2299,8 @@ index 000000000..229c14435
 +                            request,
 +                            revision,
 +                            previousCursor,
-+                            List.of(previousSource, previousPlayer)));
++                            List.of(previousSource, previousPlayer),
++                            InventoryRequestStorage.ResponsePolicy.REPORTED_SLOTS));
 +            sender.accept(request);
 +        } catch (final RuntimeException error) {
 +            requests.removeRequest(request.requestId());
@@ -10294,10 +10307,10 @@ index 000000000..afdbf134f
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestStorage.java
 new file mode 100644
-index 000000000..5ad5c2003
+index 000000000..c5194ebdd
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestStorage.java
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,185 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -10322,9 +10335,14 @@ index 000000000..5ad5c2003
 +import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseInfo;
 +
 +import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.HashSet;
 +import java.util.List;
++import java.util.Map;
++import java.util.Set;
 +
 +public final class InventoryRequestStorage {
 +
@@ -10332,14 +10350,22 @@ index 000000000..5ad5c2003
 +    private final int javaRevision;
 +    private final Container prevCursorContainer;
 +    private final List<Container> prevContainers;
++    private final ResponsePolicy responsePolicy;
 +    private Prediction prediction;
 +
 +    public InventoryRequestStorage(final ItemStackRequestInfo requestInfo, final int javaRevision,
 +                                   final Container prevCursorContainer, final List<Container> prevContainers) {
++        this(requestInfo, javaRevision, prevCursorContainer, prevContainers, ResponsePolicy.PREDICTED_SLOTS);
++    }
++
++    public InventoryRequestStorage(final ItemStackRequestInfo requestInfo, final int javaRevision,
++                                   final Container prevCursorContainer, final List<Container> prevContainers,
++                                   final ResponsePolicy responsePolicy) {
 +        this.requestInfo = requestInfo;
 +        this.javaRevision = javaRevision;
 +        this.prevCursorContainer = prevCursorContainer;
 +        this.prevContainers = List.copyOf(prevContainers);
++        this.responsePolicy = java.util.Objects.requireNonNull(responsePolicy, "responsePolicy");
 +    }
 +
 +    public ItemStackRequestInfo requestInfo() {
@@ -10362,7 +10388,7 @@ index 000000000..5ad5c2003
 +        if (this.prediction != null) {
 +            throw new IllegalStateException("Inventory request prediction was already captured");
 +        }
-+        final List<Container> containers = new ArrayList<>(this.prevContainers.size());
++        final List<ContainerPrediction> containers = new ArrayList<>(this.prevContainers.size());
 +        for (final Container previous : this.prevContainers) {
 +            Container current = resolveSnapshotContainer(tracker, previous);
 +            if (current == null) {
@@ -10372,25 +10398,83 @@ index 000000000..5ad5c2003
 +            if (current instanceof InventoryContainer) {
 +                current = tracker.getInventoryContainer();
 +            }
-+            containers.add(current.copy());
++            containers.add(new ContainerPrediction(current, previous, current.copy()));
 +        }
-+        this.prediction = new Prediction(tracker.getHudContainer().copy(), List.copyOf(containers));
++        this.prediction = new Prediction(
++                new ContainerPrediction(tracker.getHudContainer(), this.prevCursorContainer, tracker.getHudContainer().copy()),
++                List.copyOf(containers), tracker.getCurrentContainer(), tracker.currentContainerGeneration());
 +    }
 +
 +    public BedrockItem predictedItem(final Container target, final int slot) {
 +        if (this.prediction == null) {
 +            throw new IllegalStateException("Inventory request prediction has not been captured");
 +        }
-+        if (this.prediction.cursor().containerId() == target.containerId()) {
-+            return this.prediction.cursor().getItem(slot);
++        if (this.prediction.cursor().after().containerId() == target.containerId()) {
++            return this.prediction.cursor().after().getItem(slot);
 +        }
-+        for (final Container container : this.prediction.containers()) {
++        for (final ContainerPrediction snapshot : this.prediction.containers()) {
++            final Container container = snapshot.after();
 +            if (container.containerId() == target.containerId()
 +                    && container.getFullContainerName(slot).equals(target.getFullContainerName(slot))) {
 +                return container.getItem(slot);
 +            }
 +        }
 +        return null;
++    }
++
++    boolean acceptsResponse(final InventoryTracker tracker, final Container container) {
++        if (this.responsePolicy == ResponsePolicy.PREDICTED_SLOTS) {
++            return true;
++        }
++        if (this.prediction == null) {
++            throw new IllegalStateException("Inventory request prediction has not been captured");
++        }
++        return container != tracker.getCurrentContainer() || container == tracker.getInventoryContainer()
++                || container == this.prediction.menu() && tracker.currentContainerGeneration() == this.prediction.menuGeneration();
++    }
++
++    Set<Container> restoreUnconfirmedPredictions(final InventoryTracker tracker, final ItemStackResponseInfo response) {
++        if (this.responsePolicy == ResponsePolicy.PREDICTED_SLOTS) {
++            return Set.of();
++        }
++        if (this.prediction == null) {
++            throw new IllegalStateException("Inventory request prediction has not been captured");
++        }
++        final Map<Container, Set<Integer>> reported = new HashMap<>();
++        for (final var containerInfo : response.containers()) {
++            for (final var slotInfo : containerInfo.slots()) {
++                final int requestSlot = Byte.toUnsignedInt(slotInfo.slot());
++                final Container container = tracker.getContainerFromName(containerInfo.containerName(), requestSlot);
++                if (container != null && container.ownsBedrockSlot(containerInfo.containerName(), requestSlot)
++                        && this.acceptsResponse(tracker, container)) {
++                    reported.computeIfAbsent(container, key -> new HashSet<>()).add(container.slotFromRequest(requestSlot));
++                }
++            }
++        }
++        final Set<Container> restored = new HashSet<>();
++        this.restoreUnconfirmedSlots(tracker, this.prediction.cursor(), reported, restored);
++        for (final ContainerPrediction snapshot : this.prediction.containers()) {
++            this.restoreUnconfirmedSlots(tracker, snapshot, reported, restored);
++        }
++        return restored;
++    }
++
++    private void restoreUnconfirmedSlots(final InventoryTracker tracker, final ContainerPrediction snapshot,
++                                        final Map<Container, Set<Integer>> reported, final Set<Container> restored) {
++        final Container owner = snapshot.owner();
++        if (resolveSnapshotContainer(tracker, owner) != owner || !this.acceptsResponse(tracker, owner)
++                || owner.serverRevision() != snapshot.before().serverRevision()) {
++            return;
++        }
++        final Set<Integer> acknowledged = reported.getOrDefault(owner, Set.of());
++        for (int slot = 0; slot < owner.size(); slot++) {
++            final BedrockItem before = snapshot.before().getItem(slot);
++            final BedrockItem after = snapshot.after().getItem(slot);
++            if (!acknowledged.contains(slot) && !before.equals(after) && owner.getItem(slot).equals(after)) {
++                owner.setItem(slot, before.copy());
++                restored.add(owner);
++            }
++        }
 +    }
 +
 +    static Container resolveSnapshotContainer(final InventoryTracker tracker, final Container snapshot) {
@@ -10401,15 +10485,23 @@ index 000000000..5ad5c2003
 +        return current;
 +    }
 +
-+    private record Prediction(Container cursor, List<Container> containers) { }
++    public enum ResponsePolicy {
++        PREDICTED_SLOTS,
++        REPORTED_SLOTS
++    }
++
++    private record ContainerPrediction(Container owner, Container before, Container after) { }
++
++    private record Prediction(ContainerPrediction cursor, List<ContainerPrediction> containers,
++                              Container menu, long menuGeneration) { }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
 new file mode 100644
-index 000000000..11ce9ee64
+index 000000000..0c922194f
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
-@@ -0,0 +1,548 @@
+@@ -0,0 +1,555 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -10781,7 +10873,8 @@ index 000000000..11ce9ee64
 +        changed.add(tracker.getInventoryContainer());
 +        for (final Container snapshot : request.prevContainers()) {
 +            final Container container = InventoryRequestStorage.resolveSnapshotContainer(tracker, snapshot);
-+            if (container != null && container.serverRevision() == snapshot.serverRevision()) {
++            if (container != null && request.acceptsResponse(tracker, container)
++                    && container.serverRevision() == snapshot.serverRevision()) {
 +                container.setItems(snapshot.getItems());
 +                changed.add(container);
 +            }
@@ -10792,12 +10885,18 @@ index 000000000..11ce9ee64
 +    Set<Container> applySuccessfulResponse(final ItemStackResponseInfo response,
 +                                           final InventoryRequestStorage request) {
 +        final InventoryTracker tracker = this.user().get(InventoryTracker.class);
-+        final Set<Container> changed = new HashSet<>();
++        final Set<Container> changed = new HashSet<>(request.restoreUnconfirmedPredictions(tracker, response));
++        if (!changed.isEmpty()) {
++            this.clearQueuedInteractions();
++        }
 +        for (ItemStackResponseContainerInfo containerInfo : response.containers()) {
 +            for (ItemStackResponseSlotInfo slotInfo : containerInfo.slots()) {
 +                final int requestSlot = Byte.toUnsignedInt(slotInfo.slot());
 +                final Container container =
 +                        tracker.getContainerFromName(containerInfo.containerName(), requestSlot);
++                if (container != null && !request.acceptsResponse(tracker, container)) {
++                    continue;
++                }
 +                if (container == null
 +                        || !container.ownsBedrockSlot(containerInfo.containerName(), requestSlot)) {
 +                    ViaBedrock.getPlatform()
@@ -17119,6 +17218,227 @@ index 000000000..e8458a8f9
 +                      "button_mappings":[{"from_button_id":"button.menu_select", "to_button_id":"button.container_auto_place_one", "mapping_type":"pressed"}]}}]}}
 +                }}
 +                """).getAsJsonObject());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeContainerResponseTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeContainerResponseTest.java
+new file mode 100644
+index 000000000..e05c96acd
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeContainerResponseTest.java
+@@ -0,0 +1,215 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.model.container.ChestContainer;
++import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.api.model.container.NativeContainerActionSession;
++import net.raphimc.viabedrock.api.model.container.NativeContainerAutoPlacement;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackNetResult;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseContainerInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseSlotInfo;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import org.junit.jupiter.api.Test;
++import org.mockito.MockedStatic;
++
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class NativeContainerResponseTest {
++
++    @Test
++    void cursorOnlySuccessDoesNotConfirmThePredictedTransfer() {
++        try (var fixture = new Fixture()) {
++            final var changed = fixture.respond(List.of(ack(ContainerEnumName.CursorContainer, 0, 0, 0)));
++            assertEquals(4, fixture.menu.getItem(9).amount());
++            assertEquals(1008, fixture.menu.getItem(9).netId());
++            assertTrue(fixture.inventory.getInventoryContainer().getItem(0).isEmpty());
++            assertTrue(fixture.inventory.getHudContainer().getItem(0).isEmpty());
++            assertTrue(changed.contains(fixture.menu));
++        }
++    }
++
++    @Test
++    void completeResponsesRetainTheTransferAndUseAcknowledgedNetworkIds() {
++        for (final ContainerEnumName inventoryName : List.of(ContainerEnumName.CombinedHotbarAndInventoryContainer,
++                ContainerEnumName.HotbarContainer, ContainerEnumName.InventoryContainer)) {
++            try (var fixture = new Fixture()) {
++                fixture.respond(List.of(ack(ContainerEnumName.LevelEntityContainer, 9, 3, 1008),
++                        ack(inventoryName, 0, 1, 2001)));
++                assertEquals(3, fixture.menu.getItem(9).amount());
++                assertEquals(1, fixture.inventory.getInventoryContainer().getItem(0).amount());
++                assertEquals(2001, fixture.inventory.getInventoryContainer().getItem(0).netId());
++                assertEquals(4, fixture.inventory.getHudContainer().getItem(0).amount());
++            }
++        }
++    }
++
++    @Test
++    void partialResponsesRetainOnlyExplicitlyAcknowledgedSlotChanges() {
++        for (final boolean sourceAcknowledged : new boolean[] {false, true}) {
++            try (var fixture = new Fixture()) {
++                fixture.respond(List.of(sourceAcknowledged
++                        ? ack(ContainerEnumName.LevelEntityContainer, 9, 3, 1008)
++                        : ack(ContainerEnumName.CombinedHotbarAndInventoryContainer, 0, 1, 2001)));
++                assertEquals(sourceAcknowledged ? 3 : 4, fixture.menu.getItem(9).amount());
++                assertEquals(sourceAcknowledged ? 0 : 1, fixture.inventory.getInventoryContainer().getItem(0).amount());
++                assertEquals(4, fixture.inventory.getHudContainer().getItem(0).amount());
++            }
++        }
++    }
++
++    @Test
++    void unconfirmedTransfersDiscardClicksQueuedAgainstThePredictedContents() {
++        try (var fixture = new Fixture()) {
++            final var applied = new AtomicInteger();
++            assertTrue(fixture.requests.queueInteraction(new InventoryRequestTracker.QueuedInteraction() {
++                @Override
++                public Container container() {
++                    return fixture.menu;
++                }
++
++                @Override
++                public boolean apply() {
++                    applied.incrementAndGet();
++                    return true;
++                }
++            }));
++            fixture.respond(List.of(ack(ContainerEnumName.CursorContainer, 0, 0, 0)));
++            fixture.requests.removeRequest(fixture.requestId);
++            fixture.requests.drainQueuedInteractions();
++            assertEquals(0, applied.get());
++            assertEquals(4, fixture.menu.getItem(9).amount());
++        }
++    }
++
++    @Test
++    void omittedSlotsKeepNewerAuthoritativeContentsAndUnrelatedCells() {
++        try (var fixture = new Fixture()) {
++            fixture.requests.setPredictingClick(true);
++            fixture.menu.setItem(9, item(7, 3001));
++            fixture.menu.markServerUpdate();
++            fixture.inventory.getInventoryContainer().setItem(0, item(2, 3002));
++            fixture.inventory.getInventoryContainer().markServerUpdate();
++            fixture.requests.setPredictingClick(false);
++            fixture.respond(List.of(ack(ContainerEnumName.CursorContainer, 0, 0, 0)));
++            assertEquals(7, fixture.menu.getItem(9).amount());
++            assertEquals(3001, fixture.menu.getItem(9).netId());
++            assertEquals(2, fixture.inventory.getInventoryContainer().getItem(0).amount());
++            assertEquals(3002, fixture.inventory.getInventoryContainer().getItem(0).netId());
++            assertEquals(6, fixture.menu.getItem(17).amount());
++        }
++    }
++
++    @Test
++    void staleMenuResponsesCannotReplaceReusedMenusEvenWhenTheSameObjectReopens() {
++        for (final boolean rejected : new boolean[] {false, true}) {
++            for (final boolean sameObject : new boolean[] {false, true}) {
++                try (var fixture = new Fixture()) {
++                    fixture.inventory.setCurrentContainerClosed(false);
++                    final var reopened = sameObject ? fixture.menu : new ChestContainer(fixture.user, (byte) 6, null, null, 27);
++                    fixture.inventory.setCurrentContainer(reopened);
++                    fixture.requests.setPredictingClick(true);
++                    reopened.setItem(9, item(8, 3003));
++                    fixture.requests.setPredictingClick(false);
++                    if (rejected) {
++                        fixture.requests.setPredictingClick(true);
++                        fixture.requests.restoreRejectedRequest(fixture.requests.getRequest(fixture.requestId));
++                        fixture.requests.setPredictingClick(false);
++                    } else {
++                        fixture.respond(List.of(ack(ContainerEnumName.LevelEntityContainer, 9, 3, 1008)));
++                    }
++                    assertEquals(8, reopened.getItem(9).amount());
++                    assertEquals(3003, reopened.getItem(9).netId());
++                    assertTrue(fixture.inventory.getInventoryContainer().getItem(0).isEmpty());
++                }
++            }
++        }
++    }
++
++    private static ItemStackResponseContainerInfo ack(final ContainerEnumName name, final int slot, final int count, final int networkId) {
++        return new ItemStackResponseContainerInfo(new FullContainerName(name, null),
++                List.of(new ItemStackResponseSlotInfo((byte) slot, (byte) slot, (byte) count, networkId, "", null, 0)));
++    }
++
++    private static BedrockItem item(final int count, final int networkId) {
++        final var item = new BedrockItem(1);
++        item.setAmount(count);
++        item.setNetId(networkId);
++        return item;
++    }
++
++    private static final class Fixture implements AutoCloseable {
++
++        private final UserConnection user = mock(UserConnection.class);
++        private final InventoryTracker inventory = new InventoryTracker(this.user);
++        private final InventoryRequestTracker requests = new InventoryRequestTracker(this.user);
++        private final ChestContainer menu = new ChestContainer(this.user, (byte) 6, null, null, 27);
++        private final MockedStatic<PacketFactory> packets = mockStatic(PacketFactory.class);
++        private int requestId;
++
++        private Fixture() {
++            final Map<Class<?>, Object> stores = new HashMap<>();
++            final var game = mock(GameSessionStorage.class);
++            final var items = mock(ItemRewriter.class);
++            stores.put(InventoryTracker.class, this.inventory);
++            stores.put(InventoryRequestTracker.class, this.requests);
++            stores.put(GameSessionStorage.class, game);
++            stores.put(ItemRewriter.class, items);
++            when(this.user.get(any())).thenAnswer(call -> stores.get(call.getArgument(0)));
++            when(game.isInventoryServerAuthoritative()).thenReturn(true);
++            when(items.maxStackSize(any())).thenReturn(64);
++            this.inventory.setCurrentContainer(this.menu);
++            this.requests.setPredictingClick(true);
++            this.menu.setItem(9, item(4, 1008));
++            this.menu.setItem(17, item(6, 1009));
++            this.inventory.getHudContainer().setItem(0, item(4, 5001));
++            this.requests.setPredictingClick(false);
++            this.packets.when(() -> PacketFactory.sendBedrockInventoryRequest(eq(this.user), any())).thenAnswer(call -> {
++                final ItemStackRequestInfo[] sent = call.getArgument(1);
++                assertEquals(1, sent.length);
++                this.requestId = sent[0].requestId();
++                this.requests.getRequest(this.requestId).capturePrediction(this.inventory);
++                return null;
++            });
++            final var session = new NativeContainerActionSession(new NativeContainerAutoPlacement.Binding(
++                    this.menu, this.inventory.currentContainerGeneration(), 8), 6, () -> Set.of(9));
++            assertTrue(session.autoPlaceOne(this.user, 6, 8, 0, 9));
++            assertEquals(3, this.menu.getItem(9).amount());
++            assertEquals(1, this.inventory.getInventoryContainer().getItem(0).amount());
++        }
++
++        private Set<Container> respond(final List<ItemStackResponseContainerInfo> containers) {
++            this.requests.setPredictingClick(true);
++            try {
++                return this.requests.applySuccessfulResponse(new ItemStackResponseInfo(ItemStackNetResult.Success,
++                        this.requestId, containers), this.requests.getRequest(this.requestId));
++            } finally {
++                this.requests.setPredictingClick(false);
++            }
++        }
++
++        @Override
++        public void close() {
++            this.packets.close();
++        }
++
 +    }
 +
 +}

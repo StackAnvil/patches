@@ -305,3 +305,45 @@ The combined private core gate passes 1,015 cases with 30 optional skips.
 Stateful tests cover source count one, stale or reused menus, forbidden destinations, unchanged cursor, send failure and response recovery.
 Legacy backend rejection leaves ordinary Java clicks available.
 Controller navigation and full native keyboard interaction parity remain outside this change.
+
+## Reported-slot reconciliation for authored actions
+
+The recorded protocol-2193 Social interaction returns a successful response containing only an empty cursor.
+That response does not confirm the predicted source or destination transfer.
+Core previously retained both predictions, which can remove a menu icon without an accepted transfer.
+
+Authored count-one requests now use a reported-slot response policy.
+Core restores omitted predicted changes before applying the slots that the response actually reports.
+Restoration requires the same container owner, opening generation, server item revision, and still-predicted item contents.
+Newer authoritative contents remain intact. Inventory response aliases resolve to their real backing slots.
+Successful responses and rejection rollback from an earlier opening cannot overwrite a reopened menu, including the same object with a new generation.
+Restored predictions also retire queued clicks that depended on their contents.
+Ordinary Java requests retain their existing prediction policy.
+
+The matching [protocol 2193 response schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/item-stack-response-packet/)
+and [nearby preview container schema](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/types/item-stack-response-container-info/)
+describe the response and named slot records. No packet ID, enum value, or wire format changes in this fix.
+The missing-transfer case comes from the recorded target-server interaction above, rather than a new native-client comparison.
+
+Six regression cases execute the genuine authored-action session, prediction storage, and response reconciler.
+They cover cursor-only, complete and partial responses, inventory aliases, newer server contents, queued clicks, and reused menu generations.
+The suite passes alongside the existing request-tracker and native-action tests: 16 cases, no skips or failures.
+Main and test Checkstyle checks pass.
+Working Social navigation, native serializer behavior, and fresh direct and ViaProxy menu comparisons remain open.
+
+The full 101-patch stack replays after folding this change into its owning inventory patch.
+The converter and complete core build pass, including all Checkstyle tasks.
+Core runs 1,205 test cases: 1,175 pass, 30 optional cases skip, and none fail.
+
+The complete downstream build also passes: 18 converter tests, 816 add-on tests, and four ViaProxy tests pass.
+The add-on skips 120 optional cases. The final rejection-generation control passes before rebuilding these matching artifacts.
+
+A private local run uses the official BDS 1.26.51.1 archive with SHA-256
+`ad91d3b824e51ea50b5bb601c295cbd8f543a29b14315c2ad89ff27311e2d860`.
+The client reaches spawn, remains connected for 20 seconds, and reconnects successfully through ViaProxy.
+The chest-transfer fixture fails because the chest screen does not open.
+The same run reports repeated cached-chunk NBT decode errors before the inventory interaction.
+This run does not establish native menu behavior or transfer acceptance. Its processes and private display stop cleanly.
+An earlier attempt with the default BDS 1.26.45.1 installation fails protocol detection and supplies no target-version evidence.
+The home filesystem also refuses the initial private copy at its five-GiB reserve.
+The target-version run uses a private temporary checkout on a filesystem with sufficient free space and keeps that reserve check enabled.
