@@ -5,6 +5,7 @@ import { root } from "../model.ts";
 import { geyserCaseIds, geyserNegativeControlIds } from "./geyser.ts";
 import { complexGameplayCaseIds } from "./ranged-observation.ts";
 import type { IncomingProjectileObservation } from "./projectile-observation.ts";
+import { chestViewport, containerPoint, type ContainerWindow } from "./container-viewport.ts";
 
 const prefix = "[ViaBedrock Gameplay Probe] ";
 
@@ -275,7 +276,7 @@ async function respawnJavaClient(ui: Ui): Promise<void> {
 
 async function clickGui(
   ui: Ui,
-  window: { width: number; height: number },
+  window: ContainerWindow,
   imageWidth: number,
   imageHeight: number,
   offsetX: number,
@@ -283,14 +284,12 @@ async function clickGui(
   button: "left" | "right" = "left",
   doubleClick = false,
 ): Promise<void> {
-  const scale = 2;
-  const left = (window.width - imageWidth * scale) / 2;
-  const top = (window.height - imageHeight * scale) / 2;
+  const [x, y] = containerPoint(window, imageWidth, imageHeight, offsetX, offsetY);
   await ui([
     "ui",
     doubleClick ? "double-click" : "click",
-    String((left + offsetX * scale) / window.width),
-    String((top + offsetY * scale) / window.height),
+    String(x),
+    String(y),
     button,
     "--client",
     "java",
@@ -487,41 +486,8 @@ async function rejectIneligibleOffhandBlock(ui: Ui): Promise<void> {
     );
 }
 
-async function openChest(ui: Ui, sneak = false): Promise<{ width: number; height: number }> {
+async function openChest(ui: Ui, sneak = false): Promise<ContainerWindow> {
   const window = await javaWindow(ui);
-  const left = (window.width - 176 * 2) / 2;
-  const top = (window.height - 168 * 2) / 2;
-  const screenVisible = async () => {
-    // Check blank parts of both the header and footer. The world's color at one
-    // pixel can match the panel, especially when looking at a chest boat.
-    const pixels = await Promise.all(
-      (
-        [
-          [10, 15],
-          [150, 15],
-          [10, 162],
-          [150, 162],
-        ] as const
-      ).map(async ([x, y]) =>
-        (
-          await ui([
-            "ui",
-            "pixel",
-            String((left + x * 2) / window.width),
-            String((top + y * 2) / window.height),
-            "--client",
-            "java",
-          ])
-        )
-          .trim()
-          .split(/\s+/)
-          .map(Number),
-      ),
-    );
-    return pixels.every(
-      (pixel) => pixel.length === 3 && pixel.every((channel) => Math.abs(channel - 198) <= 2),
-    );
-  };
   if (sneak) {
     await Promise.all([
       ui(["ui", "key-hold", "Shift_L", "1000", "--client", "java"]),
@@ -534,10 +500,16 @@ async function openChest(ui: Ui, sneak = false): Promise<{ width: number; height
     await uiMouse(ui, "right");
   }
   await Bun.sleep(500);
-  if (!(await screenVisible())) {
+  const viewport = await chestViewport(window, async (x, y) =>
+    (await ui(["ui", "pixel", String(x), String(y), "--client", "java"]))
+      .trim()
+      .split(/\s+/)
+      .map(Number),
+  );
+  if (!viewport) {
     throw new Error("The Java chest screen did not open after right click.");
   }
-  return window;
+  return viewport;
 }
 
 async function chestTransfer(ui: Ui, sneak = false, slots: readonly number[] = [0]): Promise<void> {
