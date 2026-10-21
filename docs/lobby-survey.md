@@ -48,8 +48,9 @@ A fresh local Java replay draws the advertisement's frame, remote image, text, a
 Escape closes it. The kits form draws six cards in four columns with readable labels and images.
 Clicking the third card sends form ID 2 with response index 2 in the recorded Bedrock packet.
 This verifies client dispatch through the authored scene, not public-server acceptance of that response.
-The replay's transport check passes. Its overall rendering check fails on skin geometry,
-model processing, and unresolved-resource checks; those findings remain open.
+The replay's transport check passes. Its initial rendering check fails on skin geometry,
+model processing, and unresolved-resource checks. The geometry follow-up below resolves
+the first two categories; unresolved mappings remain open.
 
 ## Changes verified from this survey
 
@@ -66,3 +67,9 @@ Regressions cover embedded ZIP signatures and corrupt payload bytes alongside th
 
 With the UI corrections, all four projects build successfully: 2,147 tests pass and 152 optional cases skip.
 All 102 core patches replay cleanly. Offline validation passes all 263 tooling tests and patch metadata checks.
+
+Three Enchanted skin records contain JSON null followed by a newline, rather than supplied geometry.
+The renderer now treats those values as absent geometry, and the replay inspector counts them correctly.
+Malformed non-null values still require successful installation. A fresh 130-second replay installs
+all 273 skins and 270 supplied geometry records with no geometry-parse warnings.
+Transport passes; rendering verification still fails on unresolved mappings.
