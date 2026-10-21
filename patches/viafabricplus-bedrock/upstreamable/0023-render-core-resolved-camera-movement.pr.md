@@ -200,3 +200,26 @@ The previous follow-capable add-on supplies three wall observations at X = 5.00 
 Its normal Java shutdown fails with the recorder file still open.
 Those observations confirm the expected missing collision behavior, but the control recording has an incomplete lifecycle.
 They do not establish a complete passing negative control or official-client visual parity.
+
+After explicit approval, ownership checks preceded the forced stop of the hung control client.
+Its launcher exited, and its owned display and audio helpers stopped normally.
+The control recording remains incomplete.
+
+## Inline spline playback
+
+The add-on negotiates the shared spline channel and supplies accepted programs to the free-camera runtime.
+Core advances active and inactive free cameras before the existing position blend.
+The resulting pose reaches shake, culling, and listener extraction through the current camera adapter.
+Disconnect releases all spline state.
+
+Private core comparisons cover 220 native curve evaluations and 84 composed native playback samples.
+These comparisons cover numeric kernels and authored component inputs.
+They do not establish packet decoding, full native system ordering, or official-client visible parity.
+Named spline definitions and snapshots after completion remain incomplete.
+No new live spline recording is claimed.
+
+The final inline-spline build replays all 102 core patches and 38 add-on patches.
+All four projects build successfully, and Checkstyle passes.
+Core has 1,226 passing tests and 32 optional skips.
+The add-on has 816 passing tests and 120 optional skips.
+The converter has 18 passing tests, and the proxy has four.

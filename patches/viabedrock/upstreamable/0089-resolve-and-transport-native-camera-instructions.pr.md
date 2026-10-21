@@ -400,3 +400,38 @@ The previous follow-capable add-on supplies three wall observations at X = 5.00 
 Its normal Java shutdown fails with the recorder file still open.
 Those observations confirm the expected missing collision behavior, but the control recording has an incomplete lifecycle.
 They do not establish a complete passing negative control or official-client visual parity.
+
+After explicit approval, ownership checks preceded the forced stop of the hung control client.
+Its launcher exited, and its owned display and audio helpers stopped normally.
+The control recording remains incomplete.
+
+## Inline spline playback
+
+Inline instructions now compile into shared spline programs and advance in each free-camera instance.
+Spline commands do not select a perspective or restart its blend.
+Inactive free cameras also advance.
+The negotiated `viabedrock:camera_spline` channel carries elapsed programs and preset epochs.
+Clear, preset replacement, and disconnect release playback state.
+
+The target executable supplies chord-weighted segment timing and endpoint tangents.
+Its factories require four Catmull-Rom points or three linear points, despite their lower-count error messages.
+Keyframe interpolation uses the earlier frame's easing and preserves authored frame order.
+Rotation channels interpolate radians directly before quaternion conversion.
+A frame with elapsed time greater than the duration retains the preceding pose without an endpoint snap.
+Arithmetic overflow stops playback before an invalid pose reaches rendering.
+
+Private probes execute 26 native factory cases, 220 curve evaluations, and 84 composed playback samples.
+The composed samples include instruction compilation, channel initialization, keyframe interpolation, curve evaluation, and final camera pose application.
+Host boundaries supply ECS storage lookup, marker insertion, allocation, free, CFG dispatch, memory copying, and CRT trigonometry.
+The Java comparisons preserve native float operation order, including Hermite sums with large coordinates and negative progress.
+
+These results do not establish packet decoding, preset activation queries, full ECS ordering, retirement component ownership, or official-client visible parity.
+Named spline definitions from packet 338 remain unhandled.
+Late subscriptions after spline completion cannot recover the prior rendered frame.
+Empty channels are rejected because their native playback behavior is not established.
+
+The final inline-spline build replays all 102 core patches and 38 add-on patches.
+All four projects build successfully, and Checkstyle passes.
+Core has 1,226 passing tests and 32 optional skips.
+The add-on has 816 passing tests and 120 optional skips.
+The converter has 18 passing tests, and the proxy has four.

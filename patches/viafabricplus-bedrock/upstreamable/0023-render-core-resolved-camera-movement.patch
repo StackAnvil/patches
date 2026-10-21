@@ -1,4 +1,4 @@
-From 6417d7f3416d8d756caada272fdaef58276565d2 Mon Sep 17 00:00:00 2001
+From 5f1d25f8bb916331b5268e580831b01e38982cd2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(camera): render core-resolved server camera movement
@@ -10,7 +10,7 @@ remaining elapsed state after late registration instead of restarting it.
 
 Fade merging and protocol decoding belong to core. The add-on only owns
 the client clock and overlay extraction, and releases state at disconnect.
-Splines and aim assistance remain separate requirements. Native screenshot comparison must establish overlay order.
+Named splines and aim assistance remain separate requirements. Native screenshot comparison must establish overlay order.
 
 Apply server FOV to the world camera before projection and culling setup.
 Use the shared core transition rules with the previous rendered projection
@@ -35,7 +35,7 @@ Restore settled targets for late subscriptions instead of synthesizing a
 new transition from an unknown old frame. Built-in first/third-person
 alignment currently uses Java's camera collision and distance rules, so
 activation works but those poses do not establish Bedrock camera parity.
-Audio/effects, follow cameras, splines and attached targets remain gaps.
+Native parity for audio/effects, follow cameras and attached targets remains incomplete.
 
 Subscribe to the independent tracking snapshot and update every free-camera
 instance before the active blend. Resolve target unique IDs and lifetimes
@@ -66,11 +66,18 @@ Native component and world comparisons establish tracer and follow-frame
 arithmetic. Ordinary block geometry and solid-state fallbacks still need
 per-type native validation; these bindings do not establish complete
 visible camera parity.
+
+Negotiate inline spline programs and supply them to the shared free-camera
+instance runtime. Render their positions and quaternion rotations through
+the existing blend, before shake, culling and listener extraction. Release
+program state at disconnect. Core owns curve construction, keyframe easing
+and frame evaluation. Named spline definitions and official-client visible
+parity still require separate verification.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |  32 ++++
+ .../bedrock/ViaFabricPlusBedrock.java         |  36 ++++
  .../bedrock/camera/BedrockCameraFade.java     |  40 ++++
  .../bedrock/camera/BedrockCameraFov.java      |  68 +++++++
- .../bedrock/camera/BedrockCameraPosition.java | 171 ++++++++++++++++++
+ .../bedrock/camera/BedrockCameraPosition.java | 176 ++++++++++++++++++
  .../bedrock/camera/BedrockCameraShake.java    |  49 +++++
  .../bedrock/camera/BedrockCameraWorld.java    |  95 ++++++++++
  .../bedrock/camera/CameraFadePayload.java     |  22 +++
@@ -78,6 +85,7 @@ visible camera parity.
  .../bedrock/camera/CameraFovPayload.java      |  22 +++
  .../bedrock/camera/CameraPositionPayload.java |  22 +++
  .../bedrock/camera/CameraShakePayload.java    |  26 +++
+ .../bedrock/camera/CameraSplinePayload.java   |  22 +++
  .../bedrock/camera/CameraTrackingPayload.java |  22 +++
  .../render/MixinBedrockCameraFade.java        |  23 +++
  .../render/MixinBedrockCameraFov.java         |  23 +++
@@ -89,7 +97,7 @@ visible camera parity.
  .../bedrock/settings/BedrockSettings.java     |   4 +
  .../viafabricplus-bedrock/lang/en_us.json     |   1 +
  .../viafabricplus-bedrock.mixins.json         |   8 +-
- 22 files changed, 802 insertions(+), 1 deletion(-)
+ 23 files changed, 833 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFade.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
@@ -100,6 +108,7 @@ visible camera parity.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFovPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraPositionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraShakePayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraSplinePayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraTrackingPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFade.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFov.java
@@ -109,10 +118,10 @@ visible camera parity.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockCameraListener.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 8e1bc3e..073bff9 100644
+index 8e1bc3e..77d6f9d 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -49,6 +49,16 @@ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
+@@ -49,6 +49,17 @@ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
  import com.viaversion.viafabricplus.bedrock.input.InputPermissionsPayload;
  import com.viaversion.viafabricplus.bedrock.hud.HudVisibilityPayload;
@@ -122,6 +131,7 @@ index 8e1bc3e..073bff9 100644
 +import com.viaversion.viafabricplus.bedrock.camera.CameraFovPayload;
 +import com.viaversion.viafabricplus.bedrock.camera.CameraPositionPayload;
 +import com.viaversion.viafabricplus.bedrock.camera.CameraTrackingPayload;
++import com.viaversion.viafabricplus.bedrock.camera.CameraSplinePayload;
 +import com.viaversion.viafabricplus.bedrock.camera.CameraFollowPayload;
 +import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraPosition;
 +import com.viaversion.viafabricplus.bedrock.camera.CameraShakePayload;
@@ -129,7 +139,7 @@ index 8e1bc3e..073bff9 100644
  import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
  import com.viaversion.viafabricplus.bedrock.hud.BedrockLocatorBar;
  import com.viaversion.viafabricplus.bedrock.hud.LocatorBarPayload;
-@@ -140,6 +150,28 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -140,6 +151,31 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
              ClientPlayNetworking.registerReceiver(LocatorBarPayload.TYPE,
                  (payload, context) -> BedrockLocatorBar.accept(listener.getConnection(), payload.snapshot())));
@@ -150,6 +160,9 @@ index 8e1bc3e..073bff9 100644
 +            (payload, context) -> BedrockCameraPosition.accept(payload.state()));
 +        PayloadTypeRegistry.clientboundPlay().register(CameraTrackingPayload.TYPE, CameraTrackingPayload.CODEC);
 +        ClientPlayNetworking.registerGlobalReceiver(CameraTrackingPayload.TYPE,
++            (payload, context) -> BedrockCameraPosition.accept(payload.state()));
++        PayloadTypeRegistry.clientboundPlay().register(CameraSplinePayload.TYPE, CameraSplinePayload.CODEC);
++        ClientPlayNetworking.registerGlobalReceiver(CameraSplinePayload.TYPE,
 +            (payload, context) -> BedrockCameraPosition.accept(payload.state()));
 +        PayloadTypeRegistry.clientboundPlay().register(CameraFollowPayload.TYPE, CameraFollowPayload.CODEC);
 +        ClientPlayNetworking.registerGlobalReceiver(CameraFollowPayload.TYPE,
@@ -280,10 +293,10 @@ index 0000000..49fab8a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
 new file mode 100644
-index 0000000..3f10919
+index 0000000..1b56e6b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,176 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -294,6 +307,7 @@ index 0000000..3f10919
 +import net.minecraft.client.CameraType;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
 +import net.raphimc.viabedrock.api.model.CameraTrackingState;
++import net.raphimc.viabedrock.api.model.CameraSplineState;
 +import net.raphimc.viabedrock.api.model.CameraFollowState;
 +import net.raphimc.viabedrock.api.model.CameraFollowRuntime;
 +import net.raphimc.viabedrock.api.model.CameraTrackingRuntime;
@@ -332,6 +346,10 @@ index 0000000..3f10919
 +    }
 +
 +    public static void accept(final CameraTrackingState snapshot) {
++        TRACKING.accept(snapshot);
++    }
++
++    public static void accept(final CameraSplineState snapshot) {
 +        TRACKING.accept(snapshot);
 +    }
 +
@@ -754,6 +772,34 @@ index 0000000..1538d1e
 +    public Type<CameraShakePayload> type() {
 +        return TYPE;
 +    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraSplinePayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraSplinePayload.java
+new file mode 100644
+index 0000000..0dd6805
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraSplinePayload.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.camera;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.CameraSplineState;
++
++public record CameraSplinePayload(CameraSplineState state) implements CustomPacketPayload {
++    public static final Type<CameraSplinePayload> TYPE = new Type<>(Identifier.parse(CameraSplineState.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, CameraSplinePayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> CameraSplineState.TYPE.write(buffer, payload.state),
++            buffer -> new CameraSplinePayload(CameraSplineState.TYPE.read(buffer)));
++
++    @Override
++    public Type<CameraSplinePayload> type() { return TYPE; }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraTrackingPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraTrackingPayload.java
 new file mode 100644
