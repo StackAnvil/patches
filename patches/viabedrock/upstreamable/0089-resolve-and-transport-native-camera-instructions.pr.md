@@ -308,7 +308,7 @@ Checkstyle, tooling checks, 261 offline regressions, and patch metadata checks p
 
 ## Shared avoidance updater
 
-`CameraAvoidance` provides the native avoidance math for the next renderer integration.
+`CameraAvoidance` supplies the avoidance math used by follow-camera frames.
 It casts eight offset corner rays, then applies ordered horizontal and vertical feelers on both sides.
 Weights apply only when a feeler improves the previous closest distance.
 The solver preserves immediate corner contraction, spring recovery, seat spring overrides, and the actor-state collapse branch.
@@ -323,8 +323,8 @@ They execute both native cache preparation paths, the complete updater, and opti
 Host boundaries supply world ray results and CRT math.
 Separate native constructor and assignment probes establish empty default feelers and the pinned follow profile's zero spring and 0.25-block minimum.
 
-The renderer does not yet call this solver. Follow cameras still lack world collision handling.
-Block-type mapping, fluid transitions, point-state sampling, and complete frame scheduling remain open.
+The follow runtime calls this solver after attachment and view offsets.
+Actual per-type world geometry, solid-state mapping, seat overrides, and complete frame scheduling still require native validation.
 These component comparisons do not establish rendered collision parity.
 
 The converter and replayed 102-patch core stack build successfully with matching resources.
@@ -340,22 +340,63 @@ Box intersections preserve the native squared-direction threshold, inclusive edg
 A ray that starts inside a box can hit its exit surface.
 A segment wholly inside the box has no surface hit.
 
-The caller supplies accepted camera bounds in world coordinates.
-The traversal does not implement fluid-material transitions or resolve block-specific geometry and filters.
-The renderer does not yet use this model.
+The caller supplies base and extra-layer blocks, material identities, pick policies, and world-space bounds.
+The tracer preserves native layer changes and material transitions.
+Fluid surfaces remain auxiliary results and do not stop the camera by themselves.
+Custom blocks require a nonempty collision envelope, then intersect their selection box.
+A disabled selection box produces no camera hit, even with collision enabled.
 
-Private probes execute 1,800 native box intersections and 506 native world rays.
-The comparisons cover all 2,688 sampled cells, hit positions, and hit faces.
+Private probes execute 1,800 native box intersections and 810 native world rays.
+The comparisons cover every base and extra-layer lookup, hit position, and hit face.
+They include 300 material-transition cases and four cases with distinct collision and selection bounds.
 They include negative coordinates, large coordinates, thin boxes, shared edges, denied blocks, and the 200-step limit.
 The probes execute native overlay lookup, air fallback, default filter dispatch, the common camera-bound wrapper, and custom block intersections.
 Host boundaries supply authored block lookup, collision envelopes, absent random offsets, world height checks, and the CRT security-cookie check.
-These comparisons exclude fluid transitions, actual registry geometry, block-specific overrides, point-collapse mapping, and rendered collision parity.
+These comparisons exclude actual registry geometry, block-specific overrides, native actor lookup, and rendered collision parity.
 
 A separate probe executes 108 native point-state cases.
 It establishes floored block lookup and the exact material-byte, type-flag, and cached-block-byte conditions.
-The meaning of those fields for actual block registrations remains unverified.
-The renderer therefore does not substitute Java occlusion for this predicate.
+Native cache preparation identifies the cached byte as solid rendering.
+The predicate also requires a motion-blocking material and the cube-shaped property.
+The add-on uses converted custom-block occlusion metadata and Java solid-render state as its current world mapping.
+Actual per-type parity of that mapping remains unverified.
 
-The replayed 102-patch core stack and converter build successfully.
-Core runs 1,247 tests: 1,215 pass and 32 optional tests skip.
-All four raycast tests, all 18 converter tests, and Checkstyle pass.
+## Follow avoidance integration
+
+Follow instances apply avoidance around the pivot that includes attachment and view offsets.
+The native camera definition's near plane supplies 0.025-block clearance.
+The subject origin supplies the solid-state sample.
+Avoidance changes position after the look-at calculation and retains that orientation.
+Preset instances retain independent avoidance state and continue before the active blend.
+
+Private comparisons execute 768 composed native follow frames in authored empty, wall, and inside-block worlds.
+They compare the final pose and every corner-ray origin and endpoint.
+The probe executes native attachment, view offsets, cache preparation, solid-state lookup, world tracing, and avoidance.
+Host boundaries supply authored actors, block geometry, cache-pool lookup, and CRT math.
+The native definition constructor supplies the near plane.
+These comparisons do not establish real actor-pivot lookup, actual registry geometry, complete ECS ordering, or official-client visible parity.
+
+The complete build replays all 102 core patches and 38 add-on patches.
+Core runs 1,251 tests: 1,219 pass and 32 optional tests skip.
+All six raycast tests, six follow-runtime tests, 18 converter tests, and four proxy tests pass.
+The add-on has 816 passing tests and 120 optional skips. Checkstyle passes.
+
+
+The target executable supplies behavior and numeric conditions.
+The [Material fields](https://github.com/LiteLDev/LeviLamina/blob/4ca13569fc0d1cdeb873cf6e7c48ddcc7a74e59c/src/mc/world/level/material/Material.h),
+[block property names](https://github.com/LiteLDev/LeviLamina/blob/4ca13569fc0d1cdeb873cf6e7c48ddcc7a74e59c/src/mc/world/level/block/BlockProperty.h),
+and [direct component fields](https://github.com/LiteLDev/LeviLamina/blob/4ca13569fc0d1cdeb873cf6e7c48ddcc7a74e59c/src/mc/world/level/block/components/BlockComponentDirectData.h)
+provide independent names for matching layouts.
+These headers do not replace target-build execution or establish per-type registry values.
+
+
+A fresh direct NetherNet recording verifies six live geometry stages against the target Bedrock server.
+The wall moves the rendered camera from X = 5.00 to X = 2.85.
+Removing the wall restores X = 5.00.
+The recording also verifies view-offset clipping, collapse at a solid subject origin, and clear.
+The candidate completes recording and normal cleanup.
+
+The previous follow-capable add-on supplies three wall observations at X = 5.00 after the same server sequence.
+Its normal Java shutdown fails with the recorder file still open.
+Those observations confirm the expected missing collision behavior, but the control recording has an incomplete lifecycle.
+They do not establish a complete passing negative control or official-client visual parity.

@@ -151,7 +151,7 @@ The resulting detached camera applies before shake, culling, and audio listener 
 
 Accepted Java mouse-turn deltas update the active orbit instance. The existing camera-input permission check controls that collection point.
 This adapter does not establish native sensitivity, player-body coupling, or activation rotation semantics.
-Collision avoidance, complete native player-pivot lookup, and official-client visual comparisons remain open.
+The world adapter now supplies follow collision queries. Complete native player-pivot lookup and official-client visual comparisons remain open.
 
 The [camera command reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/commandsreference/examples/commands/camera) describes attachment, detachment, and offset commands.
 The live fixture uses the exact target BDS version to check command execution independently of that reference.
@@ -167,3 +167,36 @@ The direct recording completes its transport and cleanup checks.
 The extended ViaProxy run passes every pose assertion, then stalls in JVM shutdown after the recorder closes.
 Its cleanup reports `Owned Java processes did not stop normally; forced cleanup refused.`
 Those pose observations are not a complete passing proxy lifecycle. A fresh older-client live control remains pending.
+
+
+## Follow-camera world avoidance
+
+The add-on supplies base and extra-layer blocks to core's native camera tracer.
+Converted custom blocks supply collision envelopes for eligibility and selection bounds for final ray hits.
+Other block states use the client's existing collision geometry, including installed Bedrock geometry hooks.
+Liquid layers retain stable material identities. Their auxiliary surfaces do not stop the camera by themselves.
+
+The solid-origin adapter uses converted custom-block occlusion metadata and Java solid-render state for ordinary blocks.
+That mapping still requires per-type native comparisons.
+It does not establish parity for every transparent block, fluid, context-sensitive shape, or transformed custom geometry.
+
+Core applies eight corner casts, the pinned follow minimum, and native near-plane clearance before the active blend.
+The native cache includes attachment and view offsets in the avoidance pivot.
+The solid-state sample uses the subject origin. Collapse retains the pre-avoidance camera orientation.
+Core compares 768 composed native frames and 810 world rays separately from the client binding.
+
+All four projects build successfully after the full patch replay.
+Core has 1,219 passing tests and 32 optional skips.
+The add-on has 816 passing tests and 120 optional skips. Converter and proxy tests and Checkstyle pass.
+
+
+A fresh direct NetherNet recording verifies six live geometry stages against the target Bedrock server.
+The wall moves the rendered camera from X = 5.00 to X = 2.85.
+Removing the wall restores X = 5.00.
+The recording also verifies view-offset clipping, collapse at a solid subject origin, and clear.
+The candidate completes recording and normal cleanup.
+
+The previous follow-capable add-on supplies three wall observations at X = 5.00 after the same server sequence.
+Its normal Java shutdown fails with the recorder file still open.
+Those observations confirm the expected missing collision behavior, but the control recording has an incomplete lifecycle.
+They do not establish a complete passing negative control or official-client visual parity.

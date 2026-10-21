@@ -1,4 +1,4 @@
-From 5aa490f2bfe769fc0ab35c49fb0510b97e48b99c Mon Sep 17 00:00:00 2001
+From 20cec4db354ea224f2d4f25dd7ebc0d6908e39e3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(camera): resolve server presets and camera movement
@@ -137,13 +137,26 @@ Private target execution compares 1,800 box segments and 506 world rays,
 including all 2,688 sampled cells. Execute native overlay-air fallback,
 filter dispatch, the common bounds wrapper and custom block intersection;
 supply authored block geometry and explicit environment boundaries.
+
+Run avoidance in follow frames around the attachment and view-offset
+pivot. Use the native camera definition's 0.025 near plane as clearance
+and sample solid-state collapse at the subject origin. Preserve the
+pre-avoidance orientation and independent inactive preset instances.
+
+Extend world tracing with base and extra layers, liquid material
+transitions, auxiliary-fluid exclusion, and separate eligibility and
+final hit bounds. Native custom blocks gate on collision envelopes but
+intersect selection bounds. Private target execution compares 810 world
+rays with every layer lookup and 768 composed follow-avoidance frames.
+World geometry, actual type-specific policies, actor origin lookup and
+complete ECS scheduling remain separate native parity requirements.
 ---
  .../api/model/CameraAudioListener.java        |  30 ++
  .../viabedrock/api/model/CameraAvoidance.java | 171 ++++++++++
  .../viabedrock/api/model/CameraEase.java      | 140 ++++++++
  .../viabedrock/api/model/CameraFadeState.java |  95 ++++++
  .../api/model/CameraFadeTimeline.java         |  91 +++++
- .../api/model/CameraFollowRuntime.java        | 171 ++++++++++
+ .../api/model/CameraFollowRuntime.java        | 182 ++++++++++
  .../api/model/CameraFollowState.java          |  96 ++++++
  .../viabedrock/api/model/CameraFovState.java  | 133 ++++++++
  .../api/model/CameraFovTimeline.java          |  67 ++++
@@ -151,7 +164,7 @@ supply authored block geometry and explicit environment boundaries.
  .../viabedrock/api/model/CameraPose.java      | 109 ++++++
  .../api/model/CameraPoseTimeline.java         | 102 ++++++
  .../api/model/CameraPositionState.java        | 125 +++++++
- .../viabedrock/api/model/CameraRaycast.java   | 149 +++++++++
+ .../viabedrock/api/model/CameraRaycast.java   | 197 +++++++++++
  .../api/model/CameraShakeNoise.java           |  77 +++++
  .../api/model/CameraShakeState.java           | 138 ++++++++
  .../api/model/CameraShakeTimeline.java        | 119 +++++++
@@ -172,11 +185,11 @@ supply authored block geometry and explicit environment boundaries.
  .../api/model/CameraAudioListenerTest.java    |  52 +++
  .../api/model/CameraAvoidanceTest.java        | 128 +++++++
  .../api/model/CameraFadeTimelineTest.java     | 117 +++++++
- .../api/model/CameraFollowRuntimeTest.java    | 135 ++++++++
+ .../api/model/CameraFollowRuntimeTest.java    | 228 +++++++++++++
  .../api/model/CameraFovTimelineTest.java      | 132 ++++++++
  .../viabedrock/api/model/CameraOrbitTest.java | 135 ++++++++
  .../api/model/CameraPoseTimelineTest.java     | 152 +++++++++
- .../api/model/CameraRaycastTest.java          | 128 +++++++
+ .../api/model/CameraRaycastTest.java          | 199 +++++++++++
  .../api/model/CameraShakeTimelineTest.java    | 178 ++++++++++
  .../api/model/CameraTargetTrackerTest.java    | 151 +++++++++
  .../api/model/CameraTrackingRuntimeTest.java  | 111 +++++++
@@ -184,7 +197,7 @@ supply authored block geometry and explicit environment boundaries.
  .../model/CameraPositionControllerTest.java   | 311 ++++++++++++++++++
  .../protocol/model/CameraPresetTest.java      | 179 ++++++++++
  .../storage/CameraEffectsStorageTest.java     |  99 ++++++
- 46 files changed, 5604 insertions(+), 3 deletions(-)
+ 46 files changed, 5827 insertions(+), 3 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAudioListener.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAvoidance.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraEase.java
@@ -786,10 +799,10 @@ index 000000000..a9f293d4d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraFollowRuntime.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraFollowRuntime.java
 new file mode 100644
-index 000000000..a4134fdbf
+index 000000000..68ad4a294
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraFollowRuntime.java
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,182 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -851,7 +864,7 @@ index 000000000..a4134fdbf
 +        return true;
 +    }
 +
-+    public void advance(final float delta, final Actor localPlayer, final LongFunction<Actor> actors) {
++    public void advance(final float delta, final Actor localPlayer, final LongFunction<Actor> actors, final World world) {
 +        if (this.state == null) {
 +            return;
 +        }
@@ -881,9 +894,14 @@ index 000000000..a4134fdbf
 +                continue;
 +            }
 +            final Vector view = viewOffset(pivot, position, p.viewX(), p.viewY());
-+            instance.renderedPosition = position.add(view);
-+            final Vector direction = pivot.add(view).subtract(instance.renderedPosition);
++            final Vector target = position.add(view);
++            final Vector shiftedPivot = pivot.add(view);
++            final Vector direction = shiftedPivot.subtract(target);
 +            instance.orientation = CameraTargetTracker.lookAt(direction, instance.orientation);
++            // The pinned camera definition's near plane supplies avoidance clearance.
++            // Native samples the subject origin, then avoids around the pivot including its view offset.
++            instance.renderedPosition = instance.avoidance.advance(delta, shiftedPivot, target, p.radius(), .025F,
++                    world.insideSolidBlock(origin), null, world);
 +        }
 +    }
 +
@@ -942,9 +960,14 @@ index 000000000..a4134fdbf
 +        }
 +    }
 +
++    public interface World extends CameraAvoidance.Raycast {
++        boolean insideSolidBlock(Vector subjectOrigin);
++    }
++
 +    private static final class Instance {
 +        private CameraFollowState.Preset preset;
 +        private CameraOrbit orbit;
++        private final CameraAvoidance avoidance;
 +        private Vector renderedPosition;
 +        private Quaternion orientation;
 +
@@ -956,6 +979,7 @@ index 000000000..a4134fdbf
 +            this.preset = preset;
 +            final var target = target(preset);
 +            this.orbit = new CameraOrbit(settings(preset), new CameraOrbit.State(target.radius(), target.yaw(), target.polar(), 0, 0, 0), target);
++            this.avoidance = new CameraAvoidance(CameraAvoidance.Settings.followOrbit(), new CameraAvoidance.State(target.radius(), 0));
 +            this.orientation = CameraPose.fromDegrees(Vector.ZERO, preset.pitch(), preset.yaw() + 90, 0, 0).orientation();
 +        }
 +    }
@@ -1769,10 +1793,10 @@ index 000000000..54f87b01e
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraRaycast.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraRaycast.java
 new file mode 100644
-index 000000000..300e34cdb
+index 000000000..fbda06e25
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraRaycast.java
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,197 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1782,6 +1806,8 @@ index 000000000..300e34cdb
 +
 +import net.raphimc.viabedrock.api.model.CameraPose.Vector;
 +
++import java.util.Objects;
++
 +/** Float camera traversal and box surface intersections, independent of the renderer's world access. */
 +public final class CameraRaycast {
 +
@@ -1790,10 +1816,10 @@ index 000000000..300e34cdb
 +
 +    /**
 +     * Visits the starting cell and at most 200 subsequent cells, as the native camera query does.
-+     * The caller resolves block layers, camera bounds, and per-type filters before returning a box.
-+     * This traversal does not implement the native fluid-material transition state machine.
++     * The caller supplies native block geometry, material identities, and per-type pick policies.
++     * Fluid surfaces update layer selection but do not become primary camera hits.
 +     */
-+    public static Hit cast(final Vector start, final Vector end, final Shapes shapes) {
++    public static Hit cast(final Vector start, final Vector end, final World world) {
 +        int x = floor(start.x());
 +        int y = floor(start.y());
 +        int z = floor(start.z());
@@ -1803,12 +1829,25 @@ index 000000000..300e34cdb
 +        float px = start.x();
 +        float py = start.y();
 +        float pz = start.z();
++        final Block initial = base(world, x, y, z);
++        final Block overlay = overlay(world, x, y, z);
++        final boolean startsInMedium = initial.liquid || overlay.liquid;
++        final Object medium = initial.liquid ? initial.material : overlay.material;
++        boolean transitioned = !startsInMedium;
 +        for (int step = 0; step <= 200; step++) {
-+            final Box box = shapes.at(x, y, z);
-+            if (box != null) {
-+                final Hit hit = box.intersect(x, y, z, start, end);
-+                if (hit != null) {
-+                    return hit;
++            final Block block = step == 0 ? initial : transitioned ? overlay(world, x, y, z) : base(world, x, y, z);
++            if (step != 0 && startsInMedium && !transitioned && !Objects.equals(block.material, medium)) {
++                transitioned = true;
++            }
++            if (block.bounds != null && block.bounds.nonempty() && block.pick != Pick.NEVER && (block.pick != Pick.LIQUID || transitioned)) {
++                if (!transitioned || !block.liquid) {
++                    final Hit hit = block.hitBounds != null ? block.hitBounds.intersect(x, y, z, start, end) : null;
++                    if (hit != null) {
++                        return hit;
++                    }
++                } else if (step != 0) {
++                    // Native retains this fluid surface as an auxiliary result and resumes base-layer queries.
++                    transitioned = false;
 +                }
 +            }
 +            if (step == 200 || Float.isNaN(px) || Float.isNaN(py) || Float.isNaN(pz) || x == endX && y == endY && z == endZ) {
@@ -1848,10 +1887,39 @@ index 000000000..300e34cdb
 +        return truncated - (value < truncated ? 1 : 0);
 +    }
 +
-+    @FunctionalInterface
-+    public interface Shapes {
-+        /** Returns accepted world-space camera bounds, or null when this cell supplies no surface. */
-+        Box at(int x, int y, int z);
++    private static Block base(final World world, final int x, final int y, final int z) {
++        final Block block = world.base(x, y, z);
++        return block != null ? block : Block.AIR;
++    }
++
++    private static Block overlay(final World world, final int x, final int y, final int z) {
++        final Block block = world.extra(x, y, z);
++        return block != null ? block : base(world, x, y, z);
++    }
++
++    public interface World {
++        /** Returns the base block, or null for air. */
++        Block base(int x, int y, int z);
++
++        /** Returns the extra-layer block, or null to use the base block. */
++        Block extra(int x, int y, int z);
++    }
++
++    /** Native common pick policies. A liquid filter receives the material-transition flag. */
++    public enum Pick {
++        ALWAYS, LIQUID, NEVER
++    }
++
++    /** Eligibility bounds and final ray-hit bounds can differ for custom blocks. Both use world coordinates. */
++    public record Block(Object material, boolean liquid, Box bounds, Box hitBounds, Pick pick) {
++        private static final Block AIR = new Block(null, false, null, null, Pick.NEVER);
++
++        public Block {
++            Objects.requireNonNull(pick);
++            if (liquid && material == null) {
++                throw new IllegalArgumentException("Liquid camera blocks require a material identity");
++            }
++        }
 +    }
 +
 +    /** World-space hit. Face values use Bedrock's down/up/north/south/west/east ordering. */
@@ -1859,6 +1927,10 @@ index 000000000..300e34cdb
 +    }
 +
 +    public record Box(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
++
++        private boolean nonempty() {
++            return this.minX < this.maxX && this.minY < this.maxY && this.minZ < this.maxZ;
++        }
 +
 +        /**
 +         * Tests actual box surfaces, including exits from inside and inclusive edges.
@@ -4298,10 +4370,10 @@ index 000000000..26a5c62ba
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraFollowRuntimeTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraFollowRuntimeTest.java
 new file mode 100644
-index 000000000..d2ad88570
+index 000000000..ab49e8144
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CameraFollowRuntimeTest.java
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,228 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4311,6 +4383,7 @@ index 000000000..d2ad88570
 +
 +import com.google.gson.JsonArray;
 +import com.google.gson.JsonParser;
++import com.google.gson.JsonObject;
 +import io.netty.buffer.Unpooled;
 +import net.raphimc.viabedrock.api.model.CameraPose.Vector;
 +import org.junit.jupiter.api.Test;
@@ -4319,11 +4392,24 @@ index 000000000..d2ad88570
 +import java.nio.file.Path;
 +import java.util.List;
 +import java.util.UUID;
++import java.util.concurrent.atomic.AtomicInteger;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.junit.jupiter.api.Assumptions.assumeTrue;
 +
 +class CameraFollowRuntimeTest {
++
++    private static final CameraFollowRuntime.World AIR = new CameraFollowRuntime.World() {
++        @Override
++        public boolean insideSolidBlock(final Vector origin) {
++            return false;
++        }
++
++        @Override
++        public Vector cast(final Vector start, final Vector end) {
++            return null;
++        }
++    };
 +
 +    @Test
 +    void attachmentsDoNotAcquireReusedIdentityWithoutNewGeneration() {
@@ -4331,15 +4417,15 @@ index 000000000..d2ad88570
 +        final var preset = preset(0, 0, 10);
 +        final var first = actor(UUID.randomUUID(), 0);
 +        runtime.accept(state(1, 1, 0, 1, 9L, List.of(preset)));
-+        runtime.advance(.05F, null, id -> first);
++        runtime.advance(.05F, null, id -> first, AIR);
 +        final var initial = runtime.active(1, 66, 5);
 +        assertEquals(10, initial.position().x(), .00001F);
 +        assertEquals(.9F, initial.position().y(), .00001F);
 +        final var replacement = actor(UUID.randomUUID(), 20);
-+        runtime.advance(.05F, null, id -> replacement);
++        runtime.advance(.05F, null, id -> replacement, AIR);
 +        assertEquals(initial, runtime.active(1, 66, 5));
 +        runtime.accept(state(2, 1, 0, 2, 9L, List.of(preset)));
-+        runtime.advance(.05F, null, id -> replacement);
++        runtime.advance(.05F, null, id -> replacement, AIR);
 +        assertEquals(30, runtime.active(1, 66, 5).position().x(), .00001F);
 +        assertNull(runtime.active(0, 66, 5));
 +        runtime.clear();
@@ -4353,20 +4439,60 @@ index 000000000..d2ad88570
 +        final var player = actor(UUID.randomUUID(), 0);
 +        runtime.accept(state(1, 1, 0, 0, null, presets));
 +        assertTrue(runtime.input(1, 0, 90));
-+        runtime.advance(.05F, player, id -> null);
++        runtime.advance(.05F, player, id -> null, AIR);
 +        assertEquals(10, runtime.active(1, 66, 5).position().z(), .00001F);
 +        runtime.accept(state(2, 2, 1, 0, null, presets));
-+        runtime.advance(.05F, player, id -> null);
++        runtime.advance(.05F, player, id -> null, AIR);
 +        assertEquals(5, runtime.active(2, 66, 5).position().x(), .00001F);
 +        runtime.accept(state(3, 3, 0, 0, null, presets));
-+        runtime.advance(.05F, player, id -> null);
++        runtime.advance(.05F, player, id -> null, AIR);
 +        assertEquals(10, runtime.active(3, 66, 5).position().z(), .00001F);
 +        runtime.accept(state(4, 4, 0, 0, null, List.of(preset(0, 1, 10), presets.get(1))));
-+        runtime.advance(.05F, player, id -> null);
++        runtime.advance(.05F, player, id -> null, AIR);
 +        assertEquals(10, runtime.active(4, 66, 5).position().x(), .00001F);
 +        assertFalse(runtime.input(3, 0, 45));
 +        runtime.accept(state(2, 2, 1, 0, null, presets));
 +        assertNotNull(runtime.active(4, 66, 5));
++    }
++
++    @Test
++    void avoidanceClipsTheRenderedPoseAndReleasesAfterTheObstacleDisappears() {
++        final var runtime = new CameraFollowRuntime();
++        final var player = actor(UUID.randomUUID(), 0);
++        runtime.accept(state(1, 1, 0, 0, null, List.of(preset(0, 0, 10))));
++        final var wall = new CameraFollowRuntime.World() {
++            @Override
++            public boolean insideSolidBlock(final Vector origin) {
++                assertEquals(1.62F, origin.y());
++                return false;
++            }
++
++            @Override
++            public Vector cast(final Vector start, final Vector end) {
++                final var hit = new CameraRaycast.Box(4, 0, -1, 5, 3, 1).intersect(4, 0, 0, start, end);
++                return hit != null ? hit.position() : null;
++            }
++        };
++        runtime.advance(.05F, player, id -> null, wall);
++        final var clipped = runtime.active(1, 66, 5);
++        assertTrue(clipped.position().x() > 3.9F && clipped.position().x() < 4);
++        runtime.advance(.05F, player, id -> null, AIR);
++        final var clear = runtime.active(1, 66, 5);
++        assertEquals(10, clear.position().x(), .00001F);
++        assertEquals(clear.orientation(), clipped.orientation());
++        runtime.advance(.05F, player, id -> null, new CameraFollowRuntime.World() {
++            @Override
++            public boolean insideSolidBlock(final Vector origin) {
++                return true;
++            }
++
++            @Override
++            public Vector cast(final Vector start, final Vector end) {
++                fail();
++                return null;
++            }
++        });
++        assertEquals(new Vector(0, 1.62F, 0), runtime.active(1, 66, 5).position());
 +    }
 +
 +    @Test
@@ -4394,29 +4520,68 @@ index 000000000..d2ad88570
 +        assumeTrue(source != null);
 +        final var cases = JsonParser.parseString(Files.readString(Path.of(source))).getAsJsonObject().getAsJsonArray("cases");
 +        for (final var element : cases) {
-+            final var sample = element.getAsJsonObject();
-+            final var origin = vector(sample.getAsJsonArray("origin"));
-+            final boolean attached = sample.get("attached").getAsBoolean();
-+            final var feet = attached ? origin : origin.subtract(new Vector(0, 1.62F, 0));
-+            final var actor = new CameraFollowRuntime.Actor(UUID.randomUUID(), feet, feet.add(new Vector(0, .9F, 0)), sample.get("actorYaw").getAsFloat());
-+            final var view = sample.getAsJsonArray("view");
-+            final var preset = new CameraFollowState.Preset(0, 0, sample.get("radius").getAsFloat(), sample.get("pitch").getAsFloat(), sample.get("yaw").getAsFloat(),
-+                    view.get(0).getAsFloat(), view.get(1).getAsFloat(), vector(sample.getAsJsonArray("entityOffset")), -180, 180);
-+            final var runtime = new CameraFollowRuntime();
-+            runtime.accept(state(1, 1, 0, 1, sample.get("attached").getAsBoolean() ? 9L : null, List.of(preset)));
-+            runtime.advance(1F / 60, actor, id -> actor);
-+            final var pose = runtime.active(1, 66, 5);
-+            final var expected = vector(sample.getAsJsonArray("position"));
-+            assertEquals(expected.x(), pose.position().x(), .00002F, sample::toString);
-+            assertEquals(expected.y(), pose.position().y(), .00002F, sample::toString);
-+            assertEquals(expected.z(), pose.position().z(), .00002F, sample::toString);
-+            final var q = sample.getAsJsonArray("orientation");
-+            final var observed = pose.orientation();
-+            final float dot = observed.x() * q.get(0).getAsFloat() + observed.y() * q.get(1).getAsFloat()
-+                    + observed.z() * q.get(2).getAsFloat() + observed.w() * q.get(3).getAsFloat();
-+            assertEquals(1, Math.abs(dot), .00001F, sample::toString);
++            assertNativeFrame(element.getAsJsonObject(), AIR);
 +        }
 +        assertEquals(256, cases.size());
++    }
++
++    @Test
++    void nativeFollowAvoidanceMatchesWorldQueriesAndTheFinalPose() throws Exception {
++        final String source = System.getenv("STACKANVIL_NATIVE_CAMERA_FOLLOW_COLLISION");
++        assumeTrue(source != null);
++        final var cases = JsonParser.parseString(Files.readString(Path.of(source))).getAsJsonObject().getAsJsonArray("cases");
++        for (final var element : cases) {
++            final var sample = element.getAsJsonObject();
++            final var queries = sample.getAsJsonArray("queries");
++            final var calls = new AtomicInteger();
++            final var world = new CameraFollowRuntime.World() {
++                @Override
++                public boolean insideSolidBlock(final Vector origin) {
++                    assertVector(vector(sample.getAsJsonArray("origin")), origin);
++                    return sample.get("collapsed").getAsBoolean();
++                }
++
++                @Override
++                public Vector cast(final Vector start, final Vector end) {
++                    final var query = queries.get(calls.getAndIncrement()).getAsJsonObject();
++                    assertVector(vector(query.getAsJsonArray("start")), start);
++                    assertVector(vector(query.getAsJsonArray("end")), end);
++                    return query.get("hit").isJsonNull() ? null : vector(query.getAsJsonArray("hit"));
++                }
++            };
++            assertNativeFrame(sample, world);
++            assertEquals(queries.size(), calls.get());
++        }
++        assertEquals(768, cases.size());
++    }
++
++    private static void assertVector(final Vector expected, final Vector actual) {
++        assertEquals(expected.x(), actual.x(), .0001F);
++        assertEquals(expected.y(), actual.y(), .0001F);
++        assertEquals(expected.z(), actual.z(), .0001F);
++    }
++
++    private static void assertNativeFrame(final JsonObject sample, final CameraFollowRuntime.World world) {
++        final var origin = vector(sample.getAsJsonArray("origin"));
++        final boolean attached = sample.get("attached").getAsBoolean();
++        final var feet = attached ? origin : origin.subtract(new Vector(0, 1.62F, 0));
++        final var actor = new CameraFollowRuntime.Actor(UUID.randomUUID(), feet, feet.add(new Vector(0, .9F, 0)), sample.get("actorYaw").getAsFloat());
++        final var view = sample.getAsJsonArray("view");
++        final var preset = new CameraFollowState.Preset(0, 0, sample.get("radius").getAsFloat(), sample.get("pitch").getAsFloat(), sample.get("yaw").getAsFloat(),
++                view.get(0).getAsFloat(), view.get(1).getAsFloat(), vector(sample.getAsJsonArray("entityOffset")), -180, 180);
++        final var runtime = new CameraFollowRuntime();
++        runtime.accept(state(1, 1, 0, 1, sample.get("attached").getAsBoolean() ? 9L : null, List.of(preset)));
++        runtime.advance(1F / 60, actor, id -> actor, world);
++        final var pose = runtime.active(1, 66, 5);
++        final var expected = vector(sample.getAsJsonArray("position"));
++        assertEquals(expected.x(), pose.position().x(), .00002F, sample::toString);
++        assertEquals(expected.y(), pose.position().y(), .00002F, sample::toString);
++        assertEquals(expected.z(), pose.position().z(), .00002F, sample::toString);
++        final var q = sample.getAsJsonArray("orientation");
++        final var observed = pose.orientation();
++        final float dot = observed.x() * q.get(0).getAsFloat() + observed.y() * q.get(1).getAsFloat()
++                + observed.z() * q.get(2).getAsFloat() + observed.w() * q.get(3).getAsFloat();
++        assertEquals(1, Math.abs(dot), .00001F, sample::toString);
 +    }
 +
 +    private static CameraFollowState state(final long sequence, final long position, final long active, final long attachment, final Long actor,
@@ -4876,10 +5041,10 @@ index 000000000..87e2ea32c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraRaycastTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraRaycastTest.java
 new file mode 100644
-index 000000000..d641d97cf
+index 000000000..6de4be885
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CameraRaycastTest.java
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,199 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4897,7 +5062,9 @@ index 000000000..d641d97cf
 +import java.nio.file.Path;
 +import java.util.ArrayList;
 +import java.util.HashMap;
++import java.util.LinkedHashSet;
 +import java.util.List;
++import java.util.Map;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -4916,18 +5083,52 @@ index 000000000..d641d97cf
 +
 +    @Test
 +    void traversalPreservesCornerPriorityAndTheNativeStepLimit() {
-+        final var cells = new ArrayList<Cell>();
++        final var queries = new ArrayList<Query>();
 +        final var stop = new CameraRaycast.Box(0, 0, 0, 1, 1, 1);
-+        CameraRaycast.cast(new Vector(-1, -1, -1), new Vector(2, 2, 2), (x, y, z) -> {
-+            final var cell = new Cell(x, y, z);
-+            cells.add(cell);
-+            return cell.equals(new Cell(0, 0, 0)) ? stop : null;
-+        });
-+        assertEquals(List.of(new Cell(-1, -1, -1), new Cell(-1, -1, 0), new Cell(-1, 0, 0), new Cell(0, 0, 0)), cells);
++        CameraRaycast.cast(new Vector(-1, -1, -1), new Vector(2, 2, 2),
++                world(Map.of(new Cell(0, 0, 0), solid(stop)), Map.of(), queries));
++        final var cells = new LinkedHashSet<Cell>();
++        queries.forEach(query -> cells.add(query.cell));
++        assertEquals(List.of(new Cell(-1, -1, -1), new Cell(-1, -1, 0), new Cell(-1, 0, 0), new Cell(0, 0, 0)), new ArrayList<>(cells));
 +        final var start = new Vector(.5F, .5F, .5F);
 +        final var end = new Vector(250.5F, .5F, .5F);
-+        assertNotNull(CameraRaycast.cast(start, end, (x, y, z) -> x == 200 ? new CameraRaycast.Box(200, 0, 0, 201, 1, 1) : null));
-+        assertNull(CameraRaycast.cast(start, end, (x, y, z) -> x == 201 ? new CameraRaycast.Box(201, 0, 0, 202, 1, 1) : null));
++        assertNotNull(CameraRaycast.cast(start, end, world(Map.of(new Cell(200, 0, 0),
++                solid(new CameraRaycast.Box(200, 0, 0, 201, 1, 1))), Map.of(), queries)));
++        assertNull(CameraRaycast.cast(start, end, world(Map.of(new Cell(201, 0, 0),
++                solid(new CameraRaycast.Box(201, 0, 0, 202, 1, 1))), Map.of(), queries)));
++    }
++
++    @Test
++    void extraLiquidChangesLayerSelectionWithoutStoppingTheCamera() {
++        final var start = new Vector(-1, .5F, .5F);
++        final var end = new Vector(3, .5F, .5F);
++        final var first = new Cell(0, 0, 0);
++        final var second = new Cell(1, 0, 0);
++        final var box = new CameraRaycast.Box(0, 0, 0, 1, 1, 1);
++        final var liquid = new CameraRaycast.Block(1, true, box, box, CameraRaycast.Pick.LIQUID);
++        final var base = Map.of(first, solid(box), second, solid(new CameraRaycast.Box(1, 0, 0, 2, 1, 1)));
++        final var queries = new ArrayList<Query>();
++        final var hit = CameraRaycast.cast(start, end, world(base, Map.of(first, liquid), queries));
++        assertEquals(new CameraRaycast.Hit(new Vector(1, .5F, .5F), 4), hit);
++        assertTrue(queries.contains(new Query(false, second)));
++        assertFalse(queries.contains(new Query(true, second)));
++        assertNull(CameraRaycast.cast(start, end, world(Map.of(first, liquid), Map.of(), queries)));
++    }
++
++    @Test
++    void customBlocksRequireCollisionEligibilityButIntersectTheirSelectionBox() {
++        final var collision = new CameraRaycast.Box(.25F, 0, .25F, .75F, 1, .75F);
++        final var selection = new CameraRaycast.Box(0, 0, 0, 1, 1, 1);
++        final var start = new Vector(-1, .5F, .5F);
++        final var end = new Vector(2, .5F, .5F);
++        final var cell = new Cell(0, 0, 0);
++        final var queries = new ArrayList<Query>();
++        assertEquals(new CameraRaycast.Hit(new Vector(0, .5F, .5F), 4), CameraRaycast.cast(start, end,
++                world(Map.of(cell, new CameraRaycast.Block(null, false, collision, selection, CameraRaycast.Pick.ALWAYS)), Map.of(), queries)));
++        assertNull(CameraRaycast.cast(start, end,
++                world(Map.of(cell, new CameraRaycast.Block(null, false, collision, null, CameraRaycast.Pick.ALWAYS)), Map.of(), queries)));
++        assertNull(CameraRaycast.cast(start, end,
++                world(Map.of(cell, new CameraRaycast.Block(null, false, null, selection, CameraRaycast.Pick.ALWAYS)), Map.of(), queries)));
 +    }
 +
 +    @Test
@@ -4947,29 +5148,61 @@ index 000000000..d641d97cf
 +        final var root = nativeFixture();
 +        for (final var element : root.getAsJsonArray("worlds")) {
 +            final var sample = element.getAsJsonObject();
-+            final var shapes = new HashMap<Cell, CameraRaycast.Box>();
-+            for (final var cellElement : sample.getAsJsonArray("cells")) {
-+                final var value = cellElement.getAsJsonObject();
-+                if (!value.get("allow").getAsBoolean() || value.get("bounds").isJsonNull()) {
-+                    continue;
-+                }
-+                final var cell = cell(value.getAsJsonArray("position"));
-+                final var bounds = value.getAsJsonArray("bounds");
-+                shapes.put(cell, new CameraRaycast.Box(bounds.get(0).getAsFloat() + cell.x, bounds.get(1).getAsFloat() + cell.y,
-+                        bounds.get(2).getAsFloat() + cell.z, bounds.get(3).getAsFloat() + cell.x, bounds.get(4).getAsFloat() + cell.y,
-+                        bounds.get(5).getAsFloat() + cell.z));
-+            }
-+            final var visited = new ArrayList<Cell>();
-+            final var actual = CameraRaycast.cast(vector(sample.getAsJsonArray("start")), vector(sample.getAsJsonArray("end")), (x, y, z) -> {
-+                final var cell = new Cell(x, y, z);
-+                visited.add(cell);
-+                return shapes.get(cell);
-+            });
++            final var visited = new ArrayList<Query>();
++            final var actual = CameraRaycast.cast(vector(sample.getAsJsonArray("start")), vector(sample.getAsJsonArray("end")),
++                    world(blocks(sample.getAsJsonArray("cells")), blocks(sample.getAsJsonArray("extras")), visited));
 +            assertHit(sample, actual);
-+            final var expected = new ArrayList<Cell>();
-+            sample.getAsJsonArray("sampled").forEach(value -> expected.add(cell(value.getAsJsonArray())));
-+            assertEquals(expected, visited);
++            final var expected = new ArrayList<Query>();
++            sample.getAsJsonArray("queries").forEach(value -> {
++                final var query = value.getAsJsonObject();
++                expected.add(new Query(query.get("layer").getAsString().equals("extra"), cell(query.getAsJsonArray("position"))));
++            });
++            assertEquals(expected, visited, sample::toString);
 +        }
++    }
++
++    private static Map<Cell, CameraRaycast.Block> blocks(final JsonArray cells) {
++        final var result = new HashMap<Cell, CameraRaycast.Block>();
++        for (final var element : cells) {
++            final var value = element.getAsJsonObject();
++            final var cell = cell(value.getAsJsonArray("position"));
++            result.put(cell, new CameraRaycast.Block(value.get("material").getAsLong(), value.get("liquid").getAsBoolean(),
++                    worldBox(value, "bounds", cell), worldBox(value, "selectionBounds", cell), CameraRaycast.Pick.valueOf(value.get("pick").getAsString())));
++        }
++        return result;
++    }
++
++    private static CameraRaycast.Box worldBox(final JsonObject value, final String field, final Cell cell) {
++        if (value.get(field).isJsonNull()) {
++            return null;
++        }
++        final var bounds = value.getAsJsonArray(field);
++        return new CameraRaycast.Box(bounds.get(0).getAsFloat() + cell.x, bounds.get(1).getAsFloat() + cell.y,
++                bounds.get(2).getAsFloat() + cell.z, bounds.get(3).getAsFloat() + cell.x, bounds.get(4).getAsFloat() + cell.y,
++                bounds.get(5).getAsFloat() + cell.z);
++    }
++
++    private static CameraRaycast.Block solid(final CameraRaycast.Box box) {
++        return new CameraRaycast.Block(null, false, box, box, CameraRaycast.Pick.ALWAYS);
++    }
++
++    private static CameraRaycast.World world(final Map<Cell, CameraRaycast.Block> base, final Map<Cell, CameraRaycast.Block> extra,
++                                             final List<Query> queries) {
++        return new CameraRaycast.World() {
++            @Override
++            public CameraRaycast.Block base(final int x, final int y, final int z) {
++                final var cell = new Cell(x, y, z);
++                queries.add(new Query(false, cell));
++                return base.get(cell);
++            }
++
++            @Override
++            public CameraRaycast.Block extra(final int x, final int y, final int z) {
++                final var cell = new Cell(x, y, z);
++                queries.add(new Query(true, cell));
++                return extra.get(cell);
++            }
++        };
 +    }
 +
 +    private static JsonObject nativeFixture() throws Exception {
@@ -5002,6 +5235,9 @@ index 000000000..d641d97cf
 +
 +    private static Cell cell(final JsonArray value) {
 +        return new Cell(value.get(0).getAsInt(), value.get(1).getAsInt(), value.get(2).getAsInt());
++    }
++
++    private record Query(boolean extra, Cell cell) {
 +    }
 +
 +    private record Cell(int x, int y, int z) {

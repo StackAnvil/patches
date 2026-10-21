@@ -1,4 +1,4 @@
-From cd9d5caefffeb811bd1558eda62d7003f4193b64 Mon Sep 17 00:00:00 2001
+From 6417d7f3416d8d756caada272fdaef58276565d2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(camera): render core-resolved server camera movement
@@ -55,12 +55,24 @@ Forward accepted Java mouse-turn deltas to the active follow instance.
 Existing camera-input permission handling still controls the collector.
 Core comparisons establish composed component math; native avoidance,
 activation/pivot rules, input/body coupling and visual parity remain open.
+
+Bind follow-camera avoidance to the translated client world using the
+shared native tracer. Supply custom collision eligibility and selection
+hit bounds from converted metadata, preserve extra-layer liquids, and
+use existing block geometry for ordinary states. Sample solid-origin
+collapse before casting the eight corner rays.
+
+Native component and world comparisons establish tracer and follow-frame
+arithmetic. Ordinary block geometry and solid-state fallbacks still need
+per-type native validation; these bindings do not establish complete
+visible camera parity.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |  32 ++++
  .../bedrock/camera/BedrockCameraFade.java     |  40 ++++
  .../bedrock/camera/BedrockCameraFov.java      |  68 +++++++
  .../bedrock/camera/BedrockCameraPosition.java | 171 ++++++++++++++++++
  .../bedrock/camera/BedrockCameraShake.java    |  49 +++++
+ .../bedrock/camera/BedrockCameraWorld.java    |  95 ++++++++++
  .../bedrock/camera/CameraFadePayload.java     |  22 +++
  .../bedrock/camera/CameraFollowPayload.java   |  22 +++
  .../bedrock/camera/CameraFovPayload.java      |  22 +++
@@ -77,11 +89,12 @@ activation/pivot rules, input/body coupling and visual parity remain open.
  .../bedrock/settings/BedrockSettings.java     |   4 +
  .../viafabricplus-bedrock/lang/en_us.json     |   1 +
  .../viafabricplus-bedrock.mixins.json         |   8 +-
- 21 files changed, 707 insertions(+), 1 deletion(-)
+ 22 files changed, 802 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFade.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraShake.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraWorld.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFadePayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFollowPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFovPayload.java
@@ -267,7 +280,7 @@ index 0000000..49fab8a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
 new file mode 100644
-index 0000000..c175d47
+index 0000000..3f10919
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
 @@ -0,0 +1,171 @@
@@ -394,7 +407,7 @@ index 0000000..c175d47
 +            changed = true;
 +        }
 +        TRACKING.advance(delta, BedrockCameraPosition::targetActor);
-+        FOLLOW.advance(delta, localFollowActor(), BedrockCameraPosition::followActor);
++        FOLLOW.advance(delta, localFollowActor(), BedrockCameraPosition::followActor, new BedrockCameraWorld(Minecraft.getInstance().level));
 +        if (state.mode() == Mode.LOCAL) {
 +            rendered = normal;
 +            return null;
@@ -495,6 +508,107 @@ index 0000000..08950fe
 +        TIMELINE.clear();
 +        sequence = -1;
 +        updatedAt = 0;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraWorld.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraWorld.java
+new file mode 100644
+index 0000000..3bbb458
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraWorld.java
+@@ -0,0 +1,95 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.camera;
++
++import com.viaversion.viafabricplus.bedrock.block.BedrockCustomBlocks;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.core.BlockPos;
++import net.minecraft.tags.FluidTags;
++import net.minecraft.world.level.block.LiquidBlock;
++import net.minecraft.world.level.material.FluidState;
++import net.raphimc.viabedrock.api.model.CameraFollowRuntime;
++import net.raphimc.viabedrock.api.model.CameraPose.Vector;
++import net.raphimc.viabedrock.api.model.CameraRaycast;
++import net.raphimc.viabedrock.api.model.CustomBlockVisual;
++
++import java.util.List;
++
++/** Supplies the translated world's geometry to the shared native camera tracer. */
++final class BedrockCameraWorld implements CameraFollowRuntime.World, CameraRaycast.World {
++
++    private final ClientLevel level;
++
++    BedrockCameraWorld(final ClientLevel level) {
++        this.level = level;
++    }
++
++    @Override
++    public boolean insideSolidBlock(final Vector origin) {
++        if (this.level == null) return false;
++        final var state = this.level.getBlockState(BlockPos.containing(origin.x(), origin.y(), origin.z()));
++        final var custom = BedrockCustomBlocks.current(state);
++        return custom != null ? custom.definition().occluding() : state.isSolidRender();
++    }
++
++    @Override
++    public Vector cast(final Vector start, final Vector end) {
++        final var hit = CameraRaycast.cast(start, end, this);
++        return hit != null ? hit.position() : null;
++    }
++
++    @Override
++    public CameraRaycast.Block base(final int x, final int y, final int z) {
++        if (this.level == null) return null;
++        final var pos = new BlockPos(x, y, z);
++        final var state = this.level.getBlockState(pos);
++        if (state.isAir()) return null;
++        if (state.getBlock() instanceof LiquidBlock) return liquid(state.getFluidState());
++        final var custom = BedrockCustomBlocks.current(state);
++        if (custom != null) {
++            final var definition = custom.definition();
++            return new CameraRaycast.Block(null, false, envelope(definition.cameraBoxesAt(x, y, z)),
++                    envelope(definition.selectionBoxesAt(x, y, z)), CameraRaycast.Pick.ALWAYS);
++        }
++        final var shape = state.getCollisionShape(this.level, pos);
++        if (shape.isEmpty()) return null;
++        final var bounds = shape.bounds();
++        final var box = new CameraRaycast.Box(x + (float) bounds.minX, y + (float) bounds.minY, z + (float) bounds.minZ,
++                x + (float) bounds.maxX, y + (float) bounds.maxY, z + (float) bounds.maxZ);
++        return new CameraRaycast.Block(null, false, box, box, CameraRaycast.Pick.ALWAYS);
++    }
++
++    @Override
++    public CameraRaycast.Block extra(final int x, final int y, final int z) {
++        if (this.level == null) return null;
++        final var state = this.level.getBlockState(new BlockPos(x, y, z));
++        return state.getBlock() instanceof LiquidBlock || state.getFluidState().isEmpty() ? null : liquid(state.getFluidState());
++    }
++
++    private static CameraRaycast.Block liquid(final FluidState fluid) {
++        final Object material = fluid.is(FluidTags.WATER) ? FluidTags.WATER : fluid.is(FluidTags.LAVA) ? FluidTags.LAVA : fluid.getType();
++        return new CameraRaycast.Block(material, true, null, null, CameraRaycast.Pick.LIQUID);
++    }
++
++    private static CameraRaycast.Box envelope(final List<CustomBlockVisual.Box> boxes) {
++        if (boxes.isEmpty()) return null;
++        float minX = Float.POSITIVE_INFINITY;
++        float minY = Float.POSITIVE_INFINITY;
++        float minZ = Float.POSITIVE_INFINITY;
++        float maxX = Float.NEGATIVE_INFINITY;
++        float maxY = Float.NEGATIVE_INFINITY;
++        float maxZ = Float.NEGATIVE_INFINITY;
++        for (final var box : boxes) {
++            minX = Math.min(minX, (float) box.minX());
++            minY = Math.min(minY, (float) box.minY());
++            minZ = Math.min(minZ, (float) box.minZ());
++            maxX = Math.max(maxX, (float) box.maxX());
++            maxY = Math.max(maxY, (float) box.maxY());
++            maxZ = Math.max(maxZ, (float) box.maxZ());
++        }
++        return new CameraRaycast.Box(minX, minY, minZ, maxX, maxY, maxZ);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFadePayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFadePayload.java
