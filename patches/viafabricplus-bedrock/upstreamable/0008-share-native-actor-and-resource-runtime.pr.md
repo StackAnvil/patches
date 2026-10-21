@@ -1912,3 +1912,33 @@ The recording, skin pixels, observer, screenshots and actor identities remain pr
 All four projects build with 2,122 passing tests and 152 optional skips.
 Offline validation passes all 261 tooling tests and patch metadata checks.
 All four stack health reports contain no errors.
+
+
+## Native body rotation for remote players
+
+Use the target player's body control for remote player actors, including server NPCs.
+The generic mob body control has different rules and does not apply here.
+The player control keeps its movement threshold, turn smoothing, soft turn limit and passenger branch.
+It wraps angles with native float operations before Java extracts the render state.
+The adapter uses float positions and the existing translated swing state.
+
+Bedrock 1.26.51.1 supplies the versioned evidence.
+The player constructor selects its body control through virtual slot `0x558`.
+Its control callback is `14387a200`; the body-control system invokes it through `144893380`.
+The executable identity appears in the patch body.
+All 2,268 direct and 320 chained native system callbacks match the Java calculation bit for bit.
+The native fixtures use the original player control, system normalization and official UCRT math.
+They cover movement thresholds, standing half turns, swings and passengers.
+Native code and fixtures remain private.
+
+This change does not establish complete native movement interpolation or swing timing.
+
+A private lobby replay compared the previous scale-fixed artifact with the body-control artifact.
+The same player NPC retained its server yaw, head yaw and scale in both runs.
+Its body angle changed in both the entity and the extracted render state.
+The observer reported no errors, and every owned process completed normal cleanup.
+These short replay slices verify client integration; they do not prove complete scene parity or resolve the reported visible facing issue.
+
+All four projects build with 2,125 passing tests and 152 optional skips.
+Offline validation passes all 261 tooling tests and patch metadata checks.
+All four stack health reports contain no errors.
