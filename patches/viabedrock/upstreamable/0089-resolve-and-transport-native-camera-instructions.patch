@@ -1,4 +1,4 @@
-From b8f4e630e4f06eed17ba9302b74f54fb941bedd7 Mon Sep 17 00:00:00 2001
+From 0f0d7c6c624e89589b4e289aad585d82123082a7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(camera): resolve server presets and camera movement
@@ -206,7 +206,16 @@ connection tick releases expired snapshot channel history using its clock;
 a deterministic clock test covers equality, strict expiry and a fresh
 request. Full native ECS scheduling, queue/pause clock parity, terminal
 pose recovery for late subscribers and visible parity remain unverified.
+
+Add shared non-debug aim-assist target ranking from the pinned client.
+Preserve cubic angle scoring, scaled distance squares, float operation
+order, clamped priorities, zero-priority eligibility and strict tie order.
+Private execution fixtures compare 384 scores, 44 priority conversions
+and 32 selector results at float precision. Keep this candidate ranking
+contract separate from unimplemented activation, geometry, obstruction,
+reticle rendering and interaction rotation; aim assistance is not complete.
 ---
+ .../api/model/CameraAimAssistTargeting.java   |  88 +++++
  .../api/model/CameraAudioListener.java        |  30 ++
  .../viabedrock/api/model/CameraAvoidance.java | 171 +++++++++
  .../viabedrock/api/model/CameraEase.java      | 140 +++++++
@@ -243,6 +252,7 @@ pose recovery for late subscribers and visible parity remain unverified.
  .../protocol/packet/UnhandledPackets.java     |   4 -
  .../storage/CameraEffectsStorage.java         | 308 ++++++++++++++++
  .../protocol/task/EntityTrackerTickTask.java  |   5 +
+ .../model/CameraAimAssistTargetingTest.java   | 120 ++++++
  .../api/model/CameraAudioListenerTest.java    |  52 +++
  .../api/model/CameraAvoidanceTest.java        | 128 +++++++
  .../api/model/CameraFadeTimelineTest.java     | 117 ++++++
@@ -261,7 +271,8 @@ pose recovery for late subscribers and visible parity remain unverified.
  .../protocol/model/CameraPresetTest.java      | 179 +++++++++
  .../model/CameraSplineDefinitionTest.java     | 213 +++++++++++
  .../storage/CameraEffectsStorageTest.java     | 194 ++++++++++
- 54 files changed, 7206 insertions(+), 4 deletions(-)
+ 56 files changed, 7414 insertions(+), 4 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAimAssistTargeting.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAudioListener.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAvoidance.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraEase.java
@@ -293,6 +304,7 @@ pose recovery for late subscribers and visible parity remain unverified.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CameraSplineRegistry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraAimAssistTargetingTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraAudioListenerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraAvoidanceTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraFadeTimelineTest.java
@@ -312,6 +324,100 @@ pose recovery for late subscribers and visible parity remain unverified.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CameraSplineDefinitionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorageTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraAimAssistTargeting.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraAimAssistTargeting.java
+new file mode 100644
+index 000000000..0175d3394
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraAimAssistTargeting.java
+@@ -0,0 +1,88 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.api.model.CameraPose.Vector;
++
++import java.util.List;
++import java.util.Objects;
++
++/** Native non-debug ranking after geometry, exclusion and obstruction queries produce candidates. */
++public final class CameraAimAssistTargeting {
++
++    private CameraAimAssistTargeting() {
++    }
++
++    /** Packet mode zero ranks angles; every nonzero mode ranks distance. */
++    public static float score(final Vector origin, final Vector direction, final Vector point,
++                              final float scale, final int mode) {
++        final float dx = point.x() - origin.x();
++        final float dy = point.y() - origin.y();
++        final float dz = point.z() - origin.z();
++        if (mode != 0) {
++            final float x = dx * scale;
++            final float y = dy * scale;
++            final float z = dz * scale;
++            return z * z + (y * y + x * x);
++        }
++        final float length = (float) Math.sqrt(dz * dz + (dy * dy + dx * dx));
++        final float nx = length < .0001F ? 0 : dx / length;
++        final float ny = length < .0001F ? 0 : dy / length;
++        final float nz = length < .0001F ? 0 : dz / length;
++        final float dot = nz * direction.z() + (ny * direction.y() + nx * direction.x());
++        // This cubic is the native angle approximation. acos changes target ordering.
++        return scale * (dot * -.87266463F + -.6981317F * dot * dot * dot + 1.5707964F);
++    }
++
++    /** Actor priority packet values and resolved block priorities use the same float conversion. */
++    public static float priorityScale(final int priority) {
++        return Math.clamp(1.1F - (float) priority * .01F, .1F, 1.1F);
++    }
++
++    /** Native treats scales within this tolerance of the zero-priority scale as ineligible. */
++    public static boolean eligible(final float scale) {
++        return Float.isFinite(scale) && Math.abs(scale - 1.1F) > .00001F;
++    }
++
++    /**
++     * Retains the first point and candidate on equal scores. Callers supply native candidate order,
++     * with block candidates before entity candidates, and filter excluded or obstructed targets.
++     * Debug-mode alternate-target sorting and final interaction hit construction are separate steps.
++     */
++    public static <T> Selection<T> select(final Vector origin, final Vector direction, final int mode,
++                                         final Iterable<Candidate<T>> candidates) {
++        Selection<T> selected = null;
++        float bestScore = Float.MAX_VALUE;
++        for (final Candidate<T> candidate : candidates) {
++            if (!eligible(candidate.scale)) {
++                continue;
++            }
++            for (final Vector point : candidate.points) {
++                final float score = score(origin, direction, point, candidate.scale, mode);
++                if (score < bestScore) {
++                    selected = new Selection<>(candidate.identity, point, score);
++                    bestScore = score;
++                }
++            }
++        }
++        return selected;
++    }
++
++    /** Blocks supply visible face points; entities supply their picking-box center. */
++    public record Candidate<T>(T identity, List<Vector> points, float scale) {
++        public Candidate {
++            Objects.requireNonNull(identity);
++            points = List.copyOf(points);
++            if (points.size() > 3 || !Float.isFinite(scale)) {
++                throw new IllegalArgumentException("Invalid aim-assist candidate");
++            }
++        }
++    }
++
++    public record Selection<T>(T identity, Vector position, float score) {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraAudioListener.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraAudioListener.java
 new file mode 100644
 index 000000000..ad79cb977
@@ -4829,6 +4935,132 @@ index 5729504a5..75f8cbdeb 100644
                      } catch (final Throwable e) {
                          BedrockProtocol.kickForIllegalState(info, "Error ticking entity tracker. See console for details.", e);
                      }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraAimAssistTargetingTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraAimAssistTargetingTest.java
+new file mode 100644
+index 000000000..5c21e79f6
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CameraAimAssistTargetingTest.java
+@@ -0,0 +1,120 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import net.raphimc.viabedrock.api.model.CameraAimAssistTargeting.Candidate;
++import net.raphimc.viabedrock.api.model.CameraPose.Vector;
++import org.junit.jupiter.api.Test;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++class CameraAimAssistTargetingTest {
++
++    @Test
++    void angleAndDistanceModesChooseDifferentTargetsWithoutChangingTieOrder() {
++        final var centered = new Candidate<>(1, List.of(new Vector(0, 0, 5)), 1);
++        final var nearby = new Candidate<>(2, List.of(new Vector(1, 0, 1)), 1);
++        final var direction = new Vector(0, 0, 1);
++        assertEquals(1, CameraAimAssistTargeting.select(Vector.ZERO, direction, 0, List.of(centered, nearby)).identity());
++        assertEquals(2, CameraAimAssistTargeting.select(Vector.ZERO, direction, 1, List.of(centered, nearby)).identity());
++        assertEquals(2, CameraAimAssistTargeting.select(Vector.ZERO, direction, 255, List.of(centered, nearby)).identity());
++        final var firstPoint = new Vector(-1, 0, 1);
++        final var secondPoint = new Vector(1, 0, 1);
++        final var first = new Candidate<>(3, List.of(firstPoint, secondPoint), 1);
++        final var tied = new Candidate<>(4, List.of(secondPoint), 1);
++        final var selected = CameraAimAssistTargeting.select(Vector.ZERO, direction, 1, List.of(first, tied));
++        assertEquals(3, selected.identity());
++        assertEquals(firstPoint, selected.position());
++    }
++
++    @Test
++    void priorityClampingAndZeroPriorityToleranceExcludeUnrankedTargets() {
++        assertEquals(1.1F, CameraAimAssistTargeting.priorityScale(Integer.MIN_VALUE));
++        assertEquals(.1F, CameraAimAssistTargeting.priorityScale(Integer.MAX_VALUE));
++        assertEquals(.8000001F, CameraAimAssistTargeting.priorityScale(30));
++        assertEquals(.100000024F, CameraAimAssistTargeting.priorityScale(100));
++        assertFalse(CameraAimAssistTargeting.eligible(CameraAimAssistTargeting.priorityScale(0)));
++        assertFalse(CameraAimAssistTargeting.eligible(1.099999F));
++        assertTrue(CameraAimAssistTargeting.eligible(CameraAimAssistTargeting.priorityScale(1)));
++        assertFalse(CameraAimAssistTargeting.eligible(Float.NaN));
++        assertNull(CameraAimAssistTargeting.select(Vector.ZERO, new Vector(0, 0, 1), 0,
++                List.of(new Candidate<>(1, List.of(new Vector(0, 0, 1)), 1.1F))));
++        assertThrows(IllegalArgumentException.class, () -> new Candidate<>(1, List.of(Vector.ZERO), Float.NaN));
++    }
++
++    @Test
++    void nativeBlockAndEntityScoresMatchAtFloatPrecision() throws Exception {
++        final var rows = fixture("native-scores.json").getAsJsonArray("cases");
++        for (final var element : rows) {
++            final var row = element.getAsJsonObject();
++            // This isolated native scorer uses one for angle; the packet and selector use zero.
++            final float actual = CameraAimAssistTargeting.score(vector(row, "origin"), vector(row, "direction"),
++                    vector(row, "position"), row.get("weight").getAsFloat(), row.get("mode").getAsInt() == 1 ? 0 : 1);
++            assertEquals(Float.floatToRawIntBits(row.get("score").getAsFloat()), Float.floatToRawIntBits(actual), row.toString());
++        }
++        assertEquals(384, rows.size());
++    }
++
++    @Test
++    void nativePriorityConversionMatchesIncludingSignedExtremes() throws Exception {
++        final var rows = fixture("native-priorities.json").getAsJsonArray("cases");
++        int compared = 0;
++        for (final var element : rows) {
++            final var row = element.getAsJsonObject();
++            if (row.get("obstructed").getAsBoolean() || row.get("odd").getAsInt() != 0) {
++                continue;
++            }
++            final int priority = row.get("match").getAsBoolean() ? row.get("priority").getAsInt() : 0;
++            assertEquals(Float.floatToRawIntBits(row.get("scale").getAsFloat()),
++                    Float.floatToRawIntBits(CameraAimAssistTargeting.priorityScale(priority)), row.toString());
++            compared++;
++        }
++        assertEquals(44, compared);
++    }
++
++    @Test
++    void nativeSelectorModeEligibilityAndTieReductionMatch() throws Exception {
++        final var rows = fixture("native-selection.json").getAsJsonArray("cases");
++        for (final var element : rows) {
++            final var row = element.getAsJsonObject();
++            final var candidates = new ArrayList<Candidate<Integer>>();
++            for (final var entry : row.getAsJsonArray("candidates")) {
++                final var candidate = entry.getAsJsonObject();
++                candidates.add(new Candidate<>(candidate.get("actor").getAsInt(), List.of(vector(candidate, "position")),
++                        candidate.get("scale").getAsFloat()));
++            }
++            final var actual = CameraAimAssistTargeting.select(vector(row, "origin"), vector(row, "direction"),
++                    row.get("mode").getAsInt(), candidates);
++            final var expected = row.getAsJsonObject("selected");
++            assertNotNull(actual, row.toString());
++            assertEquals(expected.get("actor").getAsInt(), actual.identity(), row.toString());
++            assertEquals(vector(expected, "position"), actual.position(), row.toString());
++            assertEquals(Float.floatToRawIntBits(expected.get("score").getAsFloat()), Float.floatToRawIntBits(actual.score()), row.toString());
++        }
++        assertEquals(32, rows.size());
++    }
++
++    private static JsonObject fixture(final String name) throws Exception {
++        final String source = System.getenv("STACKANVIL_NATIVE_CAMERA_AIM_ASSIST");
++        assumeTrue(source != null);
++        return JsonParser.parseString(Files.readString(Path.of(source).resolve(name))).getAsJsonObject();
++    }
++
++    private static Vector vector(final JsonObject object, final String field) {
++        final JsonArray values = object.getAsJsonArray(field);
++        return new Vector(values.get(0).getAsFloat(), values.get(1).getAsFloat(), values.get(2).getAsFloat());
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraAudioListenerTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraAudioListenerTest.java
 new file mode 100644
 index 000000000..48c7f2087

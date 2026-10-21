@@ -487,3 +487,44 @@ Core has 1,236 passing tests and 32 optional skips.
 The add-on has 816 passing tests and 120 optional skips.
 All 18 converter tests and four proxy tests pass.
 Checkstyle, offline regressions, and patch metadata checks pass.
+
+## Aim-assist target ranking
+
+The shared ranking kernel now implements the target build's non-debug score reduction.
+Wire mode zero ranks the view angle; every nonzero mode ranks distance.
+The angle score uses a cubic approximation, rather than `acos`.
+Distance scoring squares each scaled coordinate before summing.
+Both paths preserve native float operation order.
+Equal scores retain the first candidate and the first visible face point.
+Callers must supply native candidate order, with blocks before entities.
+
+Priority conversion clamps `1.1 - priority * 0.01` between 0.1 and 1.1.
+The selector excludes scales within 0.00001 of 1.1.
+This makes zero and negative priorities ineligible during ranking.
+A priority of 100 produces 0.100000024 at float precision; larger priorities clamp at 0.1.
+
+Private probes execute the pinned 1.26.51.1 binary.
+The shared implementation matches all 384 block/entity score samples, 44 priority conversions, and 32 selector results at float precision.
+These comparisons cover small distances, large world coordinates, zero directions, both modes, priority clamps, eligibility, and ties.
+The tests read private fixtures through `STACKANVIL_NATIVE_CAMERA_AIM_ASSIST`.
+Ordinary tests cover mode selection, point ties, and eligibility without those fixtures.
+
+A separate 176-case native probe establishes actor-priority lookup and update boundaries.
+Preset ID 136 and category ID 137 come from the local player's metadata.
+Actor ID 138 comes from the candidate actor.
+The priority packet updates keys formed from those three IDs; registry array positions do not supply them.
+The probe also covers obstruction rejection and odd-tick gating.
+Java tests compare only the 44 conversion cases from that probe.
+They do not establish the unimplemented lookup, obstruction, or tick pipeline.
+
+Aim assistance still does not execute in the add-on.
+Packet handling, registry updates, activation, native candidate geometry, obstruction queries, debug alternatives, reticle rendering, and interaction rotation remain open.
+This kernel establishes ranking behavior after those stages supply candidates.
+It does not establish visible or interaction parity.
+
+After folding the ranking kernel into its owner, all 102 core patches replay successfully.
+All four projects build, with 1,241 core tests passing and 32 optional skips.
+The add-on has 816 passing tests and 120 optional skips.
+All 18 converter tests and four proxy tests pass.
+Checkstyle, 261 offline regressions, tooling checks, and patch metadata validation pass.
+No live aim-assist test is claimed because client execution is still open.
