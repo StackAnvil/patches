@@ -490,7 +490,7 @@ Checkstyle, offline regressions, and patch metadata checks pass.
 
 ## Aim-assist state and geometry
 
-Core now handles protocol-2193 packets 316, 320, and 339 instead of discarding them.
+Core now handles protocol-2193 packets 316, 320, 327, and 339 instead of discarding them.
 It retains command settings, category and preset definitions, and actor-priority updates on each connection.
 Shared ranking and entity geometry execute independently of the renderer.
 Client activation, world queries, the reticle, and interaction rotation remain incomplete.
@@ -571,19 +571,63 @@ Preset ID 136 and category ID 137 come from the local player's metadata.
 Actor ID 138 comes from the candidate actor.
 The probe also covers obstruction rejection and odd-tick gating.
 Java tests compare only the 44 conversion cases from that probe.
-They do not establish the unimplemented metadata, obstruction, or tick pipeline.
+They do not establish the obstruction or tick pipeline.
+The transport below binds the three metadata IDs to actor lifetimes.
+
+### Control scheme and client state
+
+Packet 327 retains the raw unsigned control-scheme byte, including unknown values.
+Malformed bodies reject the update before mutation.
+The native handler at `141319120` stores that byte without enum validation.
+The [protocol-2193 schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/clientbound-control-scheme-set-packet/) and [preview schema](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/packets/clientbound-control-scheme-set-packet/) confirm its encoding.
+No received byte remains distinct from an explicit zero.
+This retention does not implement the scheme's movement mappings or pitch changes.
+
+Native interaction at `141baef80` checks `ControlSchemeComponent` and the current camera identifier through `1429d4550`.
+The shared policy matches 2,048 native results across eight identifiers and every unsigned byte.
+Free and fixed-boom identifiers permit schemes zero through four.
+Follow-orbit permits only schemes one and three.
+Other tested identifiers and unknown schemes reject interaction.
+The probe executes the actual lookup and its initial map construction, including native built-in names.
+Host boundaries provide TLS guards, allocation, memory operations, and exit registration.
+Current-camera identifier production, result generation, and input override remain outside this probe.
+The policy does not assume that a custom preset uses its resolved root identifier.
+
+The negotiated `viabedrock:camera_aim_assist_v1` channel carries complete accepted state and independent actor binding changes.
+Catalog changes carry definitions, active settings, actor priorities, the optional control byte, and the selected camera context.
+The camera context preserves resolved preset fields, its base, epoch, instruction sequence, and index.
+It does not invent activation defaults for optional aim fields.
+Unchanged catalogs are reused rather than sorted on each connection tick.
+
+Catalogs use contiguous 256-KiB fragments with a 64-MiB transport guard.
+The client allocates only received bytes and replaces the view only after complete decoding.
+A malformed or interrupted transfer preserves the accepted view and bindings.
+An oversized core snapshot withdraws client state without changing accepted core definitions.
+An unchanged rejected view does not trigger repeated serialization or warnings on each tick.
+Late channel registration sends a complete snapshot and all current bindings.
+A complete registration snapshot resets old bindings atomically.
+
+Bindings carry Java identity, native lifetime, unique actor ID, and metadata IDs 136–138.
+Only native integer metadata supplies an ID. Missing or differently typed values produce zero, as the native metadata query does.
+A metadata change sends one binding instead of the full catalog.
+Despawn sends a removal for that lifetime.
+Bindings can arrive before actor snapshots, but client lookup requires the actor's current native lifetime.
+A late removal cannot erase a replacement actor with the same Java identity.
+Transfer sequences reject stale messages and interrupted fragments.
+The add-on checks the captured connection and generation on its client thread, and clears state on disconnect.
+Binding transport does not establish native candidate enumeration order.
 
 ### Remaining aim-assist work
 
-The add-on still needs negotiated state transport and camera-preset activation.
-Native actor enumeration, metadata binding, block candidates, world obstruction, and debug alternatives remain open.
+Camera-preset activation and actual target execution remain incomplete.
+Native actor enumeration, block candidates, world obstruction, and debug alternatives remain open.
 The reticle and interaction rotation must consume the selected native target.
 Passing geometry, packet, and ranking tests does not establish those behaviors.
 
 ### Verification after replay
 
 All 102 core patches replay successfully.
-All four projects build, with 1,249 core tests passing and 32 optional skips.
+All four projects build, with 1,256 core tests passing and 32 optional skips.
 The add-on has 816 passing tests and 120 optional skips.
 All 18 converter tests and four proxy tests pass.
 Checkstyle, tooling checks, 261 offline regressions, and patch metadata validation pass.
@@ -597,3 +641,16 @@ It does not alter the packets or production state.
 The recording reaches spawn, closes normally, and releases all owned Java and display processes.
 The private server stops and its fixture is restored.
 This verifies the packet and retained-state path; selected hits, reticles, and interactions remain unverified.
+
+A further isolated recording verifies the negotiated state in the actual add-on.
+It contains 39 client-thread observations, including 32 accepted views.
+Those views retain four categories, two presets, and thirteen priorities.
+They reproduce six active-setting transitions and every control-scheme byte from zero through four.
+The journal contains all five packet-327 updates.
+Selected free-camera context arrives and clears with the camera instruction.
+Two armor-stand identities from native packet 13 correlate with the received actor bindings.
+The observations show target removal, an empty interval, and a replacement with a different identity and lifetime.
+The screenshot shows the playable test scene.
+Source artifact and manifest checksums match; all recorded Java, display, and server identities are gone after normal cleanup.
+The fixture and private observer source are restored.
+These observations verify delivery and lifetime checks, without establishing aim activation, selected hits, reticles, or interaction rotation.

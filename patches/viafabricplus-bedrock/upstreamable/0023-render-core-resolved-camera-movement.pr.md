@@ -242,3 +242,33 @@ Core has 1,236 passing tests and 32 optional skips.
 The add-on has 816 passing tests and 120 optional skips.
 All 18 converter tests and four proxy tests pass.
 Checkstyle, offline regressions, and patch metadata checks pass.
+
+## Aim-assist state reception
+
+The add-on registers the negotiated `viabedrock:camera_aim_assist_v1` payload on each connection.
+It retains complete accepted catalogs, command settings, actor priorities, control-scheme bytes, and selected camera context.
+Catalog transfer assembles bounded fragments before replacing the accepted view.
+Independent actor bindings preserve native identity, lifetime, and metadata IDs 136–138.
+Client lookup checks each binding against the actor runtime's current lifetime.
+
+Queued work checks both its captured connection and disconnect generation before mutation.
+Disconnect clears accepted and pending state.
+Stale transfers and late removals cannot replace newer state or remove a replacement lifetime.
+Late registration supplies a complete view and all current bindings.
+The shared tests cover fragmented catalogs, more than 4,096 priorities, interrupted transfers, malformed bodies, reconnects, and reused actor identities.
+
+This reception supplies state for native aim execution.
+Camera-preset activation, world queries, selected hits, reticles, and interaction rotation remain incomplete.
+The shared control policy matches 2,048 native lookup results, but current-camera identifier production remains unverified.
+Fixed-boom rendering and full control-scheme movement mappings remain separate unfinished work.
+
+An isolated connection to BDS 1.26.51.1 records 39 client-thread observations, including 32 accepted aim views.
+It verifies six setting transitions, all five control bytes, free-camera context and clear, and lifetime-validated actor bindings.
+Native packet-13 identities correlate the original armor stand and its replacement with their client bindings.
+The recording reaches gameplay and closes normally.
+All owned Java, display, and server identities are gone after cleanup.
+The source artifact and manifest checksums match, and the private observer source is restored.
+All four projects build. The add-on has 816 passing tests and 120 optional skips.
+Core has 1,256 passing tests and 32 optional skips, including the native control-policy comparison.
+Checkstyle, tooling checks, 261 offline regressions, and patch metadata validation pass.
+These checks establish state delivery and binding lifetime behavior, without establishing native aim execution or visible parity.

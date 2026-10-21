@@ -162,7 +162,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core retains received presets and resolves optional-field inheritance. It also resolves fades, FOV transitions, and default camera shake, which the add-on renders. Free-camera activation, pose transport, per-preset overrides, and native blend arithmetic now have production paths. Target tracking, splines, attachments, aim assistance, native follow cameras, built-in perspective pose parity, player-effects application, custom shake parameters, and broader lifecycle comparisons remain incomplete. |
+| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core and add-on execute camera effects, free-camera movement, target tracking, follow-orbit frames and spline playback with scoped native comparisons. Aim commands, definitions, actor priorities, control bytes and lifetime-scoped actor bindings now reach the add-on. Native aim activation, world queries, reticles and interaction rotation remain unfinished. Full follow-camera, built-in perspective and lifecycle parity also remain open. See the camera patch evidence for the verified scope. |
 | U2 | Fog and HUD visibility | Incomplete | Core retains all target HUD restrictions and transports them through direct connections and ViaProxy. The add-on applies individual Java HUD restrictions and preserves local settings on reset. Fog, missing native widgets, and remaining visual comparisons are incomplete. |
 | U3 | Texture animations, toasts, credits, store requests, and inventory preferences | Incomplete | Core retains each furnace family's tab, filter and layout settings from packet 351. A negotiated channel carries native settings in both directions and replays retained settings after registration or joining. The add-on isolates settings by play session. Tests cover negotiation, malformed payloads, Java changes, opaque values and stale session cleanup. Native cooking screens, preference controls, other inventory settings and native/route comparisons remain incomplete. Other packet-driven presentations remain incomplete. |
 | U4 | Dynamic JSON UI and widgets | Incomplete | Core resolves authored server-form templates, bounded expressions, collections, bindings, images, and original response indices. The add-on renders supported grids, scrolling, textures and alpha animations. The add-on binds forms, containers and NPC screens to each play session. Tests reject stale callbacks on a reused connection. Complete controller bindings, font metrics, other animation properties, and native comparisons on both routes. |
@@ -9228,3 +9228,26 @@ A private proposal scopes separate native material programs to the owning entity
 It retains ordinary Java eyes and requires actual transformed shader, color, depth, culling and reload checks.
 The active desktop profile has no Iris installation, and no new shader or runtime change has been applied.
 The reported tooltip screenshot also needs its actual active route observed; the frozen Wardrobe strings contain real line feeds.
+
+## Aim state delivery and control policy (October 21, 2026)
+
+The camera owner patches now transport accepted aim catalogs, settings, priorities, control bytes, and selected camera context to the add-on.
+Independent actor bindings carry metadata IDs 136–138 and native lifetimes.
+Bounded fragments install complete views atomically.
+Sequence, connection, generation, and lifetime checks reject stale work.
+Packet 327 retains every raw byte without claiming full control-scheme movement support.
+The shared interaction policy matches 2,048 target-native identifier and byte combinations.
+
+Both affected stacks replay, and all four projects build.
+Core has 1,256 passing tests and 32 optional skips; the add-on has 816 passing tests and 120 optional skips.
+The 18 converter tests, four proxy tests, Checkstyle, tooling checks, 261 offline regressions, and metadata validation pass.
+
+An actual add-on connection to BDS 1.26.51.1 records 39 client-thread observations and 32 accepted views.
+The views retain four categories, two presets, and thirteen actor priorities.
+They verify six setting transitions, all five control bytes, free-camera context and clear, and target removal followed by replacement.
+Native packet-13 identities correlate both target bindings.
+The run reaches gameplay and closes normally; all owned Java, display, and server identities are gone.
+Artifact and manifest checksums match, and the fixture and private observer source are restored.
+
+Native aim activation, candidate enumeration, world obstruction, selected hits, reticles, and interaction rotation remain incomplete.
+These results do not establish official-client visual parity or completion of the five implementation areas.
