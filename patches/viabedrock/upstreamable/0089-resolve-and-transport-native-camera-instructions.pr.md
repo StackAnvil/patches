@@ -218,10 +218,36 @@ The offline tooling, 261 regression tests, and patch metadata checks also pass.
 A direct NetherNet run against BDS 1.26.51.1 verifies live target movement, center offset, inactive-preset continuity, angular speed, removal, default, and clear.
 The rendered audit measures 19.99 degrees per second for the configured 20-degree camera.
 The server completes the full sequence in a fresh world with one target.
-This verifies delivery and add-on execution for that sequence. Official-client visual parity and fresh ViaProxy tracking remain open.
+A fresh ViaProxy run passes the same sequence and measures 19.96 degrees per second.
+Both routes verify delivery and add-on execution. Official-client visual parity remains open.
 
 
 The previous add-on supplies a negative control in a separate fresh world.
 It reaches gameplay and receives the complete command sequence, but retains its initial camera rotation and fails the orientation assertions.
 The candidate passes the same assertions. The candidate artifact and manifest are restored after the control.
 Both owned servers, Java clients, and the isolated display stop cleanly.
+
+
+## Combined camera actions
+
+Position and FOV handling share the native rule that selects one camera action before clear.
+Target and target removal now take precedence over clear, preserving the active preset and position blend.
+Attachment, detachment, and spline instructions also prevent lower-priority actions from running.
+Those actions still require their own rendering implementations.
+FOV runs only when its action wins, and clear resets FOV only when clear wins.
+Optional false flags do not select an action.
+
+A private comparison executes 864 action selections from the pinned native client.
+It covers set, attach, detach, target removal, target, FOV, spline, and clear.
+Boolean flags cover absent, false, and true values.
+The probe executes every dispatch instruction and stops at the selected action body.
+It establishes action selection, not ECS construction or action execution.
+Ordinary regression tests cover target and removal with clear, FOV and spline selection, false flags, and unsupported-action fallthrough.
+A storage regression also checks emitted FOV sequences and reset commands when actions compete.
+
+
+The final action-selection build replays all 102 core patches and builds all four projects.
+Core runs 1,228 tests: 1,196 pass and 32 optional cases skip.
+The 864 native selections pass within that suite.
+The add-on runs 936 tests: 816 pass and 120 optional cases skip.
+All 18 converter tests and four ViaProxy tests pass. Checkstyle and patch metadata checks pass.
