@@ -324,9 +324,38 @@ Host boundaries supply world ray results and CRT math.
 Separate native constructor and assignment probes establish empty default feelers and the pinned follow profile's zero spring and 0.25-block minimum.
 
 The renderer does not yet call this solver. Follow cameras still lack world collision handling.
-Native world clipping, shape filters, point-state sampling, and complete frame scheduling remain open.
+Block-type mapping, fluid transitions, point-state sampling, and complete frame scheduling remain open.
 These component comparisons do not establish rendered collision parity.
 
 The converter and replayed 102-patch core stack build successfully with matching resources.
 Core runs 1,243 tests: 1,211 pass and 32 optional tests skip. All four new avoidance tests pass.
 Converter tests and Checkstyle pass.
+
+## Camera ray intersections
+
+`CameraRaycast` supplies float traversal and box surface intersections for the avoidance integration.
+It visits the starting cell and at most 200 subsequent cells.
+Equal traversal fractions choose Z, then Y, then X.
+Box intersections preserve the native squared-direction threshold, inclusive edges, and face priority.
+A ray that starts inside a box can hit its exit surface.
+A segment wholly inside the box has no surface hit.
+
+The caller supplies accepted camera bounds in world coordinates.
+The traversal does not implement fluid-material transitions or resolve block-specific geometry and filters.
+The renderer does not yet use this model.
+
+Private probes execute 1,800 native box intersections and 506 native world rays.
+The comparisons cover all 2,688 sampled cells, hit positions, and hit faces.
+They include negative coordinates, large coordinates, thin boxes, shared edges, denied blocks, and the 200-step limit.
+The probes execute native overlay lookup, air fallback, default filter dispatch, the common camera-bound wrapper, and custom block intersections.
+Host boundaries supply authored block lookup, collision envelopes, absent random offsets, world height checks, and the CRT security-cookie check.
+These comparisons exclude fluid transitions, actual registry geometry, block-specific overrides, point-collapse mapping, and rendered collision parity.
+
+A separate probe executes 108 native point-state cases.
+It establishes floored block lookup and the exact material-byte, type-flag, and cached-block-byte conditions.
+The meaning of those fields for actual block registrations remains unverified.
+The renderer therefore does not substitute Java occlusion for this predicate.
+
+The replayed 102-patch core stack and converter build successfully.
+Core runs 1,247 tests: 1,215 pass and 32 optional tests skip.
+All four raycast tests, all 18 converter tests, and Checkstyle pass.

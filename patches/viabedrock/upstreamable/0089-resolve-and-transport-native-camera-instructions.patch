@@ -1,4 +1,4 @@
-From 19185d6d121a72ed34f485fbafd5d773741df66c Mon Sep 17 00:00:00 2001
+From 5aa490f2bfe769fc0ab35c49fb0510b97e48b99c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(camera): resolve server presets and camera movement
@@ -127,6 +127,16 @@ assignment establish empty default feelers and the pinned follow profile's
 zero spring and quarter-block minimum. Host ray and CRT boundaries are
 explicit. Native world clipping, actor-state lookup, projection inputs and
 full frame scheduling remain integration requirements.
+
+Add shared camera ray traversal and box surface intersections with native
+float arithmetic, cell and face tie ordering, the direction threshold,
+inside exits and the 200-step limit. Keep world geometry and policy in the
+caller; fluid transitions and renderer bindings remain incomplete.
+
+Private target execution compares 1,800 box segments and 506 world rays,
+including all 2,688 sampled cells. Execute native overlay-air fallback,
+filter dispatch, the common bounds wrapper and custom block intersection;
+supply authored block geometry and explicit environment boundaries.
 ---
  .../api/model/CameraAudioListener.java        |  30 ++
  .../viabedrock/api/model/CameraAvoidance.java | 171 ++++++++++
@@ -141,6 +151,7 @@ full frame scheduling remain integration requirements.
  .../viabedrock/api/model/CameraPose.java      | 109 ++++++
  .../api/model/CameraPoseTimeline.java         | 102 ++++++
  .../api/model/CameraPositionState.java        | 125 +++++++
+ .../viabedrock/api/model/CameraRaycast.java   | 149 +++++++++
  .../api/model/CameraShakeNoise.java           |  77 +++++
  .../api/model/CameraShakeState.java           | 138 ++++++++
  .../api/model/CameraShakeTimeline.java        | 119 +++++++
@@ -165,6 +176,7 @@ full frame scheduling remain integration requirements.
  .../api/model/CameraFovTimelineTest.java      | 132 ++++++++
  .../viabedrock/api/model/CameraOrbitTest.java | 135 ++++++++
  .../api/model/CameraPoseTimelineTest.java     | 152 +++++++++
+ .../api/model/CameraRaycastTest.java          | 128 +++++++
  .../api/model/CameraShakeTimelineTest.java    | 178 ++++++++++
  .../api/model/CameraTargetTrackerTest.java    | 151 +++++++++
  .../api/model/CameraTrackingRuntimeTest.java  | 111 +++++++
@@ -172,7 +184,7 @@ full frame scheduling remain integration requirements.
  .../model/CameraPositionControllerTest.java   | 311 ++++++++++++++++++
  .../protocol/model/CameraPresetTest.java      | 179 ++++++++++
  .../storage/CameraEffectsStorageTest.java     |  99 ++++++
- 44 files changed, 5327 insertions(+), 3 deletions(-)
+ 46 files changed, 5604 insertions(+), 3 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAudioListener.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAvoidance.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraEase.java
@@ -186,6 +198,7 @@ full frame scheduling remain integration requirements.
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraPose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraPoseTimeline.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraPositionState.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraRaycast.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraShakeNoise.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraShakeState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraShakeTimeline.java
@@ -205,6 +218,7 @@ full frame scheduling remain integration requirements.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraFovTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraOrbitTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraPoseTimelineTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraRaycastTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraShakeTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraTargetTrackerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraTrackingRuntimeTest.java
@@ -1750,6 +1764,161 @@ index 000000000..54f87b01e
 +        THIRD_PERSON_FRONT,
 +        FREE,
 +        FOLLOW_ORBIT
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraRaycast.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraRaycast.java
+new file mode 100644
+index 000000000..300e34cdb
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraRaycast.java
+@@ -0,0 +1,149 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.api.model.CameraPose.Vector;
++
++/** Float camera traversal and box surface intersections, independent of the renderer's world access. */
++public final class CameraRaycast {
++
++    private CameraRaycast() {
++    }
++
++    /**
++     * Visits the starting cell and at most 200 subsequent cells, as the native camera query does.
++     * The caller resolves block layers, camera bounds, and per-type filters before returning a box.
++     * This traversal does not implement the native fluid-material transition state machine.
++     */
++    public static Hit cast(final Vector start, final Vector end, final Shapes shapes) {
++        int x = floor(start.x());
++        int y = floor(start.y());
++        int z = floor(start.z());
++        final int endX = floor(end.x());
++        final int endY = floor(end.y());
++        final int endZ = floor(end.z());
++        float px = start.x();
++        float py = start.y();
++        float pz = start.z();
++        for (int step = 0; step <= 200; step++) {
++            final Box box = shapes.at(x, y, z);
++            if (box != null) {
++                final Hit hit = box.intersect(x, y, z, start, end);
++                if (hit != null) {
++                    return hit;
++                }
++            }
++            if (step == 200 || Float.isNaN(px) || Float.isNaN(py) || Float.isNaN(pz) || x == endX && y == endY && z == endZ) {
++                return null;
++            }
++            final float bx = x < endX ? (float) x + 1 : x > endX ? x : 0;
++            final float by = y < endY ? (float) y + 1 : y > endY ? y : 0;
++            final float bz = z < endZ ? (float) z + 1 : z > endZ ? z : 0;
++            final float dx = end.x() - px;
++            final float dy = end.y() - py;
++            final float dz = end.z() - pz;
++            final float tx = x == endX ? 999 : (bx - px) / dx;
++            final float ty = y == endY ? 999 : (by - py) / dy;
++            final float tz = z == endZ ? 999 : (bz - pz) / dz;
++            if (ty > tx && tz > tx) {
++                x += x < endX ? 1 : -1;
++                px = bx;
++                py += dy * tx;
++                pz += dz * tx;
++            } else if (ty < tz) {
++                y += y < endY ? 1 : -1;
++                px += dx * ty;
++                py = by;
++                pz += dz * ty;
++            } else {
++                z += z < endZ ? 1 : -1;
++                px += dx * tz;
++                py += dy * tz;
++                pz = bz;
++            }
++        }
++        return null;
++    }
++
++    private static int floor(final float value) {
++        final int truncated = (int) value;
++        return truncated - (value < truncated ? 1 : 0);
++    }
++
++    @FunctionalInterface
++    public interface Shapes {
++        /** Returns accepted world-space camera bounds, or null when this cell supplies no surface. */
++        Box at(int x, int y, int z);
++    }
++
++    /** World-space hit. Face values use Bedrock's down/up/north/south/west/east ordering. */
++    public record Hit(Vector position, int face) {
++    }
++
++    public record Box(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
++
++        /**
++         * Tests actual box surfaces, including exits from inside and inclusive edges.
++         * A segment wholly inside a box has no hit. Equal-distance faces retain X, then Y, then Z priority.
++         */
++        public Hit intersect(final int x, final int y, final int z, final Vector start, final Vector end) {
++            if (this.maxX <= this.minX || this.maxY <= this.minY || this.maxZ <= this.minZ) {
++                return null;
++            }
++            final float sx = start.x() - x;
++            final float sy = start.y() - y;
++            final float sz = start.z() - z;
++            final float dx = (end.x() - x) - sx;
++            final float dy = (end.y() - y) - sy;
++            final float dz = (end.z() - z) - sz;
++            final float lx = this.minX - x;
++            final float ly = this.minY - y;
++            final float lz = this.minZ - z;
++            final float hx = this.maxX - x;
++            final float hy = this.maxY - y;
++            final float hz = this.maxZ - z;
++            float closest = Float.POSITIVE_INFINITY;
++            Hit hit = null;
++            for (int plane = 0; plane < 6; plane++) {
++                final int axis = plane / 2;
++                final float delta = axis == 0 ? dx : axis == 1 ? dy : dz;
++                if (delta * delta < 1E-7F) {
++                    continue;
++                }
++                final boolean upper = (plane & 1) != 0;
++                final float boundary = switch (axis) {
++                    case 0 -> upper ? hx : lx;
++                    case 1 -> upper ? hy : ly;
++                    default -> upper ? hz : lz;
++                };
++                final float origin = axis == 0 ? sx : axis == 1 ? sy : sz;
++                final float fraction = (boundary - origin) / delta;
++                if (!(fraction >= 0 && fraction <= 1)) {
++                    continue;
++                }
++                final float px = fraction * dx + sx;
++                final float py = fraction * dy + sy;
++                final float pz = fraction * dz + sz;
++                if (axis != 0 && !(px >= lx && px <= hx) || axis != 1 && !(py >= ly && py <= hy)
++                        || axis != 2 && !(pz >= lz && pz <= hz)) {
++                    continue;
++                }
++                final float distance = (pz - sz) * (pz - sz) + (py - sy) * (py - sy) + (px - sx) * (px - sx);
++                if (hit == null || distance < closest) {
++                    closest = distance;
++                    final int face = switch (axis) {
++                        case 0 -> 4 + (plane & 1);
++                        case 1 -> plane & 1;
++                        default -> 2 + (plane & 1);
++                    };
++                    hit = new Hit(new Vector(x + px, y + py, z + pz), face);
++                }
++            }
++            return hit;
++        }
 +    }
 +
 +}
@@ -4702,6 +4871,140 @@ index 000000000..87e2ea32c
 +    private static CameraPose.Vector vector(final JsonArray a) {
 +        return new CameraPose.Vector(
 +                a.get(0).getAsFloat(), a.get(1).getAsFloat(), a.get(2).getAsFloat());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraRaycastTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraRaycastTest.java
+new file mode 100644
+index 000000000..d641d97cf
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CameraRaycastTest.java
+@@ -0,0 +1,128 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import net.raphimc.viabedrock.api.model.CameraPose.Vector;
++import org.junit.jupiter.api.Test;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++class CameraRaycastTest {
++
++    @Test
++    void intersectsSurfacesInsteadOfInventingAnInsideHit() {
++        final var box = new CameraRaycast.Box(0, 0, 0, 1, 1, 1);
++        final var inside = new Vector(.5F, .5F, .5F);
++        assertNull(box.intersect(0, 0, 0, inside, new Vector(.6F, .5F, .5F)));
++        assertEquals(new CameraRaycast.Hit(new Vector(1, .5F, .5F), 5), box.intersect(0, 0, 0, inside, new Vector(2, .5F, .5F)));
++        assertEquals(new CameraRaycast.Hit(Vector.ZERO, 4), box.intersect(0, 0, 0, new Vector(-1, -1, -1), new Vector(2, 2, 2)));
++        assertNull(box.intersect(0, 0, 0, new Vector(-.0001F, .5F, .5F), new Vector(.0001F, .5F, .5F)));
++    }
++
++    @Test
++    void traversalPreservesCornerPriorityAndTheNativeStepLimit() {
++        final var cells = new ArrayList<Cell>();
++        final var stop = new CameraRaycast.Box(0, 0, 0, 1, 1, 1);
++        CameraRaycast.cast(new Vector(-1, -1, -1), new Vector(2, 2, 2), (x, y, z) -> {
++            final var cell = new Cell(x, y, z);
++            cells.add(cell);
++            return cell.equals(new Cell(0, 0, 0)) ? stop : null;
++        });
++        assertEquals(List.of(new Cell(-1, -1, -1), new Cell(-1, -1, 0), new Cell(-1, 0, 0), new Cell(0, 0, 0)), cells);
++        final var start = new Vector(.5F, .5F, .5F);
++        final var end = new Vector(250.5F, .5F, .5F);
++        assertNotNull(CameraRaycast.cast(start, end, (x, y, z) -> x == 200 ? new CameraRaycast.Box(200, 0, 0, 201, 1, 1) : null));
++        assertNull(CameraRaycast.cast(start, end, (x, y, z) -> x == 201 ? new CameraRaycast.Box(201, 0, 0, 202, 1, 1) : null));
++    }
++
++    @Test
++    void nativeBoxIntersectionsMatch() throws Exception {
++        final var root = nativeFixture();
++        for (final var element : root.getAsJsonArray("boxes")) {
++            final var sample = element.getAsJsonObject();
++            final var cell = cell(sample.getAsJsonArray("cell"));
++            final var actual = box(sample.getAsJsonArray("bounds")).intersect(cell.x, cell.y, cell.z,
++                    vector(sample.getAsJsonArray("start")), vector(sample.getAsJsonArray("end")));
++            assertHit(sample, actual);
++        }
++    }
++
++    @Test
++    void nativeWorldIntersectionsAndCellOrderMatch() throws Exception {
++        final var root = nativeFixture();
++        for (final var element : root.getAsJsonArray("worlds")) {
++            final var sample = element.getAsJsonObject();
++            final var shapes = new HashMap<Cell, CameraRaycast.Box>();
++            for (final var cellElement : sample.getAsJsonArray("cells")) {
++                final var value = cellElement.getAsJsonObject();
++                if (!value.get("allow").getAsBoolean() || value.get("bounds").isJsonNull()) {
++                    continue;
++                }
++                final var cell = cell(value.getAsJsonArray("position"));
++                final var bounds = value.getAsJsonArray("bounds");
++                shapes.put(cell, new CameraRaycast.Box(bounds.get(0).getAsFloat() + cell.x, bounds.get(1).getAsFloat() + cell.y,
++                        bounds.get(2).getAsFloat() + cell.z, bounds.get(3).getAsFloat() + cell.x, bounds.get(4).getAsFloat() + cell.y,
++                        bounds.get(5).getAsFloat() + cell.z));
++            }
++            final var visited = new ArrayList<Cell>();
++            final var actual = CameraRaycast.cast(vector(sample.getAsJsonArray("start")), vector(sample.getAsJsonArray("end")), (x, y, z) -> {
++                final var cell = new Cell(x, y, z);
++                visited.add(cell);
++                return shapes.get(cell);
++            });
++            assertHit(sample, actual);
++            final var expected = new ArrayList<Cell>();
++            sample.getAsJsonArray("sampled").forEach(value -> expected.add(cell(value.getAsJsonArray())));
++            assertEquals(expected, visited);
++        }
++    }
++
++    private static JsonObject nativeFixture() throws Exception {
++        final String source = System.getenv("STACKANVIL_NATIVE_CAMERA_WORLD");
++        assumeTrue(source != null);
++        return JsonParser.parseString(Files.readString(Path.of(source))).getAsJsonObject();
++    }
++
++    private static void assertHit(final JsonObject sample, final CameraRaycast.Hit actual) {
++        if (sample.get("hit").isJsonNull()) {
++            assertNull(actual, sample::toString);
++            return;
++        }
++        assertNotNull(actual, sample::toString);
++        assertEquals(sample.get("face").getAsInt(), actual.face(), sample::toString);
++        final Vector expected = vector(sample.getAsJsonArray("hit"));
++        assertEquals(expected.x(), actual.position().x(), Math.max(.000001F, Math.ulp(expected.x()) * 2), sample::toString);
++        assertEquals(expected.y(), actual.position().y(), Math.max(.000001F, Math.ulp(expected.y()) * 2), sample::toString);
++        assertEquals(expected.z(), actual.position().z(), Math.max(.000001F, Math.ulp(expected.z()) * 2), sample::toString);
++    }
++
++    private static Vector vector(final JsonArray value) {
++        return new Vector(value.get(0).getAsFloat(), value.get(1).getAsFloat(), value.get(2).getAsFloat());
++    }
++
++    private static CameraRaycast.Box box(final JsonArray value) {
++        return new CameraRaycast.Box(value.get(0).getAsFloat(), value.get(1).getAsFloat(), value.get(2).getAsFloat(),
++                value.get(3).getAsFloat(), value.get(4).getAsFloat(), value.get(5).getAsFloat());
++    }
++
++    private static Cell cell(final JsonArray value) {
++        return new Cell(value.get(0).getAsInt(), value.get(1).getAsInt(), value.get(2).getAsInt());
++    }
++
++    private record Cell(int x, int y, int z) {
 +    }
 +
 +}
