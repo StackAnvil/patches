@@ -19,6 +19,17 @@ bun run server-replay record cubecraft --seconds 120
 
 Other targets are `minehut` and `geyser`. The Hive uses `geo.hivebedrock.cloud`, but ViaBedrock blacklists its network because translated clients can be banned. Use the official client to record Hive. The tool preserves the translated-client guard. A translated diagnostic join requires the explicit `--allow-hive` option.
 
+For another public server, use its current address from the in-game catalog or the server operator:
+
+```bash
+bun run server-replay record public --target play.example.org:19132 --client addon --seconds 240
+```
+
+Public targets also accept `nethernet://host:port`. The private manifest records the selected endpoint.
+Catalog experiences can use temporary endpoints, so resolve the address again before a later run.
+Named targets retain their configured address. Local targets still require loopback.
+The Hive guard also applies to its hostnames supplied through `record public`.
+
 The default login comes from the separate `StackAnvil Desktop 26.3` profile. Use `--account /absolute/path/bedrock.json` for another saved MinecraftAuth Bedrock account. The tool copies that account into its private client or proxy directory. It does not change the source account file.
 
 The Java client uses a private copy of the integration instance. Its runtime libraries stay shared, while settings, mods, logs, and account files stay isolated. The client runs on the lab's private virtual display with silent audio. A recording lasts between 20 and 300 seconds. It allows one connection and blocks automatic reconnects. The tool accepts the Java pack prompt, saves a screenshot, and stops its processes.

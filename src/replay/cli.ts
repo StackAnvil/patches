@@ -47,6 +47,7 @@ import {
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
 import { cleanupReplaySession } from "./session-cleanup.ts";
+import { hiveTarget, publicTarget } from "./targets.ts";
 import {
   hasGameplayAcknowledgments,
   verifyRendering,
@@ -627,6 +628,7 @@ async function main(): Promise<void> {
   const [mode, input, ...args] = Bun.argv.slice(2);
   if (mode === "--help" || mode === "help" || (mode === "form-fixture" && input === "--help")) {
     console.log(`Usage: bun run server-replay <record server|replay directory|inspect directory> [--seconds 120]
+       bun run server-replay record public --target host:port [--client addon|native]
        bun run server-replay form-fixture /absolute/plan.json [--dry-run] [--verbose]
        bun run server-replay form-fixture /absolute/plan.json --apply --reviewed-preview <sha256> [--verbose]
 
@@ -708,25 +710,25 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
     mode === "replay" && client === "native" ? await requireNativeOfflineReplay() : undefined;
   if (!Number.isInteger(seconds) || seconds < 20 || seconds > 300)
     throw new Error("--seconds must be between 20 and 300.");
-  if (
-    mode === "record" &&
-    input === "hive" &&
-    client !== "native" &&
-    !args.includes("--allow-hive")
-  )
-    throw new Error(
-      "ViaBedrock blacklists The Hive because translated clients can be banned. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.",
-    );
   let target = servers[input as keyof typeof servers];
-  if (mode === "record" && input !== "local" && option("--target"))
-    throw new Error("--target requires record local. Named servers use their configured address.");
+  if (mode === "record" && input !== "local" && input !== "public" && option("--target"))
+    throw new Error(
+      "--target requires record local or public. Named servers use their configured address.",
+    );
   if (mode === "record" && input === "local") {
     target = option("--target")!;
     if (!/^(?:nethernet:\/\/)?127\.0\.0\.1:\d+$/.test(target ?? ""))
       throw new Error(
         "Local recordings require --target 127.0.0.1:port or nethernet://127.0.0.1:port.",
       );
+  } else if (mode === "record" && input === "public") {
+    target = publicTarget(option("--target"));
   } else if (mode === "record" && !target) throw new Error("Unknown server.");
+  const hive = mode === "record" && hiveTarget(target!);
+  if (hive && client !== "native" && !args.includes("--allow-hive"))
+    throw new Error(
+      "ViaBedrock blacklists The Hive because translated clients can be banned. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.",
+    );
   const jar = await artifact("viaproxy");
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
   await chmod(privateRoot, 0o700);
@@ -741,7 +743,7 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
   await mkdir(proxyHome, { mode: 0o700 });
   await writeFile(
     join(proxyHome, "viabedrock.yml"),
-    `blob-cache: disabled\npack-cache: disabled\ntranslate-resource-packs: true\ndisable-server-blacklist: ${input === "hive" && args.includes("--allow-hive")}\n`,
+    `blob-cache: disabled\npack-cache: disabled\ntranslate-resource-packs: true\ndisable-server-blacklist: ${hive && args.includes("--allow-hive")}\n`,
     { mode: 0o600 },
   );
   await mkdir(join(proxyHome, "plugins"), { mode: 0o700 });
@@ -1046,7 +1048,7 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
   const summary = await inspectJournal(join(directory, "packets.sbr"));
   await writeFile(
     join(directory, "manifest.json"),
-    `${JSON.stringify({ schema: 1, mode, client, graphics, server: mode === "record" ? input : undefined, capturedAt: new Date().toISOString(), summary }, null, 2)}\n`,
+    `${JSON.stringify({ schema: 1, mode, client, graphics, server: mode === "record" ? input : undefined, target: mode === "record" ? target : undefined, capturedAt: new Date().toISOString(), summary }, null, 2)}\n`,
     { mode: 0o600 },
   );
   console.log(JSON.stringify(summary, null, 2));
