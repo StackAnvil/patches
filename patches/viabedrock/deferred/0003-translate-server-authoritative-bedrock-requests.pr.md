@@ -341,9 +341,19 @@ The add-on skips 120 optional cases. The final rejection-generation control pass
 A private local run uses the official BDS 1.26.51.1 archive with SHA-256
 `ad91d3b824e51ea50b5bb601c295cbd8f543a29b14315c2ad89ff27311e2d860`.
 The client reaches spawn, remains connected for 20 seconds, and reconnects successfully through ViaProxy.
-The chest-transfer fixture fails because the chest screen does not open.
+The chest-transfer fixture reports that the chest screen did not open.
+Later screenshot inspection confirms that the native chest screen was already open.
+The probe assumed Java GUI scale two and sampled outside the native panel.
 The same run reports repeated cached-chunk NBT decode errors before the inventory interaction.
 This run does not establish native menu behavior or transfer acceptance. Its processes and private display stop cleanly.
 An earlier attempt with the default BDS 1.26.45.1 installation fails protocol detection and supplies no target-version evidence.
 The home filesystem also refuses the initial private copy at its five-GiB reserve.
 The target-version run uses a private temporary checkout on a filesystem with sufficient free space and keeps that reserve check enabled.
+
+
+The corrected probe detects native desktop scale and uses exact capture-pixel coordinates for sampling and slot clicks.
+With the independent full-dimension biome fix, a fresh target-server ViaProxy run passes chest transfer.
+The server confirms zero items in the chest and all four items in the player inventory.
+Join, 20-second stability, reconnect, and reconnect stability also pass.
+Cached-chunk decoding errors fall from 1,058 in the earlier run to zero in the rebuilt run.
+This verifies ordinary chest interaction with these artifacts; authored Social navigation remains open.
