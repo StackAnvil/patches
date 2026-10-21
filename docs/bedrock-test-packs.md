@@ -36,6 +36,7 @@ Resetting a dead player's health through the Script API can prevent BDS from com
 | `block-break`, `block-place` | Break or place a block | The target block has the expected type and the placed item count changes. |
 | `drop-item`, `inventory-script-slot` | Drop one emerald | The server inventory count decreases by one, including when the pack sets the slot through Script API. |
 | `chest-transfer` | Move emeralds from a chest into the hotbar | The chest is empty and the player has four emeralds. |
+| `chest-authored-one-empty`, `chest-authored-one-merge` | Place and open the named probe chest, click an omitted slot, then activate its authored count-one slot. | Three source emeralds and both hidden diamonds remain. Exactly one emerald reaches the empty hotbar cell or merges into slot 15. |
 | `lab-table-then-chest` | Use a lab table, then transfer emeralds from a nearby chest | The chest opens while the lab table remains in place, and the emeralds reach the player. |
 | `chest-boat-transfer`, `chest-minecart-transfer` | Open vehicle storage and shift-click emeralds | The vehicle storage is empty and the player has four emeralds. |
 | `creative-select` | Search for a nether star and place it in the hotbar | The server sees a nether star in the player inventory. |

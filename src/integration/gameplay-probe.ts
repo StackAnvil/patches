@@ -6,6 +6,7 @@ import { geyserCaseIds, geyserNegativeControlIds } from "./geyser.ts";
 import { complexGameplayCaseIds } from "./ranged-observation.ts";
 import type { IncomingProjectileObservation } from "./projectile-observation.ts";
 import { chestViewport, containerPoint, type ContainerWindow } from "./container-viewport.ts";
+import { authoredInventoryCaseIds, isAuthoredInventoryCase } from "./inventory-ui-probe.ts";
 
 const prefix = "[ViaBedrock Gameplay Probe] ";
 
@@ -36,6 +37,7 @@ export const gameplayCaseIds = [
   "respawn",
   "dimension-change",
   "chest-transfer",
+  ...authoredInventoryCaseIds,
   "chest-rapid-transfer",
   "chest-pickup-all",
   "lab-table-then-chest",
@@ -69,7 +71,7 @@ export type GameplayPhase = "prepare" | "start" | "verify" | "invalidate";
 export function gameplayCasesForBackend(geyser: boolean): GameplayCaseId[] {
   return geyser
     ? gameplayCaseIds
-        .filter((id) => id !== "lab-table-then-chest")
+        .filter((id) => id !== "lab-table-then-chest" && !isAuthoredInventoryCase(id))
         .map((id) => (id === "offhand-ineligible-block" ? "offhand-block-place" : id))
     : [...gameplayCaseIds];
 }
@@ -587,6 +589,7 @@ export async function driveGameplay(
   id: GameplayCaseId,
   ui: Ui,
   start?: () => Promise<void>,
+  capture?: (phase: string) => Promise<void>,
 ): Promise<void> {
   switch (id) {
     case "fishing-early-reel":
@@ -733,6 +736,20 @@ export async function driveGameplay(
     case "offhand-ineligible-block":
       await rejectIneligibleOffhandBlock(ui);
       return;
+    case "chest-authored-one-empty":
+    case "chest-authored-one-merge": {
+      if (!start) throw new Error("Authored inventory fixture needs its placement setup.");
+      await uiMouse(ui, "right");
+      await start();
+      const viewport = await openChest(ui);
+      await capture?.("open");
+      // A hidden slot must not inherit generic pickup, then the authored slot moves one item.
+      await clickGui(ui, viewport, 176, 168, 16, 29);
+      await clickGui(ui, viewport, 176, 168, 16, 47);
+      await Bun.sleep(500);
+      await uiKey(ui, "Escape");
+      return;
+    }
     case "chest-transfer":
     case "custom-item-transfer":
       await chestTransfer(ui);
@@ -1045,6 +1062,19 @@ export async function runGameplayCases(
     const log = async () => (await readFile(options.serverLog, "utf8")).slice(logStart);
     const alive = () => options.clientAlive() && serverAlive();
     const screenshots: string[] = [];
+    const capture = async (phase: string) => {
+      screenshots.push(
+        await options.ui([
+          "ui",
+          "screenshot",
+          `gameplay-${id}-${run}-${phase}`,
+          "--client",
+          "java",
+          "--output-dir",
+          options.artifactDir,
+        ]),
+      );
+    };
     let stopped = false;
     try {
       const connectionError = await options.connectionError?.();
@@ -1056,33 +1086,18 @@ export async function runGameplayCases(
       // Cancellation cases leave another cell selected. Set the input precondition
       // explicitly after the world is visible, rather than treating that as loading.
       await uiKey(options.ui, "1");
-      screenshots.push(
-        await options.ui([
-          "ui",
-          "screenshot",
-          `gameplay-${id}-${run}-before`,
-          "--client",
-          "java",
-          "--output-dir",
-          options.artifactDir,
-        ]),
+      await capture("before");
+      await driveGameplay(
+        id,
+        options.ui,
+        async () => {
+          options.server.stdin?.write(`scriptevent vbprobe:start ${id} ${run}\n`);
+          await waitForGameplayEvent(id, run, "start", log, alive, 30_000, 25);
+        },
+        capture,
       );
-      await driveGameplay(id, options.ui, async () => {
-        options.server.stdin?.write(`scriptevent vbprobe:start ${id} ${run}\n`);
-        await waitForGameplayEvent(id, run, "start", log, alive, 30_000, 25);
-      });
       await Bun.sleep(350);
-      screenshots.push(
-        await options.ui([
-          "ui",
-          "screenshot",
-          `gameplay-${id}-${run}-after`,
-          "--client",
-          "java",
-          "--output-dir",
-          options.artifactDir,
-        ]),
-      );
+      await capture("after");
       options.server.stdin?.write(`scriptevent vbprobe:verify ${id} ${run}\n`);
       const event = await waitForGameplayEvent(id, run, "verify", log, alive);
       if (id === "minecart-dismount" && !minecartDismountHasClearance(event.observed)) {

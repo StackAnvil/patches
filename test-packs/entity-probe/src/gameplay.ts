@@ -459,6 +459,52 @@ define("inventory-script-slot", "inventory", async (player) => {
   return { passed: remaining === 1, observed: { remaining }, expected: 1 };
 });
 
+for (const [id, initialPlayer] of [["chest-authored-one-empty", 0], ["chest-authored-one-merge", 62]]) {
+  define(id, "inventory", async (player) => {
+    await prepareArena(player);
+    blockAt(player.dimension, 0, 1, 2).setType("minecraft:stone");
+    const chest = new ItemStack("minecraft:chest", 1);
+    chest.nameTag = "StackAnvil count-one probe";
+    inventory(player).setItem(0, chest);
+    return { placed: undefined };
+  }, (player, fixture) => {
+    const storage = fixture.placed?.getComponent("minecraft:inventory")?.container;
+    if (!storage) throw new Error("Authored inventory probe storage is unavailable.");
+    const items = inventory(player);
+    const observed = {
+      source: storage.getItem(9)?.amount ?? 0,
+      hidden: storage.getItem(0)?.amount ?? 0,
+      emeralds: countItem(items, "minecraft:emerald"),
+      diamonds: countItem(items, "minecraft:diamond"),
+      destination: items.getItem(initialPlayer ? 15 : 0)?.amount ?? 0,
+      firstHotbar: items.getItem(0)?.amount ?? 0,
+    };
+    const expected = { source: 3, hidden: 2, emeralds: initialPlayer + 1, diamonds: 0,
+      destination: initialPlayer + 1, firstHotbar: initialPlayer ? 0 : 1 };
+    return { passed: Object.entries(expected).every(([key, value]) => observed[key] === value), observed, expected };
+  }, async (player, fixture) => {
+    for (let tick = 0; tick < 20 && !fixture.placed; tick++) await nextTick();
+    const storage = fixture.placed?.getComponent("minecraft:inventory")?.container;
+    if (!storage) throw new Error("The client did not place the named chest.");
+    storage.setItem(0, new ItemStack("minecraft:diamond", 2));
+    const emerald = new ItemStack("minecraft:emerald", 4);
+    emerald.nameTag = "Probe emerald";
+    storage.setItem(9, emerald);
+    if (initialPlayer) {
+      const destination = emerald.clone();
+      destination.amount = initialPlayer;
+      inventory(player).setItem(15, destination);
+    }
+    await nextTick();
+  });
+}
+
+world.afterEvents.playerPlaceBlock.subscribe((event) => {
+  if (!active?.scenario.id.startsWith("chest-authored-one-") || active.fixture.closed || event.player.name !== active.playerName
+      || event.block.typeId !== "minecraft:chest") return;
+  active.fixture.placed = event.block;
+});
+
 define("chest-transfer", "inventory", async (player) => {
   await prepareArena(player);
   blockAt(player.dimension, 0, 1, 2).setType("minecraft:chest");

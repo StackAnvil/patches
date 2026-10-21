@@ -357,3 +357,34 @@ The server confirms zero items in the chest and all four items in the player inv
 Join, 20-second stability, reconnect, and reconnect stability also pass.
 Cached-chunk decoding errors fall from 1,058 in the earlier run to zero in the rebuilt run.
 This verifies ordinary chest interaction with these artifacts; authored Social navigation remains open.
+
+
+## Authored action live verification
+
+Two isolated BDS 1.26.51.1 cases now exercise the negotiated authored count-one path through ViaProxy.
+The client places a named chest and opens a title-selected manual grid with one exposed source slot.
+It clicks an omitted slot before activating the exposed slot.
+
+The empty-destination case leaves three source emeralds and both hidden diamonds in the chest.
+One emerald reaches hotbar slot zero.
+The merge case leaves the same chest contents and increases the existing player stack in slot 15 from 62 to 63.
+Hotbar slot zero remains empty, which verifies merge preference over an earlier empty cell.
+The ordinary four-item chest-transfer control also passes with the same installed resource pack.
+Join, stability, reconnect, and reconnect stability pass. Chunk decoding errors remain zero.
+
+An ordinary-controls fixture attempt changes the hidden slot and fails both assertions.
+A missed authored hit target leaves all contents unchanged and also fails.
+The corrected fixture uses explicit manual-grid anchors and retains its open-menu screenshots.
+These controls prevent fallback or an ignored click from passing as a native action.
+The current custom-description scope requires matching custom names on the source and merge target.
+The cases do not establish default-name presentation or full native physical input routing.
+
+A separate private comparison verifies two retained target-native Social requests against the current request codec.
+Each complete 27-byte request matches byte for byte. Both 18-byte successful cursor-only responses also round-trip exactly.
+The original protocol-2193 journal confirms that each response precedes a form, and the form precedes the client's container close.
+This verifies those serialized examples from the original recording; it does not establish a fresh Social interaction with the current client.
+A success response containing only an empty cursor therefore does not, by itself, prove that menu navigation failed.
+Current form takeover and visible navigation still require a combined check.
+
+The tooling check, probe-pack build, all 261 offline tests, and patch metadata validation pass.
+Raw recordings, packet extracts, screenshots, JVM probes, and run logs remain private.

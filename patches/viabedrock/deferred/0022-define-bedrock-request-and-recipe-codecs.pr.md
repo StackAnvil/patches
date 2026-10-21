@@ -40,3 +40,16 @@ The complete 84-patch core stack replays successfully.
 Core reports 387 tests with no failures or errors and one optional fixture skip.
 The add-on reports 519 tests with no failures or errors and 109 optional fixture skips.
 Cartography screens, authoritative result metadata, and full native crafting comparisons remain incomplete.
+
+
+## Native authored count-one packets
+
+The current codecs match two retained Social-menu request/response pairs from native Bedrock 1.26.51.1, protocol 2193.
+A private probe encodes both requests through the current request-array and action codecs.
+Each complete 27-byte packet matches its original native recording byte for byte.
+The current response-array codec also decodes and re-encodes both 18-byte success responses without changes.
+
+A separate parser checks the extracted packets against the original protocol-2193 journal.
+Both native flows receive a cursor-only success, then a form, before the client closes its container.
+The packet captures and comparison harness remain private.
+These two complete examples establish selected native serialization behavior; other action variants retain their own verification requirements.
