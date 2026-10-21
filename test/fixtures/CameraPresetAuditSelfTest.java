@@ -2,6 +2,8 @@ package com.enderdash.agent.replay;
 
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.connection.ProtocolInfo;
+import com.viaversion.viaversion.api.protocol.packet.State;
 import io.netty.buffer.Unpooled;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.model.CameraPreset;
@@ -34,12 +36,29 @@ public final class CameraPresetAuditSelfTest {
         require(packet.refCnt() == 0);
 
         var stored = new HashMap<Class<?>, Object>();
+        var state = new State[]{State.PLAY};
+        var info = (ProtocolInfo) Proxy.newProxyInstance(ProtocolInfo.class.getClassLoader(),
+                new Class<?>[]{ProtocolInfo.class}, (instance, method, arguments) -> {
+                    if (method.getName().equals("getServerState")) return state[0];
+                    throw new UnsupportedOperationException(method.toString());
+                });
         var user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
                 new Class<?>[]{UserConnection.class}, (instance, method, arguments) -> switch (method.getName()) {
+                    case "getProtocolInfo" -> info;
                     case "get" -> stored.get(arguments[0]);
                     case "put" -> { stored.put(arguments[0].getClass(), arguments[0]); yield null; }
                     default -> throw new UnsupportedOperationException(method.toString());
                 });
+        // Core ignores these packets before START_GAME, without retaining or publishing them.
+        for (var early : new State[]{State.LOGIN, State.CONFIGURATION}) {
+            state[0] = early;
+            require(CameraPresetAudit.afterPacket(user, captured, directory));
+            require(!Files.exists(directory.resolve("camera-presets-core.json")));
+            stored.put(CustomBlockPackStorage.class, new CustomBlockPackStorage(loaded -> { }));
+            require(!CameraPresetAudit.afterPacket(user, captured, directory));
+            stored.clear();
+        }
+        state[0] = State.PLAY;
         var storage = new CameraEffectsStorage(user);
         user.put(storage);
         boolean rejected = false;
