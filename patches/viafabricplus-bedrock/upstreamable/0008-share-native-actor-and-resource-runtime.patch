@@ -1,4 +1,4 @@
-From fcb7e32dcb18b8b82377aa24ccc6c3ed65095f7c Mon Sep 17 00:00:00 2001
+From 690557c08186b90662a8b5df32a541f66d4ac6b3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -7,10 +7,14 @@ Subject: [PATCH] feat(runtime): share native actor animation and resource
 Provide the shared float Molang, actor graph, geometry, accepted resource, sound and particle runtime before account appearance management. Keep native event timing, resource limits and connection lifetimes together so server actors and equipped models can consume the same implementation without Character Creator account access.
 
 Retain the existing renderer and account behavior in their following feature patch.
+
+Own the native physical-bounds payload in the shared actor bridge. Camera
+targeting and UI actor views both need dimensions with the actor lifetime,
+so neither consumer defines or registers a second bounds transport.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
- .../bedrock/ViaFabricPlusBedrock.java         |   35 +
+ .../bedrock/ViaFabricPlusBedrock.java         |   40 +
  .../appearance/BedrockActorAnimation.java     | 1085 +++++++++++++++++
  .../bedrock/appearance/BedrockActorScale.java |   33 +
  .../appearance/BedrockActorVisibility.java    |  110 ++
@@ -90,7 +94,7 @@ Retain the existing renderer and account behavior in their following feature pat
  .../sound/MixinMinecraftServerSounds.java     |   22 +
  .../bedrock/render/BedrockActorPicking.java   |   58 +
  .../render/BedrockActorPickingState.java      |   99 ++
- .../bedrock/render/BedrockActorState.java     |   89 ++
+ .../bedrock/render/BedrockActorState.java     |  100 ++
  .../bedrock/render/BedrockAnimatedModel.java  |  190 +++
  .../bedrock/render/BedrockBoneTransform.java  |   27 +
  .../render/BedrockFirstPersonActor.java       |   38 +
@@ -106,6 +110,7 @@ Retain the existing renderer and account behavior in their following feature pat
  .../bedrock/render/BedrockPlayerModel.java    |   44 +
  .../bedrock/render/BedrockViewBobbing.java    |   51 +
  .../render/BedrockWalkingAnimation.java       |   35 +
+ .../render/NativeActorBoundsPayload.java      |   22 +
  .../render/NativeActorIdentityPayload.java    |   24 +
  .../bedrock/render/NativeActorPayload.java    |   24 +
  .../render/NativeActorPickingPayload.java     |   24 +
@@ -185,7 +190,7 @@ Retain the existing renderer and account behavior in their following feature pat
  .../render/BedrockPlayerModelTest.java        |  104 ++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 177 files changed, 22233 insertions(+), 15 deletions(-)
+ 178 files changed, 22271 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibility.java
@@ -279,6 +284,7 @@ Retain the existing renderer and account behavior in their following feature pat
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbing.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimation.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorBoundsPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorIdentityPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPickingPayload.java
@@ -396,14 +402,15 @@ index d61e407..d7886b4 100644
 +    sourceSets.main { resources.srcDir(bundledBedrockAssets) }
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index bf2899a..55d481b 100644
+index bf2899a..c078841 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -24,8 +24,19 @@ package com.viaversion.viafabricplus.bedrock;
+@@ -24,8 +24,20 @@ package com.viaversion.viafabricplus.bedrock;
  import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
  import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
  import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeActorPayload;
++import com.viaversion.viafabricplus.bedrock.render.NativeActorBoundsPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeActorIdentityPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeActorPickingPayload;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorPicking;
@@ -419,7 +426,7 @@ index bf2899a..55d481b 100644
  import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
  import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
  import com.viaversion.viafabricplus.ViaFabricPlus;
-@@ -68,6 +79,30 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -68,6 +80,34 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
              ClientPlayNetworking.registerReceiver(NativeCustomEntityPayload.TYPE,
                  (payload, context) -> CustomEntityRenderStore.accept(listener.getConnection(), payload.message())));
          ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> CustomEntityRenderStore.clear());
@@ -437,6 +444,10 @@ index bf2899a..55d481b 100644
 +            ClientPlayNetworking.registerReceiver(NativeActorIdentityPayload.TYPE,
 +                (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
 +        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockActorState.clear());
++        PayloadTypeRegistry.clientboundPlay().register(NativeActorBoundsPayload.TYPE, NativeActorBoundsPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++            ClientPlayNetworking.registerReceiver(NativeActorBoundsPayload.TYPE,
++                (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
 +        PayloadTypeRegistry.clientboundPlay().register(NativeBlockIdentifiersPayload.TYPE, NativeBlockIdentifiersPayload.CODEC);
 +        ClientPlayNetworking.registerGlobalReceiver(NativeBlockIdentifiersPayload.TYPE,
 +                (payload, context) -> BedrockNativeBlocks.accept(payload.message()));
@@ -11352,10 +11363,10 @@ index 0000000..d05c95f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
 new file mode 100644
-index 0000000..993a394
+index 0000000..de07020
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,100 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11367,6 +11378,7 @@ index 0000000..993a394
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.network.Connection;
 +import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.api.model.NativeActorBoundsMessage;
 +import net.raphimc.viabedrock.api.model.NativeActorStates;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
 +
@@ -11381,12 +11393,22 @@ index 0000000..993a394
 +    private BedrockActorState() {}
 +
 +    public static void accept(final Connection connection, final NativeActorMessage message) {
++        accept(connection, localPlayer -> apply(message, localPlayer));
++    }
++
++    public static void accept(final Connection connection, final NativeActorBoundsMessage message) {
++        accept(connection, localPlayer -> ACTORS.apply(message, localPlayer));
++    }
++
++    public static NativeActorBoundsMessage bounds(final UUID uuid) { return ACTORS.bounds(uuid); }
++
++    private static void accept(final Connection connection, final java.util.function.Consumer<UUID> update) {
 +        final long receivedGeneration = generation;
 +        Minecraft.getInstance().execute(() -> {
 +            final var listener = Minecraft.getInstance().getConnection();
 +            if (generation == receivedGeneration && connection.isConnected()
 +                    && listener != null && listener.getConnection() == connection) {
-+                apply(message, listener.getLocalGameProfile().id());
++                update.accept(listener.getLocalGameProfile().id());
 +            }
 +        });
 +    }
@@ -12422,6 +12444,34 @@ index 0000000..0888be7
 +    public interface Provider {
 +        BedrockWalkingAnimation bedrockWalkingAnimation();
 +    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorBoundsPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorBoundsPayload.java
+new file mode 100644
+index 0000000..795683b
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorBoundsPayload.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeActorBoundsMessage;
++
++public record NativeActorBoundsPayload(NativeActorBoundsMessage message) implements CustomPacketPayload {
++    public static final Type<NativeActorBoundsPayload> TYPE = new Type<>(Identifier.parse(NativeActorBoundsMessage.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeActorBoundsPayload> CODEC = CustomPacketPayload.codec(
++        (payload, buffer) -> NativeActorBoundsMessage.TYPE.write(buffer, payload.message),
++        buffer -> new NativeActorBoundsPayload(NativeActorBoundsMessage.TYPE.read(buffer)));
++
++    @Override
++    public Type<NativeActorBoundsPayload> type() { return TYPE; }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorIdentityPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorIdentityPayload.java
 new file mode 100644

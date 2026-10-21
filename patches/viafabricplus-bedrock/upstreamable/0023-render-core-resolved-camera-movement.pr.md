@@ -23,7 +23,7 @@ The core compares numeric timelines with the matching Bedrock 1.26.51.1 executab
 
 ## Remaining work
 
-Preset movement, splines, fog, and aim assistance remain incomplete. Native opaque screenshots verify the overlay below the HUD. Partial opacity, exact frame timing, hidden-HUD behavior, and broader lifecycle comparisons remain unverified.
+Splines, fog, and aim assistance remain incomplete. Later sections describe free-camera movement and entity tracking. Native opaque screenshots verify the overlay below the HUD. Partial opacity, exact frame timing, hidden-HUD behavior, and broader lifecycle comparisons remain unverified.
 
 FOV snapshots retain elapsed progress. Historical local projection changes during an unsubscribed interval remain unverified.
 Native local modifiers, first-person integration, pauses, transfers, and broader lifecycle comparisons remain incomplete.
@@ -96,3 +96,47 @@ Core tests compare player orientation against the target executable.
 Private replay diagnostics read the actual sound-engine listener position, forward vector, and up vector.
 Complete route checks and limits are recorded in the coverage ledger.
 Native eye-height, vehicle/death behavior, listener activation timing, and audible panning remain unverified.
+
+
+## Entity target frame integration
+
+The add-on subscribes to `viabedrock:camera_tracking` and advances every free-camera tracker before the active blend.
+Targets resolve through native actor unique IDs and lifetimes.
+The adapter interpolates actor position and yaw, then uses native physical height and scale for the bounding-box center.
+It waits for matching native bounds instead of using Java proxy dimensions.
+The shared actor patch owns the bounds payload and registration; UI rendering reuses that bridge.
+Disconnect clears every tracker.
+
+Core owns tracking arithmetic, limits, generations, and target removal.
+The add-on supplies frame time and actor samples without changing player aim or outbound movement.
+The native kernel comparisons do not prove live delivery, native actor interpolation, or visible camera parity.
+The direct target-server run below verifies live execution. Official-client visual comparisons and fresh ViaProxy tracking runs remain required.
+
+
+## Tracking prerequisites
+
+- [Core camera runtime](../../viabedrock/upstreamable/0089-resolve-and-transport-native-camera-instructions.pr.md): Publish the tracking state and frame solver.
+- [Shared actor runtime](0008-share-native-actor-and-resource-runtime.pr.md): Publish native identity, lifetime, and physical bounds access.
+
+
+The complete candidate build replays all 102 core patches and 38 add-on patches in the private lab.
+All four projects build successfully with the pinned ViaFabricPlus artifacts and bundled Bedrock resources.
+Core runs 1,224 tests: 1,194 pass and 30 optional cases skip.
+The add-on runs 936 tests: 816 pass and 120 optional cases skip.
+All 18 converter tests and four ViaProxy tests pass. Checkstyle reports no failures.
+The offline tooling, 261 regression tests, and patch metadata checks also pass.
+
+
+A fresh BDS 1.26.51.1 world now verifies the complete live target sequence over direct NetherNet.
+Rendered camera audits follow the entity from -45 to +45 degrees and apply a two-block center offset.
+Switching to the inactive preset preserves its settled rotation.
+The configured 20-degrees-per-second camera measures 19.99 degrees per second during the return movement.
+Target removal retains the desired angles. Explicit default restores zero pitch and yaw, and clear restores the player's view.
+The server completes every command without a script error, and the fixture contains only the player and one target.
+These measurements verify this live sequence, not official-client pixel parity or every tracking option.
+
+
+The previous add-on supplies a negative control in a separate fresh world.
+It reaches gameplay and receives the complete command sequence, but retains its initial camera rotation and fails the orientation assertions.
+The candidate passes the same assertions. The candidate artifact and manifest are restored after the control.
+Both owned servers, Java clients, and the isolated display stop cleanly.

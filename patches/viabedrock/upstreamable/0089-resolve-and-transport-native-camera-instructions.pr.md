@@ -42,7 +42,8 @@ Full stack builds and rendered connection checks are recorded in the coverage le
 
 ## Remaining work
 
-Fade and FOV behavior are applied. Preset rendering, camera movement, target tracking, splines, attachments, and aim assistance remain incomplete.
+Fade, FOV, shake, free-camera movement, and entity tracking now execute. Native follow cameras, splines, attachments, and aim assistance remain incomplete.
+The sections below record the verification scope and remaining pose differences.
 Native local FOV modifiers, late context changes, pauses, transfers, and broader lifecycle behavior need further comparisons. Retaining a decoded instruction does not establish camera state or behavioral parity.
 
 ## Camera shake
@@ -146,7 +147,8 @@ Exact restoration during an existing blend remains incomplete.
 The three built-in first/third-person commands activate their requested perspectives.
 The add-on still uses Java collision and distance rules for those targets.
 Their activation does not establish Bedrock pose parity.
-Follow/orbit cameras, splines, attachments, tracking, aim assistance, custom controls, and pose/FOV coupling remain incomplete.
+Follow/orbit cameras, splines, attachments, aim assistance, custom controls, and pose/FOV coupling remain incomplete.
+Entity tracking now has a shared frame runtime, with comparison limits recorded below.
 
 Complete direct and ViaProxy replays pass transport and existing skin-rendering checks.
 Both reproduce all five free-camera targets, the short yaw arc, overshoot, perspective activation, and clear.
@@ -180,3 +182,46 @@ They cover native player orientation, inherited listener overrides, the camera d
 The add-on applies the current command's listener choice independently of its visual blend.
 Native activation timing, eye height, vehicles, death, and audible panning remain unverified.
 Route checks are recorded in the coverage ledger.
+
+
+## Entity target tracking
+
+Core now transports free-camera preset identities and target generations on `viabedrock:camera_tracking`.
+Target commands do not advance the position-blend sequence.
+The shared runtime updates inactive cameras and preserves their rotations across camera switches.
+Explicit rotation and default commands have separate revisions, so position changes retain a stopped target's rotation.
+Clear removes targeting. Target removal retains the last desired angles.
+An acquired target cannot resume through a replacement actor lifetime.
+
+The frame solver applies angular speed, first-frame snapping, horizontal and vertical limits, tracking radius, and the 1024-block removal limit.
+It uses the native sine table for actor-relative center offsets.
+Target 1.26.51.1 functions `1466f7fd0`, `1466fe8c0`, `1466fe310`, `14677b940`, and `14677b300` supply execution evidence.
+The private comparisons cover 960 angular-step samples and 160 chained samples across 32 tracking sequences.
+The chained samples exercise initialization, moving targets, limits, radius exit, return, and snap rearming.
+They use authored component storage and entity centers, with host boundaries for CRT math and ECS marker operations.
+
+A combined comparison exposed float rounding at a half-turn: the target normalizes yaw before subtracting the initial horizontal center.
+The solver now preserves that operation order.
+The comparison fixtures remain private and optional. Ordinary regression tests cover lifecycle, switching, transport, and explicit resets.
+The comparisons do not cover the complete ECS scheduler, preset construction, the zero-speed inline path, actor-relative offsets, or visible rendering.
+Late subscription also lacks the previous rendered tracking history, so it does not establish continuous native pose restoration.
+
+
+The complete candidate build replays all 102 core patches and 38 add-on patches in the private lab.
+All four projects build successfully with the pinned ViaFabricPlus artifacts and bundled Bedrock resources.
+Core runs 1,224 tests: 1,194 pass and 30 optional cases skip.
+The add-on runs 936 tests: 816 pass and 120 optional cases skip.
+All 18 converter tests and four ViaProxy tests pass. Checkstyle reports no failures.
+The offline tooling, 261 regression tests, and patch metadata checks also pass.
+
+
+A direct NetherNet run against BDS 1.26.51.1 verifies live target movement, center offset, inactive-preset continuity, angular speed, removal, default, and clear.
+The rendered audit measures 19.99 degrees per second for the configured 20-degree camera.
+The server completes the full sequence in a fresh world with one target.
+This verifies delivery and add-on execution for that sequence. Official-client visual parity and fresh ViaProxy tracking remain open.
+
+
+The previous add-on supplies a negative control in a separate fresh world.
+It reaches gameplay and receives the complete command sequence, but retains its initial camera rotation and fails the orientation assertions.
+The candidate passes the same assertions. The candidate artifact and manifest are restored after the control.
+Both owned servers, Java clients, and the isolated display stop cleanly.

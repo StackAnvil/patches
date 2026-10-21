@@ -1861,3 +1861,11 @@ Shared controller commands also require the [core animation command contract](..
 ## Shared visibility declarations
 
 Use CubeConverter's public declaration parser after the client validates rule counts, pattern lengths and value types. Normalize null and boolean values to numeric expressions before parsing. This preserves the existing client fallback semantics while CubeConverter retains its original expression representation. Ordered wildcard rules and repeated declarations remain intact.
+
+
+## Shared physical bounds transport
+
+The shared actor bridge now owns the existing native-bounds payload, receiver, and lifetime-aware accessors.
+These declarations previously lived in the later UI patch.
+Camera targeting and UI actor views consume the same bounds state and register the channel once.
+This move preserves the payload format and does not change native dimension calculations.

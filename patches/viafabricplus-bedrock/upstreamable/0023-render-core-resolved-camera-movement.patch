@@ -1,4 +1,4 @@
-From 45e22d7de54d924eeddf3b3e48d5338f466d7c33 Mon Sep 17 00:00:00 2001
+From f7b2ec941aff96648c077a074c75a5e7f11b6d60 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(camera): render core-resolved server camera movement
@@ -36,26 +36,35 @@ new transition from an unknown old frame. Built-in first/third-person
 alignment currently uses Java's camera collision and distance rules, so
 activation works but those poses do not establish Bedrock camera parity.
 Audio/effects, follow cameras, splines and attached targets remain gaps.
+
+Subscribe to the independent tracking snapshot and update every free-camera
+instance before the active blend. Resolve target unique IDs and lifetimes
+from native actor state, then interpolate the native physical box center
+and actor yaw for each rendered frame. Clear tracking on disconnect.
+Position commands retain their own sequence, so a target update does not
+restart the position ease. Physical bounds come from the shared actor
+bridge rather than Java proxy dimensions.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |  24 ++++
- .../bedrock/camera/BedrockCameraFade.java     |  40 +++++++
- .../bedrock/camera/BedrockCameraFov.java      |  68 +++++++++++
- .../bedrock/camera/BedrockCameraPosition.java | 107 ++++++++++++++++++
- .../bedrock/camera/BedrockCameraShake.java    |  49 ++++++++
- .../bedrock/camera/CameraFadePayload.java     |  22 ++++
- .../bedrock/camera/CameraFovPayload.java      |  22 ++++
- .../bedrock/camera/CameraPositionPayload.java |  22 ++++
- .../bedrock/camera/CameraShakePayload.java    |  26 +++++
- .../render/MixinBedrockCameraFade.java        |  23 ++++
- .../render/MixinBedrockCameraFov.java         |  23 ++++
- .../render/MixinBedrockCameraPerspective.java |  21 ++++
- .../render/MixinBedrockCameraShake.java       |  72 ++++++++++++
+ .../bedrock/ViaFabricPlusBedrock.java         |  28 ++++
+ .../bedrock/camera/BedrockCameraFade.java     |  40 ++++++
+ .../bedrock/camera/BedrockCameraFov.java      |  68 +++++++++
+ .../bedrock/camera/BedrockCameraPosition.java | 135 ++++++++++++++++++
+ .../bedrock/camera/BedrockCameraShake.java    |  49 +++++++
+ .../bedrock/camera/CameraFadePayload.java     |  22 +++
+ .../bedrock/camera/CameraFovPayload.java      |  22 +++
+ .../bedrock/camera/CameraPositionPayload.java |  22 +++
+ .../bedrock/camera/CameraShakePayload.java    |  26 ++++
+ .../bedrock/camera/CameraTrackingPayload.java |  22 +++
+ .../render/MixinBedrockCameraFade.java        |  23 +++
+ .../render/MixinBedrockCameraFov.java         |  23 +++
+ .../render/MixinBedrockCameraPerspective.java |  21 +++
+ .../render/MixinBedrockCameraShake.java       |  72 ++++++++++
  .../render/MixinMinecraftHudVisibility.java   |   6 +
- .../sound/MixinBedrockCameraListener.java     |  30 +++++
+ .../sound/MixinBedrockCameraListener.java     |  30 ++++
  .../bedrock/settings/BedrockSettings.java     |   4 +
  .../viafabricplus-bedrock/lang/en_us.json     |   1 +
  .../viafabricplus-bedrock.mixins.json         |   7 +-
- 18 files changed, 566 insertions(+), 1 deletion(-)
+ 19 files changed, 620 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFade.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
@@ -64,6 +73,7 @@ Audio/effects, follow cameras, splines and attached targets remain gaps.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFovPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraPositionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraShakePayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraTrackingPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFade.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFov.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraPerspective.java
@@ -71,10 +81,10 @@ Audio/effects, follow cameras, splines and attached targets remain gaps.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockCameraListener.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index a6e44c2..af3f619 100644
+index 8e1bc3e..f69c94b 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -48,6 +48,14 @@ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
+@@ -49,6 +49,15 @@ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
  import com.viaversion.viafabricplus.bedrock.input.InputPermissionsPayload;
  import com.viaversion.viafabricplus.bedrock.hud.HudVisibilityPayload;
@@ -83,13 +93,14 @@ index a6e44c2..af3f619 100644
 +import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraFov;
 +import com.viaversion.viafabricplus.bedrock.camera.CameraFovPayload;
 +import com.viaversion.viafabricplus.bedrock.camera.CameraPositionPayload;
++import com.viaversion.viafabricplus.bedrock.camera.CameraTrackingPayload;
 +import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraPosition;
 +import com.viaversion.viafabricplus.bedrock.camera.CameraShakePayload;
 +import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraShake;
  import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
  import com.viaversion.viafabricplus.bedrock.hud.BedrockLocatorBar;
  import com.viaversion.viafabricplus.bedrock.hud.LocatorBarPayload;
-@@ -135,6 +143,22 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -140,6 +149,25 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
              ClientPlayNetworking.registerReceiver(LocatorBarPayload.TYPE,
                  (payload, context) -> BedrockLocatorBar.accept(listener.getConnection(), payload.snapshot())));
@@ -107,6 +118,9 @@ index a6e44c2..af3f619 100644
 +        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockCameraFov.clear());
 +        PayloadTypeRegistry.clientboundPlay().register(CameraPositionPayload.TYPE, CameraPositionPayload.CODEC);
 +        ClientPlayNetworking.registerGlobalReceiver(CameraPositionPayload.TYPE,
++            (payload, context) -> BedrockCameraPosition.accept(payload.state()));
++        PayloadTypeRegistry.clientboundPlay().register(CameraTrackingPayload.TYPE, CameraTrackingPayload.CODEC);
++        ClientPlayNetworking.registerGlobalReceiver(CameraTrackingPayload.TYPE,
 +            (payload, context) -> BedrockCameraPosition.accept(payload.state()));
 +        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockCameraPosition.clear());
          this.settings = new BedrockSettings();
@@ -234,10 +248,10 @@ index 0000000..49fab8a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
 new file mode 100644
-index 0000000..244c650
+index 0000000..542f01c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,135 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -246,6 +260,11 @@ index 0000000..244c650
 +package com.viaversion.viafabricplus.bedrock.camera;
 +
 +import net.minecraft.client.CameraType;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
++import net.raphimc.viabedrock.api.model.CameraTrackingState;
++import net.raphimc.viabedrock.api.model.CameraTrackingRuntime;
++import net.raphimc.viabedrock.api.model.CameraTargetTracker;
++import net.raphimc.viabedrock.api.model.NativeActorBoundsMessage;
 +import net.minecraft.client.Minecraft;
 +import net.raphimc.viabedrock.api.model.CameraAudioListener;
 +import net.raphimc.viabedrock.api.model.CameraPose;
@@ -258,6 +277,7 @@ index 0000000..244c650
 +
 +/** Supplies rendered frame inputs to core's command and blend rules. */
 +public final class BedrockCameraPosition {
++    private static final CameraTrackingRuntime TRACKING = new CameraTrackingRuntime();
 +    private static final CameraPoseTimeline TIMELINE = new CameraPoseTimeline();
 +    private static final Deque<CameraPositionState> PENDING = new ArrayDeque<>();
 +    private static CameraPositionState state = CameraPositionState.EMPTY;
@@ -276,7 +296,12 @@ index 0000000..244c650
 +        PENDING.addLast(snapshot);
 +    }
 +
++    public static void accept(final CameraTrackingState snapshot) {
++        TRACKING.accept(snapshot);
++    }
++
 +    public static void clear() {
++        TRACKING.clear();
 +        PENDING.clear();
 +        state = CameraPositionState.EMPTY;
 +        rendered = null;
@@ -334,15 +359,32 @@ index 0000000..244c650
 +            appliedSequence = snapshot.sequence();
 +            changed = true;
 +        }
++        TRACKING.advance(delta, BedrockCameraPosition::targetActor);
 +        if (state.mode() == Mode.LOCAL) {
 +            rendered = normal;
 +            return null;
 +        }
-+        final CameraPose target = state.mode() == Mode.FREE
++        final CameraPose tracked = TRACKING.active(state.sequence(), normal.fov(), Mode.FREE.ordinal());
++        final CameraPose target = state.mode() == Mode.FREE && tracked != null ? tracked : state.mode() == Mode.FREE
 +                ? CameraPose.fromDegrees(state.position(), state.pitch(), state.yaw(), normal.fov(), Mode.FREE.ordinal())
 +                : new CameraPose(normal.position(), normal.orientation(), normal.fov(), state.mode().ordinal());
 +        rendered = TIMELINE.advance(changed ? 0 : delta, target, null);
 +        return rendered;
++    }
++    private static CameraTrackingRuntime.Actor targetActor(final long uniqueId) {
++        final var level = Minecraft.getInstance().level;
++        final var uuid = BedrockActorState.uuidByUniqueId(uniqueId);
++        if (level == null || uuid == null) return null;
++        final var snapshot = BedrockActorState.state(uuid);
++        final var bounds = BedrockActorState.bounds(uuid);
++        final var entity = level.getEntity(uuid);
++        if (entity == null || snapshot == null || bounds == null || !bounds.lifetime().equals(snapshot.lifetime()) || bounds.height() == null) return null;
++        if (!Float.isFinite(bounds.height()) || bounds.height() < 0 || !Float.isFinite(snapshot.scale()) || snapshot.scale() < 0
++                || !Float.isFinite(bounds.height() * snapshot.scale()) || bounds.height() * snapshot.scale() >= 1E9F) return null;
++        final float height = NativeActorBoundsMessage.scaledDimension(bounds.height(), snapshot.scale());
++        final var position = entity.getPosition(partialTick);
++        return new CameraTrackingRuntime.Actor(snapshot.lifetime(), new CameraTargetTracker.Sample(
++                new CameraPose.Vector((float) position.x, (float) position.y + height * .5F, (float) position.z), entity.getYRot(partialTick)));
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraShake.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraShake.java
@@ -515,6 +557,34 @@ index 0000000..1538d1e
 +    public Type<CameraShakePayload> type() {
 +        return TYPE;
 +    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraTrackingPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraTrackingPayload.java
+new file mode 100644
+index 0000000..43d9803
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraTrackingPayload.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.camera;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.CameraTrackingState;
++
++public record CameraTrackingPayload(CameraTrackingState state) implements CustomPacketPayload {
++    public static final Type<CameraTrackingPayload> TYPE = new Type<>(Identifier.parse(CameraTrackingState.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, CameraTrackingPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> CameraTrackingState.TYPE.write(buffer, payload.state),
++            buffer -> new CameraTrackingPayload(CameraTrackingState.TYPE.read(buffer)));
++
++    @Override
++    public Type<CameraTrackingPayload> type() { return TYPE; }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFade.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFade.java
 new file mode 100644
