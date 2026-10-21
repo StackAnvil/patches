@@ -488,9 +488,69 @@ The add-on has 816 passing tests and 120 optional skips.
 All 18 converter tests and four proxy tests pass.
 Checkstyle, offline regressions, and patch metadata checks pass.
 
-## Aim-assist target ranking
+## Aim-assist state and geometry
 
-The shared ranking kernel now implements the target build's non-debug score reduction.
+Core now handles protocol-2193 packets 316, 320, and 339 instead of discarding them.
+It retains command settings, category and preset definitions, and actor-priority updates on each connection.
+Shared ranking and entity geometry execute independently of the renderer.
+Client activation, world queries, the reticle, and interaction rotation remain incomplete.
+
+### Packet and request handling
+
+Definitions use separate category and preset arrays, followed by an operation byte.
+Operation zero replaces both tables; operation one replaces named entries and keeps omitted entries.
+Unknown operations do nothing.
+Duplicate names use the last received definition.
+Empty category names are ignored.
+Actor-priority updates replace individual signed-ID triples and retain omitted entries.
+Registry-array positions never supply those IDs.
+
+Packet 316 queues the latest accepted request until the connection update phase.
+Clear bypasses preset lookup and removes active settings.
+Other action values set settings, including unknown values.
+Unknown named presets leave an earlier pending request untouched; empty names bypass lookup.
+Invalid bounds consume a pending request but preserve active settings.
+Registry replacement leaves active settings and actor priorities intact.
+
+The native handler and updater are `14131ac70` and `145df81e0` in Bedrock 1.26.51.1.
+Registry operation handlers call `1425f98f0` and `142600ac0`.
+Priority handler `14131c180` calls the upsert routine `1425f3ae0`.
+The target-server capture supplies ten packets across all three packet types.
+Tests decode them through the registered handlers and reproduce every captured byte.
+They also compare 432 finite native request updates, including rejected bounds and retained fields.
+Connection scheduling and camera-preset activation are not established by these tests.
+
+Java rejects non-finite settings instead of reproducing the target's NaN acceptance.
+The target's unordered comparisons accept some NaN inputs.
+This is an intentional protection, separate from finite-input parity.
+Lists, strings, aggregate definitions, and retained unions have allocation limits.
+Oversized updates preserve both accepted tables without partial mutation.
+
+### Candidate geometry
+
+The shared frustum uses the existing native float trigonometry runtime.
+It does not distribute a copied native sine table or proprietary assets.
+Wire angle X controls the vertical extent; angle Y controls the horizontal extent.
+The four side planes and far plane use strict positive point tests.
+Vertical and zero directions retain the target's degenerate geometry.
+
+Entity eligibility first clamps the eye position to the picking box.
+The closest point must pass the strict distance and frustum tests.
+Ranking then uses the box center, which can lie outside the frustum.
+Nonempty native sub-hitboxes replace generic picking boxes.
+Nonempty generic boxes replace the fallback box, even when no supplied box qualifies.
+The native 101-candidate threshold is checked once per actor.
+An actor with several boxes can therefore append several candidates when the current count is 100.
+
+Private probes execute `1429d13b0`, `1426426c0`, and the geometric branch of `145d86670`.
+They use the independently verified target Windows sine table from earlier trigonometry research.
+Java matches 48 native frustums, 2,016 point predicates, and 432 entity-candidate cases.
+The comparison checks nonzero basis and plane values at float precision; zero signs are ignored.
+Fixtures cover large coordinates, box precedence, strict boundaries, and the per-actor count check.
+Actor enumeration, exclusion resolution, actual eye/facing producers, world obstruction, and visible parity remain unverified.
+
+### Ranking
+
 Wire mode zero ranks the view angle; every nonzero mode ranks distance.
 The angle score uses a cubic approximation, rather than `acos`.
 Distance scoring squares each scaled coordinate before summing.
@@ -502,29 +562,38 @@ Priority conversion clamps `1.1 - priority * 0.01` between 0.1 and 1.1.
 The selector excludes scales within 0.00001 of 1.1.
 This makes zero and negative priorities ineligible during ranking.
 A priority of 100 produces 0.100000024 at float precision; larger priorities clamp at 0.1.
-
-Private probes execute the pinned 1.26.51.1 binary.
-The shared implementation matches all 384 block/entity score samples, 44 priority conversions, and 32 selector results at float precision.
-These comparisons cover small distances, large world coordinates, zero directions, both modes, priority clamps, eligibility, and ties.
+The shared implementation matches 384 native block/entity scores, 44 priority conversions, and 32 selector results at float precision.
 The tests read private fixtures through `STACKANVIL_NATIVE_CAMERA_AIM_ASSIST`.
-Ordinary tests cover mode selection, point ties, and eligibility without those fixtures.
+Ordinary tests cover selection, ties, box precedence, bounds, clear handling, and atomic rejection without private fixtures.
 
 A separate 176-case native probe establishes actor-priority lookup and update boundaries.
 Preset ID 136 and category ID 137 come from the local player's metadata.
 Actor ID 138 comes from the candidate actor.
-The priority packet updates keys formed from those three IDs; registry array positions do not supply them.
 The probe also covers obstruction rejection and odd-tick gating.
 Java tests compare only the 44 conversion cases from that probe.
-They do not establish the unimplemented lookup, obstruction, or tick pipeline.
+They do not establish the unimplemented metadata, obstruction, or tick pipeline.
 
-Aim assistance still does not execute in the add-on.
-Packet handling, registry updates, activation, native candidate geometry, obstruction queries, debug alternatives, reticle rendering, and interaction rotation remain open.
-This kernel establishes ranking behavior after those stages supply candidates.
-It does not establish visible or interaction parity.
+### Remaining aim-assist work
 
-After folding the ranking kernel into its owner, all 102 core patches replay successfully.
-All four projects build, with 1,241 core tests passing and 32 optional skips.
+The add-on still needs negotiated state transport and camera-preset activation.
+Native actor enumeration, metadata binding, block candidates, world obstruction, and debug alternatives remain open.
+The reticle and interaction rotation must consume the selected native target.
+Passing geometry, packet, and ranking tests does not establish those behaviors.
+
+### Verification after replay
+
+All 102 core patches replay successfully.
+All four projects build, with 1,249 core tests passing and 32 optional skips.
 The add-on has 816 passing tests and 120 optional skips.
 All 18 converter tests and four proxy tests pass.
-Checkstyle, 261 offline regressions, tooling checks, and patch metadata validation pass.
-No live aim-assist test is claimed because client execution is still open.
+Checkstyle, tooling checks, 261 offline regressions, and patch metadata validation pass.
+
+A fresh Java connection to the pinned target server records 11 production state observations.
+They retain four categories, two presets, and thirteen actor priorities.
+The observations confirm default settings, custom distance-mode settings, clears, and custom settings with defaults.
+The journal contains five command packets, three definition packets, and two priority packets.
+The recorder observes state on the connection event loop after the real decoder runs.
+It does not alter the packets or production state.
+The recording reaches spawn, closes normally, and releases all owned Java and display processes.
+The private server stops and its fixture is restored.
+This verifies the packet and retained-state path; selected hits, reticles, and interactions remain unverified.
