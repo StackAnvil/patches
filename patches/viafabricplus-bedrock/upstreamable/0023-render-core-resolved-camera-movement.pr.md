@@ -69,7 +69,7 @@ Exact mid-blend restoration remains incomplete.
 
 Built-in first/third-person activation currently uses Java camera alignment.
 Native third-person distance and collision still need implementation and comparison.
-Player-effects application, native follow cameras, splines, attached actors, and aim assistance remain incomplete.
+Player-effects application, native follow-camera parity, splines, and aim assistance remain incomplete. The follow integration below executes attachment poses.
 The listener section below records audio application.
 
 Complete direct and ViaProxy replays pass transport and existing skin-rendering checks.
@@ -140,3 +140,30 @@ The previous add-on supplies a negative control in a separate fresh world.
 It reaches gameplay and receives the complete command sequence, but retains its initial camera rotation and fails the orientation assertions.
 The candidate passes the same assertions. The candidate artifact and manifest are restored after the control.
 Both owned servers, Java clients, and the isolated display stop cleanly.
+
+
+## Follow-orbit execution
+
+The add-on registers `viabedrock:camera_follow` and advances the shared runtime before the active position blend.
+Local player sampling uses the translated position and the protocol origin offset supplied by core.
+Explicit attachments use native actor lifetimes, physical heights, and scale. Missing actor state retains the previous pose until that state arrives.
+The resulting detached camera applies before shake, culling, and audio listener selection. Disconnect releases the runtime.
+
+Accepted Java mouse-turn deltas update the active orbit instance. The existing camera-input permission check controls that collection point.
+This adapter does not establish native sensitivity, player-body coupling, or activation rotation semantics.
+Collision avoidance, complete native player-pivot lookup, and official-client visual comparisons remain open.
+
+The [camera command reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/commandsreference/examples/commands/camera) describes attachment, detachment, and offset commands.
+The live fixture uses the exact target BDS version to check command execution independently of that reference.
+
+
+The live fixture uses an owned Bedrock 1.26.51.1 server and a fresh world on each run.
+Direct and ViaProxy camera audits match nine stages: follow, attach, target movement, rotated offsets, preset switching, restore, detach, default, and clear.
+Each active stage checks rendered position and orientation within 0.03 blocks and degrees, using at least two observations.
+Clear restores the ordinary attached camera.
+These runs verify this integration against server commands. They do not compare the official client's rendered view.
+
+The direct recording completes its transport and cleanup checks.
+The extended ViaProxy run passes every pose assertion, then stalls in JVM shutdown after the recorder closes.
+Its cleanup reports `Owned Java processes did not stop normally; forced cleanup refused.`
+Those pose observations are not a complete passing proxy lifecycle. A fresh older-client live control remains pending.

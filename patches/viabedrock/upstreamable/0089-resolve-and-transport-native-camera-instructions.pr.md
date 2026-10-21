@@ -42,7 +42,7 @@ Full stack builds and rendered connection checks are recorded in the coverage le
 
 ## Remaining work
 
-Fade, FOV, shake, free-camera movement, and entity tracking now execute. Native follow cameras, splines, attachments, and aim assistance remain incomplete.
+Fade, FOV, shake, free-camera movement, entity tracking, and follow-orbit frames now execute. Follow-camera parity, splines, and aim assistance remain incomplete.
 The sections below record the verification scope and remaining pose differences.
 Native local FOV modifiers, late context changes, pauses, transfers, and broader lifecycle behavior need further comparisons. Retaining a decoded instruction does not establish camera state or behavioral parity.
 
@@ -271,10 +271,36 @@ They cover moving pivots, zero and positive springs, angle wrapping, inversion, 
 The probes use authored component state and host CRT math boundaries.
 They exclude actor binding, collision queries, input collection, complete ECS scheduling, and visible rendering.
 
-The solver is a prerequisite. Follow-camera transport, actor binding, and add-on execution remain incomplete.
+The follow-camera integration below uses this solver. Collision queries and complete native frame scheduling remain incomplete.
 
 
 The orbit-model build replays all 102 core patches and builds the converter and core with matching resources.
 Core runs 1,233 tests: 1,201 pass and 32 optional cases skip.
 The 864 action selections, 270 orbit frames, and 120 input updates pass within that suite.
 All 18 converter tests, Checkstyle, and patch metadata checks pass.
+
+
+## Follow-orbit frames and attachment transport
+
+Core publishes follow presets, rotation revisions, and attachment generations on `viabedrock:camera_follow`.
+The channel uses a bounded, versioned codec and preserves signed actor IDs.
+Core sends the new position mode only when the rendering client also registers this channel.
+View and entity offsets persist per preset. Attach and detach update their own generation without restarting position blends.
+
+`CameraFollowRuntime` advances each preset instance before the active camera blend.
+It uses the pinned follow profile, native attachment rotation, view-offset transform, and look-at orientation.
+Explicit attachments use native actor identities and physical centers. Actor identity reuse cannot silently acquire an old attachment.
+The local adapter receives the protocol player-origin offset from core instead of using Java eye height.
+
+Private instruction probes compare 256 composed native frames, including attachment rotation, view offsets, and quaternion orientation.
+The probes execute the pinned input limiter, orbit updater, attachment matrix, boom matrix, view transform, and look-at helper.
+They use authored actor origins and local attachment points.
+They do not establish native actor-pivot lookup, activation rules, collision avoidance, full scheduling, or visible parity.
+
+The add-on integration is described in its [camera patch](../../viafabricplus-bedrock/upstreamable/0023-render-core-resolved-camera-movement.pr.md).
+
+The matching four-project build replays 102 core patches and 38 add-on patches.
+Core runs 1,239 tests: 1,207 pass and 32 optional tests skip.
+All 256 composed frames, 270 orbit frames, 120 orbit inputs, and 864 action selections pass.
+The add-on has 816 passing tests and 120 optional skips. Converter and proxy tests also pass.
+Checkstyle, tooling checks, 261 offline regressions, and patch metadata checks pass.
