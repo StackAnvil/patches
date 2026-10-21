@@ -205,46 +205,40 @@ After explicit approval, ownership checks preceded the forced stop of the hung c
 Its launcher exited, and its owned display and audio helpers stopped normally.
 The control recording remains incomplete.
 
-## Inline spline playback
+## Spline programs and replacement commands
 
-The add-on negotiates the shared spline channel and supplies accepted programs to the free-camera runtime.
-Core advances active and inactive free cameras before the existing position blend.
-The resulting pose reaches shake, culling, and listener extraction through the current camera adapter.
-Disconnect releases all spline state.
+The add-on negotiates `viabedrock:camera_spline_v2` and supplies accepted programs to the shared free-camera runtime.
+Named and inline commands use the same path before blending, shake, culling, and listener extraction.
+Active and inactive instances advance independently of camera selection. Disconnect releases all spline state.
+The separate tracking channel carries explicit position revisions for repeated position commands and default resets.
 
-Private core comparisons cover 220 native curve evaluations and 84 composed native playback samples.
-These comparisons cover numeric kernels and authored component inputs.
-They do not establish packet decoding, full native system ordering, or official-client visible parity.
-Core now resolves named definitions through the same program transport.
-Snapshots after completion remain incomplete.
+Live spline commands retain running keyframes, replace the curve and duration, and restart time.
+Empty replacement channels retain earlier frames.
+Complete snapshots replace channel state without appending it again.
+Retirement releases instance programs, and applied payloads do not retain old channel history.
+Fresh empty requests are safely rejected because the target updater reaches invalid reads for those inputs.
 
-The final inline-spline build replays all 102 core patches and 38 add-on patches.
-All four projects build successfully, and Checkstyle passes.
-Core has 1,226 passing tests and 32 optional skips.
+Core probes compare 64 mixed named/inline replacements, including both curve types and empty replacement channels.
+Twelve native retirement cases establish strict duration expiry and preceding-pose retention.
+Earlier probes cover spline geometry, interpolation, named lookup, and definition-table replacement.
+These comparisons use authored component storage and explicit host boundaries.
+They do not establish full native system ordering, pause/queue clock parity, or official-client visible parity.
+Snapshots after completion still cannot recover the previous rendered frame.
+
+An earlier completed recording checks named playback, repeat, both inline curve types, clears, and repeated position commands.
+Its 21 sampled poses match independent geometry within 0.000006 blocks.
+The new previous-client control completes normal cleanup but fails the retained-channel replacement verifier.
+The target server emits all authored stages, including empty replacement and fresh-empty requests.
+
+
+A fresh candidate recording passes inline replacement, named-to-inline replacement with empty channels, and inline-to-named replacement.
+All 13 sampled replacement poses match independent geometry within 0.000006 blocks.
+Clear and repeated position selections pass. A fresh empty request preserves the current view.
+Both candidate and control recordings complete normal cleanup, and all their owned processes are gone.
+The candidate screenshot confirms the restored local view.
+
+All four projects build successfully after replaying 102 core patches and 38 add-on patches.
+Core has 1,236 passing tests and 32 optional skips.
 The add-on has 816 passing tests and 120 optional skips.
-The converter has 18 passing tests, and the proxy has four.
-
-
-## Named spline programs and repeated position commands
-
-Core now decodes named definitions and resolves them into the same program transport used for inline splines.
-The add-on binds the shared version-two tracking channel, which carries independent position revisions for each preset.
-An explicit position command replaces a completed spline pose even when its coordinates match the previous command.
-Default resets restore the preset position; omitted position and inactive instances retain their own poses.
-
-The pinned server supplied named playback and both inline curve types in a completed live recording.
-A separate verifier checks sampled camera positions against rotation progress, avoiding wall-clock latency assumptions.
-That recording exposed the previous repeated-position failure and fails the new reset check.
-Native numeric comparisons remain separate from live Java execution and official-client visible parity.
-
-
-A fresh final-candidate recording passes named playback, repeated playback, both inline curve types, three clears, and three explicit position selections.
-All 21 sampled spline poses match an independent geometry calculation within 0.000006 blocks.
-Both repeated selections restore the requested position after clear.
-The recording finishes normally, and its owned client, display, audio helpers, and server stop normally.
-The private screenshot confirms the restored local view.
-This verifies target-server commands and the Java rendering path, not official-client visible parity or complete native lifecycle behavior.
-
-The final build has 1,233 passing core tests and 32 optional skips.
-The add-on has 816 passing tests and 120 optional skips; converter and proxy tests also pass.
-All four builds, Checkstyle, offline regressions, and patch metadata checks pass.
+All 18 converter tests and four proxy tests pass.
+Checkstyle, offline regressions, and patch metadata checks pass.

@@ -405,91 +405,85 @@ After explicit approval, ownership checks preceded the forced stop of the hung c
 Its launcher exited, and its owned display and audio helpers stopped normally.
 The control recording remains incomplete.
 
-## Inline spline playback
+## Spline programs and native wire fields
 
-Inline instructions now compile into shared spline programs and advance in each free-camera instance.
-Spline commands do not select a perspective or restart its blend.
-Inactive free cameras also advance.
-The negotiated `viabedrock:camera_spline` channel carries elapsed programs and preset epochs.
+Core resolves named and inline splines into shared programs for each free-camera instance.
+Spline commands do not select a perspective or restart its blend. Inactive free cameras also advance.
 Clear, preset replacement, and disconnect release playback state.
+Explicit position revisions let repeated coordinates and default resets replace a retained spline pose.
+The separate `viabedrock:camera_tracking_v2` channel carries those revisions.
 
-The target executable supplies chord-weighted segment timing and endpoint tangents.
-Its factories require four Catmull-Rom points or three linear points, despite their lower-count error messages.
-Keyframe interpolation uses the earlier frame's easing and preserves authored frame order.
-Rotation channels interpolate radians directly before quaternion conversion.
-A frame with elapsed time greater than the duration retains the preceding pose without an endpoint snap.
-Arithmetic overflow stops playback before an invalid pose reaches rendering.
-
-Private probes execute 26 native factory cases, 220 curve evaluations, and 84 composed playback samples.
-The composed samples include instruction compilation, channel initialization, keyframe interpolation, curve evaluation, and final camera pose application.
-Host boundaries supply ECS storage lookup, marker insertion, allocation, free, CFG dispatch, memory copying, and CRT trigonometry.
-The Java comparisons preserve native float operation order, including Hermite sums with large coordinates and negative progress.
-
-These results do not establish packet decoding, preset activation queries, full ECS ordering, retirement component ownership, or official-client visible parity.
-The named-spline section below adds packet 338 and corrects the instruction wire fields.
-Late subscriptions after spline completion cannot recover the prior rendered frame.
-Empty channels are rejected because their native playback behavior is not established.
-
-The final inline-spline build replays all 102 core patches and 38 add-on patches.
-All four projects build successfully, and Checkstyle passes.
-Core has 1,226 passing tests and 32 optional skips.
-The add-on has 816 passing tests and 120 optional skips.
-The converter has 18 passing tests, and the proxy has four.
-
-
-## Named spline definitions and native wire fields
-
-Core now handles packet 338 and replaces the complete named-definition table.
-Identifiers use the first exact, case-sensitive match, including duplicate names.
-A named instruction uses the definition's duration, curve, and channels instead of its inline fields.
-Replacing the table does not alter an already compiled program.
-Unknown identifiers or unsupported definitions preserve the accepted program.
-
+Packet 338 replaces the complete named-definition table without changing a running compiled program.
+Identifiers use the first exact, case-sensitive match, including duplicates.
+Named instructions use the definition's duration, curve, and channels instead of their inline fields.
 Curve types accept ASCII case variants of `linear` and `catmullrom`.
 Omitted easing inherits the preceding easing within its channel, starting with linear.
-Progress and rotation channels retain separate easing state.
-Definition and keyframe counts are bounded before allocation.
+Progress and rotation retain separate easing state.
 
-The pinned Bedrock server supplied a 149-byte definition packet and a named playback instruction.
-The instruction carries a mandatory type byte, identifier string, and load flag.
-The previous optional-field decoder reads the identifier length as a presence flag and disconnects.
-This change corrects those fields for named and inline instructions.
+The pinned server supplied a 149-byte definition packet and named playback instructions.
+Instructions carry a mandatory type byte, identifier string, and load flag.
+The previous optional-field decoder misread the identifier length and disconnected.
 The [target instruction schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/camera-instruction-packet/)
 and [definition schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/camera-spline-packet/) agree with the captured bytes.
 The pinned Gophertunnel codec differs here and is not the authority for these fields.
+Captured named, inline, and empty-channel packets consume and reproduce every wire byte.
 
-Private probes execute 36 native lookup and compilation cases, 56 composed playback samples, and four table-replacement transitions.
-They establish first-match lookup, ASCII type handling, channel easing inheritance, and whole-table replacement.
-The probes use authored component storage, allocation, memory operations, and CRT math boundaries.
-They exclude activation queries, full ECS ordering, retirement ownership, and official-client visible parity.
-Late subscriptions after completion and native empty-channel playback remain incomplete.
+The target executable supplies chord-weighted segment timing and endpoint tangents.
+Its factories require four Catmull-Rom points or three linear points, despite their lower-count error messages.
+Interpolation uses the earlier frame's easing and preserves authored frame order.
+Rotation channels interpolate radians directly before quaternion conversion.
+An update beyond the duration retains the preceding pose without an endpoint snap.
+Arithmetic overflow stops playback before an invalid pose reaches rendering.
 
-The matching build replays 102 core patches and 38 add-on patches.
-All four projects build successfully, and Checkstyle passes.
-Core has 1,233 passing tests and 32 optional skips, including the captured wire, reset regression, and native comparison cases.
+## Spline replacement and retirement
+
+A command received during playback replaces the curve and duration, appends its keyframes, and restarts time.
+It retains earlier frames without sorting them, including when new frame times restart at zero.
+Named and inline commands share this behavior.
+An empty replacement channel retains the running channel's frames.
+
+The negotiated `viabedrock:camera_spline_v2` channel distinguishes live commands from complete snapshots.
+Live commands compose against each instance's playback state; snapshots install retained channels without appending them again.
+Duplicate sequences cannot restart playback or append frames twice.
+The runtime releases applied command payloads and retired instance programs.
+Core releases expired snapshot history on its connection tick, using its own clock.
+A deterministic clock test covers exact duration equality, strict expiry, and the next fresh request.
+
+The implementation bounds cumulative keyframe counts before allocation and rejects a composition before changing any instance.
+Fresh empty channels reach invalid reads in the target updater.
+Java rejects these requests safely; it does not reproduce those invalid reads.
+That protection differs from the target's unsafe behavior for these inputs.
+Unsupported definitions and invalid compositions preserve accepted playback.
+
+Private probes execute 64 mixed replacement cases with 352 chained camera samples and 12 retirement cases with 22 updates.
+They execute the native compilers, initialization, time updates, curve evaluation, curve ownership release, and pose application.
+Host callbacks record component removal; authored storage supplies component presence.
+Allocation, free, CFG dispatch, memory copying, and CRT trigonometry remain explicit boundaries.
+These probes do not establish full ECS query scheduling, activation selection, or official-client visible parity.
+Core/client pause and queue timing remain unverified.
+Late subscriptions after completion still cannot recover the prior rendered frame.
+
+## Spline verification
+
+Earlier probes compare 26 factory cases, 220 curve evaluations, 84 inline playback samples, and 56 named playback samples.
+Named lookup and compilation cover 36 cases; whole-table replacement covers four transitions.
+An earlier completed live recording checks named playback, repeat, both inline curve types, clears, and repeated position commands.
+Its 21 sampled poses match independent geometry within 0.000006 blocks.
+
+The completed previous-client control accepts all new server stages and completes normal cleanup.
+Its replacement poses fail the independent retained-channel verifier.
+The server also emits empty replacement and fresh-empty requests without a script error.
+Native numeric comparisons remain distinct from live Java execution and official-client visible parity.
+
+
+A fresh candidate recording passes inline replacement, named-to-inline replacement with empty channels, and inline-to-named replacement.
+All 13 sampled replacement poses match independent geometry within 0.000006 blocks.
+Clear and repeated position selections pass. A fresh empty request preserves the current view.
+Both candidate and control recordings complete normal cleanup, and all their owned processes are gone.
+The candidate screenshot confirms the restored local view.
+
+All four projects build successfully after replaying 102 core patches and 38 add-on patches.
+Core has 1,236 passing tests and 32 optional skips.
 The add-on has 816 passing tests and 120 optional skips.
-The converter has 18 passing tests, and the proxy has four.
-
-
-Explicit position commands now carry a revision for each free-camera preset.
-Repeated coordinates can replace a spline's retained endpoint, and `default` restores the preset position.
-Commands that omit position preserve that instance's current position.
-Other preset instances keep their own poses.
-The extended tracking codec uses `viabedrock:camera_tracking_v2`; older clients never receive its new layout on the previous channel.
-
-A completed live recording exposed the previous reset failure after clear.
-The named and both inline curves moved correctly, but repeating the free-camera position retained the preceding spline endpoint.
-An independent verifier rejects that recording at the reset check.
-The controller/runtime regression covers this sequence and verifies the inactive instance and default reset.
-
-
-A fresh final-candidate recording passes named playback, repeated playback, both inline curve types, three clears, and three explicit position selections.
-All 21 sampled spline poses match an independent geometry calculation within 0.000006 blocks.
-Both repeated selections restore the requested position after clear.
-The recording finishes normally, and its owned client, display, audio helpers, and server stop normally.
-The private screenshot confirms the restored local view.
-This verifies target-server commands and the Java rendering path, not official-client visible parity or complete native lifecycle behavior.
-
-The final build has 1,233 passing core tests and 32 optional skips.
-The add-on has 816 passing tests and 120 optional skips; converter and proxy tests also pass.
-All four builds, Checkstyle, offline regressions, and patch metadata checks pass.
+All 18 converter tests and four proxy tests pass.
+Checkstyle, offline regressions, and patch metadata checks pass.

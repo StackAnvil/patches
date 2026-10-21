@@ -1,4 +1,4 @@
-From 368ff2b6b7cbe88d9c18f0b0d9d91fab9889a7b7 Mon Sep 17 00:00:00 2001
+From b8f4e630e4f06eed17ba9302b74f54fb941bedd7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(camera): resolve server presets and camera movement
@@ -187,6 +187,25 @@ default resets also advance the revision. Negotiate tracking version two
 on its own channel so older add-ons cannot misread the extended payload.
 A live target-server sequence exposed the missing revision, and a shared
 controller/runtime regression covers clear, repeat, inactive and default.
+
+Retain native spline channels when another command arrives before playback
+retires. Replace the curve and duration, append authored keyframes without
+sorting, and restart time. This includes empty replacement channels and
+mixed named/inline commands. Snapshots carry the complete retained program;
+live commands compose against each camera instance's actual playback state.
+Negotiate the command/snapshot distinction on a new spline channel.
+
+Native compiler, initialization, updater and pose application probes cover
+64 mixed replacements and 12 strict-duration retirement cases, including
+shared-pointer release and ECS removal boundaries. Fresh empty channels
+reach invalid target-build reads, so reject them safely. Bound cumulative
+keyframe counts before allocation and reject composition atomically.
+
+Release applied command payloads and retired instance programs. The core
+connection tick releases expired snapshot channel history using its clock;
+a deterministic clock test covers equality, strict expiry and a fresh
+request. Full native ECS scheduling, queue/pause clock parity, terminal
+pose recovery for late subscribers and visible parity remain unverified.
 ---
  .../api/model/CameraAudioListener.java        |  30 ++
  .../viabedrock/api/model/CameraAvoidance.java | 171 +++++++++
@@ -205,11 +224,11 @@ controller/runtime regression covers clear, repeat, inactive and default.
  .../api/model/CameraShakeNoise.java           |  77 ++++
  .../api/model/CameraShakeState.java           | 138 +++++++
  .../api/model/CameraShakeTimeline.java        | 119 ++++++
- .../api/model/CameraSplinePlayback.java       | 140 +++++++
- .../api/model/CameraSplineProgram.java        |  37 ++
- .../api/model/CameraSplineState.java          | 110 ++++++
+ .../api/model/CameraSplinePlayback.java       | 145 ++++++++
+ .../api/model/CameraSplineProgram.java        |  57 +++
+ .../api/model/CameraSplineState.java          | 112 ++++++
  .../api/model/CameraTargetTracker.java        | 232 ++++++++++++
- .../api/model/CameraTrackingRuntime.java      | 155 ++++++++
+ .../api/model/CameraTrackingRuntime.java      | 171 +++++++++
  .../api/model/CameraTrackingState.java        | 110 ++++++
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../protocol/model/CameraInstruction.java     | 248 +++++++++++++
@@ -222,7 +241,7 @@ controller/runtime regression covers clear, repeat, inactive and default.
  .../protocol/packet/JoinPackets.java          |   2 +
  .../protocol/packet/MultiStatePackets.java    |   2 +
  .../protocol/packet/UnhandledPackets.java     |   4 -
- .../storage/CameraEffectsStorage.java         | 293 +++++++++++++++
+ .../storage/CameraEffectsStorage.java         | 308 ++++++++++++++++
  .../protocol/task/EntityTrackerTickTask.java  |   5 +
  .../api/model/CameraAudioListenerTest.java    |  52 +++
  .../api/model/CameraAvoidanceTest.java        | 128 +++++++
@@ -233,6 +252,7 @@ controller/runtime regression covers clear, repeat, inactive and default.
  .../api/model/CameraPoseTimelineTest.java     | 152 ++++++++
  .../api/model/CameraRaycastTest.java          | 199 ++++++++++
  .../api/model/CameraShakeTimelineTest.java    | 178 +++++++++
+ .../api/model/CameraSplineLifecycleTest.java  | 194 ++++++++++
  .../api/model/CameraSplinePlaybackTest.java   | 175 +++++++++
  .../api/model/CameraTargetTrackerTest.java    | 151 ++++++++
  .../api/model/CameraTrackingRuntimeTest.java  | 111 ++++++
@@ -240,8 +260,8 @@ controller/runtime regression covers clear, repeat, inactive and default.
  .../model/CameraPositionControllerTest.java   | 346 ++++++++++++++++++
  .../protocol/model/CameraPresetTest.java      | 179 +++++++++
  .../model/CameraSplineDefinitionTest.java     | 213 +++++++++++
- .../storage/CameraEffectsStorageTest.java     | 173 +++++++++
- 53 files changed, 6933 insertions(+), 4 deletions(-)
+ .../storage/CameraEffectsStorageTest.java     | 194 ++++++++++
+ 54 files changed, 7206 insertions(+), 4 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAudioListener.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAvoidance.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraEase.java
@@ -282,6 +302,7 @@ controller/runtime regression covers clear, repeat, inactive and default.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraPoseTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraRaycastTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraShakeTimelineTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraSplineLifecycleTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraSplinePlaybackTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraTargetTrackerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraTrackingRuntimeTest.java
@@ -2399,10 +2420,10 @@ index 000000000..de12b9311
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraSplinePlayback.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraSplinePlayback.java
 new file mode 100644
-index 000000000..7bfe69458
+index 000000000..036d0634c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraSplinePlayback.java
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,145 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2429,12 +2450,17 @@ index 000000000..7bfe69458
 +    }
 +
 +    CameraSplinePlayback(final CameraSplineProgram program, final Curve curve, final float elapsed) {
-+        if (program == null || curve == null || !Float.isFinite(elapsed) || elapsed < 0) {
++        if (program == null || curve == null || program.progress().isEmpty() || program.rotations().isEmpty()
++                || !Float.isFinite(elapsed) || elapsed < 0) {
 +            throw new IllegalArgumentException("Invalid camera spline playback");
 +        }
 +        this.program = program;
 +        this.curve = curve;
 +        this.elapsed = elapsed;
++    }
++
++    CameraSplinePlayback replace(final CameraSplineProgram next, final Curve curve, final float elapsed) {
++        return new CameraSplinePlayback(next.withPreviousChannels(this.program), curve, elapsed);
 +    }
 +
 +    /** An expired update leaves the camera at its preceding frame, without an endpoint snap. */
@@ -2545,10 +2571,10 @@ index 000000000..7bfe69458
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraSplineProgram.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraSplineProgram.java
 new file mode 100644
-index 000000000..6b079b533
+index 000000000..36c53f72e
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraSplineProgram.java
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,57 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2558,6 +2584,7 @@ index 000000000..6b079b533
 +
 +import net.raphimc.viabedrock.api.model.CameraPose.Vector;
 +
++import java.util.ArrayList;
 +import java.util.List;
 +
 +/** Compiled spline channels. Rotation values use radians, as in native playback. */
@@ -2571,10 +2598,29 @@ index 000000000..6b079b533
 +        progress = List.copyOf(progress);
 +        rotations = List.copyOf(rotations);
 +        if (!Float.isFinite(duration) || duration < 0 || points.size() < (linear ? 3 : 4)
-+                || points.size() > MAX_ENTRIES || progress.isEmpty() || progress.size() > MAX_ENTRIES
-+                || rotations.isEmpty() || rotations.size() > MAX_ENTRIES) {
++                || points.size() > MAX_ENTRIES || progress.size() > MAX_ENTRIES
++                || rotations.size() > MAX_ENTRIES) {
 +            throw new IllegalArgumentException("Invalid camera spline program");
 +        }
++    }
++
++    /** Running requests retain their channels when a new curve and duration arrive. */
++    public CameraSplineProgram withPreviousChannels(final CameraSplineProgram previous) {
++        if (previous == null) {
++            return this;
++        }
++        return new CameraSplineProgram(this.duration, this.linear, this.points,
++                append(previous.progress, this.progress), append(previous.rotations, this.rotations));
++    }
++
++    private static List<Keyframe> append(final List<Keyframe> previous, final List<Keyframe> next) {
++        if (previous.size() + next.size() > MAX_ENTRIES) {
++            throw new IllegalArgumentException("Too many retained camera spline keyframes");
++        }
++        final List<Keyframe> result = new ArrayList<>(previous.size() + next.size());
++        result.addAll(previous);
++        result.addAll(next);
++        return result;
 +    }
 +
 +    public record Keyframe(Vector value, float time, CameraEase ease) {
@@ -2588,10 +2634,10 @@ index 000000000..6b079b533
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraSplineState.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraSplineState.java
 new file mode 100644
-index 000000000..6b810a0df
+index 000000000..9e8ce42df
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraSplineState.java
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,112 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2609,18 +2655,19 @@ index 000000000..6b810a0df
 +import java.util.List;
 +
 +/** A spline command belongs to one preset epoch and does not select a camera. */
-+public record CameraSplineState(long sequence, long epoch, float elapsed, CameraSplineProgram program) {
++public record CameraSplineState(long sequence, long epoch, float elapsed, boolean live, CameraSplineProgram program) {
 +
-+    public static final String CHANNEL = "viabedrock:camera_spline";
++    public static final String CHANNEL = "viabedrock:camera_spline_v2";
 +    public static final Type<CameraSplineState> TYPE = new Type<>(CameraSplineState.class) {
 +        @Override
 +        public CameraSplineState read(final ByteBuf b) {
-+            if (b.readableBytes() > 1 << 20 || Types.VAR_INT.readPrimitive(b) != 1) {
++            if (b.readableBytes() > 1 << 20 || Types.VAR_INT.readPrimitive(b) != 2) {
 +                throw new IllegalArgumentException("Unsupported camera spline state");
 +            }
 +            final long sequence = b.readLong();
 +            final long epoch = b.readLong();
 +            final float elapsed = b.readFloat();
++            final boolean live = b.readBoolean();
 +            final CameraSplineProgram program;
 +            if (b.readBoolean()) {
 +                final float duration = b.readFloat();
@@ -2637,13 +2684,13 @@ index 000000000..6b810a0df
 +            if (b.isReadable()) {
 +                throw new IllegalArgumentException("Trailing camera spline fields");
 +            }
-+            return new CameraSplineState(sequence, epoch, elapsed, program);
++            return new CameraSplineState(sequence, epoch, elapsed, live, program);
 +        }
 +
 +        @Override
 +        public void write(final ByteBuf b, final CameraSplineState s) {
-+            Types.VAR_INT.writePrimitive(b, 1);
-+            b.writeLong(s.sequence).writeLong(s.epoch).writeFloat(s.elapsed).writeBoolean(s.program != null);
++            Types.VAR_INT.writePrimitive(b, 2);
++            b.writeLong(s.sequence).writeLong(s.epoch).writeFloat(s.elapsed).writeBoolean(s.live).writeBoolean(s.program != null);
 +            if (s.program != null) {
 +                b.writeFloat(s.program.duration()).writeBoolean(s.program.linear());
 +                Types.VAR_INT.writePrimitive(b, s.program.points().size());
@@ -2657,7 +2704,8 @@ index 000000000..6b810a0df
 +    };
 +
 +    public CameraSplineState {
-+        if (sequence < 0 || epoch < 0 || !Float.isFinite(elapsed) || elapsed < 0) {
++        if (sequence < 0 || epoch < 0 || !Float.isFinite(elapsed) || elapsed < 0
++                || !live && program != null && (program.progress().isEmpty() || program.rotations().isEmpty())) {
 +            throw new IllegalArgumentException("Invalid camera spline state");
 +        }
 +    }
@@ -2942,10 +2990,10 @@ index 000000000..8facccc84
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraTrackingRuntime.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraTrackingRuntime.java
 new file mode 100644
-index 000000000..08c72aad4
+index 000000000..c466420b2
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraTrackingRuntime.java
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,171 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2967,28 +3015,41 @@ index 000000000..08c72aad4
 +
 +    private final Map<Long, Instance> instances = new HashMap<>();
 +    private CameraTrackingState state;
-+    private CameraSplineState spline;
++    private CameraSplineState pendingSpline;
 +    private long appliedSpline = -1;
 +    private UUID lifetime;
 +
 +    public void accept(final CameraSplineState next) {
-+        if (this.spline != null && next.sequence() <= this.spline.sequence()) {
++        if (next.sequence() <= this.appliedSpline || this.pendingSpline != null && next.sequence() <= this.pendingSpline.sequence()
++                || this.state != null && next.epoch() < this.state.epoch()) {
 +            return;
 +        }
-+        this.spline = next;
++        this.pendingSpline = next;
 +        this.applySpline();
 +    }
 +
 +    private void applySpline() {
-+        if (this.state == null || this.spline == null || this.spline.epoch() != this.state.epoch() || this.spline.sequence() <= this.appliedSpline) {
++        if (this.state == null || this.pendingSpline == null || this.pendingSpline.epoch() != this.state.epoch() || this.pendingSpline.sequence() <= this.appliedSpline) {
 +            return;
 +        }
-+        final var program = this.spline.program();
++        final var program = this.pendingSpline.program();
 +        final var curve = program == null ? null : new CameraSplinePlayback.Curve(program.linear(), program.points());
-+        for (final Instance instance : this.instances.values()) {
-+            instance.spline = program == null ? null : new CameraSplinePlayback(program, curve, this.spline.elapsed());
++        final Map<Instance, CameraSplinePlayback> replacements = new HashMap<>();
++        try {
++            for (final Instance instance : this.instances.values()) {
++                replacements.put(instance, program == null ? null
++                        : this.pendingSpline.live() && instance.spline != null ? instance.spline.replace(program, curve, this.pendingSpline.elapsed())
++                        : new CameraSplinePlayback(program, curve, this.pendingSpline.elapsed()));
++            }
++        } catch (final IllegalArgumentException exception) {
++            // Reject an incomplete or oversized composition without partially changing instances.
++            this.appliedSpline = this.pendingSpline.sequence();
++            this.pendingSpline = null;
++            return;
 +        }
-+        this.appliedSpline = this.spline.sequence();
++        replacements.forEach((instance, playback) -> instance.spline = playback);
++        this.appliedSpline = this.pendingSpline.sequence();
++        this.pendingSpline = null;
 +    }
 +
 +    public void accept(final CameraTrackingState next) {
@@ -2997,6 +3058,9 @@ index 000000000..08c72aad4
 +        }
 +        if (this.state == null || this.state.epoch() != next.epoch()) {
 +            this.instances.clear();
++            if (this.pendingSpline != null && this.pendingSpline.epoch() < next.epoch()) {
++                this.pendingSpline = null;
++            }
 +        }
 +        final boolean newTarget = this.state == null || this.state.targetSequence() != next.targetSequence();
 +        if (newTarget) {
@@ -3069,7 +3133,7 @@ index 000000000..08c72aad4
 +    public void clear() {
 +        this.instances.clear();
 +        this.state = null;
-+        this.spline = null;
++        this.pendingSpline = null;
 +        this.appliedSpline = -1;
 +        this.lifetime = null;
 +    }
@@ -4430,10 +4494,10 @@ index 172699ee1..90fc4ae60 100644
          protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.KEEP_ALIVE, null, PacketWrapper::cancel);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
 new file mode 100644
-index 000000000..d50761922
+index 000000000..20ab07608
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
-@@ -0,0 +1,293 @@
+@@ -0,0 +1,308 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4468,10 +4532,13 @@ index 000000000..d50761922
 +import net.raphimc.viabedrock.protocol.model.CameraPresetRegistry;
 +import net.raphimc.viabedrock.protocol.model.CameraSplineRegistry;
 +
++import java.util.Objects;
 +import java.util.concurrent.ThreadLocalRandom;
++import java.util.function.LongSupplier;
 +
 +public final class CameraEffectsStorage extends StoredObject {
 +
++    private final LongSupplier nanoTime;
 +    private final CameraFadeTimeline fade = new CameraFadeTimeline();
 +    private long updatedAt;
 +    private final CameraFovTimeline fov = new CameraFovTimeline();
@@ -4491,7 +4558,12 @@ index 000000000..d50761922
 +    private CameraSplineRegistry splines = CameraSplineRegistry.EMPTY;
 +
 +    public CameraEffectsStorage(final UserConnection user) {
++        this(user, System::nanoTime);
++    }
++
++    CameraEffectsStorage(final UserConnection user, final LongSupplier nanoTime) {
 +        super(user);
++        this.nanoTime = Objects.requireNonNull(nanoTime);
 +    }
 +
 +    public CameraInstruction lastInstruction() {
@@ -4513,7 +4585,7 @@ index 000000000..d50761922
 +        this.splineSequence++;
 +        this.sendTracking();
 +        this.sendFollow();
-+        this.sendSpline();
++        this.sendSpline(false, this.spline);
 +    }
 +
 +    public CameraPositionState position() {
@@ -4537,13 +4609,13 @@ index 000000000..d50761922
 +            fovCommand = null;
 +        }
 +        if (instruction.fade() != null) {
-+            final long now = System.nanoTime();
++            final long now = this.nanoTime.getAsLong();
 +            this.fade.apply(instruction.fade(), this.elapsed(now));
 +            this.updatedAt = now;
 +            this.sendFade();
 +        }
 +        if (fovCommand != null) {
-+            final long now = System.nanoTime();
++            final long now = this.nanoTime.getAsLong();
 +            this.fov.advance(elapsed(this.fovUpdatedAt, now));
 +            final var rendered =
 +                    this.fov.state().active()
@@ -4561,7 +4633,7 @@ index 000000000..d50761922
 +        try {
 +            final long previousTracking = this.position.tracking().sequence();
 +            if (this.position.apply(instruction, this.presets)) {
-+                this.positionUpdatedAt = System.nanoTime();
++                this.positionUpdatedAt = this.nanoTime.getAsLong();
 +                this.sendPosition(true);
 +            }
 +            if (this.position.tracking().sequence() != previousTracking) {
@@ -4569,17 +4641,20 @@ index 000000000..d50761922
 +                this.sendFollow();
 +            }
 +            if (instruction.action() == CameraInstruction.Action.SPLINE) {
-+                final CameraSplineProgram program = this.splines.resolve(instruction.spline());
-+                // Compile the curve before replacing the accepted command.
++                final CameraSplineProgram command = this.splines.resolve(instruction.spline());
++                this.tick();
++                final long now = this.nanoTime.getAsLong();
++                final CameraSplineProgram program = command.withPreviousChannels(this.spline);
++                // Validate the complete request before replacing accepted channels or sending a command.
 +                new CameraSplinePlayback(program, 0);
 +                this.spline = program;
-+                this.splineUpdatedAt = System.nanoTime();
++                this.splineUpdatedAt = now;
 +                this.splineSequence++;
-+                this.sendSpline();
++                this.sendSpline(true, command);
 +            } else if (instruction.action() == CameraInstruction.Action.CLEAR) {
 +                this.spline = null;
 +                this.splineSequence++;
-+                this.sendSpline();
++                this.sendSpline(false, this.spline);
 +            }
 +        } catch (final IllegalArgumentException exception) {
 +            ViaBedrock.getPlatform().getLogger().warning("Ignoring camera position: " + exception.getMessage());
@@ -4591,31 +4666,35 @@ index 000000000..d50761922
 +    }
 +
 +    public void sendSnapshot() {
++        this.tick();
 +        this.sendPosition(false);
 +        this.sendTracking();
 +        this.sendFollow();
-+        this.sendSpline();
++        this.sendSpline(false, this.spline);
 +        this.sendFade();
 +        this.sendFov(null);
-+        this.tickShake();
 +        this.sendShake(null);
 +    }
 +
 +    public void applyShake(final CameraShakeState.Command command) {
-+        this.tickShake();
++        this.tick();
 +        this.shake.apply(command, ThreadLocalRandom.current().nextLong());
-+        this.shakeUpdatedAt = System.nanoTime();
++        this.shakeUpdatedAt = this.nanoTime.getAsLong();
 +        this.shakeSequence++;
 +        this.sendShake(command);
 +    }
 +
-+    public void tickShake() {
-+        final long now = System.nanoTime();
++    public void tick() {
++        final long now = this.nanoTime.getAsLong();
 +        this.shake.advance(
 +                this.shakeUpdatedAt == 0
 +                        ? 0
 +                        : Math.max(0, (now - this.shakeUpdatedAt) / 1_000_000_000D));
 +        this.shakeUpdatedAt = now;
++        if (this.spline != null && elapsed(this.splineUpdatedAt, now) > this.spline.duration()) {
++            this.spline = null;
++            this.splineUpdatedAt = 0;
++        }
 +    }
 +
 +    private void sendShake(final CameraShakeState.Command command) {
@@ -4629,7 +4708,7 @@ index 000000000..d50761922
 +                CameraShakeState.TYPE,
 +                new CameraShakeState(
 +                        this.shakeSequence,
-+                        elapsed(this.shakeUpdatedAt, System.nanoTime()),
++                        elapsed(this.shakeUpdatedAt, this.nanoTime.getAsLong()),
 +                        this.shake.snapshot(),
 +                        command));
 +        packet.send(BedrockProtocol.class);
@@ -4640,7 +4719,7 @@ index 000000000..d50761922
 +            final PacketWrapper packet =
 +                    PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
 +            packet.write(Types.STRING, CameraFadeState.CHANNEL);
-+            packet.write(CameraFadeState.TYPE, this.fade.snapshot(this.elapsed(System.nanoTime())));
++            packet.write(CameraFadeState.TYPE, this.fade.snapshot(this.elapsed(this.nanoTime.getAsLong())));
 +            packet.send(BedrockProtocol.class);
 +        }
 +    }
@@ -4656,7 +4735,7 @@ index 000000000..d50761922
 +                CameraFovState.TYPE,
 +                new CameraFovState(
 +                        this.fovSequence,
-+                        elapsed(this.fovUpdatedAt, System.nanoTime()),
++                        elapsed(this.fovUpdatedAt, this.nanoTime.getAsLong()),
 +                        this.fov.state(),
 +                        command));
 +        packet.send(BedrockProtocol.class);
@@ -4686,14 +4765,14 @@ index 000000000..d50761922
 +        packet.send(BedrockProtocol.class);
 +    }
 +
-+    private void sendSpline() {
++    private void sendSpline(final boolean live, final CameraSplineProgram program) {
 +        if (!this.canSend(CameraSplineState.CHANNEL)) {
 +            return;
 +        }
 +        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
 +        packet.write(Types.STRING, CameraSplineState.CHANNEL);
 +        packet.write(CameraSplineState.TYPE, new CameraSplineState(this.splineSequence, this.position.tracking().epoch(),
-+                this.spline == null ? 0 : elapsed(this.splineUpdatedAt, System.nanoTime()), this.spline));
++                program == null ? 0 : elapsed(this.splineUpdatedAt, this.nanoTime.getAsLong()), live, program));
 +        packet.send(BedrockProtocol.class);
 +    }
 +
@@ -4707,7 +4786,7 @@ index 000000000..d50761922
 +        }
 +        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
 +        packet.write(Types.STRING, CameraPositionState.CHANNEL);
-+        packet.write(CameraPositionState.TYPE, new CameraPositionState(state.sequence(), elapsed(this.positionUpdatedAt, System.nanoTime()),
++        packet.write(CameraPositionState.TYPE, new CameraPositionState(state.sequence(), elapsed(this.positionUpdatedAt, this.nanoTime.getAsLong()),
 +                live, state.mode(), state.position(), state.pitch(), state.yaw(), state.duration(), state.ease(), state.playerEffects(), state.playerAudio()));
 +        packet.send(BedrockProtocol.class);
 +    }
@@ -4728,7 +4807,7 @@ index 000000000..d50761922
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/task/EntityTrackerTickTask.java b/src/main/java/net/raphimc/viabedrock/protocol/task/EntityTrackerTickTask.java
-index 5729504a5..0ec7a2cef 100644
+index 5729504a5..75f8cbdeb 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/task/EntityTrackerTickTask.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/task/EntityTrackerTickTask.java
 @@ -21,6 +21,7 @@ import com.viaversion.viaversion.api.Via;
@@ -4745,7 +4824,7 @@ index 5729504a5..0ec7a2cef 100644
                          entityTracker.tick();
 +                        final CameraEffectsStorage camera = info.get(CameraEffectsStorage.class);
 +                        if (camera != null) {
-+                            camera.tickShake();
++                            camera.tick();
 +                        }
                      } catch (final Throwable e) {
                          BedrockProtocol.kickForIllegalState(info, "Error ticking entity tracker. See console for details.", e);
@@ -6125,9 +6204,209 @@ index 000000000..428d36758
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraSplineLifecycleTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraSplineLifecycleTest.java
+new file mode 100644
+index 000000000..604b757df
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CameraSplineLifecycleTest.java
+@@ -0,0 +1,194 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.CameraPose.Quaternion;
++import net.raphimc.viabedrock.api.model.CameraPose.Vector;
++import net.raphimc.viabedrock.api.model.CameraSplineProgram.Keyframe;
++import net.raphimc.viabedrock.protocol.model.CameraInstruction;
++import net.raphimc.viabedrock.protocol.model.CameraSplineDefinition;
++import org.junit.jupiter.api.Test;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++class CameraSplineLifecycleTest {
++
++    @Test
++    void liveCommandsRetainChannelsWhileSnapshotsReplaceThemAndRetirementReleasesThem() {
++        final var runtime = runtime();
++        final var first = program(4, 0, 0);
++        runtime.accept(new CameraSplineState(1, 1, 0, true, first));
++        runtime.advance(1, id -> null);
++        assertEquals(2.5F, runtime.active(1, 70, 4).position().x(), .00001F);
++        final var empty = new CameraSplineProgram(2, true, program(2, 20, 0).points(), List.of(), List.of());
++        runtime.accept(new CameraSplineState(2, 1, 0, true, empty));
++        runtime.advance(.5F, id -> null);
++        assertEquals(21.25F, runtime.active(1, 70, 4).position().x(), .00001F);
++        runtime.accept(tracking(2, 1));
++        assertEquals(21.25F, runtime.active(2, 70, 4).position().x(), .00001F);
++        runtime.accept(new CameraSplineState(2, 1, 0, true, empty));
++        runtime.advance(0, id -> null);
++        assertEquals(21.25F, runtime.active(2, 70, 4).position().x(), .00001F);
++        runtime.accept(new CameraSplineState(3, 1, 0, false, program(2, 20, .5F)));
++        runtime.advance(0, id -> null);
++        assertEquals(25, runtime.active(2, 70, 4).position().x(), .00001F);
++        runtime.accept(new CameraSplineState(4, 1, 0, true, empty));
++        runtime.advance(.5F, id -> null);
++        assertEquals(26.25F, runtime.active(2, 70, 4).position().x(), .00001F);
++        runtime.advance(3, id -> null);
++        runtime.accept(new CameraSplineState(5, 1, 0, true, empty));
++        runtime.advance(0, id -> null);
++        assertEquals(26.25F, runtime.active(2, 70, 4).position().x(), .00001F);
++        runtime.accept(new CameraSplineState(6, 1, 0, true, first));
++        runtime.advance(0, id -> null);
++        assertEquals(0, runtime.active(2, 70, 4).position().x());
++    }
++
++    @Test
++    void incompleteCommandsCanTravelButFreshPlaybackAndOversizedCompositionsAreRejected() {
++        final var base = program(4, 0, 0);
++        final var empty = new CameraSplineProgram(2, true, base.points(), List.of(), List.of());
++        assertThrows(IllegalArgumentException.class, () -> new CameraSplinePlayback(empty, 0));
++        assertThrows(IllegalArgumentException.class, () -> new CameraSplineState(1, 1, 0, false, empty));
++        final var state = new CameraSplineState(1, 1, 0, true, empty);
++        final var buffer = Unpooled.buffer();
++        try {
++            CameraSplineState.TYPE.write(buffer, state);
++            assertEquals(state, CameraSplineState.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++        final var full = new CameraSplineProgram(4, true, base.points(),
++                Collections.nCopies(CameraSplineProgram.MAX_ENTRIES, base.progress().getFirst()), base.rotations());
++        assertThrows(IllegalArgumentException.class, () -> base.withPreviousChannels(full));
++    }
++
++    @Test
++    void nativeMixedReplacementsAndStrictDurationRetirementMatch() throws Exception {
++        final String source = System.getenv("STACKANVIL_NATIVE_CAMERA_SPLINE_LIFECYCLE");
++        assumeTrue(source != null);
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(source))).getAsJsonObject();
++        final var replacements = fixture.getAsJsonArray("replacement");
++        for (final var row : replacements) {
++            final var sample = row.getAsJsonObject();
++            final var first = source(sample, true);
++            final var next = source(sample, false);
++            final var composed = next.withPreviousChannels(first);
++            assertFrames(sample.getAsJsonObject("compiled").getAsJsonArray("progress"), composed.progress());
++            assertFrames(sample.getAsJsonObject("compiled").getAsJsonArray("rotation"), composed.rotations());
++            final var runtime = runtime();
++            runtime.accept(new CameraSplineState(1, 1, 0, true, first));
++            runtime.advance(1, id -> null);
++            assertPose(sample.getAsJsonObject("first"), runtime.active(1, 70, 4));
++            runtime.accept(new CameraSplineState(2, 1, 0, true, next));
++            for (final var frame : sample.getAsJsonArray("samples")) {
++                final var expected = frame.getAsJsonObject();
++                runtime.advance(expected.get("delta").getAsFloat(), id -> null);
++                assertPose(expected, runtime.active(1, 70, 4));
++            }
++        }
++        final var retirement = fixture.getAsJsonArray("retirement");
++        for (final var row : retirement) {
++            final var sample = row.getAsJsonObject();
++            final var first = source(replacements.get(0).getAsJsonObject(), true);
++            final var program = new CameraSplineProgram(sample.get("duration").getAsFloat(), sample.get("type").getAsInt() == 1,
++                    first.points(), first.progress(), first.rotations());
++            final var playback = new CameraSplinePlayback(program, 0);
++            var preceding = new CameraSplinePlayback.Sample(new Vector(90, 80, 70), new Quaternion(0, 0, 0, 1));
++            for (final var frame : sample.getAsJsonArray("samples")) {
++                final var expected = frame.getAsJsonObject();
++                final var actual = playback.advance(expected.get("delta").getAsFloat());
++                assertEquals(expected.get("stateActive").getAsBoolean(), actual != null);
++                if (actual != null) {
++                    preceding = actual;
++                }
++                assertPose(expected, new CameraPose(preceding.position(), preceding.orientation(), 70, 4));
++            }
++        }
++        assertEquals(64, replacements.size());
++        assertEquals(12, retirement.size());
++    }
++
++    private static CameraSplineProgram source(final JsonObject sample, final boolean original) {
++        final var points = new ArrayList<CameraInstruction.Vec3>();
++        for (final var row : sample.getAsJsonArray(original ? "originalPoints" : "points")) {
++            final var v = row.getAsJsonArray();
++            points.add(new CameraInstruction.Vec3(v.get(0).getAsFloat(), v.get(1).getAsFloat(), v.get(2).getAsFloat()));
++        }
++        final var progress = new ArrayList<CameraInstruction.Progress>();
++        for (final var row : sample.getAsJsonArray(original ? "originalProgress" : "progress")) {
++            final var f = row.getAsJsonArray();
++            progress.add(new CameraInstruction.Progress(f.get(0).getAsFloat(), f.get(1).getAsFloat(), CameraEase.values()[f.get(2).getAsInt()].name()));
++        }
++        final var rotation = new ArrayList<CameraInstruction.Rotation>();
++        for (final var row : sample.getAsJsonArray(original ? "originalRotation" : "rotation")) {
++            final var f = row.getAsJsonArray();
++            rotation.add(new CameraInstruction.Rotation(new CameraInstruction.Vec3(f.get(0).getAsFloat(), f.get(1).getAsFloat(), f.get(2).getAsFloat()),
++                    f.get(3).getAsFloat(), CameraEase.values()[f.get(4).getAsInt()].name()));
++        }
++        final float duration = original ? 4 : sample.get("duration").getAsFloat();
++        final int type = original ? 1 : sample.get("type").getAsInt();
++        return sample.get(original ? "firstKind" : "nextKind").getAsString().equals("named")
++                ? new CameraSplineDefinition("probe:path", duration, type == 1 ? "linear" : "catmullrom", points, progress, rotation).compile()
++                : new CameraInstruction.Spline(duration, type, points, progress, rotation, "", false).compile();
++    }
++
++    private static void assertFrames(final JsonArray expected, final List<Keyframe> actual) {
++        assertEquals(expected.size(), actual.size());
++        for (int i = 0; i < actual.size(); i++) {
++            final var f = expected.get(i).getAsJsonArray();
++            final var a = actual.get(i);
++            assertEquals(f.get(0).getAsFloat(), a.value().x());
++            assertEquals(f.get(1).getAsFloat(), a.value().y());
++            assertEquals(f.get(2).getAsFloat(), a.value().z());
++            assertEquals(f.get(3).getAsFloat(), a.time());
++            assertEquals(f.get(4).getAsInt(), a.ease().ordinal());
++        }
++    }
++
++    private static void assertPose(final JsonObject expected, final CameraPose actual) {
++        final var p = expected.getAsJsonArray("position");
++        assertEquals(p.get(0).getAsFloat(), actual.position().x(), .00002F);
++        assertEquals(p.get(1).getAsFloat(), actual.position().y(), .00002F);
++        assertEquals(p.get(2).getAsFloat(), actual.position().z(), .00002F);
++        final var q = expected.getAsJsonArray("orientation");
++        assertEquals(q.get(0).getAsFloat(), actual.orientation().x(), .000001F);
++        assertEquals(q.get(1).getAsFloat(), actual.orientation().y(), .000001F);
++        assertEquals(q.get(2).getAsFloat(), actual.orientation().z(), .000001F);
++        assertEquals(q.get(3).getAsFloat(), actual.orientation().w(), .000001F);
++    }
++
++    private static CameraSplineProgram program(final float duration, final float x, final float alpha) {
++        return new CameraSplineProgram(duration, true, List.of(new Vector(x, 70, 0), new Vector(x + 1, 70, 0), new Vector(x + 10, 70, 0)),
++                List.of(new Keyframe(new Vector(alpha, 0, 0), 0, CameraEase.LINEAR), new Keyframe(new Vector(1, 0, 0), duration, CameraEase.LINEAR)),
++                List.of(new Keyframe(Vector.ZERO, 0, CameraEase.LINEAR)));
++    }
++
++    private static CameraTrackingState tracking(final long sequence, final long active) {
++        final var settings = new CameraTargetTracker.Settings(0, false, 0, 360, 0, 180, false, 50);
++        return new CameraTrackingState(sequence, 1, sequence, active, 0, null, List.of(
++                new CameraTrackingState.Preset(0, 0, 0, new Vector(90, 80, 70), 0, 0, settings),
++                new CameraTrackingState.Preset(1, 0, 0, new Vector(90, 80, 70), 0, 0, settings)));
++    }
++
++    private static CameraTrackingRuntime runtime() {
++        final var runtime = new CameraTrackingRuntime();
++        runtime.accept(tracking(1, 0));
++        return runtime;
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraSplinePlaybackTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraSplinePlaybackTest.java
 new file mode 100644
-index 000000000..37f2aef03
+index 000000000..5dcfb3b0b
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CameraSplinePlaybackTest.java
 @@ -0,0 +1,175 @@
@@ -6182,7 +6461,7 @@ index 000000000..37f2aef03
 +    void splineCommandsAdvanceInactiveFreeInstancesWithoutSelectingThem() {
 +        final var runtime = new CameraTrackingRuntime();
 +        final var presets = List.of(preset(0), preset(1));
-+        runtime.accept(new CameraSplineState(1, 2, 0, program()));
++        runtime.accept(new CameraSplineState(1, 2, 0, false, program()));
 +        runtime.accept(new CameraTrackingState(1, 2, 1, -1, 0, null, presets));
 +        runtime.advance(.25F, id -> null);
 +        assertNull(runtime.active(1, 70, 4));
@@ -6193,10 +6472,10 @@ index 000000000..37f2aef03
 +        assertEquals(2.5F, runtime.active(2, 70, 4).position().x(), .00001F);
 +        runtime.accept(new CameraTrackingState(3, 2, 3, 0, 0, null, presets));
 +        assertEquals(2.5F, runtime.active(3, 70, 4).position().x(), .00001F);
-+        runtime.accept(new CameraSplineState(2, 2, 0, program()));
++        runtime.accept(new CameraSplineState(2, 2, 0, false, program()));
 +        runtime.advance(0, id -> null);
 +        assertEquals(0, runtime.active(3, 70, 4).position().x());
-+        runtime.accept(new CameraSplineState(1, 2, .5F, program()));
++        runtime.accept(new CameraSplineState(1, 2, .5F, false, program()));
 +        runtime.advance(.5F, id -> null);
 +        assertEquals(2.5F, runtime.active(3, 70, 4).position().x(), .00001F);
 +        runtime.accept(new CameraTrackingState(4, 3, 4, 0, 0, null, presets));
@@ -6208,7 +6487,7 @@ index 000000000..37f2aef03
 +
 +    @Test
 +    void splineTransportPreservesCompiledChannelsAndRejectsTrailingData() {
-+        final var state = new CameraSplineState(4, 2, .5F, program());
++        final var state = new CameraSplineState(4, 2, .5F, false, program());
 +        final var buffer = Unpooled.buffer();
 +        try {
 +            CameraSplineState.TYPE.write(buffer, state);
@@ -6216,7 +6495,7 @@ index 000000000..37f2aef03
 +            CameraSplineState.TYPE.write(buffer.clear(), state);
 +            buffer.writeByte(0);
 +            assertThrows(IllegalArgumentException.class, () -> CameraSplineState.TYPE.read(buffer));
-+            CameraSplineState.TYPE.write(buffer.clear(), new CameraSplineState(5, 2, 0, null));
++            CameraSplineState.TYPE.write(buffer.clear(), new CameraSplineState(5, 2, 0, false, null));
 +            assertNull(CameraSplineState.TYPE.read(buffer).program());
 +        } finally {
 +            buffer.release();
@@ -6669,7 +6948,7 @@ index 000000000..91c678497
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/CameraPositionControllerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/CameraPositionControllerTest.java
 new file mode 100644
-index 000000000..a71639d9b
+index 000000000..daf333e53
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/CameraPositionControllerTest.java
 @@ -0,0 +1,346 @@
@@ -6714,13 +6993,13 @@ index 000000000..a71639d9b
 +        final var program = new CameraSplineProgram(1, true, List.of(Vector.ZERO, new Vector(1, 0, 0), new Vector(10, 0, 0)),
 +                List.of(new Keyframe(Vector.ZERO, 0, CameraEase.LINEAR), new Keyframe(new Vector(1, 0, 0), 1, CameraEase.LINEAR)),
 +                List.of(new Keyframe(Vector.ZERO, 0, CameraEase.LINEAR)));
-+        runtime.accept(new CameraSplineState(1, controller.tracking().epoch(), 0, program));
++        runtime.accept(new CameraSplineState(1, controller.tracking().epoch(), 0, false, program));
 +        runtime.advance(.5F, id -> null);
 +        runtime.advance(1, id -> null);
 +        assertEquals(5, runtime.active(controller.state().sequence(), 70, 4).position().x(), .00001F);
 +        controller.apply(new CameraInstruction(null, true, null, null, null, null, null, null, null), registry);
 +        runtime.accept(controller.tracking());
-+        runtime.accept(new CameraSplineState(2, controller.tracking().epoch(), 0, null));
++        runtime.accept(new CameraSplineState(2, controller.tracking().epoch(), 0, false, null));
 +        controller.apply(set(0, position, null, null), registry);
 +        runtime.accept(controller.tracking());
 +        assertEquals(Vector.ZERO, runtime.active(controller.state().sequence(), 70, 4).position());
@@ -7425,10 +7704,10 @@ index 000000000..96f771f04
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorageTest.java
 new file mode 100644
-index 000000000..a502d5eeb
+index 000000000..31edfe321
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorageTest.java
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,194 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7455,6 +7734,7 @@ index 000000000..a502d5eeb
 +import org.mockito.ArgumentCaptor;
 +
 +import java.util.List;
++import java.util.concurrent.atomic.AtomicLong;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.mockito.Mockito.*;
@@ -7462,7 +7742,7 @@ index 000000000..a502d5eeb
 +class CameraEffectsStorageTest {
 +
 +    @Test
-+    void definitionReplacementAffectsFutureCommandsAndRetainsTheRunningProgram() throws Exception {
++    void definitionReplacementAndRetirementKeepSnapshotsAndCommandsDistinct() throws Exception {
 +        final var user = mock(UserConnection.class);
 +        final var info = mock(ProtocolInfo.class);
 +        when(user.getProtocolInfo()).thenReturn(info);
@@ -7470,7 +7750,8 @@ index 000000000..a502d5eeb
 +        final var channels = new ChannelStorage();
 +        channels.addChannels(List.of(CameraSplineState.CHANNEL));
 +        when(user.get(ChannelStorage.class)).thenReturn(channels);
-+        final var storage = new CameraEffectsStorage(user);
++        final var now = new AtomicLong(1);
++        final var storage = new CameraEffectsStorage(user, now::get);
 +        storage.markJoined();
 +        final var first = new CameraSplineDefinition("example:path", 4, "linear",
 +                List.of(new CameraInstruction.Vec3(0, 70, 0), new CameraInstruction.Vec3(1, 70, 0), new CameraInstruction.Vec3(10, 70, 0)),
@@ -7489,10 +7770,29 @@ index 000000000..a502d5eeb
 +            storage.apply(instruction);
 +            storage.setSplines(CameraSplineRegistry.EMPTY);
 +            storage.sendSnapshot();
++            now.addAndGet(8_000_000_000L);
++            storage.tick();
++            storage.sendSnapshot();
++            now.addAndGet(1_000L);
++            storage.tick();
++            storage.sendSnapshot();
++            storage.setSplines(new CameraSplineRegistry(List.of(replacement)));
++            storage.apply(instruction);
++            storage.sendSnapshot();
 +            final var states = ArgumentCaptor.forClass(CameraSplineState.class);
-+            verify(packet, times(4)).write(eq(CameraSplineState.TYPE), states.capture());
-+            assertEquals(List.of(4F, 4F, 8F, 8F), states.getAllValues().stream().map(s -> s.program().duration()).toList());
-+            assertEquals(List.of(1L, 1L, 2L, 2L), states.getAllValues().stream().map(CameraSplineState::sequence).toList());
++            verify(packet, times(8)).write(eq(CameraSplineState.TYPE), states.capture());
++            final var sent = states.getAllValues();
++            final var initial = sent.subList(0, 4);
++            assertEquals(List.of(4F, 4F, 8F, 8F), initial.stream().map(s -> s.program().duration()).toList());
++            assertEquals(List.of(1L, 1L, 2L, 2L), initial.stream().map(CameraSplineState::sequence).toList());
++            assertEquals(List.of(true, false, true, false), initial.stream().map(CameraSplineState::live).toList());
++            assertEquals(List.of(2, 2, 2, 4), initial.stream().map(s -> s.program().progress().size()).toList());
++            assertNotNull(sent.get(4).program());
++            assertEquals(8, sent.get(4).elapsed());
++            assertNull(sent.get(5).program());
++            assertEquals(2, sent.get(5).sequence());
++            assertEquals(3, sent.get(7).sequence());
++            assertEquals(2, sent.get(7).program().progress().size());
 +        }
 +    }
 +
