@@ -731,3 +731,36 @@ They do not establish native candidate gathering, reticles, interaction rotation
 All four projects build, including 1,264 passing core tests and 32 optional skips.
 The add-on has 816 passing tests and 120 optional skips.
 Checkstyle, tooling checks, 261 offline regressions, and metadata validation pass.
+
+## Native aim block queries
+
+The shared block-query runtime now captures the two native ray-grid slices and builds visible face targets.
+Odd slices clear the old targets; even slices append the lower half.
+Repeated positions retain their first geometry, priority and flags until the next clear.
+The native cache's bucket order remains observable when scores tie.
+Its constructor starts with eight buckets and a load factor of one.
+Clearing retains the allocation; removing the component resets it.
+
+Discovery intersects whole cells, while obstruction uses native selection envelopes.
+The starting cell uses the primary layer and skips a box that encloses the eye.
+Later cells prefer accepted extra-layer blocks when liquid targeting is enabled.
+Excluded blocks stop a ray and carry an exclusion flag.
+Visible face rays start 0.001 blocks inside their face and preserve Bedrock face order.
+World-space float intersections remain separate from camera collision math.
+
+Private executable probes cover 864 grids, 76,608 discovery rays, 948 traces, 2,304 face-generation prefixes and 203 cache operations.
+The cache fixture now runs the actual native constructor before insertion, growth and clear.
+Liquid-depth cases exercise the packed property lookup as well as absent-property controls.
+All comparisons pass, including nonzero float bits, layer-query order, flags, face points and cache order.
+A separate 304-case probe verifies intersection point coordinates and tie faces directly against the native surface kernel.
+Mandatory tests exercise capture, refresh, obstruction and ranking without private fixtures.
+
+The runtime requires actual selection geometry and resolved priority policies from its world provider.
+It is not connected to the live-world adapter yet.
+Native geometry and tags, eye-offset producers, entity filtering, final hits, interaction rotation and reticles remain unfinished.
+These stage comparisons do not establish complete native aim parity.
+
+All four projects build.
+The final core suite has 1,274 passing tests and 32 optional skips; the add-on has 816 passes and 120 optional skips.
+Both Checkstyle suites, offline validation and stack health pass.
+The additional surface test changes no production classes in the built artifact.
