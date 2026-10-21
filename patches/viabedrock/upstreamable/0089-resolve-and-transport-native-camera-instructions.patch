@@ -1,4 +1,4 @@
-From 494e27d31968f3ac984fea7d27fc6cc7a104a5dd Mon Sep 17 00:00:00 2001
+From 65daad67c7142f0451014e3b55294ebb90b7bc24 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(camera): resolve server presets and camera movement
@@ -90,6 +90,17 @@ cannot change projection while the target action preserves position.
 Private execution of the target build's dispatch instructions compares
 864 combinations, including absent and false flags. This establishes
 selection only; boom-camera and spline execution remain incomplete.
+
+Add the shared native orbit component model for follow-camera integration.
+Keep radius smoothing relative to the previous world-space camera and the
+current pivot, preserve wrapped angular springs and input inversion, and
+apply a supplied collision radius directly. The target follow_orbit
+profile sets all three spring rates to zero, unlike constructor defaults.
+
+Private execution of the pinned native updater compares 270 chained
+frames and 120 input updates. These probes use authored component state
+and host CRT math boundaries. Actor binding, collision queries, protocol
+transport and rendered follow-camera execution remain incomplete.
 ---
  .../api/model/CameraAudioListener.java        |  30 ++
  .../viabedrock/api/model/CameraEase.java      | 140 +++++++++
@@ -97,6 +108,7 @@ selection only; boom-camera and spline execution remain incomplete.
  .../api/model/CameraFadeTimeline.java         |  91 ++++++
  .../viabedrock/api/model/CameraFovState.java  | 133 +++++++++
  .../api/model/CameraFovTimeline.java          |  67 +++++
+ .../viabedrock/api/model/CameraOrbit.java     | 132 +++++++++
  .../viabedrock/api/model/CameraPose.java      | 109 +++++++
  .../api/model/CameraPoseTimeline.java         | 102 +++++++
  .../api/model/CameraPositionState.java        | 124 ++++++++
@@ -120,6 +132,7 @@ selection only; boom-camera and spline execution remain incomplete.
  .../api/model/CameraAudioListenerTest.java    |  52 ++++
  .../api/model/CameraFadeTimelineTest.java     | 117 ++++++++
  .../api/model/CameraFovTimelineTest.java      | 132 +++++++++
+ .../viabedrock/api/model/CameraOrbitTest.java | 135 +++++++++
  .../api/model/CameraPoseTimelineTest.java     | 152 ++++++++++
  .../api/model/CameraShakeTimelineTest.java    | 178 +++++++++++
  .../api/model/CameraTargetTrackerTest.java    | 151 ++++++++++
@@ -128,13 +141,14 @@ selection only; boom-camera and spline execution remain incomplete.
  .../model/CameraPositionControllerTest.java   | 278 ++++++++++++++++++
  .../protocol/model/CameraPresetTest.java      | 179 +++++++++++
  .../storage/CameraEffectsStorageTest.java     |  57 ++++
- 37 files changed, 4214 insertions(+), 3 deletions(-)
+ 39 files changed, 4481 insertions(+), 3 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAudioListener.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraEase.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFadeState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFadeTimeline.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFovState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFovTimeline.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraOrbit.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraPose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraPoseTimeline.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraPositionState.java
@@ -153,6 +167,7 @@ selection only; boom-camera and spline execution remain incomplete.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraAudioListenerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraFadeTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraFovTimelineTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraOrbitTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraPoseTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraShakeTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraTargetTrackerTest.java
@@ -752,6 +767,144 @@ index 000000000..910478b71
 +        }
 +        return old.target();
 +    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraOrbit.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraOrbit.java
+new file mode 100644
+index 000000000..7e10e9b08
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraOrbit.java
+@@ -0,0 +1,132 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.api.model.CameraPose.Vector;
++
++import java.util.Objects;
++
++/** Native orbit component math. The caller supplies the pivot, previous camera position and collision result. */
++public final class CameraOrbit {
++
++    private final Settings settings;
++    private State state;
++    private Target target;
++
++    public CameraOrbit(final Settings settings, final State state, final Target target) {
++        this.settings = Objects.requireNonNull(settings);
++        this.state = Objects.requireNonNull(state);
++        this.target = Objects.requireNonNull(target);
++    }
++
++    public State state() {
++        return this.state;
++    }
++
++    public Target target() {
++        return this.target;
++    }
++
++    public void target(final Target target) {
++        this.target = Objects.requireNonNull(target);
++    }
++
++    /** Apply the camera input after the native input collector has converted it to degree deltas. */
++    public void input(final float pitch, final float yaw) {
++        finite(pitch, yaw);
++        final float polar = (this.settings.invertX ? -pitch : pitch) * CameraPose.DEGREES + this.target.polar;
++        final float azimuth = wrap((this.settings.invertY ? -yaw : yaw) * CameraPose.DEGREES + this.target.yaw);
++        this.target = new Target(this.target.radius, Math.clamp(azimuth, this.settings.minYaw, this.settings.maxYaw),
++                Math.clamp(polar, this.settings.minPolar, this.settings.maxPolar));
++    }
++
++    /** Float.MAX_VALUE means that collision has not supplied a radius for this frame. */
++    public Vector advance(final float delta, final Vector pivot, final Vector previousPosition, final float collisionRadius) {
++        finite(delta, collisionRadius);
++        if (delta < 0 || collisionRadius < 0) {
++            throw new IllegalArgumentException("Invalid camera orbit frame");
++        }
++        // Native uses the supplied collision result directly, including a previous result above the new target radius.
++        final float radius = collisionRadius < Float.MAX_VALUE ? collisionRadius : this.target.radius;
++        final Axis radial;
++        if (this.settings.radiusSpring == 0) {
++            radial = new Axis(0, 0);
++        } else {
++            final Vector fromPivot = previousPosition.subtract(pivot);
++            final float distance = (float) Math.sqrt(fromPivot.z() * fromPivot.z() + fromPivot.y() * fromPivot.y() + fromPivot.x() * fromPivot.x());
++            radial = spring(distance - radius, this.state.radiusVelocity, this.settings.radiusSpring, delta);
++        }
++        final Axis yaw = spring(wrap(this.state.yaw - this.target.yaw), this.state.yawVelocity, this.settings.yawSpring, delta);
++        final Axis polar = spring(wrap(this.state.polar - this.target.polar), this.state.polarVelocity, this.settings.polarSpring, delta);
++        this.state = new State(radius + radial.error, this.target.yaw + yaw.error, this.target.polar + polar.error,
++                yaw.velocity, polar.velocity, radial.velocity);
++        final float sine = (float) Math.sin(this.state.polar);
++        return new Vector(pivot.x() + (float) Math.cos(this.state.yaw) * this.state.radius * sine,
++                pivot.y() + (float) Math.cos(this.state.polar) * this.state.radius,
++                pivot.z() + (float) Math.sin(this.state.yaw) * this.state.radius * sine);
++    }
++
++    private static Axis spring(final float error, final float velocity, final float rate, final float delta) {
++        if (rate == 0) {
++            return new Axis(0, 0);
++        }
++        final float scaled = rate * error;
++        final float sum = velocity + scaled;
++        final float exponent = -rate * delta;
++        final float decay = (float) Math.exp(exponent);
++        return new Axis((delta * sum + error) * decay, ((exponent * sum + sum) - scaled) * decay);
++    }
++
++    private static float wrap(final float angle) {
++        float value = (angle + CameraPose.PI) % (2 * CameraPose.PI);
++        if (value < 0) {
++            value += 2 * CameraPose.PI;
++        }
++        return value - CameraPose.PI;
++    }
++
++    private static void finite(final float... values) {
++        for (final float value : values) {
++            if (!Float.isFinite(value)) {
++                throw new IllegalArgumentException("Invalid camera orbit value");
++            }
++        }
++    }
++
++    public record Settings(float yawSpring, float polarSpring, float radiusSpring, float minPolar, float maxPolar,
++                           float minYaw, float maxYaw, boolean invertX, boolean invertY) {
++        public Settings {
++            finite(yawSpring, polarSpring, radiusSpring, minPolar, maxPolar, minYaw, maxYaw);
++            if (yawSpring < 0 || polarSpring < 0 || radiusSpring < 0 || minPolar > maxPolar || minYaw > maxYaw) {
++                throw new IllegalArgumentException("Invalid camera orbit settings");
++            }
++        }
++
++        /** These are the pinned follow_orbit definition's overrides, not the orbit component constructor defaults. */
++        public static Settings followOrbit(final float minYaw, final float maxYaw) {
++            return new Settings(0, 0, 0, .1F * CameraPose.DEGREES, 179.9F * CameraPose.DEGREES,
++                    minYaw * CameraPose.DEGREES, maxYaw * CameraPose.DEGREES, false, false);
++        }
++    }
++
++    public record State(float radius, float yaw, float polar, float yawVelocity, float polarVelocity, float radiusVelocity) {
++        public State {
++            finite(radius, yaw, polar, yawVelocity, polarVelocity, radiusVelocity);
++        }
++    }
++
++    public record Target(float radius, float yaw, float polar) {
++        public Target {
++            finite(radius, yaw, polar);
++            if (radius < 0) {
++                throw new IllegalArgumentException("Invalid camera orbit radius");
++            }
++        }
++    }
++
++    private record Axis(float error, float velocity) { }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraPose.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraPose.java
@@ -3413,6 +3566,147 @@ index 000000000..abd3da7cb
 +
 +    private static float toDegrees(final Value value) {
 +        return value.radians() / CameraFovState.DEGREES_TO_RADIANS;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraOrbitTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraOrbitTest.java
+new file mode 100644
+index 000000000..5e1d82347
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CameraOrbitTest.java
+@@ -0,0 +1,135 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonParser;
++import net.raphimc.viabedrock.api.model.CameraPose.Vector;
++import org.junit.jupiter.api.Test;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++class CameraOrbitTest {
++
++    @Test
++    void zeroSpringsUseTheTargetAndTheSuppliedCollisionRadiusImmediately() {
++        final var orbit = orbit(CameraOrbit.Settings.followOrbit(-180, 180), 3, 0, CameraPose.PI * .5F);
++        final var pivot = new Vector(10, 20, 30);
++        final var position = orbit.advance(0, pivot, Vector.ZERO, 15);
++        assertEquals(15, orbit.state().radius());
++        assertEquals(25, position.x());
++        assertEquals(20, position.y(), .00001F);
++        assertEquals(30, position.z());
++        assertEquals(0, orbit.state().radiusVelocity());
++        assertEquals(13, orbit.advance(.05F, pivot, position, Float.MAX_VALUE).x());
++        assertEquals(3, orbit.state().radius());
++        assertDoesNotThrow(() -> orbit.advance(0, new Vector(-Float.MAX_VALUE, 0, 0), new Vector(Float.MAX_VALUE, 0, 0), Float.MAX_VALUE));
++    }
++
++    @Test
++    void radiusSpringMeasuresThePreviousCameraAgainstTheMovingPivot() {
++        final var settings = new CameraOrbit.Settings(4, 4, 4, 0, CameraPose.PI, -CameraPose.PI, CameraPose.PI, false, false);
++        final var orbit = orbit(settings, 3, 0, CameraPose.PI * .5F);
++        final var position = orbit.advance(0, new Vector(1, 0, 0), new Vector(10, 0, 0), Float.MAX_VALUE);
++        assertEquals(9, orbit.state().radius());
++        assertEquals(10, position.x());
++        assertEquals(0, orbit.state().radiusVelocity());
++    }
++
++    @Test
++    void inputWrapsAndClampsAfterApplyingBothInversionFlags() {
++        final var settings = new CameraOrbit.Settings(0, 0, 0, .1F, 2, -.5F, .75F, true, true);
++        final var orbit = orbit(settings, 10, 0, 1);
++        orbit.input(15, 90);
++        assertEquals(-.5F, orbit.target().yaw());
++        assertEquals(1 - 15 * CameraPose.DEGREES, orbit.target().polar());
++        orbit.input(-900, -720);
++        assertEquals(2, orbit.target().polar());
++        assertEquals(-.5F, orbit.target().yaw(), .00001F);
++        assertThrows(IllegalArgumentException.class, () -> orbit.input(Float.NaN, 0));
++        assertThrows(IllegalArgumentException.class, () -> orbit.advance(-1, Vector.ZERO, Vector.ZERO, Float.MAX_VALUE));
++    }
++
++    @Test
++    void comparesChainedOrbitFramesWithTheNativeUpdater() throws Exception {
++        final String source = System.getenv("STACKANVIL_NATIVE_CAMERA_ORBIT");
++        assumeTrue(source != null);
++        final var sequences = JsonParser.parseString(Files.readString(Path.of(source))).getAsJsonObject().getAsJsonArray("sequences");
++        int checked = 0;
++        for (final var element : sequences) {
++            final var sample = element.getAsJsonObject();
++            final var rates = sample.getAsJsonArray("rates");
++            final var initial = sample.getAsJsonArray("initial");
++            final var target = sample.getAsJsonArray("target");
++            final var settings = new CameraOrbit.Settings(at(rates, 0), at(rates, 1), at(rates, 2), 0, CameraPose.PI,
++                    -CameraPose.PI, CameraPose.PI, false, false);
++            final var orbit = new CameraOrbit(settings, new CameraOrbit.State(at(initial, 0), at(initial, 1), at(initial, 2), 0, 0, 0),
++                    new CameraOrbit.Target(at(target, 0), at(target, 1), at(target, 2)));
++            Vector position = vector(sample.getAsJsonArray("initialPosition"));
++            for (final var frameElement : sample.getAsJsonArray("frames")) {
++                final var frame = frameElement.getAsJsonObject();
++                position = orbit.advance(frame.get("delta").getAsFloat(), vector(frame.getAsJsonArray("pivot")), position, sample.get("collision").getAsFloat());
++                final var expected = vector(frame.getAsJsonArray("position"));
++                assertEquals(expected.x(), position.x(), .00002F);
++                assertEquals(expected.y(), position.y(), .00002F);
++                assertEquals(expected.z(), position.z(), .00002F);
++                final var state = orbit.state();
++                final var nativeState = frame.getAsJsonArray("state");
++                assertEquals(at(nativeState, 0), state.radius(), .00002F);
++                assertEquals(at(nativeState, 1), state.yaw(), .00002F);
++                assertEquals(at(nativeState, 2), state.polar(), .00002F);
++                assertEquals(at(nativeState, 6), state.yawVelocity(), .00002F);
++                assertEquals(at(nativeState, 7), state.polarVelocity(), .00002F);
++                assertEquals(at(nativeState, 8), state.radiusVelocity(), .00002F);
++                checked++;
++            }
++        }
++        assertEquals(270, checked);
++    }
++
++    @Test
++    void comparesChainedInputWithNativeWrappingLimitsAndInversion() throws Exception {
++        final String source = System.getenv("STACKANVIL_NATIVE_CAMERA_ORBIT_INPUT");
++        assumeTrue(source != null);
++        final var sequences = JsonParser.parseString(Files.readString(Path.of(source))).getAsJsonObject().getAsJsonArray("sequences");
++        int checked = 0;
++        for (final var element : sequences) {
++            final var sample = element.getAsJsonObject();
++            final var limits = sample.getAsJsonArray("limitsRadians");
++            final var initial = sample.getAsJsonArray("initialRadians");
++            final var settings = new CameraOrbit.Settings(0, 0, 0, at(limits, 0), at(limits, 1), at(limits, 2), at(limits, 3),
++                    sample.get("flipX").getAsBoolean(), sample.get("flipY").getAsBoolean());
++            final var orbit = orbit(settings, 10, at(initial, 0), at(initial, 1));
++            for (final var frameElement : sample.getAsJsonArray("frames")) {
++                final var frame = frameElement.getAsJsonObject();
++                final var delta = frame.getAsJsonArray("delta");
++                orbit.input(at(delta, 0), at(delta, 1));
++                final var expected = frame.getAsJsonArray("target");
++                assertEquals(at(expected, 0), orbit.target().yaw(), .000001F);
++                assertEquals(at(expected, 1), orbit.target().polar(), .000001F);
++                checked++;
++            }
++        }
++        assertEquals(120, checked);
++    }
++
++    private static CameraOrbit orbit(final CameraOrbit.Settings settings, final float radius, final float yaw, final float polar) {
++        return new CameraOrbit(settings, new CameraOrbit.State(radius, yaw, polar, 0, 0, 0), new CameraOrbit.Target(radius, yaw, polar));
++    }
++
++    private static float at(final JsonArray array, final int index) {
++        return array.get(index).getAsFloat();
++    }
++
++    private static Vector vector(final JsonArray array) {
++        return new Vector(at(array, 0), at(array, 1), at(array, 2));
 +    }
 +
 +}

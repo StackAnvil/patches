@@ -251,3 +251,30 @@ Core runs 1,228 tests: 1,196 pass and 32 optional cases skip.
 The 864 native selections pass within that suite.
 The add-on runs 936 tests: 816 pass and 120 optional cases skip.
 All 18 converter tests and four ViaProxy tests pass. Checkstyle and patch metadata checks pass.
+
+
+## Orbit component model
+
+`CameraOrbit` now supplies the shared frame math needed by follow cameras.
+It retains separate radius, yaw, and polar velocities, wraps angular errors, and applies native input limits and inversion flags.
+Radius smoothing measures the previous camera against the current pivot.
+A supplied collision radius overrides the target radius directly, including a previous result above a newly reduced target.
+The zero-spring path does not inspect the previous camera position.
+
+The pinned client package's `follow_orbit` definition overrides all three spring rates to zero.
+It uses a 10-block radius and polar limits of 0.1 and 179.9 degrees.
+These values differ from the component constructor defaults.
+The package and extracted definitions remain private.
+
+Private comparisons execute 270 chained native orbit frames and 120 native input updates.
+They cover moving pivots, zero and positive springs, angle wrapping, inversion, limits, and collision-radius replacement.
+The probes use authored component state and host CRT math boundaries.
+They exclude actor binding, collision queries, input collection, complete ECS scheduling, and visible rendering.
+
+The solver is a prerequisite. Follow-camera transport, actor binding, and add-on execution remain incomplete.
+
+
+The orbit-model build replays all 102 core patches and builds the converter and core with matching resources.
+Core runs 1,233 tests: 1,201 pass and 32 optional cases skip.
+The 864 action selections, 270 orbit frames, and 120 input updates pass within that suite.
+All 18 converter tests, Checkstyle, and patch metadata checks pass.
