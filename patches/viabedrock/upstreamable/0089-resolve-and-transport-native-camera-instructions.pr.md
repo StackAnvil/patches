@@ -493,7 +493,7 @@ Checkstyle, offline regressions, and patch metadata checks pass.
 Core now handles protocol-2193 packets 316, 320, 327, and 339 instead of discarding them.
 It retains command settings, category and preset definitions, and actor-priority updates on each connection.
 Shared ranking and entity geometry execute independently of the renderer.
-Client activation, world queries, the reticle, and interaction rotation remain incomplete.
+Client target execution, world queries, the reticle, and interaction rotation remain incomplete.
 
 ### Packet and request handling
 
@@ -593,7 +593,7 @@ Host boundaries provide TLS guards, allocation, memory operations, and exit regi
 Current-camera identifier production, result generation, and input override remain outside this probe.
 The policy does not assume that a custom preset uses its resolved root identifier.
 
-The negotiated `viabedrock:camera_aim_assist_v1` channel carries complete accepted state and independent actor binding changes.
+The negotiated `viabedrock:camera_aim_assist_v2` channel carries complete accepted state and independent actor binding changes.
 Catalog changes carry definitions, active settings, actor priorities, the optional control byte, and the selected camera context.
 The camera context preserves resolved preset fields, its base, epoch, instruction sequence, and index.
 It does not invent activation defaults for optional aim fields.
@@ -619,7 +619,8 @@ Binding transport does not establish native candidate enumeration order.
 
 ### Remaining aim-assist work
 
-Camera-preset activation and actual target execution remain incomplete.
+Camera-preset aim activation uses the server request path below.
+Actual client target execution remains incomplete.
 Native actor enumeration, block candidates, world obstruction, and debug alternatives remain open.
 The reticle and interaction rotation must consume the selected native target.
 Passing geometry, packet, and ranking tests does not establish those behaviors.
@@ -627,7 +628,7 @@ Passing geometry, packet, and ranking tests does not establish those behaviors.
 ### Verification after replay
 
 All 102 core patches replay successfully.
-All four projects build, with 1,256 core tests passing and 32 optional skips.
+All four projects build, with 1,264 core tests passing and 32 optional skips.
 The add-on has 816 passing tests and 120 optional skips.
 All 18 converter tests and four proxy tests pass.
 Checkstyle, tooling checks, 261 offline regressions, and patch metadata validation pass.
@@ -654,3 +655,79 @@ The screenshot shows the playable test scene.
 Source artifact and manifest checksums match; all recorded Java, display, and server identities are gone after normal cleanup.
 The fixture and private observer source are restored.
 These observations verify delivery and lifetime checks, without establishing aim activation, selected hits, reticles, or interaction rotation.
+
+### Aim preset wire framing
+
+An aim-enabled camera table from BDS 1.26.51.1 exposed an incorrect target-mode width in core.
+The optional mode uses one unsigned byte, rather than a four-byte integer.
+The extra read desynchronized the remaining fields and disconnected the client during packet 198.
+Core now reads and writes that byte, preserving unknown values from zero through 255.
+The following control scheme and starting-rotation fields retain their positions.
+
+The [protocol-2193 camera schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/types/camera-presets/) and [preview schema](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/types/camera-presets/) identify the mode as `uint8`.
+The pinned Gophertunnel codec uses `Int32` for this nested field and disagrees with the captured target server.
+It remains useful for other camera fields, but it does not establish this field's encoding.
+A 743-byte captured table with complete, empty, and partial aim objects now round-trips every byte.
+A separate wire test covers every mode byte and checks the following fields and preset boundary.
+The partial aim object replaces the inherited object as a whole.
+
+The aim transport now negotiates version two because its camera context embeds the corrected preset codec.
+Peers that advertise only the earlier format do not receive the changed layout.
+The add-on derives its channel and codec from the shared core contract.
+
+### Client activation requests
+
+The [target packet-321 schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/client-camera-aim-assist-packet/) defines client activation by camera preset name.
+The server then returns packet 316 with resolved settings.
+Native callback `145d81cb0` and helpers `1429d3560`, `1429d4320`, and `1429d4440` establish this request path.
+The server handler at `1416ed830` resolves camera aim settings and restores stored command settings when appropriate.
+Retaining packet 198 alone does not activate its aim object.
+
+Core now accepts a negotiated client control that names its complete aim snapshot sequence and reports perspective eligibility.
+It rejects stale snapshots and camera contexts before sending packet 321.
+The sender checks the referenced aim preset before requesting camera activation.
+A missing reference leaves accepted server state intact.
+Absent preset references use the native default aim preset identifier.
+Camera switches, preset-table replacement, and perspective changes can create a new request.
+Command-setting replies and ordinary position updates within the same preset do not create repeated activation requests.
+This prevents a feedback loop that can overwrite later server settings.
+Full native event scheduling remains unverified.
+
+A native camera without a perspective-option component permits aim activation.
+A present option permits activation when its integer value is nonzero.
+The add-on supplies the local camera option when no server preset is active.
+Forced first-person, third-person, free, and follow cameras use their rendered perspective semantics.
+Perspective eligibility remains separate from the interaction control-scheme policy.
+
+The native packet factory limits the camera identifier to its first 64 UTF-8 bytes.
+The shared writer preserves that byte limit, including a split multibyte sequence.
+Private probes compare eighteen actual native payload-factory results and ten valid-camera perspective cases.
+The probes supply weak-camera resolution, sparse component data, memory operations, allocation, and warning callbacks.
+They do not establish camera-component construction, registry loading, or complete event scheduling.
+Storage tests cover stale controls, camera changes, command replies, and duplicate suppression.
+
+The corrected-codec baseline reaches gameplay with all eleven presets and retains complete, empty, and partial aim objects.
+Its 43 client-thread observations show the camera changes, but the journal contains zero activation requests.
+That baseline isolates the missing packet-321 path from the fixed joining failure.
+
+Two further actual add-on recordings verify the activation path against the same target server.
+They contain 39 and 38 client-thread observations, with eight and nine packet-321 requests respectively.
+Their complete request sequences match the camera and perspective transitions without extra activation requests.
+The corresponding thirteen and fourteen packet-316 replies match every expected setting and clear.
+Full aim objects activate their authored angle, distance, and mode.
+Empty objects activate native defaults of 50°/50° and 8.5 blocks.
+A partial child object activates 30°/40°, 8.5 blocks, and angle mode instead of retaining its parent's other fields.
+A real `/aimassist` command, issued while aim is allowed, supplies the stored settings for the restoration control.
+Switching from the overriding camera to a camera without an aim object restores those command settings through BDS.
+A first-person clear removes active settings.
+The Script API fixture does not populate the same stored command state, so its non-override clear remains a separate control.
+
+Both recordings reach gameplay, retain all eleven presets, and reproduce the captured table hash.
+Artifact and manifest checksums match.
+All owned Java, display, and server identities are gone after normal cleanup.
+The fixture and private observer source are restored.
+These results verify camera aim activation and command restoration on the actual Java route.
+They do not establish native candidate gathering, reticles, interaction rotation, local F5 transitions, or complete event scheduling.
+All four projects build, including 1,264 passing core tests and 32 optional skips.
+The add-on has 816 passing tests and 120 optional skips.
+Checkstyle, tooling checks, 261 offline regressions, and metadata validation pass.

@@ -1,4 +1,4 @@
-From d5df7dc9ad2c8debb779d2635c01f2bad4002156 Mon Sep 17 00:00:00 2001
+From 29a67065a76fb87f463ea9694bc00c663f5ffdac Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(camera): render core-resolved server camera movement
@@ -93,16 +93,29 @@ on disconnect without letting late removals affect replacement actors.
 
 An actual add-on connection verifies six setting transitions, five control
 bytes, camera context and clear, target removal/replacement and normal
-cleanup. Native aim activation, world queries, selection, reticles and
+cleanup. Native world queries, selection, reticles and
 interaction rotation remain incomplete; transport does not establish them.
+
+Report the current complete aim view sequence and perspective to core.
+Use the local camera option without a server preset; forced first-person
+is ineligible, while rendered third-person, free and follow cameras permit
+aim activation. Reset client request state on disconnect. Core validates
+snapshot and camera identity and sends native packet 321, leaving settings
+resolution to BDS rather than synthesizing optional camera aim defaults.
+
+Two actual client recordings verify exact request/reply sequences,
+complete/empty/partial aim objects, native command restoration and normal
+cleanup. Reticle, target/world queries, interaction rotation, local F5
+transitions and full native event scheduling remain open.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |  43 +++++
- .../camera/BedrockCameraAimAssist.java        |  46 +++++
+ .../bedrock/ViaFabricPlusBedrock.java         |  44 +++++
+ .../camera/BedrockCameraAimAssist.java        |  70 +++++++
  .../bedrock/camera/BedrockCameraFade.java     |  40 ++++
  .../bedrock/camera/BedrockCameraFov.java      |  68 +++++++
  .../bedrock/camera/BedrockCameraPosition.java | 176 ++++++++++++++++++
  .../bedrock/camera/BedrockCameraShake.java    |  49 +++++
  .../bedrock/camera/BedrockCameraWorld.java    |  95 ++++++++++
+ .../camera/CameraAimAssistControlPayload.java |  22 +++
  .../camera/CameraAimAssistPayload.java        |  22 +++
  .../bedrock/camera/CameraFadePayload.java     |  22 +++
  .../bedrock/camera/CameraFollowPayload.java   |  22 +++
@@ -121,13 +134,14 @@ interaction rotation remain incomplete; transport does not establish them.
  .../bedrock/settings/BedrockSettings.java     |   4 +
  .../viafabricplus-bedrock/lang/en_us.json     |   1 +
  .../viafabricplus-bedrock.mixins.json         |   8 +-
- 25 files changed, 908 insertions(+), 1 deletion(-)
+ 26 files changed, 955 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraAimAssist.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFade.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraShake.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraWorld.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraAimAssistControlPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraAimAssistPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFadePayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFollowPayload.java
@@ -144,7 +158,7 @@ interaction rotation remain incomplete; transport does not establish them.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockCameraListener.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 8e1bc3e..d1b5214 100644
+index 8e1bc3e..00f799f 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 @@ -49,6 +49,19 @@ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
@@ -167,7 +181,7 @@ index 8e1bc3e..d1b5214 100644
  import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
  import com.viaversion.viafabricplus.bedrock.hud.BedrockLocatorBar;
  import com.viaversion.viafabricplus.bedrock.hud.LocatorBarPayload;
-@@ -140,6 +153,36 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -140,6 +153,37 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
              ClientPlayNetworking.registerReceiver(LocatorBarPayload.TYPE,
                  (payload, context) -> BedrockLocatorBar.accept(listener.getConnection(), payload.snapshot())));
@@ -192,6 +206,7 @@ index 8e1bc3e..d1b5214 100644
 +        PayloadTypeRegistry.clientboundPlay().register(CameraSplinePayload.TYPE, CameraSplinePayload.CODEC);
 +        ClientPlayNetworking.registerGlobalReceiver(CameraSplinePayload.TYPE,
 +            (payload, context) -> BedrockCameraPosition.accept(payload.state()));
++        BedrockCameraAimAssist.register();
 +        PayloadTypeRegistry.clientboundPlay().register(CameraAimAssistPayload.TYPE, CameraAimAssistPayload.CODEC);
 +        ClientPlayConnectionEvents.INIT.register((listener, client) ->
 +            ClientPlayNetworking.registerReceiver(CameraAimAssistPayload.TYPE,
@@ -206,10 +221,10 @@ index 8e1bc3e..d1b5214 100644
          this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraAimAssist.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraAimAssist.java
 new file mode 100644
-index 0000000..830b158
+index 0000000..da4ec01
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraAimAssist.java
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,70 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -217,6 +232,10 @@ index 0000000..830b158
 + */
 +package com.viaversion.viafabricplus.bedrock.camera;
 +
++import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
++import net.raphimc.viabedrock.api.model.CameraAimAssistActivation;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.network.Connection;
 +import net.raphimc.viabedrock.api.model.CameraAimAssistClientState;
@@ -229,9 +248,27 @@ index 0000000..830b158
 +
 +/** Connection-scoped catalog and actor bindings. Selection and rotation require separate native execution. */
 +public final class BedrockCameraAimAssist {
++    private static long sentView = -1;
++    private static boolean sentAllowed;
 +    private static final CameraAimAssistClientState STATE = new CameraAimAssistClientState();
 +
 +    private BedrockCameraAimAssist() { }
++
++    public static void register() {
++        PayloadTypeRegistry.serverboundPlay().register(CameraAimAssistControlPayload.TYPE, CameraAimAssistControlPayload.CODEC);
++        ClientTickEvents.END_CLIENT_TICK.register(client -> {
++            final var view = STATE.view();
++            if (client.player == null || client.getConnection() == null || view == null) {
++                return;
++            }
++            final boolean allowed = CameraAimAssistActivation.allowed(view.camera(), client.options.getCameraType().isFirstPerson());
++            if (STATE.viewSequence() != sentView || allowed != sentAllowed) {
++                ClientPlayNetworking.send(new CameraAimAssistControlPayload(new CameraAimAssistActivation.Control(STATE.viewSequence(), allowed)));
++                sentView = STATE.viewSequence();
++                sentAllowed = allowed;
++            }
++        });
++    }
 +
 +    public static void accept(final Connection connection, final CameraAimAssistMessage message) {
 +        final long generation = STATE.generation();
@@ -254,6 +291,8 @@ index 0000000..830b158
 +
 +    public static void clear() {
 +        STATE.clear();
++        sentView = -1;
++        sentAllowed = false;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFade.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFade.java
@@ -713,6 +752,34 @@ index 0000000..3bbb458
 +        }
 +        return new CameraRaycast.Box(minX, minY, minZ, maxX, maxY, maxZ);
 +    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraAimAssistControlPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraAimAssistControlPayload.java
+new file mode 100644
+index 0000000..609efae
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraAimAssistControlPayload.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.camera;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.CameraAimAssistActivation;
++
++public record CameraAimAssistControlPayload(CameraAimAssistActivation.Control control) implements CustomPacketPayload {
++    public static final Type<CameraAimAssistControlPayload> TYPE = new Type<>(Identifier.parse(CameraAimAssistActivation.Control.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, CameraAimAssistControlPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> CameraAimAssistActivation.Control.TYPE.write(buffer, payload.control),
++            buffer -> new CameraAimAssistControlPayload(CameraAimAssistActivation.Control.TYPE.read(buffer)));
++
++    @Override
++    public Type<CameraAimAssistControlPayload> type() { return TYPE; }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraAimAssistPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraAimAssistPayload.java
 new file mode 100644

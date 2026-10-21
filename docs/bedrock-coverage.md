@@ -162,7 +162,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core and add-on execute camera effects, free-camera movement, target tracking, follow-orbit frames and spline playback with scoped native comparisons. Aim commands, definitions, actor priorities, control bytes and lifetime-scoped actor bindings now reach the add-on. Native aim activation, world queries, reticles and interaction rotation remain unfinished. Full follow-camera, built-in perspective and lifecycle parity also remain open. See the camera patch evidence for the verified scope. |
+| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core and add-on execute camera effects, free-camera movement, target tracking, follow-orbit frames and spline playback with scoped native comparisons. Aim commands, definitions, actor priorities, control bytes and lifetime-scoped actor bindings now reach the add-on. Camera-preset aim activation and stored-command restoration now use verified native requests and replies. Native target execution, world queries, reticles and interaction rotation remain unfinished. Full follow-camera, built-in perspective and lifecycle parity also remain open. See the camera patch evidence for the verified scope. |
 | U2 | Fog and HUD visibility | Incomplete | Core retains all target HUD restrictions and transports them through direct connections and ViaProxy. The add-on applies individual Java HUD restrictions and preserves local settings on reset. Fog, missing native widgets, and remaining visual comparisons are incomplete. |
 | U3 | Texture animations, toasts, credits, store requests, and inventory preferences | Incomplete | Core retains each furnace family's tab, filter and layout settings from packet 351. A negotiated channel carries native settings in both directions and replays retained settings after registration or joining. The add-on isolates settings by play session. Tests cover negotiation, malformed payloads, Java changes, opaque values and stale session cleanup. Native cooking screens, preference controls, other inventory settings and native/route comparisons remain incomplete. Other packet-driven presentations remain incomplete. |
 | U4 | Dynamic JSON UI and widgets | Incomplete | Core resolves authored server-form templates, bounded expressions, collections, bindings, images, and original response indices. The add-on renders supported grids, scrolling, textures and alpha animations. The add-on binds forms, containers and NPC screens to each play session. Tests reject stale callbacks on a reused connection. Complete controller bindings, font metrics, other animation properties, and native comparisons on both routes. |
@@ -9251,3 +9251,28 @@ Artifact and manifest checksums match, and the fixture and private observer sour
 
 Native aim activation, candidate enumeration, world obstruction, selected hits, reticles, and interaction rotation remain incomplete.
 These results do not establish official-client visual parity or completion of the five implementation areas.
+
+## Camera aim activation and preset decoding (October 21, 2026)
+
+An aim-enabled BDS preset table exposed a nested target-mode width error that disconnected joins.
+The mode uses one unsigned byte. Core now consumes the 743-byte table and reproduces every captured byte.
+A separate regression checks all 256 byte values and the following fields.
+Aim transport negotiates version two because its camera context embeds the corrected codec.
+
+The add-on now reports its current snapshot and perspective to core, which validates the camera context before sending native packet 321.
+BDS resolves the camera's aim object and returns packet 316.
+Missing aim references preserve accepted state; stale controls and duplicate activation requests do not reach the server.
+Private comparisons cover eighteen native payload-factory results and ten valid-camera perspective cases.
+
+A corrected-codec baseline joins with all eleven presets but sends no activation requests, isolating the missing request path.
+Two further actual add-on recordings verify authored settings, empty-object defaults, partial-object inheritance, perspective clears, and stored `/aimassist` command restoration.
+Their exact request and reply sequences contain eight/nine activation requests and thirteen/fourteen setting replies.
+The runs retain 39 and 38 client-thread observations and close normally.
+All owned Java, display, and server identities are gone after cleanup.
+Artifact checksums match, and private observer and fixture changes are restored.
+
+Both owner stacks replay and all four projects build.
+Core has 1,264 passing tests and 32 optional skips; the add-on has 816 passing tests and 120 optional skips.
+Checkstyle, tooling checks, 261 offline regressions, and metadata validation pass.
+Native target gathering, world obstruction, reticles, interaction rotation, local F5 transitions, and full camera scheduling remain unfinished or unverified.
+The full five-area implementation goal remains active.

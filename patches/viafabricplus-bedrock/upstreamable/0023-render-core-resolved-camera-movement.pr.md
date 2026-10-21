@@ -245,7 +245,7 @@ Checkstyle, offline regressions, and patch metadata checks pass.
 
 ## Aim-assist state reception
 
-The add-on registers the negotiated `viabedrock:camera_aim_assist_v1` payload on each connection.
+The add-on registers the negotiated `viabedrock:camera_aim_assist_v2` payload on each connection.
 It retains complete accepted catalogs, command settings, actor priorities, control-scheme bytes, and selected camera context.
 Catalog transfer assembles bounded fragments before replacing the accepted view.
 Independent actor bindings preserve native identity, lifetime, and metadata IDs 136–138.
@@ -258,7 +258,8 @@ Late registration supplies a complete view and all current bindings.
 The shared tests cover fragmented catalogs, more than 4,096 priorities, interrupted transfers, malformed bodies, reconnects, and reused actor identities.
 
 This reception supplies state for native aim execution.
-Camera-preset activation, world queries, selected hits, reticles, and interaction rotation remain incomplete.
+World queries, selected hits, reticles, and interaction rotation remain incomplete.
+The activation request section below records the camera-preset settings path.
 The shared control policy matches 2,048 native lookup results, but current-camera identifier production remains unverified.
 Fixed-boom rendering and full control-scheme movement mappings remain separate unfinished work.
 
@@ -269,6 +270,28 @@ The recording reaches gameplay and closes normally.
 All owned Java, display, and server identities are gone after cleanup.
 The source artifact and manifest checksums match, and the private observer source is restored.
 All four projects build. The add-on has 816 passing tests and 120 optional skips.
-Core has 1,256 passing tests and 32 optional skips, including the native control-policy comparison.
+Core has 1,264 passing tests and 32 optional skips, including the native control-policy comparison.
 Checkstyle, tooling checks, 261 offline regressions, and patch metadata validation pass.
 These checks establish state delivery and binding lifetime behavior, without establishing native aim execution or visible parity.
+
+## Camera aim activation requests
+
+The add-on now reports the accepted aim snapshot sequence and current perspective through a separate client control payload.
+Core validates the snapshot and camera context before it sends native packet 321.
+The server resolves the camera preset and returns packet 316 with the accepted aim settings.
+The add-on does not synthesize those settings from the optional aim object.
+
+A forced first-person camera disallows aim activation.
+Third-person, free, and follow cameras permit it.
+The normal local camera follows the user's first-person or third-person option.
+Disconnect clears the request state with the accepted view.
+Server setting replies can update that view without repeatedly reactivating the same camera.
+Native target selection, world queries, reticles, and interaction rotation remain unfinished.
+
+Two actual add-on recordings verify complete, empty, and partial camera aim objects, perspective clears, and stored command restoration.
+Their eight and nine packet-321 requests and thirteen and fourteen packet-316 replies match the expected sequences exactly.
+The client retains the authoritative settings after each request.
+A non-override camera restores settings from a real `/aimassist` command.
+The runs contain 39 and 38 client-thread observations, reach gameplay, and close normally.
+All owned Java, display, and server identities are gone; artifact checksums match and private fixture changes are restored.
+Local F5 transitions, native target selection, reticles, interaction rotation, and full event scheduling remain unverified.
