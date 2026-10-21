@@ -384,7 +384,12 @@ Each complete 27-byte request matches byte for byte. Both 18-byte successful cur
 The original protocol-2193 journal confirms that each response precedes a form, and the form precedes the client's container close.
 This verifies those serialized examples from the original recording; it does not establish a fresh Social interaction with the current client.
 A success response containing only an empty cursor therefore does not, by itself, prove that menu navigation failed.
-Current form takeover and visible navigation still require a combined check.
+A subsequent offline replay uses the unchanged first 210 seconds of the original native journal and its accepted resource pack.
+The current add-on reaches the authored Friends form after the container and cursor-only success response.
+A saved screenshot confirms the visible form, and the screen audit records the container-to-scene transition.
+The replay passes transport, spawn, payload completeness, and Java resource-pack loading.
+Overall rendering verification fails because the scene contains unresolved mappings, including `cubecraft:empty.entity`.
+This result verifies form takeover during recorded delivery. It does not establish fresh interactive Social request acceptance or complete scene rendering.
 
 The tooling check, probe-pack build, all 261 offline tests, and patch metadata validation pass.
 Raw recordings, packet extracts, screenshots, JVM probes, and run logs remain private.
