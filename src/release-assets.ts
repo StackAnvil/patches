@@ -1,10 +1,17 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { Effect } from "effect";
 import { bundleModpack } from "./modpack.ts";
 import { root, targetIds } from "./model.ts";
 import { verifyPinnedManifest, type ViaFabricPlusPin } from "./viafabricplus.ts";
+import {
+  buildArtifactEvidence,
+  requireReleaseEvidence,
+  validationMarkdown,
+  type ValidationReport,
+} from "./validation.ts";
+import { git } from "./process.ts";
 
 interface ArtifactManifest {
   target: string;
@@ -62,8 +69,34 @@ export async function prepareReleaseAssets(
   return [...names];
 }
 
+export async function prepareValidatedRelease(
+  artifactsDir: string,
+  outputDir: string,
+  revision: string,
+  projects: readonly string[],
+  pin?: ViaFabricPlusPin,
+): Promise<string[]> {
+  const report = JSON.parse(
+    await readFile(join(artifactsDir, "validation", "release.json"), "utf8"),
+  ) as ValidationReport;
+  requireReleaseEvidence(
+    report,
+    revision,
+    await buildArtifactEvidence(artifactsDir, { projects, pin }),
+  );
+  const files = await prepareReleaseAssets(artifactsDir, outputDir, projects, pin);
+  await writeFile(join(outputDir, "validation.json"), `${JSON.stringify(report, null, 2)}\n`);
+  await writeFile(join(outputDir, "validation.md"), validationMarkdown(report));
+  return [...files, "validation.json", "validation.md"];
+}
+
 if (import.meta.main) {
-  prepareReleaseAssets(join(root, "artifacts"), join(root, "release"), await targetIds())
+  prepareValidatedRelease(
+    join(root, "artifacts"),
+    join(root, "release"),
+    await Effect.runPromise(git(["rev-parse", "HEAD"], root)),
+    await targetIds(),
+  )
     .then((files) => console.log(files.join("\n")))
     .catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : error);

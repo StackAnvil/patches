@@ -1,9 +1,13 @@
 import { Effect } from "effect";
+import { parseArgs } from "node:util";
+import { resolve } from "node:path";
 import { getSeries, getTarget, targetIds } from "./model.ts";
 import { build, buildPr } from "./build.ts";
 import { abortApply, addPatch, continueApply, edit, rebuild, sync, workdir } from "./stack.ts";
 import { prBody, syncPr, updatePrParticipants } from "./pr.ts";
 import { devSetup } from "./dev.ts";
+import { healthFailed, healthMarkdown, patchHealth } from "./health.ts";
+import { writeReport } from "./validation.ts";
 
 const [area, action, id, extra, ...rest] = process.argv.slice(2);
 const argumentsAfterProject = extra ? [extra, ...rest] : rest;
@@ -17,6 +21,21 @@ const artifact = { runId: option("--run-id"), artifactId: option("--artifact-id"
 const patchFile = option("--patch");
 
 async function main(): Promise<void> {
+  if (area === "stack" && action === "health") {
+    const { values, positionals } = parseArgs({
+      args: process.argv.slice(4),
+      allowPositionals: true,
+      options: { upstream: { type: "boolean" }, output: { type: "string" } },
+    });
+    if (positionals.length > 1) throw new Error("Choose one project or all.");
+    const report = await patchHealth(positionals[0] ?? "all", { upstream: values.upstream });
+    if (values.output) {
+      await writeReport(resolve(values.output), report, healthMarkdown(report));
+      console.log(`Patch health: ${values.output}`);
+    } else console.log(JSON.stringify(report, null, 2));
+    if (healthFailed(report)) process.exitCode = 1;
+    return;
+  }
   if (area === "dev" && action === "setup") {
     await Effect.runPromise(devSetup());
     return;
