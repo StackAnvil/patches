@@ -215,11 +215,36 @@ Disconnect releases all spline state.
 Private core comparisons cover 220 native curve evaluations and 84 composed native playback samples.
 These comparisons cover numeric kernels and authored component inputs.
 They do not establish packet decoding, full native system ordering, or official-client visible parity.
-Named spline definitions and snapshots after completion remain incomplete.
-No new live spline recording is claimed.
+Core now resolves named definitions through the same program transport.
+Snapshots after completion remain incomplete.
 
 The final inline-spline build replays all 102 core patches and 38 add-on patches.
 All four projects build successfully, and Checkstyle passes.
 Core has 1,226 passing tests and 32 optional skips.
 The add-on has 816 passing tests and 120 optional skips.
 The converter has 18 passing tests, and the proxy has four.
+
+
+## Named spline programs and repeated position commands
+
+Core now decodes named definitions and resolves them into the same program transport used for inline splines.
+The add-on binds the shared version-two tracking channel, which carries independent position revisions for each preset.
+An explicit position command replaces a completed spline pose even when its coordinates match the previous command.
+Default resets restore the preset position; omitted position and inactive instances retain their own poses.
+
+The pinned server supplied named playback and both inline curve types in a completed live recording.
+A separate verifier checks sampled camera positions against rotation progress, avoiding wall-clock latency assumptions.
+That recording exposed the previous repeated-position failure and fails the new reset check.
+Native numeric comparisons remain separate from live Java execution and official-client visible parity.
+
+
+A fresh final-candidate recording passes named playback, repeated playback, both inline curve types, three clears, and three explicit position selections.
+All 21 sampled spline poses match an independent geometry calculation within 0.000006 blocks.
+Both repeated selections restore the requested position after clear.
+The recording finishes normally, and its owned client, display, audio helpers, and server stop normally.
+The private screenshot confirms the restored local view.
+This verifies target-server commands and the Java rendering path, not official-client visible parity or complete native lifecycle behavior.
+
+The final build has 1,233 passing core tests and 32 optional skips.
+The add-on has 816 passing tests and 120 optional skips; converter and proxy tests also pass.
+All four builds, Checkstyle, offline regressions, and patch metadata checks pass.
