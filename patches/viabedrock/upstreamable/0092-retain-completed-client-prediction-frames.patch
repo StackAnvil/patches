@@ -1,4 +1,4 @@
-From 98e1f4321c4c95d9a5b09e4ca9a9eb4cb375baac Mon Sep 17 00:00:00 2001
+From 8c07245037ce5c6a107c92153774fcd8d3a9ed2e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -420,6 +420,19 @@ Withdraw the pending completed frame when its permission capability is
 unregistered. Preserve frame watermark and correction history so an old
 frame cannot replay after re-registration. Raw handler regressions cover
 unregister, re-register and the next ordinary tick.
+
+Use the native Player position anchor 1.62001F for both authoritative
+teleports and completed-frame output. The target 1.26.51.1 constructor
+1401dc620 initializes this value from PE address 14e6ae444. A private BDS
+protocol 2193 ScriptAPI teleport to feet Y 70 sends player Y 71.62001037597656
+(bits 428f3d72). Subtracting the previous 1.62F leaves Java feet Y
+70.00000762939453; the native value restores 70 exactly. The recorded
+Java completed frames independently expose that same drift.
+
+A packet-level regression translates the captured native Y into exact
+Java feet and returns four completed frames to the same native anchor.
+This corrects the shared origin conversion; native aim selection, camera
+update scheduling and complete physics trajectory parity remain separate.
 ---
  build.gradle                                  |  31 +-
  .../api/model/CollisionContact.java           |  80 ++
@@ -443,6 +456,7 @@ unregister, re-register and the next ordinary tick.
  .../api/model/entity/ClientPlayerEntity.java  | 112 +-
  .../viabedrock/api/model/entity/Entity.java   |  65 +-
  .../api/model/entity/LivingEntity.java        |  32 +-
+ .../api/model/entity/PlayerEntity.java        |   2 +-
  .../definition/ItemDefinitions.java           |  13 +
  .../raphimc/viabedrock/api/util/MathUtil.java |   6 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   3 +
@@ -464,7 +478,7 @@ unregister, re-register and the next ordinary tick.
  .../api/model/FluidCurrentTest.java           |  56 +
  .../model/GeyserMovementReferenceTest.java    |  50 +
  .../api/model/GeyserMovementTest.java         | 131 +++
- .../api/model/GlideMovementTest.java          | 115 +++
+ .../api/model/GlideMovementTest.java          | 115 ++
  .../model/MovementControllerOrderTest.java    |  52 +
  .../api/model/MovementEffectTest.java         | 105 ++
  .../api/model/MovementEffectTimelineTest.java | 253 +++++
@@ -484,11 +498,12 @@ unregister, re-register and the next ordinary tick.
  .../model/BedrockItemEnchantmentTest.java     |  73 ++
  .../protocol/model/ItemUseModifiersTest.java  |  55 +
  .../packet/ClientPlayerPacketsTest.java       |  32 +-
- .../packet/CompletedFramePositionTest.java    | 972 ++++++++++++++++++
- .../packet/MovementEffectPacketsTest.java     | 116 +++
+ .../packet/CompletedFramePositionTest.java    | 992 ++++++++++++++++++
+ .../packet/MovementEffectPacketsTest.java     | 116 ++
  .../packet/PlayerCorrectionPacketTest.java    | 184 ++++
  .../packet/PlayerPredictionPacketTest.java    |  87 ++
- 67 files changed, 5613 insertions(+), 54 deletions(-)
+ .../protocol/storage/EntityTrackerTest.java   |   4 +-
+ 69 files changed, 5636 insertions(+), 57 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java
@@ -2347,6 +2362,19 @@ index bd5e91117..d79489fc2 100644
              default -> false;
          };
      }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
+index 82b9eb731..ef95055b6 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
+@@ -103,7 +103,7 @@ public class PlayerEntity extends LivingEntity {
+ 
+     @Override
+     public float eyeOffset() {
+-        return 1.62F;
++        return 1.62001F;
+     }
+ 
+     public PlayerAbilities abilities() {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
 index 4c9d776ac..8a5a49326 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
@@ -5851,10 +5879,10 @@ index ad55fc55c..93bdd824d 100644
          final ClientPlayerEntity player = player();
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
 new file mode 100644
-index 000000000..011658e58
+index 000000000..df1b9c280
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
-@@ -0,0 +1,972 @@
+@@ -0,0 +1,992 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5940,6 +5968,26 @@ index 000000000..011658e58
 +import static org.mockito.Mockito.when;
 +
 +class CompletedFramePositionTest {
++
++    @Test
++    void nativeTeleportAndCompletedFramesRetainTheSamePlayerAnchor() throws Exception {
++        try (Fixture fixture = new Fixture()) {
++            // BDS 1.26.51.1 sends these Y bits after ScriptAPI teleports the feet to Y 70.
++            final Position3f nativePosition = new Position3f(.5F, Float.intBitsToFloat(0x428F3D72), 4.5F);
++            fixture.player.setPosition(nativePosition);
++            final PacketWrapper teleport = new PacketWrapperImpl(null, null, fixture.user);
++            fixture.player.writePlayerPositionPacketToClient(teleport, Relative.NONE, false);
++            final Position3f feet = new Position3f(teleport.get(Types.DOUBLE, 0).floatValue(),
++                    teleport.get(Types.DOUBLE, 1).floatValue(), teleport.get(Types.DOUBLE, 2).floatValue());
++            assertEquals(new Position3f(.5F, 70F, 4.5F), feet);
++            fixture.player.confirmTeleport(teleport.get(Types.VAR_INT, 0));
++
++            for (int frame = 1; frame <= 4; frame++) {
++                fixture.accept(prediction(frame, feet));
++                assertEquals(nativePosition, fixture.tick().position());
++            }
++        }
++    }
 +
 +    @Test
 +    void completedPhysicsUsesItsCurrentPositionWhenJavaOmitsSubthresholdMovement() throws Exception {
@@ -6146,7 +6194,7 @@ index 000000000..011658e58
 +            fixture.move(new Position3f(0.5F, 64F, -0.25F));
 +            fixture.accept(prediction(1, new Position3f(0.5001F, 64F, -0.25F)));
 +            final Input input = fixture.tick();
-+            assertEquals(new Position3f(0.5F, 65.62F, -0.25F), input.position());
++            assertEquals(new Position3f(0.5F, 65.62001F, -0.25F), input.position());
 +            assertEquals(new Position3f(0.5F, 0F, -0.25F), input.velocity());
 +            assertEquals(-1, fixture.predictions.clientFrame(input.tick()));
 +        }
@@ -7232,5 +7280,26 @@ index 000000000..0c1d02d0b
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
+index 004043a37..907e52d82 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
+@@ -64,14 +64,14 @@ class EntityTrackerTest {
+         tracker.addEntity(player, false);
+         final Entity vehicle = tracker.addEntity(10, 100, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
+         vehicle.setPosition(new Position3f(12F, 64F, 8F));
+-        player.setPosition(new Position3f(0F, 65.62F, 0F));
++        player.setPosition(new Position3f(0F, 65.62001F, 0F));
+         player.setMountEntityRuntimeId(vehicle.runtimeId());
+         vehicle.addPassenger(player.uniqueId());
+ 
+         tracker.removeEntity(vehicle);
+ 
+         assertEquals(-1, player.mountEntityRuntimeId());
+-        assertEquals(new Position3f(12F, 65.62F, 8F), player.position());
++        assertEquals(new Position3f(12F, 65.62001F, 8F), player.position());
+         assertSame(player, tracker.getEntityByUid(player.uniqueId()));
+     }
+ 
 -- 
 2.56.0
