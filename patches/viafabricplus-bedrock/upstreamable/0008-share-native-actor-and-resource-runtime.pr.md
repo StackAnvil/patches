@@ -116,7 +116,7 @@ The newest overlay player definition has 68 animation aliases; the extracted bas
 
 Acquire `vanilla`, `vanilla_base`, and numeric vanilla directories from the pinned official package. The matching build supplies 57 layers. Older names such as `vanilla_1.14` imply patch version zero. Keep their paths and manifests separate. Cache format 5 refreshes base-only caches and validates pack UUIDs and overlay versions. Missing layers or mismatched manifests preserve the old cache.
 
-Resolve models, animations, and controllers by identifier in pack order. Merge client-entity description objects by key; higher lists and scalar values replace lower values. Equal duplicates within a pack share a definition. Conflicting definitions remain errors. Preserve each controller's format version so a higher pack cannot change another controller's first-frame behavior. Merge sound catalog entries across both catalog formats. Resolve sound banks, particle files, and textures by pack order. Namespaced block models no longer prevent library loading.
+Resolve models, animations, and controllers by identifier in pack order. Merge client-entity description objects by key; higher lists and scalar values replace lower values. Animation definitions replace earlier registrations within their pack. Conflicting models and other catalogs retain their ambiguity checks. Preserve each controller's format version so a higher pack cannot change another controller's first-frame behavior. Merge sound catalog entries across both catalog formats. Resolve sound banks, particle files, and textures by pack order. Namespaced block models no longer prevent library loading.
 
 The matching player file declares 68 aliases and comes from `vanilla_1.21.130`. The effective description retains four aliases from lower layers. Only references absent from the merged dictionary are undeclared during compilation and playback allocation. Declared resources that cannot resolve still contribute incomplete tracks. Compile script arrays as one bounded program. The matching 8,141-character pre-animation script spans conditional blocks across JSON strings. Preserve temporary scope and early returns. Bone expressions retain their smaller limits.
 
@@ -1958,3 +1958,40 @@ The grouped-reference regression and bundled camel standing/sitting tests pass.
 The complete dependency build passes 2,132 tests, with 152 optional skips.
 A private client comparison confirms native camel model submissions after the parser and query bindings are corrected together.
 The world actor patch records that runtime check and its limits.
+
+
+## Repeated animation identifiers in lobby packs
+
+CubeCraft's target-protocol recording contains two different definitions of `animation.cubecraft.logo.idle` in one pack.
+The shared library rejected the complete animation catalog, preventing the player graph from loading.
+The older server-animation path allowed replacements, so the two production paths disagreed.
+
+An executable fixture runs the original animation-definition registration helper in Bedrock 1.26.51.1 build 51061372.
+It covers nine registrations, including six replacements, with independent identifiers between replacements.
+Every replacement installs a new complete definition and destroys the old data without removing other identifiers.
+The fixture executes registration, native hash lookup and insertion, allocation, reference accounting, and replacement destruction.
+It supplies an initialized manager, non-owner metadata, uncontended mutex calls, allocator/free, CFG, and finite CRT helpers.
+Default Molang compilation is a fixture boundary. Whole-file decoding and native file enumeration are outside this probe.
+
+The shared library now replaces repeated animation identifiers in accepted file order.
+It preserves that order when grouping bundled files and retains each winning definition's format version.
+This gives the shared player-animation path the replacement behavior already used by the older server-animation factory.
+The existing controller-loading paths remain unchanged because their native conflict rules need separate verification.
+Tests sample bone poses after replacements and pack overrides, including discarded old bones and retained unrelated animations.
+Other resource catalogs keep their existing conflict policy; this fixture does not establish their native replacement rules.
+
+The probe also observes lowercase name construction in native animation registration.
+General animation reference normalization remains a separate gap.
+The captured duplicate uses the same lowercase identifier in both files.
+
+
+The rebuilt client completes a 300-second CubeCraft replay through SkyWars EU1, MinerWare EU2, and Parkour EU1.
+Its player graph resolves 200 animations and 12 controllers; observed renderer playbacks produce changing bone poses.
+There are no player-graph or skin-alias loading errors. All 320 skins and geometry records install.
+The audit counts 26,716 remote-player render frames. Transport passes; rendering still fails on unresolved mappings.
+The final replay terrain is incomplete, unlike the original live Parkour screenshot. Replay terrain delivery needs further investigation.
+These checks establish restored graph loading and execution, not native visual parity.
+
+All four projects build with 2,150 passing tests and 152 optional skips.
+All 38 client patches replay. Offline validation passes 263 tooling tests and metadata checks.
+The four replay self-test groups pass. The seven owned test processes close normally.

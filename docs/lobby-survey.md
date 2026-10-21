@@ -10,7 +10,7 @@ Continuous transfer verification remains open.
 
 | Server | Reached | Result |
 | --- | --- | --- |
-| CubeCraft | Main lobby, SkyWars, MinerWare, Parkour | The game selector opened and changed lobbies. Custom selector images and inventory items rendered. Loading the player animation graph failed on a duplicate resource identifier. |
+| CubeCraft | Main lobby, SkyWars, MinerWare, Parkour | The game selector opened and changed lobbies. Custom selector images and inventory items rendered. The animation follow-up restores the player graph in replay after a duplicate identifier stopped it loading. |
 | Lifeboat | Navigator, minigame selector, SkyWars description, Solo action | Forms responded through generic Java dialogs. The Solo action was followed by a biome palette exception and disconnect. The world stayed black before that action; its cause remains unresolved. |
 | Galaxite | World loading | Disconnected with `End of stream` before a playable scene. No rendering verdict. |
 | SoulSteel | Fresh catalog admission, pack negotiation, StartGame | Pack loading reported missing manifests. StartGame decoding exhausted the packet while reading a trailing string. No playable scene. |
@@ -94,3 +94,35 @@ All 102 core patches replay cleanly. Offline validation passes all 263 tooling t
 The four replay self-test groups also pass.
 Transport passes, and all 273 skins and 270 supplied geometry records install.
 Rendering verification still fails on unresolved mappings. All seven owned test processes close normally.
+
+
+## CubeCraft animation registration
+
+CubeCraft's pack declares two different versions of `animation.cubecraft.logo.idle` in separate files.
+The shared animation library rejected the catalog, which stopped the unrelated player graph from loading.
+The renderer could not use the animation graph, including valid player definitions.
+
+An executable probe of Bedrock 1.26.51.1 confirms that animation registration replaces an existing definition as a whole.
+Nine registrations cover six replacements and retention of unrelated identifiers.
+The probe covers registration, native lookup, reference accounting, and replacement destruction.
+It supplies manager metadata and runtime seams; default Molang compilation and native file enumeration are outside its scope.
+
+The shared library now applies that replacement rule in accepted file order.
+It preserves file admission order when grouping bundled assets.
+Pose tests cover both orders, higher-pack overrides, discarded old bones, and retained unrelated animations.
+General animation name normalization and native file-enumeration order remain open.
+This change does not establish native parity for NPC body direction.
+
+
+A fresh 300-second replay resolves 200 player animations and 12 controllers.
+The observer sees changing bone poses, with no player-graph or skin-alias loading errors.
+The replay reaches SkyWars EU1, MinerWare EU2, and Parkour EU1.
+All 320 skins and supplied geometry records install, with 26,716 remote-player render frames observed.
+Transport passes; rendering verification still fails on unresolved mappings.
+The replay's final Parkour terrain is incomplete, while the original live screenshot shows the full lobby.
+That difference needs a separate replay investigation and prevents a terrain-parity claim.
+The seven owned test processes close normally.
+
+All four projects build with 2,150 passing tests and 152 optional skips.
+All 38 client patches replay cleanly. Offline validation passes 263 tooling tests and metadata checks.
+All four replay self-test groups pass.
