@@ -167,3 +167,11 @@ These results establish stack replay and test behavior. Live server frame-time p
 ## Upstream prerequisites
 
 - [viafabricplus-bedrock patch](../../viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md): Land the shared graph runtime before adapting server custom actors.
+
+## Bound animation particle origins
+
+Bound animation emitters now start at the local origin.
+The sampled attachment supplies the world actor or locator transform, so passing a world position applies translation twice.
+Unbound declarations receive the sampled world position without a following supplier.
+This matches the existing player renderer and preserves the shared native attachment transforms.
+The world-actor integration fixture verifies the same binding through the mapped renderer; custom actor live placement remains a separate check.
