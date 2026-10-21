@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(targets = "com.viaversion.viafabricplus.bedrock.render.BedrockEntityRenderer", remap = false)
 public abstract class MixinCustomActorFrame {
     @Inject(method = "resolveModels", at = @At("RETURN"))
-    private void resolved(@Coerce Object data, @Coerce Object packs, CallbackInfoReturnable<List<?>> callback) {
+    private void resolved(@Coerce Object data, @Coerce Object packs, boolean netherLighting, CallbackInfoReturnable<List<?>> callback) {
         RenderAudit.nativeActorModels(callback.getReturnValue().size());
     }
 
