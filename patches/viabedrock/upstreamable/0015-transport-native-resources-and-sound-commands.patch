@@ -1,4 +1,4 @@
-From 67c926fef278729420ef0a49815c87f682e0f21b Mon Sep 17 00:00:00 2001
+From 2d476cce805cf67bf1656238c1a27f540431a651 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(effects): transport native resources and sound commands
@@ -143,33 +143,37 @@ selected locale before English fallback, preserving pack order and empty
 translations. An overlay without language files reuses the original table.
 This avoids duplicating every bundled locale for each world actor type.
 Tests cover structural reuse, overlay priority and locale fallback.
+
+Carry both native block layers, exact runtime state IDs and immutable state properties through the negotiated block_identifiers_v2 channel. Aim-assist discovery checks the extra layer before the primary layer when liquid targeting is enabled; primary-only names cannot reproduce this. Snapshots include native air and both palettes, and incremental updates retain the layer. Keep particle expiration on the primary layer.
+
+Bound dictionary messages by encoded byte size as well as entry count, and bound the retained definition union. Tests cover independent layer replacement and updates, missing all-air palettes, negative and hashed IDs, dimension/forget lifecycles, state properties, and packed/wire boundaries. This supplies authoritative inputs for aim execution; selection geometry, block tags and actual aim targeting remain separate work.
 ---
  build.gradle                                  |   6 +
- .../api/model/NativeBlockIdentifiers.java     | 144 +++++++++++
+ .../api/model/NativeBlockIdentifiers.java     | 231 ++++++++++++++++++
  .../api/model/NativeBlockSection.java         | 143 +++++++++++
- .../viabedrock/api/model/NativeBlockView.java |  86 +++++++
- .../viabedrock/api/model/SoundCaptions.java   |  94 ++++++++
+ .../viabedrock/api/model/NativeBlockView.java | 111 +++++++++
+ .../viabedrock/api/model/SoundCaptions.java   |  94 +++++++
  .../api/model/SoundPlaybackMessage.java       |  76 ++++++
  .../api/resourcepack/NativeActorLibrary.java  | 136 +++++++++++
  .../resourcepack/NativeResourceArchive.java   | 153 ++++++++++++
  .../api/resourcepack/SoundTranslations.java   |  70 ++++++
- .../api/resourcepack/WaveSound.java           | 228 ++++++++++++++++++
+ .../api/resourcepack/WaveSound.java           | 228 +++++++++++++++++
  .../http/ConvertedResourcePackCache.java      |   2 +-
  .../protocol/packet/MultiStatePackets.java    |   6 +
  .../protocol/packet/WorldEffectPackets.java   |  29 ++-
  .../rewriter/ResourcePackRewriter.java        |   6 +
  .../NativeEffectsResourceRewriter.java        |  41 ++++
- .../protocol/storage/ChunkTracker.java        |  83 +++++++
+ .../protocol/storage/ChunkTracker.java        |  92 +++++++
  .../protocol/storage/ResourcePackStorage.java |  43 +++-
- .../api/model/NativeBlockViewTest.java        | 141 +++++++++++
+ .../api/model/NativeBlockViewTest.java        | 211 ++++++++++++++++
  .../api/model/SoundCaptionsTest.java          |  80 ++++++
  .../resourcepack/NativeActorLibraryTest.java  | 186 ++++++++++++++
  .../NativeResourceArchiveTest.java            |  51 ++++
  .../resourcepack/SoundTranslationsTest.java   |  64 +++++
  .../api/resourcepack/WaveSoundTest.java       | 182 ++++++++++++++
  .../protocol/packet/SoundUpdateTest.java      |   5 +
- .../storage/NativeBlockSectionTest.java       |  54 +++++
- 25 files changed, 2101 insertions(+), 8 deletions(-)
+ .../storage/NativeBlockSectionTest.java       |  60 +++++
+ 25 files changed, 2298 insertions(+), 8 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockSection.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
@@ -204,10 +208,10 @@ index 0ae10d4af..d493a516d 100644
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
 new file mode 100644
-index 000000000..e75d0c13d
+index 000000000..af5f1843a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,231 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -221,29 +225,34 @@ index 000000000..e75d0c13d
 +import io.netty.buffer.ByteBuf;
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +
++import java.nio.charset.StandardCharsets;
 +import java.util.ArrayList;
++import java.util.HashMap;
 +import java.util.List;
++import java.util.Map;
 +
 +/** Ordered authoritative block identity snapshots and changes for native client effects. */
 +public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Reset, NativeBlockIdentifiers.Section,
 +        NativeBlockIdentifiers.Update, NativeBlockIdentifiers.Dictionary, NativeBlockIdentifiers.Forget {
 +
-+    String CHANNEL = "viabedrock:block_identifiers";
++    String CHANNEL = "viabedrock:block_identifiers_v2";
++    int MAX_DICTIONARY_BYTES = 256 * 1024;
 +    Type<NativeBlockIdentifiers> TYPE = new Type<>(NativeBlockIdentifiers.class) {
 +        @Override
 +        public NativeBlockIdentifiers read(final ByteBuf buffer) {
-+            if (Types.VAR_INT.readPrimitive(buffer) != 1
++            if (Types.VAR_INT.readPrimitive(buffer) != 2
 +                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
 +                throw new IllegalArgumentException("Unsupported native block identity message");
 +            }
 +            final int kind = buffer.readUnsignedByte();
 +            final int dimension = Types.VAR_INT.readPrimitive(buffer);
 +            return switch (kind) {
-+                case 0 -> new Reset(dimension, buffer.readInt(), buffer.readInt());
++                case 0 -> new Reset(dimension, buffer.readInt(), buffer.readInt(), buffer.readInt());
 +                case 1 -> {
 +                    final int x = buffer.readInt();
 +                    final int y = buffer.readInt();
 +                    final int z = buffer.readInt();
++                    final int layer = layer(buffer.readUnsignedByte());
 +                    final int count = Types.VAR_INT.readPrimitive(buffer);
 +                    if (count <= 0 || count > NativeBlockSection.CELLS) {
 +                        throw new IllegalArgumentException("Invalid native block palette count");
@@ -260,9 +269,10 @@ index 000000000..e75d0c13d
 +                    for (int index = 0; index < length; index++) {
 +                        data[index] = buffer.readLong();
 +                    }
-+                    yield new Section(dimension, x, y, z, new NativeBlockSection(palette, data));
++                    yield new Section(dimension, x, y, z, layer, new NativeBlockSection(palette, data));
 +                }
-+                case 2 -> new Update(dimension, new BlockPosition(buffer.readInt(), buffer.readInt(), buffer.readInt()), buffer.readInt());
++                case 2 -> new Update(dimension, new BlockPosition(buffer.readInt(), buffer.readInt(), buffer.readInt()),
++                        layer(buffer.readUnsignedByte()), buffer.readInt());
 +                case 3 -> new Forget(dimension, buffer.readInt(), buffer.readInt());
 +                case 4 -> {
 +                    final int count = Types.VAR_INT.readPrimitive(buffer);
@@ -270,8 +280,25 @@ index 000000000..e75d0c13d
 +                        throw new IllegalArgumentException("Invalid native block dictionary size");
 +                    }
 +                    final List<Name> names = new ArrayList<>();
++                    final int start = buffer.readerIndex();
 +                    for (int index = 0; index < count; index++) {
-+                        names.add(new Name(buffer.readInt(), Types.STRING.read(buffer)));
++                        final int state = buffer.readInt();
++                        final String identifier = text(buffer);
++                        final int propertyCount = Types.VAR_INT.readPrimitive(buffer);
++                        if (propertyCount < 0 || propertyCount > 64) {
++                            throw new IllegalArgumentException("Invalid native block property count");
++                        }
++                        final Map<String, String> properties = new HashMap<>();
++                        for (int property = 0; property < propertyCount; property++) {
++                            final String key = text(buffer);
++                            if (properties.put(key, text(buffer)) != null) {
++                                throw new IllegalArgumentException("Duplicate native block property");
++                            }
++                        }
++                        names.add(new Name(state, identifier, properties));
++                        if (buffer.readerIndex() - start > MAX_DICTIONARY_BYTES) {
++                            throw new IllegalArgumentException("Native block dictionary exceeds its byte limit");
++                        }
 +                    }
 +                    yield new Dictionary(dimension, names);
 +                }
@@ -281,14 +308,15 @@ index 000000000..e75d0c13d
 +
 +        @Override
 +        public void write(final ByteBuf buffer, final NativeBlockIdentifiers value) {
-+            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, 2);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            buffer.writeByte(value instanceof Reset ? 0 : value instanceof Section ? 1 : value instanceof Update ? 2 : value instanceof Forget ? 3 : 4);
 +            Types.VAR_INT.writePrimitive(buffer, value.dimension());
 +            if (value instanceof Reset reset) {
-+                buffer.writeInt(reset.minY()).writeInt(reset.height());
++                buffer.writeInt(reset.minY()).writeInt(reset.height()).writeInt(reset.air());
 +            } else if (value instanceof Section section) {
 +                buffer.writeInt(section.chunkX()).writeInt(section.sectionY()).writeInt(section.chunkZ());
++                buffer.writeByte(section.layer());
 +                final int[] palette = section.blocks().palette();
 +                Types.VAR_INT.writePrimitive(buffer, palette.length);
 +                for (final int state : palette) {
@@ -301,6 +329,7 @@ index 000000000..e75d0c13d
 +                }
 +            } else if (value instanceof Update update) {
 +                buffer.writeInt(update.position().x()).writeInt(update.position().y()).writeInt(update.position().z());
++                buffer.writeByte(update.layer());
 +                buffer.writeInt(update.state());
 +            } else if (value instanceof Forget forget) {
 +                buffer.writeInt(forget.chunkX()).writeInt(forget.chunkZ());
@@ -309,6 +338,11 @@ index 000000000..e75d0c13d
 +                for (final Name name : dictionary.names()) {
 +                    buffer.writeInt(name.state());
 +                    Types.STRING.write(buffer, name.identifier());
++                    Types.VAR_INT.writePrimitive(buffer, name.properties().size());
++                    for (final var property : name.properties().entrySet()) {
++                        Types.STRING.write(buffer, property.getKey());
++                        Types.STRING.write(buffer, property.getValue());
++                    }
 +                }
 +            }
 +        }
@@ -316,7 +350,39 @@ index 000000000..e75d0c13d
 +
 +    int dimension();
 +
-+    record Reset(int dimension, int minY, int height) implements NativeBlockIdentifiers {
++    static int layer(final int layer) {
++        if (layer < 0 || layer > 1) {
++            throw new IllegalArgumentException("Invalid native block layer");
++        }
++        return layer;
++    }
++
++    private static String text(final ByteBuf buffer) {
++        final int bytes = Types.VAR_INT.readPrimitive(buffer);
++        if (bytes < 0 || bytes > 1024 || bytes > buffer.readableBytes()) {
++            throw new IllegalArgumentException("Invalid native block text size");
++        }
++        final String value = buffer.readCharSequence(bytes, StandardCharsets.UTF_8).toString();
++        checkText(value);
++        return value;
++    }
++
++    private static void checkText(final String value) {
++        if (value.length() > 256) {
++            throw new IllegalArgumentException("Native block text exceeds limits");
++        }
++    }
++
++    private static int textSize(final String value) {
++        final int bytes = value.getBytes(StandardCharsets.UTF_8).length;
++        return varIntSize(bytes) + bytes;
++    }
++
++    private static int varIntSize(final int value) {
++        return value < 128 ? 1 : 2;
++    }
++
++    record Reset(int dimension, int minY, int height, int air) implements NativeBlockIdentifiers {
 +        public Reset {
 +            if ((minY & 15) != 0 || height <= 0 || height > 4096 || (height & 15) != 0
 +                    || (long) minY + height > Integer.MAX_VALUE) {
@@ -325,17 +391,39 @@ index 000000000..e75d0c13d
 +        }
 +    }
 +
-+    record Section(int dimension, int chunkX, int sectionY, int chunkZ, NativeBlockSection blocks) implements NativeBlockIdentifiers {
++    record Section(int dimension, int chunkX, int sectionY, int chunkZ, int layer, NativeBlockSection blocks) implements NativeBlockIdentifiers {
++        public Section {
++            NativeBlockIdentifiers.layer(layer);
++            java.util.Objects.requireNonNull(blocks);
++        }
 +    }
 +
-+    record Update(int dimension, BlockPosition position, int state) implements NativeBlockIdentifiers {
++    record Update(int dimension, BlockPosition position, int layer, int state) implements NativeBlockIdentifiers {
++        public Update {
++            NativeBlockIdentifiers.layer(layer);
++            java.util.Objects.requireNonNull(position);
++        }
 +    }
 +
-+    record Name(int state, String identifier) {
++    record Name(int state, String identifier, Map<String, String> properties) {
 +        public Name {
-+            if (identifier.length() > 256) {
-+                throw new IllegalArgumentException("Native block identifier exceeds limits");
++            checkText(identifier);
++            properties = Map.copyOf(properties);
++            if (properties.size() > 64) {
++                throw new IllegalArgumentException("Native block properties exceed limits");
 +            }
++            properties.forEach((key, value) -> {
++                checkText(key);
++                checkText(value);
++            });
++        }
++
++        public int encodedSize() {
++            int size = 4 + textSize(this.identifier) + varIntSize(this.properties.size());
++            for (final var property : this.properties.entrySet()) {
++                size += textSize(property.getKey()) + textSize(property.getValue());
++            }
++            return size;
 +        }
 +    }
 +
@@ -344,6 +432,9 @@ index 000000000..e75d0c13d
 +            names = List.copyOf(names);
 +            if (names.size() > 256) {
 +                throw new IllegalArgumentException("Native block dictionary exceeds limits");
++            }
++            if (names.stream().mapToInt(Name::encodedSize).sum() > MAX_DICTIONARY_BYTES) {
++                throw new IllegalArgumentException("Native block dictionary exceeds its byte limit");
 +            }
 +        }
 +    }
@@ -354,7 +445,7 @@ index 000000000..e75d0c13d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockSection.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockSection.java
 new file mode 100644
-index 000000000..13fd6ba94
+index 000000000..ec1862263
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockSection.java
 @@ -0,0 +1,143 @@
@@ -370,7 +461,7 @@ index 000000000..13fd6ba94
 +import java.util.Arrays;
 +import java.util.function.IntUnaryOperator;
 +
-+/** Primary-layer identities retain distinctions lost by the Java block mapping. */
++/** Native layer identities retain distinctions lost by the Java block mapping. */
 +public final class NativeBlockSection {
 +
 +    public static final int CELLS = 4096;
@@ -503,10 +594,10 @@ index 000000000..13fd6ba94
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
 new file mode 100644
-index 000000000..4de1147b1
+index 000000000..c0e1a08ac
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,111 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -517,17 +608,21 @@ index 000000000..4de1147b1
 +import java.util.HashMap;
 +import java.util.Map;
 +
-+/** A client mirror of primary block identities, with no reverse Java mapping. */
++/** A client mirror of both native block layers and state properties, with no reverse Java mapping. */
 +public final class NativeBlockView {
 +
-+    private final Map<Long, NativeBlockSection[]> chunks = new HashMap<>();
++    private final Map<Long, NativeBlockSection[][]> chunks = new HashMap<>();
 +    private NativeBlockIdentifiers.Reset world;
-+    private final Map<Integer, String> names = new HashMap<>();
++    private NativeBlockIdentifiers.Name air;
++    private final Map<Integer, NativeBlockIdentifiers.Name> names = new HashMap<>();
++    private int dictionaryBytes;
 +
 +    public void clear() {
 +        this.chunks.clear();
 +        this.names.clear();
 +        this.world = null;
++        this.air = null;
++        this.dictionaryBytes = 0;
 +    }
 +
 +    public boolean ready() {
@@ -538,6 +633,7 @@ index 000000000..4de1147b1
 +        if (message instanceof NativeBlockIdentifiers.Reset reset) {
 +            this.clear();
 +            this.world = reset;
++            this.air = new NativeBlockIdentifiers.Name(reset.air(), "minecraft:air", Map.of());
 +        } else if (this.world != null && message.dimension() == this.world.dimension()) {
 +            if (message instanceof NativeBlockIdentifiers.Section section) {
 +                final long index = (long) section.sectionY() - (this.world.minY() >> 4);
@@ -548,21 +644,34 @@ index 000000000..4de1147b1
 +                if (!this.chunks.containsKey(key) && this.chunks.size() >= 8192) {
 +                    throw new IllegalArgumentException("Native block view exceeds its chunk limit");
 +                }
-+                this.chunks.computeIfAbsent(key, ignored -> new NativeBlockSection[this.world.height() >> 4])[(int) index] = section.blocks();
++                this.chunks.computeIfAbsent(key, ignored -> new NativeBlockSection[2][this.world.height() >> 4])[section.layer()][(int) index] = section.blocks();
 +            } else if (message instanceof NativeBlockIdentifiers.Update update) {
 +                final var position = update.position();
-+                final var sections = this.chunks.get(key(position.x() >> 4, position.z() >> 4));
++                final var layers = this.chunks.get(key(position.x() >> 4, position.z() >> 4));
 +                final int index = this.sectionIndex(position.y());
-+                if (sections != null && index >= 0 && index < sections.length && sections[index] != null) {
-+                    sections[index] = sections[index].with(NativeBlockSection.index(position.x(), position.y(), position.z()), update.state());
++                if (layers != null && index >= 0 && index < layers[update.layer()].length) {
++                    final var sections = layers[update.layer()];
++                    final var previous = sections[index] != null ? sections[index]
++                            : new NativeBlockSection(new int[]{this.world.air()}, new long[0]);
++                    sections[index] = previous.with(NativeBlockSection.index(position.x(), position.y(), position.z()), update.state());
 +                }
 +            } else if (message instanceof NativeBlockIdentifiers.Dictionary dictionary) {
++                final Map<Integer, NativeBlockIdentifiers.Name> updates = new HashMap<>();
 +                for (final var name : dictionary.names()) {
-+                    if (!this.names.containsKey(name.state()) && this.names.size() >= 1_000_000) {
-+                        throw new IllegalArgumentException("Native block dictionary exceeds its state limit");
-+                    }
-+                    this.names.put(name.state(), name.identifier());
++                    updates.put(name.state(), name);
 +                }
++                int bytes = this.dictionaryBytes;
++                int states = this.names.size();
++                for (final var name : updates.values()) {
++                    final var previous = this.names.get(name.state());
++                    bytes += name.encodedSize() - (previous == null ? 0 : previous.encodedSize());
++                    states += previous == null ? 1 : 0;
++                }
++                if (states > 1_000_000 || bytes > 64 * 1024 * 1024) {
++                    throw new IllegalArgumentException("Native block dictionary exceeds its retained limits");
++                }
++                this.names.putAll(updates);
++                this.dictionaryBytes = bytes;
 +            } else if (message instanceof NativeBlockIdentifiers.Forget forget) {
 +                this.chunks.remove(key(forget.chunkX(), forget.chunkZ()));
 +            }
@@ -570,17 +679,24 @@ index 000000000..4de1147b1
 +    }
 +
 +    public String block(final int x, final int y, final int z) {
++        final var state = this.state(x, y, z, 0);
++        return state == null || state.identifier().isEmpty() ? null : state.identifier();
++    }
++
++    /** Returns the authoritative state, native air outside loaded data, or null before reset/for unknown IDs. */
++    public NativeBlockIdentifiers.Name state(final int x, final int y, final int z, final int layer) {
++        NativeBlockIdentifiers.layer(layer);
 +        if (this.world == null) {
 +            return null;
 +        }
-+        final var sections = this.chunks.get(key(x >> 4, z >> 4));
++        final var layers = this.chunks.get(key(x >> 4, z >> 4));
 +        final int index = this.sectionIndex(y);
 +        // ChunkTracker uses native air outside loaded sections and the dimension's vertical bounds.
-+        if (sections == null || index < 0 || index >= sections.length || sections[index] == null) {
-+            return "minecraft:air";
++        if (layers == null || index < 0 || index >= layers[layer].length || layers[layer][index] == null) {
++            return this.air;
 +        }
-+        final String name = this.names.get(sections[index].state(NativeBlockSection.index(x, y, z)));
-+        return name == null || name.isEmpty() ? null : name;
++        final int state = layers[layer][index].state(NativeBlockSection.index(x, y, z));
++        return state == this.world.air() ? this.air : this.names.get(state);
 +    }
 +
 +    private int sectionIndex(final int y) {
@@ -1581,7 +1697,7 @@ index 000000000..d045933a0
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-index a5da475d8..123ff3c4f 100644
+index a5da475d8..bd7380781 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 @@ -26,6 +26,7 @@ import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
@@ -1623,13 +1739,13 @@ index a5da475d8..123ff3c4f 100644
          }
  
          if (prevBlockState != blockState) {
-+            if (layer == 0 && this.nativeBlocksEnabled()) {
-+                this.sendNativeBlocks(new NativeBlockIdentifiers.Update(this.dimension.ordinal(), blockPosition, blockState));
++            if (layer <= 1 && this.nativeBlocksEnabled()) {
++                this.sendNativeBlocks(new NativeBlockIdentifiers.Update(this.dimension.ordinal(), blockPosition, layer, blockState));
 +            }
              this.invalidateJavaBlockStates(blockPosition.x() >> 4, blockPosition.y() >> 4, blockPosition.z() >> 4);
              final int chunkX = blockPosition.x() >> 4;
              final int chunkZ = blockPosition.z() >> 4;
-@@ -489,6 +499,78 @@ public class ChunkTracker extends StoredObject {
+@@ -489,6 +499,87 @@ public class ChunkTracker extends StoredObject {
          return section;
      }
  
@@ -1639,7 +1755,7 @@ index a5da475d8..123ff3c4f 100644
 +            return;
 +        }
 +        this.nativeBlockWorldSent = false;
-+        this.sendNativeBlocks(new NativeBlockIdentifiers.Reset(this.dimension.ordinal(), this.minY, this.worldHeight));
++        this.sendNativeBlocks(new NativeBlockIdentifiers.Reset(this.dimension.ordinal(), this.minY, this.worldHeight, this.bedrockAirId()));
 +        for (final BedrockChunk chunk : this.chunks.values()) {
 +            if (isChunkFullyLoaded(chunk)) {
 +                this.sendNativeChunk(chunk);
@@ -1660,21 +1776,27 @@ index a5da475d8..123ff3c4f 100644
 +            this.nativeBlockWorldSent = true;
 +            this.nativeBlockNames.clear();
 +        } else if (!this.nativeBlockWorldSent) {
-+            this.sendNativeBlocks(new NativeBlockIdentifiers.Reset(this.dimension.ordinal(), this.minY, this.worldHeight));
++            this.sendNativeBlocks(new NativeBlockIdentifiers.Reset(this.dimension.ordinal(), this.minY, this.worldHeight, this.bedrockAirId()));
 +        }
 +        final int[] states = message instanceof NativeBlockIdentifiers.Section section ? section.blocks().palette()
 +                : message instanceof NativeBlockIdentifiers.Update update ? new int[]{update.state()} : new int[0];
 +        final List<NativeBlockIdentifiers.Name> names = new ArrayList<>();
++        int bytes = 0;
 +        for (final int state : states) {
 +            if (!this.nativeBlockNames.add(state)) {
 +                continue;
 +            }
 +            final var block = this.user().get(BlockStateRewriter.class).blockState(state);
-+            names.add(new NativeBlockIdentifiers.Name(state, block == null ? "" : block.namespacedIdentifier()));
-+            if (names.size() == 256) {
++            final var name = new NativeBlockIdentifiers.Name(state, block == null ? "" : block.namespacedIdentifier(),
++                    block == null ? Map.of() : block.properties());
++            final int size = name.encodedSize();
++            if (!names.isEmpty() && (names.size() == 256 || bytes + size > NativeBlockIdentifiers.MAX_DICTIONARY_BYTES)) {
 +                this.sendNativeBlocks(new NativeBlockIdentifiers.Dictionary(this.dimension.ordinal(), names));
 +                names.clear();
++                bytes = 0;
 +            }
++            names.add(name);
++            bytes += size;
 +        }
 +        if (!names.isEmpty()) {
 +            this.sendNativeBlocks(new NativeBlockIdentifiers.Dictionary(this.dimension.ordinal(), names));
@@ -1691,14 +1813,17 @@ index a5da475d8..123ff3c4f 100644
 +        }
 +        final BedrockChunkSection[] sections = chunk.getSections();
 +        for (int index = 0; index < sections.length; index++) {
-+            this.sendNativeBlocks(new NativeBlockIdentifiers.Section(this.dimension.ordinal(), chunk.getX(),
-+                    (this.minY >> 4) + index, chunk.getZ(), nativeBlockSection(sections[index], this.bedrockAirId())));
++            for (int layer = 0; layer < 2; layer++) {
++                this.sendNativeBlocks(new NativeBlockIdentifiers.Section(this.dimension.ordinal(), chunk.getX(),
++                        (this.minY >> 4) + index, chunk.getZ(), layer, nativeBlockSection(sections[index], this.bedrockAirId(), layer)));
++            }
 +        }
 +    }
 +
-+    static NativeBlockSection nativeBlockSection(final BedrockChunkSection section, final int air) {
-+        final DataPalette palette = section == null || section.palettesCount(PaletteType.BLOCKS) == 0
-+                ? null : section.palettes(PaletteType.BLOCKS).get(0);
++    static NativeBlockSection nativeBlockSection(final BedrockChunkSection section, final int air, final int layer) {
++        NativeBlockIdentifiers.layer(layer);
++        final DataPalette palette = section == null || section.palettesCount(PaletteType.BLOCKS) <= layer
++                ? null : section.palettes(PaletteType.BLOCKS).get(layer);
 +        if (palette == null || palette.size() == 1) {
 +            return new NativeBlockSection(new int[]{palette == null ? air : palette.idByIndex(0)}, new long[0]);
 +        }
@@ -1708,7 +1833,7 @@ index a5da475d8..123ff3c4f 100644
      public void sendChunkInNextTick(final int chunkX, final int chunkZ) {
          final BedrockChunk chunk = this.getChunk(chunkX, chunkZ);
          if (chunk == null || !isChunkFullyLoaded(chunk)) {
-@@ -510,6 +592,7 @@ public class ChunkTracker extends StoredObject {
+@@ -510,6 +601,7 @@ public class ChunkTracker extends StoredObject {
          levelChunkWithLight.write(this.chunkType, remappedChunk); // chunk
          this.writeLightData(levelChunkWithLight, buildFullLightPacketData(light));
          levelChunkWithLight.send(BedrockProtocol.class);
@@ -1799,10 +1924,10 @@ index d3dc43159..ea436f259 100644
      }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java
 new file mode 100644
-index 000000000..209be0506
+index 000000000..de26cb3e4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,211 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1817,6 +1942,8 @@ index 000000000..209be0506
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.List;
++import java.util.HashMap;
++import java.util.Map;
 +import java.util.Random;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -1857,27 +1984,27 @@ index 000000000..209be0506
 +    void mirrorsNegativeCoordinatesChangesUnknownStatesAndDimensionLifecycles() {
 +        final NativeBlockView view = new NativeBlockView();
 +        assertNull(view.block(-31, -63, -47));
-+        view.accept(new NativeBlockIdentifiers.Reset(0, -64, 384));
++        view.accept(new NativeBlockIdentifiers.Reset(0, -64, 384, 0));
 +        view.accept(new NativeBlockIdentifiers.Dictionary(0, List.of(
-+                new NativeBlockIdentifiers.Name(1, "test:native_carrier_a"),
-+                new NativeBlockIdentifiers.Name(2, "test:native_carrier_b"))));
-+        view.accept(new NativeBlockIdentifiers.Section(0, -2, -4, -3, NativeBlockSection.create(index -> 1)));
++                new NativeBlockIdentifiers.Name(1, "test:native_carrier_a", Map.of("variant", "a")),
++                new NativeBlockIdentifiers.Name(2, "test:native_carrier_b", Map.of("variant", "b")))));
++        view.accept(new NativeBlockIdentifiers.Section(0, -2, -4, -3, 0, NativeBlockSection.create(index -> 1)));
 +        final BlockPosition position = new BlockPosition(-31, -63, -47);
-+        view.accept(new NativeBlockIdentifiers.Update(1, position, 2));
++        view.accept(new NativeBlockIdentifiers.Update(1, position, 0, 2));
 +        assertEquals("test:native_carrier_a", view.block(-31, -63, -47));
-+        view.accept(new NativeBlockIdentifiers.Update(0, position, 2));
++        view.accept(new NativeBlockIdentifiers.Update(0, position, 0, 2));
 +        assertEquals("test:native_carrier_b", view.block(-31, -63, -47));
 +        assertEquals("test:native_carrier_a", view.block(-32, -64, -48));
-+        view.accept(new NativeBlockIdentifiers.Update(0, position, 3));
++        view.accept(new NativeBlockIdentifiers.Update(0, position, 0, 3));
 +        assertNull(view.block(-31, -63, -47));
 +        assertEquals("minecraft:air", view.block(-31, Integer.MAX_VALUE, -47));
 +        assertEquals("minecraft:air", view.block(-31, Integer.MIN_VALUE, -47));
 +        view.accept(new NativeBlockIdentifiers.Forget(0, -2, -3));
 +        assertEquals("minecraft:air", view.block(-31, -63, -47));
-+        view.accept(new NativeBlockIdentifiers.Reset(1, 0, 256));
-+        view.accept(new NativeBlockIdentifiers.Section(0, -2, 0, -3, NativeBlockSection.create(index -> 1)));
++        view.accept(new NativeBlockIdentifiers.Reset(1, 0, 256, 0));
++        view.accept(new NativeBlockIdentifiers.Section(0, -2, 0, -3, 0, NativeBlockSection.create(index -> 1)));
 +        assertEquals("minecraft:air", view.block(-31, 1, -47));
-+        view.accept(new NativeBlockIdentifiers.Section(1, -2, 0, -3, NativeBlockSection.create(index -> 1)));
++        view.accept(new NativeBlockIdentifiers.Section(1, -2, 0, -3, 0, NativeBlockSection.create(index -> 1)));
 +        assertNull(view.block(-31, 1, -47));
 +        view.clear();
 +        assertFalse(view.ready());
@@ -1887,10 +2014,10 @@ index 000000000..209be0506
 +    void roundtripsAllMessagesWithoutConsumingFollowingFields() {
 +        final var section = NativeBlockSection.create(index -> index * 17 - 4096);
 +        final List<NativeBlockIdentifiers> messages = List.of(
-+                new NativeBlockIdentifiers.Reset(0, -64, 384),
-+                new NativeBlockIdentifiers.Dictionary(0, List.of(new NativeBlockIdentifiers.Name(Integer.MIN_VALUE, "test:custom"))),
-+                new NativeBlockIdentifiers.Section(0, -5, -4, 7, section),
-+                new NativeBlockIdentifiers.Update(0, new BlockPosition(-79, -62, 115), Integer.MAX_VALUE),
++                new NativeBlockIdentifiers.Reset(0, -64, 384, 0),
++                new NativeBlockIdentifiers.Dictionary(0, List.of(new NativeBlockIdentifiers.Name(Integer.MIN_VALUE, "test:custom", Map.of("test:mode", "mixed_α")))),
++                new NativeBlockIdentifiers.Section(0, -5, -4, 7, 1, section),
++                new NativeBlockIdentifiers.Update(0, new BlockPosition(-79, -62, 115), 1, Integer.MAX_VALUE),
 +                new NativeBlockIdentifiers.Forget(0, -5, 7));
 +        for (final var expected : messages) {
 +            final var buffer = Unpooled.buffer();
@@ -1903,6 +2030,7 @@ index 000000000..209be0506
 +                    assertEquals(left.chunkX(), right.chunkX());
 +                    assertEquals(left.sectionY(), right.sectionY());
 +                    assertEquals(left.chunkZ(), right.chunkZ());
++                    assertEquals(left.layer(), right.layer());
 +                    assertArrayEquals(left.blocks().palette(), right.blocks().palette());
 +                    assertArrayEquals(left.blocks().data(), right.blocks().data());
 +                } else {
@@ -1917,25 +2045,92 @@ index 000000000..209be0506
 +    }
 +
 +    @Test
++    void keepsLayersAndSameNamedStatesIndependentAcrossSnapshotsAndChanges() {
++        final var view = new NativeBlockView();
++        final var primary = new NativeBlockIdentifiers.Name(-17, "test:state", Map.of("variant", "primary"));
++        final var extra = new NativeBlockIdentifiers.Name(41, "test:state", Map.of("variant", "extra", "liquid_depth", "0"));
++        final var changed = new NativeBlockIdentifiers.Name(43, "test:state", Map.of("variant", "changed"));
++        final var position = new BlockPosition(-31, -63, -47);
++        view.accept(new NativeBlockIdentifiers.Reset(0, -64, 384, Integer.MIN_VALUE));
++        view.accept(new NativeBlockIdentifiers.Dictionary(0, List.of(primary, extra, changed)));
++        view.accept(new NativeBlockIdentifiers.Section(0, -2, -4, -3, 0, NativeBlockSection.create(index -> -17)));
++        assertEquals(Integer.MIN_VALUE, view.state(-31, -63, -47, 1).state());
++        // An extra-layer update also works when its all-air section has no explicit palette yet.
++        view.accept(new NativeBlockIdentifiers.Update(0, position, 1, 41));
++        assertEquals(primary, view.state(-31, -63, -47, 0));
++        assertEquals(extra, view.state(-31, -63, -47, 1));
++        assertEquals(Integer.MIN_VALUE, view.state(-32, -64, -48, 1).state());
++        view.accept(new NativeBlockIdentifiers.Section(0, -2, -4, -3, 1, NativeBlockSection.create(index -> 41)));
++        view.accept(new NativeBlockIdentifiers.Update(0, position, 0, 43));
++        assertEquals(changed, view.state(-31, -63, -47, 0));
++        assertEquals(extra, view.state(-31, -63, -47, 1));
++        assertEquals(primary.identifier(), view.block(-31, -63, -47));
++        view.accept(new NativeBlockIdentifiers.Update(1, position, 1, 43));
++        assertEquals(extra, view.state(-31, -63, -47, 1));
++        view.accept(new NativeBlockIdentifiers.Forget(0, -2, -3));
++        for (int layer = 0; layer < 2; layer++) {
++            assertEquals(Integer.MIN_VALUE, view.state(-31, -63, -47, layer).state());
++        }
++        view.accept(new NativeBlockIdentifiers.Reset(1, -64, 384, 19));
++        view.accept(new NativeBlockIdentifiers.Section(1, -2, -4, -3, 1, NativeBlockSection.create(index -> 41)));
++        assertNull(view.state(-31, -63, -47, 1));
++        assertEquals(19, view.state(-31, -63, -47, 0).state());
++    }
++
++    @Test
++    void boundsDictionaryBytesAndCopiesStateProperties() {
++        final Map<String, String> properties = new HashMap<>();
++        for (int index = 0; index < 64; index++) {
++            properties.put("€".repeat(250) + index, "€".repeat(256));
++        }
++        final var name = new NativeBlockIdentifiers.Name(17, "test:block", properties);
++        properties.clear();
++        assertEquals(64, name.properties().size());
++        final var buffer = Unpooled.buffer();
++        try {
++            final var accepted = new NativeBlockIdentifiers.Dictionary(0, List.of(name, name));
++            NativeBlockIdentifiers.TYPE.write(buffer, accepted);
++            assertEquals(accepted, NativeBlockIdentifiers.TYPE.read(buffer));
++            assertTrue(name.encodedSize() * 3 > NativeBlockIdentifiers.MAX_DICTIONARY_BYTES);
++            assertThrows(IllegalArgumentException.class, () -> new NativeBlockIdentifiers.Dictionary(0, List.of(name, name, name)));
++            buffer.clear();
++            Types.VAR_INT.writePrimitive(buffer, 2);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            buffer.writeByte(4);
++            Types.VAR_INT.writePrimitive(buffer, 0);
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            buffer.writeInt(17);
++            Types.STRING.write(buffer, "test:block");
++            Types.VAR_INT.writePrimitive(buffer, 65);
++            assertThrows(IllegalArgumentException.class, () -> NativeBlockIdentifiers.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
 +    void rejectsInvalidPackedIndexesDimensionsAndUnboundedWireCounts() {
 +        assertThrows(IllegalArgumentException.class, () -> new NativeBlockSection(new int[0], new long[0]));
 +        assertThrows(IllegalArgumentException.class, () -> new NativeBlockSection(new int[]{1, 2}, new long[0]));
 +        final long[] invalid = new long[128];
 +        invalid[0] = 3;
 +        assertThrows(IllegalArgumentException.class, () -> new NativeBlockSection(new int[]{1, 2, 3}, invalid));
-+        assertThrows(IllegalArgumentException.class, () -> new NativeBlockIdentifiers.Reset(0, -63, 384));
-+        assertThrows(IllegalArgumentException.class, () -> new NativeBlockIdentifiers.Reset(0, -64, 4097));
++        assertThrows(IllegalArgumentException.class, () -> new NativeBlockIdentifiers.Reset(0, -63, 384, 0));
++        assertThrows(IllegalArgumentException.class, () -> new NativeBlockIdentifiers.Reset(0, -64, 4097, 0));
++        assertThrows(IllegalArgumentException.class, () -> new NativeBlockIdentifiers.Section(0, 0, 0, 0, 2,
++                NativeBlockSection.create(index -> 0)));
++        assertThrows(IllegalArgumentException.class, () -> new NativeBlockIdentifiers.Update(0, new BlockPosition(0, 0, 0), -1, 0));
 +        final var buffer = Unpooled.buffer();
 +        try {
-+            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, 2);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION + 1);
 +            assertThrows(IllegalArgumentException.class, () -> NativeBlockIdentifiers.TYPE.read(buffer));
 +            buffer.clear();
-+            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, 2);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            buffer.writeByte(1);
 +            Types.VAR_INT.writePrimitive(buffer, 0);
-+            buffer.writeInt(0).writeInt(0).writeInt(0);
++            buffer.writeInt(0).writeInt(0).writeInt(0).writeByte(0);
 +            Types.VAR_INT.writePrimitive(buffer, 4097);
 +            assertThrows(IllegalArgumentException.class, () -> NativeBlockIdentifiers.TYPE.read(buffer));
 +        } finally {
@@ -2562,10 +2757,10 @@ index 9fb210508..a736cb21b 100644
              }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeBlockSectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeBlockSectionTest.java
 new file mode 100644
-index 000000000..a64a60d28
+index 000000000..7c458f492
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeBlockSectionTest.java
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,60 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2584,7 +2779,7 @@ index 000000000..a64a60d28
 +class NativeBlockSectionTest {
 +
 +    @Test
-+    void samplesEveryNativeCoordinateFromThePrimaryLayer() {
++    void samplesEveryNativeCoordinateFromBothLayers() {
 +        final var section = new BedrockChunkSectionImpl();
 +        final var primary = new BedrockDataPalette();
 +        primary.addId(0);
@@ -2596,14 +2791,18 @@ index 000000000..a64a60d28
 +            for (int z = 0; z < 16; z++) {
 +                for (int x = 0; x < 16; x++) {
 +                    primary.setIdAt(x, y, z, x * 10000 + y * 100 + z);
++                    secondary.setIdAt(x, y, z, -(z * 10000 + x * 100 + y));
 +                }
 +            }
 +        }
-+        final var blocks = ChunkTracker.nativeBlockSection(section, 23);
-+        for (int y = 0; y < 16; y++) {
-+            for (int z = 0; z < 16; z++) {
-+                for (int x = 0; x < 16; x++) {
-+                    assertEquals(primary.idAt(x, y, z), blocks.state(NativeBlockSection.index(x, y, z)));
++        for (int layer = 0; layer < 2; layer++) {
++            final var blocks = ChunkTracker.nativeBlockSection(section, 23, layer);
++            final var expected = layer == 0 ? primary : secondary;
++            for (int y = 0; y < 16; y++) {
++                for (int z = 0; z < 16; z++) {
++                    for (int x = 0; x < 16; x++) {
++                        assertEquals(expected.idAt(x, y, z), blocks.state(NativeBlockSection.index(x, y, z)));
++                    }
 +                }
 +            }
 +        }
@@ -2612,10 +2811,12 @@ index 000000000..a64a60d28
 +    @Test
 +    void retainsNativeAirForMissingSectionsAndPalettes() {
 +        for (final var section : new BedrockChunkSectionImpl[]{null, new BedrockChunkSectionImpl()}) {
-+            final var blocks = ChunkTracker.nativeBlockSection(section, 23);
-+            assertEquals(23, blocks.state(0));
-+            assertEquals(23, blocks.state(4095));
-+            assertEquals(0, blocks.data().length);
++            for (int layer = 0; layer < 2; layer++) {
++                final var blocks = ChunkTracker.nativeBlockSection(section, 23, layer);
++                assertEquals(23, blocks.state(0));
++                assertEquals(23, blocks.state(4095));
++                assertEquals(0, blocks.data().length);
++            }
 +        }
 +    }
 +

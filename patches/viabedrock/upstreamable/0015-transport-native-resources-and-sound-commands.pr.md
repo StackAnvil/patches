@@ -364,6 +364,30 @@ Java clients behind ViaProxy cannot inspect a local Bedrock connection to select
 
 The conversion cache version changes so older cached packs cannot omit the marker. This patch establishes the resource contract; it does not forward native actor or player appearance state. Offline ViaProxy replay checks the client integration separately.
 
+## Native world inputs for aim assistance
+
+The negotiated `block_identifiers_v2` channel carries both block layers, native runtime IDs and immutable state properties.
+Snapshots include the dimension's native air ID and both palettes.
+Updates retain their layer, and dimension resets and chunk removal clear both layers.
+This preserves distinctions that Java block mappings can lose.
+Particle expiration still reads the primary layer.
+
+Dictionary batches have entry and byte limits.
+The client also bounds the retained dictionary before it applies a batch.
+Targeted tests cover both palettes, independent updates, negative coordinates, hashed IDs, state properties and world lifecycles.
+
+Native 1.26.51.1 aim-tracer probes establish why both layers are necessary.
+With liquid targeting enabled, later ray cells check the extra layer before falling back to the primary layer.
+The starting cell always uses the primary layer.
+This transport supplies world inputs; native selection geometry, block tags and complete aim execution still need integration.
+
+A live add-on run against owned BDS 2193 produced 39 scene samples, including 30 with a local player.
+The mirror retained stair rotation properties, signed runtime IDs and independent fluid layers through seven authored stages.
+Observed state changes match an ordered subsequence of 23 native block updates at the tested positions and layers.
+Water could flow into a removed stair position before the next one-second sample.
+This verifies transported inputs, not exact fluid simulation or aim parity.
+All four projects build, with 2,104 passing Java tests, 152 optional skips and no failures.
+
 ## Upstream prerequisites
 
 - [viabedrock patch](../../viabedrock/upstreamable/0015-decode-native-sound-packet-layouts.pr.md): Land the sound wire models before native playback transport.

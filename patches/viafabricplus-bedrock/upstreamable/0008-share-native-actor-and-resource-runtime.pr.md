@@ -1869,3 +1869,19 @@ The shared actor bridge now owns the existing native-bounds payload, receiver, a
 These declarations previously lived in the later UI patch.
 Camera targeting and UI actor views consume the same bounds state and register the channel once.
 This move preserves the payload format and does not change native dimension calculations.
+
+## Native world inputs
+
+The block mirror now consumes the core's negotiated `block_identifiers_v2` channel.
+It retains both native layers, runtime IDs and state properties for client world queries.
+Particle expiration continues to read only the primary layer.
+Its integration test verifies that changing the extra layer cannot change a primary-layer filter result.
+
+The receiver captures its connection and rejects queued work after disconnect or connection replacement.
+Dimension changes clear the mirrored data before new snapshots apply.
+These changes prepare the world source for aim assistance; target selection and reticle rendering remain unfinished.
+
+The live BDS 2193 control recorded 39 samples, including 30 with a local player.
+It exercised dry and wet stairs, rotation, removal and restoration.
+Observed runtime IDs match incoming block updates in order for each tested position and layer.
+The run completed normal cleanup, and its private observer and server script were restored.
