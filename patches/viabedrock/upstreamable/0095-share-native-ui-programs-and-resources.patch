@@ -1,4 +1,4 @@
-From 90ca08fe17c96bf0229b9e5c3fe6dd359f1922a4 Mon Sep 17 00:00:00 2001
+From 001ed6d7c910c5d3d2cb7d53a7c7119cf8cd5e2e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): share bounded native UI programs and resource
@@ -7,6 +7,18 @@ Subject: [PATCH] feat(ui): share bounded native UI programs and resource
 Provide immutable JSON UI declarations, scoped expression evaluation, domain bindings and bounded scene contracts before packet integration. Keep accepted pack layering, textures, fonts and builtin UI identity in one resource lifecycle.
 
 The following transport patch registers form, NPC, HUD and container presentation without changing these APIs. Tests for the evaluator, bindings, texture limits and message codecs live with this prerequisite.
+
+Resolve descendant declarations such as main_screen_content/server_form_factory
+in the owning template and instance scopes. Preserve those declarations across
+program export, retain inline properties when an explicit parent changes, and
+resolve relative children in the replacement namespace. The pinned executable
+control visitor confirms slash-separated paths with template suffixes removed;
+full definition-store merge precedence remains inferred from versioned inputs.
+
+Accept bounded relative texture paths containing a tilde. The Enchanted pack
+uses these filenames; share validation between loading and scene resolution
+so accepted pixels and metadata survive conversion. Its authored form still
+requires locally counted collection factories before it can resolve fully.
 ---
  build.gradle                                  |   11 +
  .../api/model/NativeContainerAction.java      |   93 ++
@@ -23,11 +35,11 @@ The following transport patch registers form, NPC, HUD and container presentatio
  .../api/resourcepack/ui/HudFactoryUi.java     |  127 ++
  .../api/resourcepack/ui/HudRootUi.java        |   35 +
  .../api/resourcepack/ui/HudTitleUi.java       |   28 +
- .../api/resourcepack/ui/JsonUiProgram.java    | 1316 +++++++++++++++++
+ .../api/resourcepack/ui/JsonUiProgram.java    | 1367 +++++++++++++++++
  .../api/resourcepack/ui/NpcDialogueUi.java    |  311 ++++
  .../resourcepack/ui/NpcEditorBindings.java    |  324 ++++
  .../api/resourcepack/ui/NpcEditorState.java   |  322 ++++
- .../api/resourcepack/ui/ServerFormUi.java     |  253 ++++
+ .../api/resourcepack/ui/ServerFormUi.java     |  253 +++
  .../resourcepack/ui/UiAsepriteMetadata.java   |   95 ++
  .../api/resourcepack/ui/UiBindings.java       |   40 +
  .../api/resourcepack/ui/UiExpression.java     |  304 ++++
@@ -45,17 +57,17 @@ The following transport patch registers form, NPC, HUD and container presentatio
  .../api/resourcepack/ui/ContainerUiTest.java  |  375 +++++
  .../ui/FormCollectionActivationTest.java      |   97 ++
  .../api/resourcepack/ui/HudRootUiTest.java    |   90 ++
- .../resourcepack/ui/JsonUiProgramTest.java    |  295 ++++
+ .../resourcepack/ui/JsonUiProgramTest.java    |  366 +++++
  .../resourcepack/ui/NpcDialogueUiTest.java    |  108 ++
  .../resourcepack/ui/NpcEditorStateTest.java   |  209 +++
  .../ui/ServerCustomFormUiTest.java            |  146 ++
  .../ui/ServerFormUiSliderStateTest.java       |  126 ++
- .../api/resourcepack/ui/ServerFormUiTest.java |  335 +++++
+ .../api/resourcepack/ui/ServerFormUiTest.java |  383 +++++
  .../ui/UiAsepriteMetadataTest.java            |  112 ++
  .../api/resourcepack/ui/UiExpressionTest.java |   56 +
  .../api/resourcepack/ui/UiFontsTest.java      |  187 +++
  .../api/resourcepack/ui/UiTexturesTest.java   |  175 +++
- 47 files changed, 7553 insertions(+), 2 deletions(-)
+ 47 files changed, 7723 insertions(+), 2 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerStatus.java
@@ -1701,10 +1713,10 @@ index 000000000..4f11b0d3f
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 000000000..07dd60613
+index 000000000..6a578a1d5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,1316 @@
+@@ -0,0 +1,1367 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2099,6 +2111,7 @@ index 000000000..07dd60613
 +            }
 +            final Set<String> referenced = new LinkedHashSet<>();
 +            referenced.add(definition.parent);
++            this.definitions.keySet().stream().filter(candidate -> candidate.startsWith(name + "/")).forEach(referenced::add);
 +            this.references(definition.value, name.substring(0, name.indexOf('.')), referenced);
 +            for (final String reference : referenced) {
 +                if (this.definitions.containsKey(reference) && closure.add(reference)) {
@@ -2212,24 +2225,7 @@ index 000000000..07dd60613
 +                    if (!entry.getValue().isJsonObject()) {
 +                        continue;
 +                    }
-+                    final String[] name = entry.getKey().split("@", 2);
-+                    final String identity = namespace + "." + name[0];
-+                    final Definition lower = this.definitions.get(identity);
-+                    if (lower == null && this.definitions.size() >= MAX_NODES) {
-+                        throw new IllegalArgumentException("Too many UI definitions");
-+                    }
-+                    final JsonObject value = lower == null ? new JsonObject() : lower.value.deepCopy();
-+                    merge(value, entry.getValue().getAsJsonObject());
-+                    final String parent = name.length == 2 ? (name[1].contains(".") ? name[1] : namespace + "." + name[1])
-+                            : lower == null ? "" : lower.parent;
-+                    this.definitions.put(identity, new Definition(value, parent));
-+                    if (!server) {
-+                        final Definition nativeLower = this.nativeDefinitions.get(identity);
-+                        final JsonObject nativeValue = nativeLower == null ? new JsonObject() : nativeLower.value.deepCopy();
-+                        merge(nativeValue, entry.getValue().getAsJsonObject());
-+                        final String nativeParent = name.length == 2 ? parent : nativeLower == null ? "" : nativeLower.parent;
-+                        this.nativeDefinitions.put(identity, new Definition(nativeValue, nativeParent));
-+                    }
++                    this.loadDefinition(namespace, entry.getKey(), entry.getValue().getAsJsonObject(), server);
 +                }
 +                if (server) {
 +                    this.customizedFiles.add(file.getKey());
@@ -2238,6 +2234,41 @@ index 000000000..07dd60613
 +                // A malformed unrelated UI file cannot activate an unused control.
 +            }
 +        }
++    }
++
++    private void loadDefinition(final String namespace, final String reference, final JsonObject declaration,
++                                final boolean server) {
++        final String[] name = reference.split("@", 2);
++        final String identity = namespace + "." + name[0];
++        final String parent = name.length == 2 ? (name[1].contains(".") ? name[1] : namespace + "." + name[1]) : null;
++        overlayDefinition(this.definitions, identity, parent, declaration);
++        if (!server) {
++            overlayDefinition(this.nativeDefinitions, identity, parent, declaration);
++        }
++    }
++
++    private static void overlayDefinition(final Map<String, Definition> definitions, final String identity,
++                                          final String parent, final JsonObject declaration) {
++        final Definition lower = definitions.get(identity);
++        if (lower == null && definitions.size() >= MAX_NODES) {
++            throw new IllegalArgumentException("Too many UI definitions");
++        }
++        final JsonObject value = lower == null ? new JsonObject() : lower.value.deepCopy();
++        merge(value, declaration);
++        definitions.put(identity, new Definition(value, parent != null ? parent : lower == null ? "" : lower.parent));
++    }
++
++    private List<String> definitionPaths(final String name) {
++        final List<String> paths = new ArrayList<>();
++        String current = name;
++        while (this.definitions.containsKey(current)) {
++            if (paths.size() >= 64 || paths.contains(current)) {
++                throw new IllegalArgumentException("Recursive UI inheritance");
++            }
++            paths.addFirst(current);
++            current = this.definitions.get(current).parent;
++        }
++        return paths;
 +    }
 +
 +    private JsonObject template(final String name, final Set<String> active, final Set<String> required) {
@@ -2478,7 +2509,7 @@ index 000000000..07dd60613
 +    }
 +
 +    static boolean safePath(final String path) {
-+        return path.matches("[A-Za-z0-9_./-]{1,256}") && !path.contains("..") && !path.startsWith("/");
++        return path.matches("[A-Za-z0-9_./~-]{1,256}") && !path.contains("..") && !path.startsWith("/");
 +    }
 +
 +    static String string(final JsonObject object, final String key) {
@@ -2541,12 +2572,44 @@ index 000000000..07dd60613
 +            if (base == null && parts.length == 2) {
 +                throw new MissingControlException(baseName);
 +            }
-+            final JsonObject control = base == null ? new JsonObject() : base;
++            JsonObject control = base == null ? new JsonObject() : base;
 +            merge(control, overrides);
++            String namespace = base != null && baseName.contains(".") ? baseName.substring(0, baseName.indexOf('.')) : "";
++            List<String> templatePaths = JsonUiProgram.this.definitionPaths(baseName);
++            final Set<String> instancePaths = new LinkedHashSet<>();
++            final JsonElement ancestors = inherited.get("$__definition_paths");
++            if (!name.isEmpty() && ancestors != null && ancestors.isJsonArray()) {
++                for (final JsonElement ancestor : ancestors.getAsJsonArray()) {
++                    final String path = ancestor.getAsString() + "/" + name;
++                    instancePaths.add(path);
++                    final Definition definition = JsonUiProgram.this.definitions.get(path);
++                    if (definition == null) {
++                        continue;
++                    }
++                    this.requiredDefinitions.add(path);
++                    if (definition.parent.isEmpty()) {
++                        merge(control, definition.value);
++                    } else {
++                        control = JsonUiProgram.this.template(definition.parent, new HashSet<>(), this.requiredDefinitions);
++                        merge(control, overrides);
++                        merge(control, definition.value);
++                        templatePaths = JsonUiProgram.this.definitionPaths(definition.parent);
++                        namespace = definition.parent.substring(0, definition.parent.indexOf('.'));
++                    }
++                }
++            }
 +            applyModifications(control);
 +            final Map<String, JsonElement> values = new HashMap<>(inherited);
-+            if (base != null && baseName.contains(".")) {
-+                values.put("$__namespace", new JsonPrimitive(baseName.substring(0, baseName.indexOf('.'))));
++            final Set<String> paths = new LinkedHashSet<>(templatePaths);
++            paths.addAll(instancePaths);
++            if (paths.size() > MAX_NODES) {
++                throw new IllegalArgumentException("UI definition path scope exceeds limits");
++            }
++            final JsonArray pathScope = new JsonArray();
++            paths.forEach(pathScope::add);
++            values.put("$__definition_paths", pathScope);
++            if (!namespace.isEmpty()) {
++                values.put("$__namespace", new JsonPrimitive(namespace));
 +            }
 +            values.put("#visible", new JsonPrimitive(true));
 +            final boolean parentVisible = !inherited.containsKey("$__effective_visible")
@@ -4961,7 +5024,7 @@ index 000000000..95de71369
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
 new file mode 100644
-index 000000000..99b5b080a
+index 000000000..e597c1123
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
 @@ -0,0 +1,94 @@
@@ -4993,8 +5056,8 @@ index 000000000..99b5b080a
 +        final Set<String> images = new LinkedHashSet<>();
 +        for (final var entry : files.entrySet()) {
 +            final String path = entry.getKey();
-+            if (!path.startsWith("textures/") || !path.matches("[A-Za-z0-9_./-]{1,256}")
-+                    || path.contains("..") || entry.getValue().length > 16 * 1024 * 1024) {
++            if (!path.startsWith("textures/") || !JsonUiProgram.safePath(path)
++                    || entry.getValue().length > 16 * 1024 * 1024) {
 +                continue;
 +            }
 +            if (path.endsWith(".json")) {
@@ -6189,10 +6252,10 @@ index 000000000..de9cde9f8
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
 new file mode 100644
-index 000000000..6ae95f2cd
+index 000000000..f4cbdab94
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
-@@ -0,0 +1,295 @@
+@@ -0,0 +1,366 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -6427,6 +6490,77 @@ index 000000000..6ae95f2cd
 +        final var children = root.getAsJsonArray("children");
 +        assertEquals(1, children.size());
 +        assertEquals("New", children.get(0).getAsJsonObject().get("text").getAsString());
++    }
++
++    @Test
++    void descendantOverridesRemainScopedAcrossSharedTemplatesAndExport() {
++        final var ui = program("""
++                {"namespace":"example","root@base":{},
++                 "base":{"type":"panel","controls":[{"left@group":{}},{"right@group":{}}]},
++                 "group":{"type":"panel","controls":[{"leaf@icon":{}}]},
++                 "icon":{"type":"image","texture":"textures/ui/probe","size":[8,8]},
++                 "group/leaf":{"size":[17,9]},
++                 "root/left/leaf":{"alpha":0.25},"root/right/leaf":{"alpha":0.75}}
++                """);
++        final var resolved = ui.resolve("example.root", new Bindings());
++        final var children = resolved.root().getAsJsonArray("children");
++        final var left = children.get(0).getAsJsonObject().getAsJsonArray("children").get(0).getAsJsonObject();
++        final var right = children.get(1).getAsJsonObject().getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals(0.25F, left.get("alpha").getAsFloat());
++        assertEquals(0.75F, right.get("alpha").getAsFloat());
++        assertEquals(JsonParser.parseString("[17,9]"), left.get("size"));
++        assertEquals(left.get("size"), right.get("size"));
++        final var exported = JsonUiProgram.fromProgram(ui.export(resolved.requiredDefinitions(), new JsonObject()));
++        assertEquals(resolved.root(), exported.resolve("example.root", new Bindings()).root());
++        final var untouched = ui.resolve("example.group", new Bindings()).root().getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals(1F, untouched.get("alpha").getAsFloat());
++    }
++
++    @Test
++    void descendantParentReplacementUsesItsNewTemplateAndRetainsLocalProperties() {
++        final var ui = new JsonUiProgram(List.of(Map.of("ui/example.json", """
++                {"namespace":"example","root":{"type":"panel","controls":[{"child@old":{"size":[3,4]}}]},
++                 "old":{"type":"label","alpha":0.4},
++                 "replacement":{"type":"image","texture":"textures/ui/~probe"}}
++                """.getBytes(StandardCharsets.UTF_8)), Map.of("ui/example.json", """
++                {"namespace":"example","root/child@replacement":{}}
++                """.getBytes(StandardCharsets.UTF_8))));
++        final var child = ui.resolve("example.root", new Bindings()).root().getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals(1F, child.get("alpha").getAsFloat());
++        assertEquals(JsonParser.parseString("[3,4]"), child.get("size"));
++        assertEquals(JsonUiProgram.textureId("textures/ui/~probe"), child.get("texture").getAsString());
++    }
++
++    @Test
++    void descendantParentReplacementUsesTheReplacementNamespaceForRelativeChildren() {
++        final var ui = new JsonUiProgram(List.of(Map.of("ui/example.json", """
++                {"namespace":"example","root":{"type":"panel","controls":[{"child@old":{}}]},
++                 "old":{"type":"panel"},"leaf":{"type":"image","alpha":0.2},
++                 "root/child@other.replacement":{}}
++                """.getBytes(StandardCharsets.UTF_8), "ui/other.json", """
++                {"namespace":"other","replacement":{"type":"panel","controls":[{"leaf@leaf":{}}]},
++                 "leaf":{"type":"image","alpha":0.8}}
++                """.getBytes(StandardCharsets.UTF_8))));
++        final var resolved = ui.resolve("example.root", new Bindings());
++        final var leaf = resolved.root().getAsJsonArray("children").get(0).getAsJsonObject()
++                .getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals(0.8F, leaf.get("alpha").getAsFloat());
++        final var exported = JsonUiProgram.fromProgram(ui.export(resolved.requiredDefinitions(), new JsonObject()));
++        assertEquals(resolved.root(), exported.resolve("example.root", new Bindings()).root());
++    }
++
++    @Test
++    void dynamicControlArraysReceiveTheSameDescendantOverrides() {
++        final var ui = program("""
++                {"namespace":"example","root":{"type":"panel","controls":"$rows"},
++                 "icon":{"type":"image","texture":"textures/ui/probe","size":[8,8]},
++                 "root/leaf":{"alpha":0.3}}
++                """);
++        final var bindings = new Bindings();
++        bindings.globals().put("$rows", JsonParser.parseString("[{\"leaf@example.icon\":{}}]"));
++        final var child = ui.resolve("example.root", bindings).root().getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals(0.3F, child.get("alpha").getAsFloat());
++        assertEquals(JsonParser.parseString("[8,8]"), child.get("size"));
 +    }
 +
 +    private static final class Bindings implements UiBindings {
@@ -7103,10 +7237,10 @@ index 000000000..362380ae1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
 new file mode 100644
-index 000000000..38d126c00
+index 000000000..3b8871a57
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
-@@ -0,0 +1,335 @@
+@@ -0,0 +1,383 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7116,6 +7250,7 @@ index 000000000..38d126c00
 +
 +import com.viaversion.viaversion.libs.gson.*;
 +import java.awt.image.BufferedImage;
++import java.io.ByteArrayInputStream;
 +import java.io.ByteArrayOutputStream;
 +import java.nio.charset.StandardCharsets;
 +import java.util.List;
@@ -7173,6 +7308,33 @@ index 000000000..38d126c00
 +        assertEquals("One", first.getAsJsonArray("children").get(0).getAsJsonObject().get("text").getAsString());
 +        assertEquals(80, first.getAsJsonArray("size").get(0).getAsInt());
 +        assertEquals(3, scene.getAsJsonObject("fallback").getAsJsonArray("buttons").size());
++    }
++
++    @Test
++    void descendantFactoryOverrideSelectsTheAuthoredResponses() {
++        final var ui = new ServerFormUi(List.of(definitions("""
++                {"namespace":"server_form","third_party_server_screen":{"$screen_content":"server_form.main_screen_content"},
++                 "main_screen_content":{"type":"panel","controls":[{"server_form_factory":{"type":"factory",
++                   "control_ids":{"long_form":"@server_form.ordinary"}}}]},
++                 "ordinary":{"type":"grid","collection_name":"form_buttons","grid_item_template":"server_form.row"},
++                 "authored":{"type":"grid","size":[160,100],"grid_dimensions":[2,2],
++                   "collection_name":"form_buttons","grid_item_template":"server_form.row"},
++                 "row":{"type":"button","size":[80,50],"$pressed_button_name":"button.form_button_click"}}
++                """), definitions("""
++                {"namespace":"server_form","main_screen_content/server_form_factory":{
++                  "control_ids":{"long_form":"@server_form.authored"}}}
++                """)));
++        final var scene = ui.resolve(form("one", "two", "three"));
++        assertNotNull(scene);
++        final var factory = scene.getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject();
++        final var grid = factory.getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals(JsonParser.parseString("[160,100]"), grid.get("size"));
++        assertEquals(JsonParser.parseString("[2,2]"), grid.get("grid_dimensions"));
++        final var rows = grid.getAsJsonArray("children");
++        assertEquals(3, rows.size());
++        for (int index = 0; index < rows.size(); index++) {
++            assertEquals(index, rows.get(index).getAsJsonObject().get("action").getAsInt());
++        }
 +    }
 +
 +    @Test
@@ -7335,6 +7497,26 @@ index 000000000..38d126c00
 +        assertEquals(JsonUiProgram.textureId("textures/ui/card"), button.get("texture").getAsString());
 +        assertArrayEquals(png, program.textures().get("textures/ui/card.png"));
 +        assertNull(new ServerFormUi(List.of(base, Map.of("textures/ui/card.json", "{".getBytes(StandardCharsets.UTF_8)))).resolve(form("tile:One")));
++    }
++
++    @Test
++    void tildeNamedTexturesRetainTheirPixelsAndMetadata() throws Exception {
++        final var image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, 0xA0123456);
++        final var bytes = new ByteArrayOutputStream();
++        ImageIO.write(image, "PNG", bytes);
++        final var files = new HashMap<>(definitions(UI.replace("\"type\":\"button\"",
++                "\"type\":\"button\",\"texture\":\"textures/ui/~border\"")));
++        files.put("textures/ui/~border.png", bytes.toByteArray());
++        files.put("textures/ui/~border.json", "{\"nineslice_size\":2}".getBytes(StandardCharsets.UTF_8));
++        final var program = new JsonUiProgram(List.of(files));
++        final var scene = new ServerFormUi(program).resolve(form("tile:One"));
++        assertNotNull(scene);
++        final var button = scene.getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject()
++                .getAsJsonArray("children").get(0).getAsJsonObject();
++        assertEquals(2, button.get("nineslice_size").getAsInt());
++        final var decoded = ImageIO.read(new ByteArrayInputStream(program.textures().get("textures/ui/~border.png")));
++        assertEquals(image.getRGB(0, 0), decoded.getRGB(0, 0));
 +    }
 +
 +    @Test

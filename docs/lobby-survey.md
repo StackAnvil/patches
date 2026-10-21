@@ -36,6 +36,13 @@ The precise ray target was not recorded there, so this is not yet an interaction
 A separate Enchanted retry verifies the ray hitting the trader, then right-clicks it and opens the kits menu.
 That response works, while the menu still shows its internal title and malformed text.
 
+The menu trace identifies two presentation defects: its descendant factory override was
+stored but never applied, and texture validation rejected filenames containing `~`.
+Both now have targeted fixes. The captured forms reach the authored factory, then stop
+at a locally counted collection named `diagram_with_button_collection`.
+Support for those factories remains open, so this is not yet a fixed authored menu.
+Generic form responses remain available.
+
 ## Changes verified from this survey
 
 The recorder now discards observations of camera presets that core intentionally ignores before StartGame.
@@ -50,3 +57,7 @@ The original reader fails on that archive; the corrected reader retains all 58 f
 Regressions cover embedded ZIP signatures and corrupt payload bytes alongside the existing archive-layout cases.
 All four projects build successfully: 2,133 tests pass and 152 optional cases skip.
 The offline checks also pass, including 263 tooling tests and patch metadata validation.
+
+The follow-up UI fixes also pass all four builds: 2,139 tests pass and 152 optional cases skip.
+All 102 core patches replay cleanly, and the offline validation remains green.
+The captured Enchanted forms still require locally counted factory support.

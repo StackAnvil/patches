@@ -85,6 +85,38 @@ This probe verifies resolution and action identities, but does not establish liv
 The final 99-patch core replay and build pass 1,027 tests: 997 passed and 30 optional skips.
 Main, test, and tool Checkstyle pass with no failures or errors.
 
+## Descendant declarations and texture filenames
+
+The captured Enchanted pack redirects the native form factory with a declaration named
+`main_screen_content/server_form_factory`. The resolver previously stored that declaration
+without applying it to the factory child. It selected the default native form instead.
+
+Apply descendant declarations within the current template and instance paths. Keep shared
+templates isolated between sibling instances, and include descendant declarations in exported
+programs. An explicit replacement parent supplies its namespace for relative child references.
+Inline instance properties remain available after that replacement.
+
+Six original-executable cases on Bedrock 1.26.51.1 confirm the control visitor's path construction.
+It appends slash-separated child names and removes their `@template` suffixes. Cases include
+nested siblings, heap strings, UTF-8 names, and a literal slash in a child name. This proves
+path construction, not native definition-store overlay precedence or rendered pixels. The
+existing layered overlay policy remains inferred from the versioned declarations.
+
+The same pack uses texture filenames containing `~`. Loading and scene validation now share
+the bounded relative-path check, so those images and their metadata survive conversion.
+Six new regression tests cover path scope, shared inheritance, replacement parents, relative
+namespaces, dynamic child arrays, export/import, factory responses, and texture pixels.
+The full UI test suite passes with the bundled native definitions.
+
+The actual captured Enchanted forms now reach their authored factory. They still fail on
+`diagram_with_button_collection`, whose count comes from a local binding. Locally counted
+factory collections remain unsupported. These changes do not establish a working Enchanted
+authored menu or native visual parity; the existing generic form fallback remains available.
+
+All 102 core patches replay cleanly. The four full builds pass with 2,139 tests passed,
+152 optional skips, and no failures or errors. Core, test, and tool Checkstyle checks pass.
+Offline validation also passes all 263 tooling tests and the four stacks' metadata checks.
+
 ## Upstream prerequisites
 
 Requires [0015-transport-native-resources-and-sound-commands.patch](0015-transport-native-resources-and-sound-commands.pr.md): Land accepted native resource transport before loading shared UI programs.
