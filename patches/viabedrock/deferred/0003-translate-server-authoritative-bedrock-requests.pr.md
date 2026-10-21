@@ -393,3 +393,36 @@ This result verifies form takeover during recorded delivery. It does not establi
 
 The tooling check, probe-pack build, all 261 offline tests, and patch metadata validation pass.
 Raw recordings, packet extracts, screenshots, JVM probes, and run logs remain private.
+
+## Late responses after menu replacement
+
+Ordinary inventory requests previously bypassed the menu-lifetime check used by authored count-one actions.
+A delayed success response could overwrite a replacement chest through its shared container name.
+A rejected request could also restore old crafting cells from its full cursor snapshot.
+
+Both response policies now retain the captured menu lifetime.
+Reusing a container ID or reopening the same object does not authorize an old reply.
+The permanent player inventory and cursor still accept their own response data after a screen transition.
+Other HUD cells retain the captured menu lifetime.
+This includes workstation slots that fall back to the player UI after closure.
+Rejected requests preserve those later cells. Crafted-result refresh also ignores obsolete destinations.
+Dynamic bundle replies retain the captured registry object, so reusing a removed bundle's ID cannot overwrite its replacement.
+Generation history also survives an intervening open/close cycle when the request starts without an open menu.
+
+The expanded ordinary-click regression fails before this change by overwriting a reopened chest.
+The bundle regression also fails before its identity guard by overwriting a replacement with the same dynamic ID.
+The closed-menu control fails before the generation-history correction.
+Behavioral tests cover both policies, success and rejection, object reuse, HUD fallback, and persistent inventory and cursor controls.
+The crafted-result test checks an active destination before it closes or reopens.
+Test fixtures capture predictions at the production sender's boundary.
+These checks establish translator lifecycle behavior. They do not establish a new native response-manager or graphical parity comparison.
+
+All 102 core patches replay cleanly. All four projects build with 2,154 passing tests and 152 optional skips.
+Offline validation passes 263 tooling tests and metadata checks. All four replay self-test groups pass.
+
+A fresh isolated BDS 1.26.51.1 run passes both authored count-one cases and the ordinary chest-transfer control through ViaProxy.
+The empty case transfers one emerald to hotbar slot zero; the merge case increases slot 15 from 62 to 63.
+Both preserve the hidden diamonds and leave three source emeralds.
+The ordinary control transfers all four items. Join, reconnect, and their 20-second stability checks pass.
+The test services and private display stop normally.
+These live cases verify normal requests with the rebuilt artifacts. Delayed response and replacement coverage comes from the behavioral tests above.
