@@ -168,6 +168,8 @@ The proxy route still does not support native actor and player geometry. It ther
 
 ## Validation scope
 
+The [live lobby survey](lobby-survey.md) records the scenes reached, interaction results, and join blockers from the latest multi-server pass.
+
 Native recording and `--client native` replay screenshots show the official Bedrock client. Default replay screenshots show ViaFabricPlus with the Bedrock add-on.
 
 Private regression recordings cover CubeCraft, Hive, the public Geyser test server, and Minehut. CubeCraft exercises 240 skin updates, 37 advertised custom actor types, and actual native actor and player submissions. The Geyser scene exercises supplied player geometry and custom block packs.
