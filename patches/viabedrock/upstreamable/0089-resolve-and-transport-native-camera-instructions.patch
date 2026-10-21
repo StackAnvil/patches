@@ -1,4 +1,4 @@
-From e04f723304c10fa698bb2452d5c43267e6e0c96e Mon Sep 17 00:00:00 2001
+From 19185d6d121a72ed34f485fbafd5d773741df66c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(camera): resolve server presets and camera movement
@@ -113,8 +113,23 @@ lifetimes and keep inactive preset state current. Carry the protocol
 player-origin offset from core instead of substituting Java eye height.
 Private component comparisons cover 256 composed frames. Full native
 actor-pivot, input, avoidance and visible-rendering parity remain open.
+
+Add the shared native avoidance updater for follow-camera integration.
+Preserve eight offset corner casts, ordered weighted feelers on both sides
+of each axis, immediate corner contraction and spring relaxation. Keep
+native minimum-distance boundaries, optional seat spring overrides, and
+actor-state collapse separate from the position blend.
+
+Private execution compares 2,400 chained native frames and 14,400 ray
+queries, including fixed-boom cache preparation, minimum expansion,
+recovery and spring overrides. Actual native definition construction and
+assignment establish empty default feelers and the pinned follow profile's
+zero spring and quarter-block minimum. Host ray and CRT boundaries are
+explicit. Native world clipping, actor-state lookup, projection inputs and
+full frame scheduling remain integration requirements.
 ---
  .../api/model/CameraAudioListener.java        |  30 ++
+ .../viabedrock/api/model/CameraAvoidance.java | 171 ++++++++++
  .../viabedrock/api/model/CameraEase.java      | 140 ++++++++
  .../viabedrock/api/model/CameraFadeState.java |  95 ++++++
  .../api/model/CameraFadeTimeline.java         |  91 +++++
@@ -144,6 +159,7 @@ actor-pivot, input, avoidance and visible-rendering parity remain open.
  .../storage/CameraEffectsStorage.java         | 253 ++++++++++++++
  .../protocol/task/EntityTrackerTickTask.java  |   5 +
  .../api/model/CameraAudioListenerTest.java    |  52 +++
+ .../api/model/CameraAvoidanceTest.java        | 128 +++++++
  .../api/model/CameraFadeTimelineTest.java     | 117 +++++++
  .../api/model/CameraFollowRuntimeTest.java    | 135 ++++++++
  .../api/model/CameraFovTimelineTest.java      | 132 ++++++++
@@ -156,8 +172,9 @@ actor-pivot, input, avoidance and visible-rendering parity remain open.
  .../model/CameraPositionControllerTest.java   | 311 ++++++++++++++++++
  .../protocol/model/CameraPresetTest.java      | 179 ++++++++++
  .../storage/CameraEffectsStorageTest.java     |  99 ++++++
- 42 files changed, 5028 insertions(+), 3 deletions(-)
+ 44 files changed, 5327 insertions(+), 3 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAudioListener.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAvoidance.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraEase.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFadeState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFadeTimeline.java
@@ -182,6 +199,7 @@ actor-pivot, input, avoidance and visible-rendering parity remain open.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraAudioListenerTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraAvoidanceTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraFadeTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraFollowRuntimeTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraFovTimelineTest.java
@@ -228,6 +246,183 @@ index 000000000..ad79cb977
 +    private static CameraPose.Vector normalized(final float x, final float y, final float z) {
 +        final float length = (float) Math.sqrt(z * z + (y * y + x * x));
 +        return length < .0001F ? CameraPose.Vector.ZERO : new CameraPose.Vector(x / length, y / length, z / length);
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraAvoidance.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraAvoidance.java
+new file mode 100644
+index 000000000..f396b16f1
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraAvoidance.java
+@@ -0,0 +1,171 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.api.model.CameraPose.Vector;
++
++import java.util.List;
++import java.util.Objects;
++
++/** Native camera avoidance. The caller supplies world ray results and the resolved camera pivot. */
++public final class CameraAvoidance {
++
++    private final Settings settings;
++    private State state;
++
++    public CameraAvoidance(final Settings settings, final State state) {
++        this.settings = Objects.requireNonNull(settings);
++        this.state = Objects.requireNonNull(state);
++    }
++
++    public State state() {
++        return this.state;
++    }
++
++    /**
++     * A null orbit radius uses the measured camera distance, as the fixed-boom cache does.
++     * Angular feelers require a nonzero pivot-to-camera direction.
++     */
++    public Vector advance(final float delta, final Vector pivot, final Vector camera, final Float orbitRadius,
++                          final float clearance, final boolean collapseToPivot, final Float springOverride, final Raycast raycast) {
++        finite(delta, clearance);
++        if (delta < 0 || clearance < 0 || orbitRadius != null && (!Float.isFinite(orbitRadius) || orbitRadius < 0)
++                || springOverride != null && (!Float.isFinite(springOverride) || springOverride < 0)) {
++            throw new IllegalArgumentException("Invalid camera avoidance frame");
++        }
++        if (collapseToPivot) {
++            return pivot;
++        }
++        final Vector direction = camera.subtract(pivot);
++        final float measured = length(direction);
++        final float maximum = orbitRadius != null ? orbitRadius : measured;
++        float closest = Float.MAX_VALUE;
++        for (int i = 0; i < 8; i++) {
++            final Vector start = new Vector(((i & 1) * 2 - 1) * .1F + pivot.x(), ((i & 2) - 1) * .1F + pivot.y(),
++                    (((i >> 1) & 2) - 1) * .1F + pivot.z());
++            final Vector hit = raycast.cast(start, direction.add(start));
++            if (hit != null) {
++                final float distance = length(pivot.subtract(hit)) - clearance;
++                closest = Math.min(closest, Math.max(clearance, distance));
++            }
++        }
++        final float constrained = this.constrain(maximum, closest);
++        float radius = this.state.radius;
++        float velocity = this.state.velocity;
++        if (constrained < radius) {
++            radius = constrained;
++            velocity = 0;
++        }
++        float requested = constrained;
++        if (!this.settings.horizontal.isEmpty() || !this.settings.vertical.isEmpty()) {
++            if (measured == 0) {
++                throw new IllegalArgumentException("Camera feelers require a nonzero direction");
++            }
++            final float yaw = (float) Math.atan2(direction.z(), direction.x());
++            final float polar = (float) Math.acos(direction.y() / measured);
++            requested = Math.min(requested, this.feelers(this.settings.horizontal, yaw, polar, constrained, pivot, raycast, true, 1));
++            requested = Math.min(requested, this.feelers(this.settings.horizontal, yaw, polar, constrained, pivot, raycast, true, -1));
++            requested = Math.min(requested, this.feelers(this.settings.vertical, yaw, polar, constrained, pivot, raycast, false, -1));
++            requested = Math.min(requested, this.feelers(this.settings.vertical, yaw, polar, constrained, pivot, raycast, false, 1));
++        }
++        requested = this.constrain(constrained, requested);
++        final float spring = springOverride != null ? springOverride : this.settings.spring;
++        if (spring == 0) {
++            radius = requested;
++            velocity = 0;
++        } else {
++            final float error = radius - requested;
++            final float scaled = error * spring;
++            final float sum = velocity + scaled;
++            final float exponent = -spring * delta;
++            final float decay = (float) Math.exp(exponent);
++            radius = (delta * sum + error) * decay + requested;
++            velocity = ((exponent * sum + sum) - scaled) * decay;
++        }
++        this.state = new State(radius, velocity);
++        if (measured > 0 && Math.abs(measured - radius) > Math.ulp(1F)) {
++            return new Vector(direction.x() * radius / measured + pivot.x(), direction.y() * radius / measured + pivot.y(),
++                    direction.z() * radius / measured + pivot.z());
++        }
++        return camera;
++    }
++
++    private float constrain(final float maximum, final float distance) {
++        // Native tests the raw distance before applying the minimum, including equality at the boundary.
++        return maximum < distance ? maximum : Math.max(distance, this.settings.minimum);
++    }
++
++    private float feelers(final List<Ray> rays, final float yaw, final float polar, final float radius,
++                          final Vector pivot, final Raycast raycast, final boolean horizontal, final int sign) {
++        float closest = radius;
++        float weighted = radius;
++        for (final Ray ray : rays) {
++            final float azimuth = horizontal ? yaw + sign * ray.angle : yaw;
++            final float inclination = horizontal ? polar : polar + sign * ray.angle;
++            final float sine = (float) Math.sin(inclination);
++            final Vector end = new Vector((float) Math.cos(azimuth) * radius * sine + pivot.x(),
++                    (float) Math.cos(inclination) * radius + pivot.y(), (float) Math.sin(azimuth) * radius * sine + pivot.z());
++            final Vector hit = raycast.cast(pivot, end);
++            final float distance = hit != null ? length(hit.subtract(pivot)) : Float.MAX_VALUE;
++            if (distance < Float.MAX_VALUE && distance < closest) {
++                weighted -= (closest - distance) * ray.weight;
++                closest = distance;
++            }
++        }
++        return weighted;
++    }
++
++    private static float length(final Vector value) {
++        return (float) Math.sqrt(value.x() * value.x() + value.y() * value.y() + value.z() * value.z());
++    }
++
++    private static void finite(final float... values) {
++        for (final float value : values) {
++            if (!Float.isFinite(value)) {
++                throw new IllegalArgumentException("Non-finite camera avoidance value");
++            }
++        }
++    }
++
++    /** Angles are radians. Native applies weights only when a ray beats the previous closest distance. */
++    public record Ray(float angle, float weight) {
++        public Ray {
++            finite(angle, weight);
++        }
++    }
++
++    public record Settings(float spring, float minimum, List<Ray> horizontal, List<Ray> vertical) {
++        public Settings {
++            finite(spring, minimum);
++            if (spring < 0 || minimum < 0) {
++                throw new IllegalArgumentException("Invalid camera avoidance settings");
++            }
++            horizontal = List.copyOf(horizontal);
++            vertical = List.copyOf(vertical);
++        }
++
++        /** The pinned follow_orbit definition overrides the native constructor's spring and minimum. */
++        public static Settings followOrbit() {
++            return new Settings(0, .25F, List.of(), List.of());
++        }
++    }
++
++    public record State(float radius, float velocity) {
++        public State {
++            finite(radius, velocity);
++            if (radius < 0) {
++                throw new IllegalArgumentException("Invalid camera avoidance radius");
++            }
++        }
++    }
++
++    @FunctionalInterface
++    public interface Raycast {
++        /** Returns the world hit position, or null for a miss. */
++        Vector cast(Vector start, Vector end);
 +    }
 +
 +}
@@ -3672,6 +3867,140 @@ index 000000000..48c7f2087
 +        assertEquals(expected.get(0).getAsFloat(), actual.x(), .000001F);
 +        assertEquals(expected.get(1).getAsFloat(), actual.y(), .000001F);
 +        assertEquals(expected.get(2).getAsFloat(), actual.z(), .000001F);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraAvoidanceTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraAvoidanceTest.java
+new file mode 100644
+index 000000000..55a84585f
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CameraAvoidanceTest.java
+@@ -0,0 +1,128 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonParser;
++import net.raphimc.viabedrock.api.model.CameraPose.Vector;
++import org.junit.jupiter.api.Test;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++class CameraAvoidanceTest {
++
++    @Test
++    void minimumCanExpandTargetBelowItsBoundary() {
++        final var avoidance = new CameraAvoidance(CameraAvoidance.Settings.followOrbit(), new CameraAvoidance.State(10, 0));
++        final Vector target = new Vector(.1F, 0, 0);
++        assertVector(new Vector(.25F, 0, 0), avoidance.advance(.05F, Vector.ZERO, target, .1F, .1F, false, null, (start, end) -> null));
++        final var calls = new AtomicInteger();
++        final Vector stopped = avoidance.advance(.05F, Vector.ZERO, target, .1F, .1F, false, null, (start, end) -> {
++            calls.incrementAndGet();
++            return Vector.ZERO;
++        });
++        assertEquals(8, calls.get());
++        assertEquals(.25F, stopped.x(), .000001F);
++        assertEquals(.25F, avoidance.state().radius());
++    }
++
++    @Test
++    void feelerWeightsAccumulateOnlyWhenTheClosestHitImproves() {
++        final var rays = List.of(new CameraAvoidance.Ray(.15F, .25F), new CameraAvoidance.Ray(.5F, .75F));
++        final var avoidance = new CameraAvoidance(new CameraAvoidance.Settings(0, .25F, rays, List.of()), new CameraAvoidance.State(10, 0));
++        final var calls = new AtomicInteger();
++        final Vector result = avoidance.advance(.05F, Vector.ZERO, new Vector(10, 0, 0), 10F, .1F, false, null, (start, end) -> {
++            final int index = calls.getAndIncrement();
++            if (index != 8 && index != 9) {
++                return null;
++            }
++            final float scale = index == 8 ? .4F : .2F;
++            return new Vector(end.x() * scale, end.y() * scale, end.z() * scale);
++        });
++        assertEquals(12, calls.get());
++        assertEquals(7, avoidance.state().radius(), .00001F);
++        assertVector(new Vector(7, 0, 0), result);
++    }
++
++    @Test
++    void cornerHitsContractBeforeSpringRelaxationAndAnOverrideCanDisableTheSpring() {
++        final var avoidance = new CameraAvoidance(new CameraAvoidance.Settings(4, .25F, List.of(), List.of()), new CameraAvoidance.State(10, 3));
++        final Vector target = new Vector(10, 0, 0);
++        final Vector collision = avoidance.advance(0, Vector.ZERO, target, 10F, .1F, false, null, (start, end) -> new Vector(4, 0, 0));
++        assertEquals(3.9F, collision.x(), .000001F);
++        assertEquals(0, avoidance.state().velocity());
++        final Vector relaxing = avoidance.advance(.05F, Vector.ZERO, target, 10F, .1F, false, null, (start, end) -> null);
++        assertTrue(relaxing.x() > collision.x() && relaxing.x() < target.x());
++        final var beforeCollapse = avoidance.state();
++        assertVector(Vector.ZERO, avoidance.advance(.05F, Vector.ZERO, target, 10F, .1F, true, null, (start, end) -> {
++            fail();
++            return null;
++        }));
++        assertEquals(beforeCollapse, avoidance.state());
++        assertVector(target, avoidance.advance(.05F, Vector.ZERO, target, 10F, .1F, false, 0F, (start, end) -> null));
++        assertEquals(0, avoidance.state().velocity());
++    }
++
++    @Test
++    void nativeUpdaterMatchesEveryQueryAndChainedState() throws Exception {
++        final String source = System.getenv("STACKANVIL_NATIVE_CAMERA_AVOIDANCE");
++        assumeTrue(source != null);
++        final var sequences = JsonParser.parseString(Files.readString(Path.of(source))).getAsJsonObject().getAsJsonArray("sequences");
++        for (final var element : sequences) {
++            final var sequence = element.getAsJsonObject();
++            final var avoidance = new CameraAvoidance(new CameraAvoidance.Settings(sequence.get("spring").getAsFloat(), .25F,
++                    rays(sequence.getAsJsonArray("yawRays")), rays(sequence.getAsJsonArray("pitchRays"))),
++                    new CameraAvoidance.State(sequence.get("initialRadius").getAsFloat(), 0));
++            final Float override = sequence.get("override").isJsonNull() ? null : sequence.get("override").getAsFloat();
++            for (final var frameElement : sequence.getAsJsonArray("frames")) {
++                final var frame = frameElement.getAsJsonObject();
++                final var queries = frame.getAsJsonArray("queries");
++                final var calls = new AtomicInteger();
++                final Float maximum = sequence.get("fixedBoom").getAsBoolean() ? null : frame.get("radius").getAsFloat();
++                final Vector observed = avoidance.advance(frame.get("delta").getAsFloat(), vector(frame.getAsJsonArray("pivot")),
++                        vector(frame.getAsJsonArray("target")), maximum, frame.get("margin").getAsFloat(), sequence.get("collapse").getAsBoolean(), override,
++                        (start, end) -> {
++                            final var query = queries.get(calls.getAndIncrement()).getAsJsonObject();
++                            assertVector(vector(query.getAsJsonArray("start")), start);
++                            assertVector(vector(query.getAsJsonArray("end")), end);
++                            return query.get("hit").isJsonNull() ? null : vector(query.getAsJsonArray("hit"));
++                        });
++                assertEquals(queries.size(), calls.get());
++                assertVector(vector(frame.getAsJsonArray("position")), observed);
++                final var state = frame.getAsJsonObject("state");
++                assertEquals(state.get("radius").getAsFloat(), avoidance.state().radius(), .00003F);
++                assertEquals(state.get("velocity").getAsFloat(), avoidance.state().velocity(), .00003F);
++            }
++        }
++    }
++
++    private static List<CameraAvoidance.Ray> rays(final JsonArray array) {
++        final var rays = new ArrayList<CameraAvoidance.Ray>();
++        for (final var element : array) {
++            final var pair = element.getAsJsonArray();
++            rays.add(new CameraAvoidance.Ray(pair.get(0).getAsFloat(), pair.get(1).getAsFloat()));
++        }
++        return rays;
++    }
++
++    private static Vector vector(final JsonArray value) {
++        return new Vector(value.get(0).getAsFloat(), value.get(1).getAsFloat(), value.get(2).getAsFloat());
++    }
++
++    private static void assertVector(final Vector expected, final Vector actual) {
++        assertEquals(expected.x(), actual.x(), .00003F);
++        assertEquals(expected.y(), actual.y(), .00003F);
++        assertEquals(expected.z(), actual.z(), .00003F);
 +    }
 +
 +}

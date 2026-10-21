@@ -304,3 +304,29 @@ Core runs 1,239 tests: 1,207 pass and 32 optional tests skip.
 All 256 composed frames, 270 orbit frames, 120 orbit inputs, and 864 action selections pass.
 The add-on has 816 passing tests and 120 optional skips. Converter and proxy tests also pass.
 Checkstyle, tooling checks, 261 offline regressions, and patch metadata checks pass.
+
+
+## Shared avoidance updater
+
+`CameraAvoidance` provides the native avoidance math for the next renderer integration.
+It casts eight offset corner rays, then applies ordered horizontal and vertical feelers on both sides.
+Weights apply only when a feeler improves the previous closest distance.
+The solver preserves immediate corner contraction, spring recovery, seat spring overrides, and the actor-state collapse branch.
+The native minimum can expand a requested radius below that minimum, even when all rays miss.
+
+The caller supplies the camera pose, resolved pivot, projection clearance, actor-state flag, and world ray results.
+A missing orbit radius uses measured camera distance, as native fixed-boom cache preparation does.
+Angular feelers require a nonzero direction.
+
+Private probes execute 2,400 chained native frames and compare 14,400 queries, including their origins and endpoints.
+They execute both native cache preparation paths, the complete updater, and optional seat override lookup.
+Host boundaries supply world ray results and CRT math.
+Separate native constructor and assignment probes establish empty default feelers and the pinned follow profile's zero spring and 0.25-block minimum.
+
+The renderer does not yet call this solver. Follow cameras still lack world collision handling.
+Native world clipping, shape filters, point-state sampling, and complete frame scheduling remain open.
+These component comparisons do not establish rendered collision parity.
+
+The converter and replayed 102-patch core stack build successfully with matching resources.
+Core runs 1,243 tests: 1,211 pass and 32 optional tests skip. All four new avoidance tests pass.
+Converter tests and Checkstyle pass.
