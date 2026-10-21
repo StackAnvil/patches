@@ -1,4 +1,4 @@
-From 5575c66a3fc41e9c88ce76ce05f5c99a997aac4c Mon Sep 17 00:00:00 2001
+From 5020eb55680f2249f86fe88c29d1c534375e3226 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -15,6 +15,14 @@ so neither consumer defines or registers a second bounds transport.
 Consume the core block_identifiers_v2 mirror with both native layers and state properties. Expose exact per-layer state lookup for native world queries while particle expiration continues to use primary identities. Bind payload reception to the captured connection and invalidate queued work on disconnect so an old world cannot populate a new session.
 
 The particle block-filter integration test now also verifies that an extra-layer update cannot change a primary-layer expiration result. This prepares the world source for native aim queries; it does not claim completed aim target selection or rendering.
+
+Apply the retained native actor scale during living render-state extraction.
+CubeCraft initially sends four local-skin copies at scale 0.0001, then
+uses scale one for visible previews and zero for hidden actors. The Java
+render state kept scale one after those metadata updates. Replace its
+scale before shadow extraction, so the body, equipment and shadow share
+the native value without the Java attribute clamp. Actors without a
+native snapshot retain the ordinary Java scale.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -87,6 +95,7 @@ The particle block-filter integration test now also verifies that an extra-layer
  .../render/MixinAvatarAnimationState.java     |   40 +
  .../MixinBedrockModelPartTransforms.java      |   34 +
  .../render/MixinBedrockWalkingAnimation.java  |   35 +
+ .../render/MixinLivingEntityRenderer.java     |   26 +
  .../render/MixinNativeActorPickingEntity.java |   41 +
  .../MixinNativeActorPickingLocalPlayer.java   |   31 +
  .../features/sound/MixinBedrockChannel.java   |   17 +
@@ -125,7 +134,7 @@ The particle block-filter integration test now also verifies that an extra-layer
  .../licenses/brarchive-extractor.txt          |   21 +
  .../licenses/vgmstream.txt                    |   23 +
  .../shaders/core/bedrock_particle.fsh         |   52 +
- .../viafabricplus-bedrock.mixins.json         |   17 +-
+ .../viafabricplus-bedrock.mixins.json         |   18 +-
  .../appearance/BedrockActorAnimationTest.java |  678 ++++++++++
  .../BedrockActorRenderSelectionTest.java      |   71 ++
  .../appearance/BedrockActorScaleTest.java     |   77 ++
@@ -194,7 +203,7 @@ The particle block-filter integration test now also verifies that an extra-layer
  .../render/BedrockPlayerModelTest.java        |  104 ++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 178 files changed, 22290 insertions(+), 15 deletions(-)
+ 179 files changed, 22317 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibility.java
@@ -262,6 +271,7 @@ The particle block-filter integration test now also verifies that an extra-layer
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockModelPartTransforms.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockWalkingAnimation.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingEntity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingLocalPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannel.java
@@ -10901,6 +10911,38 @@ index 0000000..95fa67a
 +                player.onGround(), player.isSwimming(), player.isAlive(), player.isPassenger());
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityRenderer.java
+new file mode 100644
+index 0000000..44781a3
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityRenderer.java
+@@ -0,0 +1,26 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
++import net.minecraft.client.renderer.entity.LivingEntityRenderer;
++import net.minecraft.world.entity.LivingEntity;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(LivingEntityRenderer.class)
++public abstract class MixinLivingEntityRenderer {
++
++    @WrapOperation(method = "extractRenderState", at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/world/entity/LivingEntity;getScale()F"), require = 1, allow = 1)
++    private float nativeActorScale(final LivingEntity entity, final Operation<Float> original) {
++        final var snapshot = BedrockActorState.state(entity.getUUID());
++        return snapshot == null ? original.call(entity) : snapshot.scale();
++    }
++
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingEntity.java
 new file mode 100644
 index 0000000..9b9784e
@@ -12897,7 +12939,7 @@ index 0000000..ff0be71
 +    #endif
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index de445f7..cd1dea5 100644
+index de445f7..817ade1 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
 @@ -47,6 +47,8 @@
@@ -12909,17 +12951,18 @@ index de445f7..cd1dea5 100644
      "features.render.MixinAbstractClientPlayer",
      "features.render.MixinPlayerInfoSkin",
      "features.render.MixinPlayerSkinRenderCache",
-@@ -63,6 +65,9 @@
+@@ -63,6 +65,10 @@
      "features.render.MixinEntityRenderDispatcher",
      "features.render.MixinMinecraftSkinLifecycle",
      "features.render.MixinLivingEntitySkinLayers",
++    "features.render.MixinLivingEntityRenderer",
 +    "features.render.MixinAvatarAnimationState",
 +    "features.render.MixinBedrockWalkingAnimation",
 +    "features.render.MixinBedrockModelPartTransforms",
      "features.render.MixinPlayerSkinWidget",
      "features.render.MixinGuiSkinRenderer",
      "features.movement.MixinEntity",
-@@ -71,7 +76,17 @@
+@@ -71,7 +77,17 @@
      "features.movement.MixinHoneyBlock",
      "features.movement.MixinLivingEntity",
      "features.movement.MixinLocalPlayer",

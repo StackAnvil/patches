@@ -1885,3 +1885,30 @@ The live BDS 2193 control recorded 39 samples, including 30 with a local player.
 It exercised dry and wet stairs, rotation, removal and restoration.
 Observed runtime IDs match incoming block updates in order for each tested position and layer.
 The run completed normal cleanup, and its private observer and server script were restored.
+
+
+## Native scale for player actors
+
+A fresh CubeCraft recording exposed player-skin actors with scale updates that the Java renderer ignored.
+The server supplied the same skin pixels for four lobby actors and the local player.
+Each lobby actor started at scale `0.0001`.
+Later updates selected scale `1` for visible previews and scale `0` for a hidden actor.
+Java kept render scale `1` for the hidden actor despite its native scale `0`.
+
+The shared living renderer now reads the retained native scale during render-state extraction.
+This applies before the body, equipment layers and shadow extraction.
+It preserves zero and small values without the Java attribute clamp.
+Actors without a native snapshot retain their Java scale.
+The change does not alter actor yaw or replace the skin that the server supplied.
+
+A private replay compared the original artifact with the rebuilt artifact against the same protocol-2193 recording.
+Both runs used a private display, zero volume and a controlled camera view.
+The same hidden actor retained native scale `0` and Java attribute scale `1` in both runs.
+Its actual render state used scale `1` before the fix and scale `0` after the fix.
+Ordinary actors retained render scale `1`.
+The replay slices verify this render-state change, not complete native orientation or scene parity.
+The recording, skin pixels, observer, screenshots and actor identities remain private.
+
+All four projects build with 2,122 passing tests and 152 optional skips.
+Offline validation passes all 261 tooling tests and patch metadata checks.
+All four stack health reports contain no errors.
