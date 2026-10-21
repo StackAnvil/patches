@@ -55,7 +55,7 @@ the first two categories; unresolved mappings remain open.
 ## Changes verified from this survey
 
 The recorder now discards observations of camera presets that core intentionally ignores before StartGame.
-It still waits for the custom-block resource gate and compares decoded preset bytes during play.
+It waits for resource loading and Java play-listener initialization, then compares decoded preset bytes during play.
 
 The lab accepts explicit public endpoints through `server-replay record public --target host:port`.
 This supports current catalog endpoints while retaining the Hive guard and loopback restrictions for local fixtures.
@@ -73,3 +73,24 @@ The renderer now treats those values as absent geometry, and the replay inspecto
 Malformed non-null values still require successful installation. A fresh 130-second replay installs
 all 273 skins and 270 supplied geometry records with no geometry-parse warnings.
 Transport passes; rendering verification still fails on unresolved mappings.
+
+## Startup particle delivery
+
+The Enchanted destination sends custom particle packets before Fabric registers its play channels.
+Translation discarded ten packets as unknown particles, although their definitions were in the downloaded pack.
+Core now keeps world packets in order until Java acknowledges its initialized play listener.
+The same buffer covers supplemental resource-pack loading and joins without custom blocks.
+
+A fresh 130-second replay records 2,196 native particle render frames, with up to 99 particles in 68 emitters.
+The font and sparkle effects reach the native world particle render pass.
+Child highlight effects also create emitters and particles. The ten startup warnings fall to zero,
+with no particle loading or initialization errors. The authored advertisement and kits menu still open;
+Escape closes the advertisement and the third kit card dispatches its response.
+These observations verify delivery and execution. They do not establish native visual parity.
+The scene retains overlapping labels and repeated HIT icons that were present before this change.
+
+All four projects build: 2,149 tests pass and 152 optional cases skip.
+All 102 core patches replay cleanly. Offline validation passes all 263 tooling tests and metadata checks.
+The four replay self-test groups also pass.
+Transport passes, and all 273 skins and 270 supplied geometry records install.
+Rendering verification still fails on unresolved mappings. All seven owned test processes close normally.

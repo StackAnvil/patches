@@ -9,7 +9,7 @@ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.model.CameraPreset;
 import net.raphimc.viabedrock.protocol.model.CameraPresetRegistry;
 import net.raphimc.viabedrock.protocol.storage.CameraEffectsStorage;
-import net.raphimc.viabedrock.protocol.storage.CustomBlockPackStorage;
+import net.raphimc.viabedrock.protocol.storage.WorldPacketBuffer;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.io.IOException;
@@ -54,7 +54,7 @@ public final class CameraPresetAuditSelfTest {
             state[0] = early;
             require(CameraPresetAudit.afterPacket(user, captured, directory));
             require(!Files.exists(directory.resolve("camera-presets-core.json")));
-            stored.put(CustomBlockPackStorage.class, new CustomBlockPackStorage(loaded -> { }));
+            stored.put(WorldPacketBuffer.class, new WorldPacketBuffer());
             require(!CameraPresetAudit.afterPacket(user, captured, directory));
             stored.clear();
         }
@@ -67,8 +67,8 @@ public final class CameraPresetAuditSelfTest {
         require(rejected);
         require(!Files.exists(directory.resolve("camera-presets-core.json")));
 
-        // A received table can be queued while custom block models load.
-        stored.put(CustomBlockPackStorage.class, new CustomBlockPackStorage(loaded -> { }));
+        // A received table can wait for custom models or Java play-listener initialization.
+        stored.put(WorldPacketBuffer.class, new WorldPacketBuffer());
         require(!CameraPresetAudit.afterPacket(user, captured, directory));
         require(!Files.exists(directory.resolve("camera-presets-core.json")));
 
@@ -76,7 +76,7 @@ public final class CameraPresetAuditSelfTest {
         try { storage.setPresets(new CameraPresetRegistry(CameraPreset.LIST_TYPE.read(input))); }
         finally { input.release(); }
         require(!CameraPresetAudit.afterPacket(user, captured, directory));
-        stored.remove(CustomBlockPackStorage.class);
+        stored.remove(WorldPacketBuffer.class);
         require(CameraPresetAudit.afterPacket(user, captured, directory));
         require(Files.isRegularFile(directory.resolve("camera-presets-core.json")));
 

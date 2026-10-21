@@ -1,4 +1,4 @@
-From 66ab1271b7d51d29a8e44081d642e0d6b59eb6b5 Mon Sep 17 00:00:00 2001
+From f5cdc58c34ef3275ab8448af56606d772db4ade8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -217,6 +217,23 @@ ambient overrides, and visible native comparison remain separate work.
 Parse native item atlas object texture paths and object entries inside arrays. Targeted atlas tests preserve path precedence and invalid entry handling.
 
 Retain indexed terrain atlas variants for callers that select a Bedrock auxiliary value. Scalar server overrides apply to every variant, while the existing first-path block API keeps its behavior. Native pane item conversion needs this lookup for all sixteen stained-glass colors.
+
+Separate supplemental-pack acknowledgement from the bounded world packet
+buffer. After Java login and bootstrap, wait for the existing client ping
+acknowledgement before translating the scene. Preserve packet order across
+both buffering phases and ignore stale or disconnected acknowledgements.
+Pre-StartGame skins still drain before this second phase.
+
+The pinned Fabric networking API 6.3.8 registers play channels only after
+ClientboundLoginPacket. Minecraft 26.3 handles the following ping on that
+same client packet thread before sending pong. The recorded Bedrock
+1.26.51.1 Enchanted lobby sends custom particles during this startup window;
+previously translation dropped them before the native channel registered.
+This also applies when the server has no supplemental custom-block pack.
+Java-only clients keep their existing translation fallbacks after pong.
+
+Tests preserve ordered resource/world delivery, one-shot release, channel
+registration before release, replacement/disconnect isolation and bounds.
 ---
  .../api/model/CustomBlockCulling.java         | 206 +++++++
  .../api/model/CustomBlockFaceLighting.java    |  98 +++
@@ -230,9 +247,9 @@ Retain indexed terrain atlas variants for callers that select a Bedrock auxiliar
  .../definition/ModelDefinitions.java          |   7 +
  .../definition/TextureDefinitions.java        |  85 ++-
  .../http/ConvertedResourcePackCache.java      |  12 +-
- .../viabedrock/protocol/BedrockProtocol.java  |  27 +-
- .../protocol/packet/JoinPackets.java          |  30 +-
- .../protocol/packet/ResourcePackPackets.java  |  44 +-
+ .../viabedrock/protocol/BedrockProtocol.java  |  26 +-
+ .../protocol/packet/JoinPackets.java          |  31 +-
+ .../protocol/packet/ResourcePackPackets.java  |  47 +-
  .../protocol/packet/VoxelShapePackets.java    |  35 ++
  .../protocol/rewriter/BlockStateRewriter.java |  72 ++-
  .../rewriter/ResourcePackRewriter.java        |   2 +
@@ -241,9 +258,10 @@ Retain indexed terrain atlas variants for callers that select a Bedrock auxiliar
  .../CustomBlockResourceRewriter.java          | 233 ++++++++
  .../CustomBlockStateDefinitions.java          | 153 +++++
  .../protocol/storage/ChunkTracker.java        |  33 +-
- .../storage/CustomBlockPackStorage.java       |  85 +++
+ .../storage/CustomBlockPackStorage.java       |  37 ++
  .../protocol/storage/ResourcePackStorage.java |  44 +-
  .../protocol/storage/VoxelShapeRegistry.java  | 125 ++++
+ .../protocol/storage/WorldPacketBuffer.java   |  75 +++
  .../api/model/CustomBlockCullingTest.java     |  54 ++
  .../api/model/CustomBlockLightingTest.java    | 171 ++++++
  .../api/model/CustomBlockOffsetTest.java      |  80 +++
@@ -257,9 +275,10 @@ Retain indexed terrain atlas variants for callers that select a Bedrock auxiliar
  .../CustomBlockMaterialVisibilityTest.java    | 106 ++++
  .../CustomBlockStateDefinitionsTest.java      | 218 +++++++
  .../protocol/storage/ChunkTrackerTest.java    |  22 +
- .../storage/CustomBlockPackStorageTest.java   | 169 ++++++
+ .../storage/CustomBlockPackStorageTest.java   |  31 +
  .../storage/VoxelShapeRegistryTest.java       | 130 ++++
- 41 files changed, 4593 insertions(+), 23 deletions(-)
+ .../storage/WorldPacketBufferTest.java        | 230 +++++++
+ 43 files changed, 4715 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
@@ -275,6 +294,7 @@ Retain indexed terrain atlas variants for callers that select a Bedrock auxiliar
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistry.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBuffer.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockCullingTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockOffsetTest.java
@@ -288,6 +308,7 @@ Retain indexed terrain atlas variants for callers that select a Bedrock auxiliar
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistryTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBufferTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
 new file mode 100644
@@ -1356,7 +1377,7 @@ index de51c6584..7e8f026ab 100644
          final byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
          output.writeInt(bytes.length);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
-index 44e1ff721..1736fcd13 100644
+index 44e1ff721..cd70c4f43 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 @@ -53,7 +53,12 @@ import net.raphimc.viabedrock.protocol.task.*;
@@ -1397,20 +1418,19 @@ index 44e1ff721..1736fcd13 100644
          user.put(new BlockInteractionSoundTracker());
          user.put(new ResourcePackDownloadTracker());
          user.put(new BlobCache(user));
-@@ -177,11 +185,26 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+@@ -177,11 +185,25 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
                  ViaBedrock.getPlatform().getLogger().warning("Received unknown packet " + wrapper.getId() + " in state " + serverState + " with content: " + ByteBufUtil.hexDump(content));
                  throw CancelException.generate();
              }
-+            final CustomBlockPackStorage customBlocks =
-+                    wrapper.user().get(CustomBlockPackStorage.class);
-+            if (customBlocks != null && packet == ClientboundBedrockPackets.START_GAME) {
++            final WorldPacketBuffer worldPackets = wrapper.user().get(WorldPacketBuffer.class);
++            if (worldPackets != null && packet == ClientboundBedrockPackets.START_GAME) {
 +                throw CancelException.generate();
 +            }
-+            if (customBlocks != null && (!BEFORE_PLAY_STATE_WHITELIST.contains(packet) || packet == ClientboundBedrockPackets.PLAY_STATUS)) {
++            if (worldPackets != null && (!BEFORE_PLAY_STATE_WHITELIST.contains(packet) || packet == ClientboundBedrockPackets.PLAY_STATUS)) {
 +                final ByteBuf input = ((PacketWrapperImpl) wrapper).getInputBuffer();
 +                final byte[] payload = new byte[input.readableBytes()];
 +                input.getBytes(input.readerIndex(), payload);
-+                customBlocks.queue(packet, payload);
++                worldPackets.queue(packet, payload);
 +                throw CancelException.generate();
 +            }
              if (serverState != State.PLAY && (packet == ClientboundBedrockPackets.PLAYER_LIST || packet == ClientboundBedrockPackets.PLAYER_SKIN)) {
@@ -1426,7 +1446,7 @@ index 44e1ff721..1736fcd13 100644
                  final PacketWrapper playStatus = PacketWrapper.create(ClientboundBedrockPackets.PLAY_STATUS, wrapper.user());
                  playStatus.write(Types.INT, PlayStatus.LoginSuccess.getValue()); // status
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 78a98f2bf..8609237c8 100644
+index 78a98f2bf..049f7a141 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -383,7 +383,8 @@ public final class JoinPackets {
@@ -1480,19 +1500,28 @@ index 78a98f2bf..8609237c8 100644
      private static void handleJavaClientGameJoin(final UserConnection user) {
          final JoinGameStorage joinGameStorage = user.get(JoinGameStorage.class);
          final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
+@@ -639,6 +653,7 @@ public final class JoinPackets {
+             initialDayTime(joinGameStorage.dayCycleStopTime(), gameSession.getLevelTime()),
+             user.get(GameRulesStorage.class).getGameRule("doDayLightCycle"));
+         setTime.send(BedrockProtocol.class);
++        new WorldPacketBuffer().awaitClient(user);
+     }
+ 
+     static long initialDayTime(final int dayCycleStopTime, final long levelTime) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index d86cda3e8..5927936c0 100644
+index d86cda3e8..1a6e4d3f1 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-@@ -39,6 +39,7 @@ import net.raphimc.viabedrock.protocol.provider.ResourcePackProvider;
+@@ -39,6 +39,8 @@ import net.raphimc.viabedrock.protocol.provider.ResourcePackProvider;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackDownloadTracker;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackLoadStateTracker;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import net.raphimc.viabedrock.protocol.storage.CustomBlockPackStorage;
++import net.raphimc.viabedrock.protocol.storage.WorldPacketBuffer;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  
  import java.net.MalformedURLException;
-@@ -46,6 +47,7 @@ import java.net.URL;
+@@ -46,6 +48,7 @@ import java.net.URL;
  import java.util.ArrayList;
  import java.util.List;
  import java.util.UUID;
@@ -1500,7 +1529,7 @@ index d86cda3e8..5927936c0 100644
  import java.util.logging.Level;
  import java.util.concurrent.CompletableFuture;
  import java.util.function.Function;
-@@ -213,8 +215,24 @@ public final class ResourcePackPackets {
+@@ -213,8 +216,24 @@ public final class ResourcePackPackets {
          });
  
          protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.RESOURCE_PACK, ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, wrapper -> {
@@ -1526,18 +1555,20 @@ index d86cda3e8..5927936c0 100644
              switch (action) {
                  case SUCCESSFULLY_LOADED -> {
                      final ResourcePackStorage resourcePackStorage = wrapper.user().get(ResourcePackStorage.class);
-@@ -328,6 +346,30 @@ public final class ResourcePackPackets {
+@@ -328,6 +347,32 @@ public final class ResourcePackPackets {
          response.scheduleSendToServer(BedrockProtocol.class);
      }
  
 +    public static void loadCustomBlocks(final UserConnection user, final Consumer<Boolean> joined) {
++        final WorldPacketBuffer buffered = new WorldPacketBuffer();
 +        final CustomBlockPackStorage gate = new CustomBlockPackStorage(loaded -> {
-+            final CustomBlockPackStorage finished = user.get(CustomBlockPackStorage.class);
 +            user.remove(CustomBlockPackStorage.class);
++            user.remove(WorldPacketBuffer.class);
 +            joined.accept(loaded);
-+            finished.drain(user);
++            buffered.drain(user);
 +        });
 +        user.put(gate);
++        user.put(buffered);
 +        ViaBedrock.getResourcePackServer().prepare(user.get(ResourcePackStorage.class)).thenAccept(pack ->
 +                user.getChannel().eventLoop().execute(() -> {
 +                    if (!user.getChannel().isActive() || user.get(CustomBlockPackStorage.class) != gate) {
@@ -2999,10 +3030,10 @@ index 94521c248..6b7b9b0ec 100644
                      return;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
 new file mode 100644
-index 000000000..181f0ac46
+index 000000000..0fef4f5c2
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,37 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3011,29 +3042,15 @@ index 000000000..181f0ac46
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.viaversion.viaversion.api.connection.StorableObject;
-+import com.viaversion.viaversion.api.connection.UserConnection;
-+import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
-+import io.netty.buffer.Unpooled;
-+import io.netty.buffer.ByteBuf;
-+import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
-+import net.raphimc.viabedrock.api.util.PacketFactory;
 +
-+import java.util.ArrayDeque;
-+import java.util.Queue;
 +import java.util.UUID;
-+import java.util.Objects;
 +import java.util.function.Consumer;
-+import java.util.function.BiConsumer;
 +
-+/** Holds ordered world packets while the configuration client loads state-specific block models. */
++/** Tracks acknowledgement of the supplemental block-model pack during configuration. */
 +public final class CustomBlockPackStorage implements StorableObject {
 +
-+    private static final int MAX_BYTES = 64 * 1024 * 1024;
-+    private static final int MAX_PACKETS = 10000;
-+    private final Queue<Packet> packets = new ArrayDeque<>();
 +    private final Consumer<Boolean> completion;
 +    private UUID packId;
-+    private int bytes;
 +    private boolean completed;
 +
 +    public CustomBlockPackStorage(final Consumer<Boolean> completion) {
@@ -3044,14 +3061,6 @@ index 000000000..181f0ac46
 +        this.packId = id;
 +    }
 +
-+    public void queue(final ClientboundBedrockPackets type, final byte[] payload) {
-+        if (this.packets.size() == MAX_PACKETS || payload.length > MAX_BYTES - this.bytes) {
-+            throw new IllegalStateException("World packets exceeded the custom block pack loading buffer");
-+        }
-+        this.packets.add(new Packet(Objects.requireNonNull(type), payload.clone()));
-+        this.bytes += payload.length;
-+    }
-+
 +    public boolean complete(final UUID id, final boolean loaded) {
 +        if (this.completed || this.packId == null || !this.packId.equals(id)) {
 +            return false;
@@ -3059,32 +3068,6 @@ index 000000000..181f0ac46
 +        this.completed = true;
 +        this.completion.accept(loaded);
 +        return true;
-+    }
-+
-+    public void drain(final UserConnection user) {
-+        this.drain((type, payload) -> {
-+            final ByteBuf input = Unpooled.wrappedBuffer(payload);
-+            try {
-+                PacketFactory.replayClientbound(PacketWrapper.create(type, input, user));
-+            } finally {
-+                input.release();
-+            }
-+        });
-+    }
-+
-+    public void drain(final BiConsumer<ClientboundBedrockPackets, byte[]> receiver) {
-+        Packet packet;
-+        while ((packet = this.packets.poll()) != null) {
-+            this.bytes -= packet.payload.length;
-+            receiver.accept(packet.type, packet.payload);
-+        }
-+    }
-+
-+    public int packetCount() {
-+        return this.packets.size();
-+    }
-+
-+    private record Packet(ClientboundBedrockPackets type, byte[] payload) {
 +    }
 +
 +}
@@ -3306,6 +3289,87 @@ index 000000000..d8425be58
 +            final int index = (x * this.ySize + y) * this.zSize + z;
 +            return (this.cells[index / 8] & 1 << (index % 8)) != 0;
 +        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBuffer.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBuffer.java
+new file mode 100644
+index 000000000..3caaf7718
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBuffer.java
+@@ -0,0 +1,75 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StorableObject;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++
++import java.util.ArrayDeque;
++import java.util.Objects;
++import java.util.Queue;
++import java.util.function.BiConsumer;
++
++/** Buffers ordered world packets while Java loads resources or initializes its play listener. */
++public final class WorldPacketBuffer implements StorableObject {
++
++    private static final int MAX_BYTES = 64 * 1024 * 1024;
++    private static final int MAX_PACKETS = 10000;
++    private final Queue<Packet> packets = new ArrayDeque<>();
++    private int bytes;
++
++    public void awaitClient(final UserConnection user) {
++        user.put(this);
++        // Java handles this ping on the login packet thread, after Fabric registers its play channels.
++        user.get(PacketSyncStorage.class).syncWithClient(() -> {
++            if (!user.getChannel().isActive() || user.get(WorldPacketBuffer.class) != this) {
++                return;
++            }
++            user.remove(WorldPacketBuffer.class);
++            this.drain(user);
++        });
++    }
++
++    public void queue(final ClientboundBedrockPackets type, final byte[] payload) {
++        if (this.packets.size() == MAX_PACKETS || payload.length > MAX_BYTES - this.bytes) {
++            throw new IllegalStateException("World packets exceeded the Java initialization buffer");
++        }
++        this.packets.add(new Packet(Objects.requireNonNull(type), payload.clone()));
++        this.bytes += payload.length;
++    }
++
++    public void drain(final UserConnection user) {
++        this.drain((type, payload) -> {
++            final ByteBuf input = Unpooled.wrappedBuffer(payload);
++            try {
++                PacketFactory.replayClientbound(PacketWrapper.create(type, input, user));
++            } finally {
++                input.release();
++            }
++        });
++    }
++
++    public void drain(final BiConsumer<ClientboundBedrockPackets, byte[]> receiver) {
++        Packet packet;
++        while ((packet = this.packets.poll()) != null) {
++            this.bytes -= packet.payload.length;
++            receiver.accept(packet.type, packet.payload);
++        }
++    }
++
++    public int packetCount() {
++        return this.packets.size();
++    }
++
++    private record Packet(ClientboundBedrockPackets type, byte[] payload) {
 +    }
 +
 +}
@@ -5212,10 +5276,10 @@ index aae5aea28..f3e303f03 100644
          final BedrockDataPalette palette = new BedrockDataPalette();
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
 new file mode 100644
-index 000000000..9b5cd6fca
+index 000000000..4d1cdb37c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,31 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5224,27 +5288,10 @@ index 000000000..9b5cd6fca
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import org.junit.jupiter.api.Test;
-+import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
-+import net.raphimc.viabedrock.protocol.BedrockProtocol;
-+import net.raphimc.viabedrock.api.util.PacketFactory;
-+import com.viaversion.viaversion.api.connection.ProtocolInfo;
-+import com.viaversion.viaversion.api.connection.UserConnection;
-+import com.viaversion.viaversion.api.protocol.Protocol;
-+import com.viaversion.viaversion.api.protocol.ProtocolPipeline;
-+import com.viaversion.viaversion.api.protocol.packet.Direction;
-+import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
-+import com.viaversion.viaversion.api.protocol.packet.State;
-+import com.viaversion.viaversion.api.type.Types;
-+import com.viaversion.viaversion.exception.CancelException;
-+import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
-+import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
-+import io.netty.buffer.ByteBuf;
-+import io.netty.buffer.Unpooled;
 +
 +import java.util.ArrayList;
 +import java.util.List;
 +import java.util.UUID;
-+import java.lang.reflect.Proxy;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -5261,127 +5308,6 @@ index 000000000..9b5cd6fca
 +        assertTrue(storage.complete(id, false));
 +        assertFalse(storage.complete(id, true));
 +        assertEquals(List.of(false), completed);
-+    }
-+
-+    @Test
-+    void buffersImmutablePacketsInOrderAndLimitsAccumulation() {
-+        final CustomBlockPackStorage storage = new CustomBlockPackStorage(ignored -> { });
-+        final byte[] bytes = new byte[]{7};
-+        storage.queue(ClientboundBedrockPackets.PLAYER_LIST, bytes);
-+        bytes[0] = 9;
-+        storage.queue(ClientboundBedrockPackets.PLAYER_SKIN, bytes);
-+        final List<Integer> received = new ArrayList<>();
-+        final List<ClientboundBedrockPackets> types = new ArrayList<>();
-+        storage.drain((type, payload) -> {
-+            types.add(type);
-+            received.add((int) payload[0]);
-+        });
-+        assertEquals(List.of(7, 9), received);
-+        assertEquals(List.of(ClientboundBedrockPackets.PLAYER_LIST, ClientboundBedrockPackets.PLAYER_SKIN), types);
-+        assertEquals(0, storage.packetCount());
-+        for (int i = 0; i < 10000; i++) {
-+            storage.queue(ClientboundBedrockPackets.SET_TIME, new byte[0]);
-+        }
-+        assertThrows(IllegalStateException.class, () -> storage.queue(ClientboundBedrockPackets.SET_TIME, new byte[0]));
-+    }
-+
-+    @Test
-+    void resumesTypedPacketsWithoutRepeatingBaseProtocolsAndKeepsCancellationSemantics() {
-+        final List<ClientboundBedrockPackets> handled = new ArrayList<>();
-+        final List<Integer> sent = new ArrayList<>();
-+        final Protocol<?, ?, ?, ?> base = protocol(true, (state, wrapper) -> fail("Buffered packets already passed base protocols"));
-+        final Protocol<?, ?, ?, ?> translator = protocol(false, (state, wrapper) -> {
-+            assertEquals(State.PLAY, state);
-+            final ClientboundBedrockPackets type = (ClientboundBedrockPackets) wrapper.getPacketType();
-+            handled.add(type);
-+            final int value = wrapper.read(Types.INT);
-+            if (type == ClientboundBedrockPackets.PLAYER_LIST) {
-+                wrapper.cancel();
-+                throw new CancelException();
-+            }
-+            wrapper.setPacketType(ClientboundPackets26_3.PLAYER_INFO_UPDATE);
-+            wrapper.write(Types.INT, value + 1);
-+        });
-+        final Protocol<?, ?, ?, ?> downstream = protocol(false, (state, wrapper) -> {
-+            assertEquals(State.PLAY, state);
-+            assertSame(ClientboundPackets26_3.PLAYER_INFO_UPDATE, wrapper.getPacketType());
-+            wrapper.write(Types.INT, wrapper.read(Types.INT) + 100);
-+        });
-+        final ProtocolPipeline pipeline = (ProtocolPipeline) Proxy.newProxyInstance(ProtocolPipeline.class.getClassLoader(), new Class<?>[]{ProtocolPipeline.class}, (proxy, method, arguments) -> {
-+            assertEquals("pipes", method.getName());
-+            assertSame(BedrockProtocol.class, arguments[0]);
-+            assertEquals(false, arguments[1]);
-+            assertSame(Direction.CLIENTBOUND, arguments[2]);
-+            return List.of(base, translator, downstream);
-+        });
-+        final ProtocolInfo info = (ProtocolInfo) Proxy.newProxyInstance(ProtocolInfo.class.getClassLoader(), new Class<?>[]{ProtocolInfo.class}, (proxy, method, arguments) -> {
-+            return switch (method.getName()) {
-+                case "getPipeline" -> pipeline;
-+                case "getServerState", "getClientState" -> State.CONFIGURATION;
-+                default -> throw new UnsupportedOperationException(method.getName());
-+            };
-+        });
-+        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class}, (proxy, method, arguments) -> {
-+            if (method.getName().equals("getProtocolInfo")) {
-+                return info;
-+            }
-+            if (method.getName().equals("sendRawPacket") && arguments.length == 1) {
-+                final ByteBuf output = (ByteBuf) arguments[0];
-+                try {
-+                    assertEquals(ClientboundPackets26_3.PLAYER_INFO_UPDATE.getId(), Types.VAR_INT.readPrimitive(output));
-+                    sent.add(output.readInt());
-+                    assertFalse(output.isReadable());
-+                } finally {
-+                    output.release();
-+                }
-+                return null;
-+            }
-+            throw new UnsupportedOperationException(method.getName());
-+        });
-+        final CustomBlockPackStorage gate = new CustomBlockPackStorage(ignored -> { });
-+        for (ClientboundBedrockPackets type : List.of(ClientboundBedrockPackets.PLAYER_LIST, ClientboundBedrockPackets.PLAYER_SKIN, ClientboundBedrockPackets.PLAYER_SKIN)) {
-+            final ByteBuf payload = Unpooled.buffer();
-+            try {
-+                payload.writeInt(handled.size() + gate.packetCount());
-+                final byte[] bytes = new byte[payload.readableBytes()];
-+                payload.readBytes(bytes);
-+                gate.queue(type, bytes);
-+            } finally {
-+                payload.release();
-+            }
-+        }
-+        gate.drain((type, bytes) -> {
-+            final ByteBuf payload = Unpooled.wrappedBuffer(bytes);
-+            try {
-+                PacketFactory.replayClientbound(new PacketWrapperImpl(type, payload, user));
-+            } finally {
-+                payload.release();
-+            }
-+        });
-+        assertEquals(List.of(ClientboundBedrockPackets.PLAYER_LIST, ClientboundBedrockPackets.PLAYER_SKIN, ClientboundBedrockPackets.PLAYER_SKIN), handled);
-+        assertEquals(List.of(102, 103), sent);
-+        assertEquals(0, gate.packetCount());
-+    }
-+
-+    private static Protocol<?, ?, ?, ?> protocol(final boolean base, final Transform transform) {
-+        return (Protocol<?, ?, ?, ?>) Proxy.newProxyInstance(Protocol.class.getClassLoader(), new Class<?>[]{Protocol.class}, (proxy, method, arguments) -> {
-+            if (method.getName().equals("isBaseProtocol")) {
-+                return base;
-+            }
-+            if (method.getName().equals("transform")) {
-+                assertSame(Direction.CLIENTBOUND, arguments[0]);
-+                transform.apply((State) arguments[1], (PacketWrapper) arguments[2]);
-+                return null;
-+            }
-+            throw new UnsupportedOperationException(method.getName());
-+        });
-+    }
-+
-+    @FunctionalInterface
-+    private interface Transform {
-+
-+        void apply(State state, PacketWrapper wrapper) throws CancelException;
-+
 +    }
 +
 +}
@@ -5518,6 +5444,242 @@ index 000000000..7359689d9
 +        BedrockTypes.STRING.write(input, "test:asymmetric");
 +        input.writeShortLE(0).writeShortLE(1);
 +        return input;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBufferTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBufferTest.java
+new file mode 100644
+index 000000000..41138f382
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBufferTest.java
+@@ -0,0 +1,230 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import org.junit.jupiter.api.Test;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.Protocol;
++import com.viaversion.viaversion.api.protocol.ProtocolPipeline;
++import com.viaversion.viaversion.api.protocol.packet.Direction;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.exception.CancelException;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import io.netty.channel.Channel;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.concurrent.atomic.AtomicReference;
++import java.lang.reflect.Proxy;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.Mockito.*;
++
++class WorldPacketBufferTest {
++
++    @Test
++    void preservesResourcePackPacketOrderUntilPlayCapabilitiesPrecedeAcknowledgment() {
++        final ClientAcknowledgments client = new ClientAcknowledgments();
++        final ChannelStorage channels = new ChannelStorage();
++        final List<Integer> received = new ArrayList<>();
++        final WorldPacketBuffer resources = new WorldPacketBuffer();
++        resources.queue(ClientboundBedrockPackets.ADD_ENTITY, new byte[]{1});
++        resources.queue(ClientboundBedrockPackets.SPAWN_PARTICLE_EFFECT, new byte[]{2});
++        final WorldPacketBuffer initialization = spy(new WorldPacketBuffer());
++        doAnswer(ignored -> {
++            assertNull(client.current.get());
++            assertTrue(channels.hasChannel("test:particles"));
++            initialization.drain((type, payload) -> received.add((int) payload[0]));
++            return null;
++        }).when(initialization).drain(client.user);
++
++        initialization.awaitClient(client.user);
++        resources.drain(initialization::queue);
++        initialization.queue(ClientboundBedrockPackets.SPAWN_PARTICLE_EFFECT, new byte[]{3});
++        assertTrue(received.isEmpty());
++        assertEquals(3, initialization.packetCount());
++        channels.addChannels(List.of("test:particles"));
++        client.callbacks.getFirst().run();
++        client.callbacks.getFirst().run();
++        assertEquals(List.of(1, 2, 3), received);
++        verify(initialization, times(1)).drain(client.user);
++    }
++
++    @Test
++    void ignoresAcknowledgmentsForReplacedOrDisconnectedWorlds() {
++        final ClientAcknowledgments client = new ClientAcknowledgments();
++        final WorldPacketBuffer previous = spy(new WorldPacketBuffer());
++        final WorldPacketBuffer current = spy(new WorldPacketBuffer());
++        previous.awaitClient(client.user);
++        current.awaitClient(client.user);
++        client.callbacks.getFirst().run();
++        assertSame(current, client.current.get());
++        verify(previous, never()).drain(client.user);
++
++        when(client.channel.isActive()).thenReturn(false);
++        client.callbacks.getLast().run();
++        assertSame(current, client.current.get());
++        verify(current, never()).drain(client.user);
++    }
++
++    @Test
++    void buffersImmutablePacketsInOrderAndLimitsAccumulation() {
++        final WorldPacketBuffer storage = new WorldPacketBuffer();
++        final byte[] bytes = new byte[]{7};
++        storage.queue(ClientboundBedrockPackets.PLAYER_LIST, bytes);
++        bytes[0] = 9;
++        storage.queue(ClientboundBedrockPackets.PLAYER_SKIN, bytes);
++        final List<Integer> received = new ArrayList<>();
++        final List<ClientboundBedrockPackets> types = new ArrayList<>();
++        storage.drain((type, payload) -> {
++            types.add(type);
++            received.add((int) payload[0]);
++        });
++        assertEquals(List.of(7, 9), received);
++        assertEquals(List.of(ClientboundBedrockPackets.PLAYER_LIST, ClientboundBedrockPackets.PLAYER_SKIN), types);
++        assertEquals(0, storage.packetCount());
++        for (int i = 0; i < 10000; i++) {
++            storage.queue(ClientboundBedrockPackets.SET_TIME, new byte[0]);
++        }
++        assertThrows(IllegalStateException.class, () -> storage.queue(ClientboundBedrockPackets.SET_TIME, new byte[0]));
++    }
++
++    @Test
++    void resumesTypedPacketsWithoutRepeatingBaseProtocolsAndKeepsCancellationSemantics() {
++        final List<ClientboundBedrockPackets> handled = new ArrayList<>();
++        final List<Integer> sent = new ArrayList<>();
++        final Protocol<?, ?, ?, ?> base = protocol(true, (state, wrapper) -> fail("Buffered packets already passed base protocols"));
++        final Protocol<?, ?, ?, ?> translator = protocol(false, (state, wrapper) -> {
++            assertEquals(State.PLAY, state);
++            final ClientboundBedrockPackets type = (ClientboundBedrockPackets) wrapper.getPacketType();
++            handled.add(type);
++            final int value = wrapper.read(Types.INT);
++            if (type == ClientboundBedrockPackets.PLAYER_LIST) {
++                wrapper.cancel();
++                throw new CancelException();
++            }
++            wrapper.setPacketType(ClientboundPackets26_3.PLAYER_INFO_UPDATE);
++            wrapper.write(Types.INT, value + 1);
++        });
++        final Protocol<?, ?, ?, ?> downstream = protocol(false, (state, wrapper) -> {
++            assertEquals(State.PLAY, state);
++            assertSame(ClientboundPackets26_3.PLAYER_INFO_UPDATE, wrapper.getPacketType());
++            wrapper.write(Types.INT, wrapper.read(Types.INT) + 100);
++        });
++        final ProtocolPipeline pipeline = (ProtocolPipeline) Proxy.newProxyInstance(ProtocolPipeline.class.getClassLoader(), new Class<?>[]{ProtocolPipeline.class}, (proxy, method, arguments) -> {
++            assertEquals("pipes", method.getName());
++            assertSame(BedrockProtocol.class, arguments[0]);
++            assertEquals(false, arguments[1]);
++            assertSame(Direction.CLIENTBOUND, arguments[2]);
++            return List.of(base, translator, downstream);
++        });
++        final ProtocolInfo info = (ProtocolInfo) Proxy.newProxyInstance(ProtocolInfo.class.getClassLoader(), new Class<?>[]{ProtocolInfo.class}, (proxy, method, arguments) -> {
++            return switch (method.getName()) {
++                case "getPipeline" -> pipeline;
++                case "getServerState", "getClientState" -> State.CONFIGURATION;
++                default -> throw new UnsupportedOperationException(method.getName());
++            };
++        });
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class}, (proxy, method, arguments) -> {
++            if (method.getName().equals("getProtocolInfo")) {
++                return info;
++            }
++            if (method.getName().equals("sendRawPacket") && arguments.length == 1) {
++                final ByteBuf output = (ByteBuf) arguments[0];
++                try {
++                    assertEquals(ClientboundPackets26_3.PLAYER_INFO_UPDATE.getId(), Types.VAR_INT.readPrimitive(output));
++                    sent.add(output.readInt());
++                    assertFalse(output.isReadable());
++                } finally {
++                    output.release();
++                }
++                return null;
++            }
++            throw new UnsupportedOperationException(method.getName());
++        });
++        final WorldPacketBuffer gate = new WorldPacketBuffer();
++        for (ClientboundBedrockPackets type : List.of(ClientboundBedrockPackets.PLAYER_LIST, ClientboundBedrockPackets.PLAYER_SKIN, ClientboundBedrockPackets.PLAYER_SKIN)) {
++            final ByteBuf payload = Unpooled.buffer();
++            try {
++                payload.writeInt(handled.size() + gate.packetCount());
++                final byte[] bytes = new byte[payload.readableBytes()];
++                payload.readBytes(bytes);
++                gate.queue(type, bytes);
++            } finally {
++                payload.release();
++            }
++        }
++        gate.drain((type, bytes) -> {
++            final ByteBuf payload = Unpooled.wrappedBuffer(bytes);
++            try {
++                PacketFactory.replayClientbound(new PacketWrapperImpl(type, payload, user));
++            } finally {
++                payload.release();
++            }
++        });
++        assertEquals(List.of(ClientboundBedrockPackets.PLAYER_LIST, ClientboundBedrockPackets.PLAYER_SKIN, ClientboundBedrockPackets.PLAYER_SKIN), handled);
++        assertEquals(List.of(102, 103), sent);
++        assertEquals(0, gate.packetCount());
++    }
++
++    private static Protocol<?, ?, ?, ?> protocol(final boolean base, final Transform transform) {
++        return (Protocol<?, ?, ?, ?>) Proxy.newProxyInstance(Protocol.class.getClassLoader(), new Class<?>[]{Protocol.class}, (proxy, method, arguments) -> {
++            if (method.getName().equals("isBaseProtocol")) {
++                return base;
++            }
++            if (method.getName().equals("transform")) {
++                assertSame(Direction.CLIENTBOUND, arguments[0]);
++                transform.apply((State) arguments[1], (PacketWrapper) arguments[2]);
++                return null;
++            }
++            throw new UnsupportedOperationException(method.getName());
++        });
++    }
++
++    private static final class ClientAcknowledgments {
++
++        private final UserConnection user = mock(UserConnection.class);
++        private final Channel channel = mock(Channel.class);
++        private final AtomicReference<WorldPacketBuffer> current = new AtomicReference<>();
++        private final List<Runnable> callbacks = new ArrayList<>();
++
++        private ClientAcknowledgments() {
++            final PacketSyncStorage sync = mock(PacketSyncStorage.class);
++            when(this.user.get(PacketSyncStorage.class)).thenReturn(sync);
++            when(this.user.getChannel()).thenReturn(this.channel);
++            when(this.channel.isActive()).thenReturn(true);
++            when(this.user.get(WorldPacketBuffer.class)).thenAnswer(ignored -> this.current.get());
++            when(this.user.remove(WorldPacketBuffer.class)).thenAnswer(ignored -> this.current.getAndSet(null));
++            doAnswer(invocation -> {
++                this.current.set(invocation.getArgument(0));
++                return null;
++            }).when(this.user).put(any(WorldPacketBuffer.class));
++            doAnswer(invocation -> {
++                this.callbacks.add(invocation.getArgument(0));
++                return null;
++            }).when(sync).syncWithClient(any(Runnable.class));
++        }
++
++    }
++
++    @FunctionalInterface
++    private interface Transform {
++
++        void apply(State state, PacketWrapper wrapper) throws CancelException;
++
 +    }
 +
 +}

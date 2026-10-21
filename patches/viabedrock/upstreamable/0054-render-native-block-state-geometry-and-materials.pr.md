@@ -323,3 +323,32 @@ Keep all native terrain atlas variants for explicit auxiliary-value lookup.
 Scalar server overrides apply to every variant.
 The existing first-path block API retains its behavior.
 Native glass-pane item conversion uses the indexed lookup for all sixteen stained-glass colors.
+
+## Wait for the Java play listener
+
+The Enchanted lobby recording sends custom particles before Fabric registers its play channels.
+Fabric networking API 6.3.8 sends that registration after Java login.
+Minecraft 26.3 handles the following ping on the same client packet thread before sending pong.
+The existing ping acknowledgement therefore provides an initialization boundary without a fixed delay.
+
+Separate supplemental-pack acknowledgement from the bounded world packet buffer.
+Keep world packets in order through pack loading and play-listener initialization.
+Release them after pong, including joins without a supplemental custom-block pack.
+Preserve pre-StartGame skin handling and ordinary Java translation fallbacks.
+Ignore callbacks for replaced buffers or disconnected connections.
+The camera observer now waits for both buffering phases before checking retained preset bytes.
+
+Targeted tests cover ordered delivery across both phases, registration before release,
+one-shot release, replacement and disconnect isolation, immutable payloads, and packet bounds.
+
+
+The 130-second Enchanted replay records 2,196 native particle render frames across ten effect identifiers,
+with up to 99 particles in 68 emitters. This includes the font, sparkle, and child highlight effects.
+Startup unknown-particle warnings fall from ten to zero, with no particle loading or initialization errors.
+The kits menu still sends form ID 2 with response index 2 after clicking its third card.
+All 273 skins and 270 supplied geometry records install; transport passes.
+Rendering verification still fails on unresolved mappings. These observations do not establish native visual parity.
+
+All four projects build with 2,149 passing tests and 152 optional skips.
+All 102 core patches replay. Offline validation passes 263 tooling tests and metadata checks.
+All four replay self-test groups pass. The seven owned test processes close normally.
