@@ -1,4 +1,4 @@
-From 6527bdd31699b452e1c34c506659f46ca185876f Mon Sep 17 00:00:00 2001
+From b738c75be1f4b18613e0f98bd78ab372982af3b9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -439,6 +439,24 @@ reader 1424d06e0 and shield reader 143043940. Returning at the marker lost
 state needed to distinguish cooking outputs and item behavior. Both
 network item layouts share this loader and retain partial-tail behavior.
 Positive legacy NBT markers remain outside this correction.
+
+Share the native transfer quantity decoder across pickup and authored
+count-one request paths. Preserve explicit-count bounds, the separate
+all/half/one descriptor domains, unsigned-byte narrowing, and rejection
+of unknown descriptor values. Source validity, maximum-stack resolution,
+permissions and destination capacity remain separate executor steps.
+
+Bedrock 1.26.51.1 build 51061372, protocol 2193, establishes the decoder
+at 1433e8615 within transfer executor 1433e8380, including the out-of-line
+one branch at 1433e8928. A private fixture executes the original decoder
+instructions for 1,638 descriptor and count cases. This proves this
+internal count boundary, not complete recipe dispatch or native UI parity.
+
+Reject native count-one sources without a positive server stack network
+ID and skip unresolved occupied merge destinations. Do not unbox a
+missing ID or send a predicted request with an unresolved identity.
+Keep empty destinations at network ID zero and derive predicted counts
+from the actual emitted action.
 ---
  Data Asset Sources.md                         |    8 +
  build.gradle                                  |    3 +-
@@ -448,7 +466,8 @@ Positive legacy NBT markers remain outside this correction.
  .../api/model/container/HorseContainer.java   |  239 ++
  .../NativeContainerActionBackend.java         |  143 +
  .../NativeContainerActionSession.java         |  133 +
- .../NativeContainerAutoPlacement.java         |  150 +
+ .../NativeContainerAutoPlacement.java         |  155 +
+ .../container/NativeTransferQuantity.java     |   40 +
  .../model/container/block/AnvilContainer.java |  178 +
  .../container/block/BeaconContainer.java      |  238 +
  .../block/BlastFurnaceContainer.java          |   51 +
@@ -507,8 +526,9 @@ Positive legacy NBT markers remain outside this correction.
  .../viabedrock/data/custom/block_tags.json    |   16 +-
  .../api/model/container/ContainerTest.java    |  198 +
  .../model/container/HorseContainerTest.java   |  187 +
- .../NativeContainerActionSessionTest.java     |  115 +
- .../NativeContainerAutoPlacementTest.java     |  139 +
+ .../NativeContainerActionSessionTest.java     |  128 +
+ .../NativeContainerAutoPlacementTest.java     |  165 +
+ .../container/NativeTransferQuantityTest.java |   60 +
  .../block/BrewingStandContainerTest.java      |   29 +
  .../block/EnchantmentContainerTest.java       |  120 +
  .../container/block/LecternContainerTest.java |   84 +
@@ -549,12 +569,13 @@ Positive legacy NBT markers remain outside this correction.
  .../item/NetworkItemConstructionTest.java     |  165 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 109 files changed, 19799 insertions(+), 952 deletions(-)
+ 111 files changed, 19943 insertions(+), 952 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionBackend.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSession.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacement.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeTransferQuantity.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BlastFurnaceContainer.java
@@ -590,6 +611,7 @@ Positive legacy NBT markers remain outside this correction.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/HorseContainerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSessionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacementTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/NativeTransferQuantityTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/block/BrewingStandContainerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/block/EnchantmentContainerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/block/LecternContainerTest.java
@@ -738,7 +760,7 @@ index a37f1b071..d535541bf 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-index 26f172417..d2c723f6c 100644
+index 26f172417..10ad6b7de 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 @@ -21,18 +21,50 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -973,7 +995,7 @@ index 26f172417..d2c723f6c 100644
 +            final int bedrockSlot,
 +            final byte button,
 +            final BedrockItem item) {
-+        final int amountToTake = button == 0 ? item.amount() : (item.amount() + 1) / 2;
++        final int amountToTake = (button == 0 ? NativeTransferQuantity.ALL : NativeTransferQuantity.HALF).count(item.amount());
 +
 +        final BedrockItem finalCursorItem = this.copyStackWithAmount(item, amountToTake);
 +        clickContext.inventoryTracker.getHudContainer().setItem(0, finalCursorItem);
@@ -997,7 +1019,7 @@ index 26f172417..d2c723f6c 100644
 +        if (!container.canPlaceItem(bedrockSlot, cursorItem)) {
 +            return null;
 +        }
-+        final int amt = button == 0 ? cursorItem.amount() : 1;
++        final int amt = (button == 0 ? NativeTransferQuantity.ALL : NativeTransferQuantity.ONE).count(cursorItem.amount());
 +        final int amountToPlace =
 +                item.isDifferent(cursorItem)
 +                        ? Math.min(amt, this.user.get(ItemRewriter.class).maxStackSize(cursorItem))
@@ -2507,10 +2529,10 @@ index 000000000..1cddc51b5
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacement.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacement.java
 new file mode 100644
-index 000000000..2e1dc08af
+index 000000000..54fbeeaa1
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacement.java
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,155 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2553,7 +2575,7 @@ index 000000000..2e1dc08af
 +            throw new IllegalArgumentException("Unsupported native container action provider");
 +        }
 +        final BedrockItem source = current.getItem(sourceSlot);
-+        if (source.isEmpty()) {
++        if (source.isEmpty() || !hasServerIdentity(source)) {
 +            return null;
 +        }
 +        requireUnlocked(source);
@@ -2567,6 +2589,7 @@ index 000000000..2e1dc08af
 +                }
 +                if (merge) {
 +                    if (destination.isEmpty()
++                            || !hasServerIdentity(destination)
 +                            || destination.isDifferent(source)
 +                            || destination.amount() >= maximumStackSize) {
 +                        continue;
@@ -2577,7 +2600,7 @@ index 000000000..2e1dc08af
 +                requireUnlocked(destination);
 +                final var action =
 +                        new ItemStackRequestAction.PlaceAction(
-+                                1,
++                                NativeTransferQuantity.ONE.count(source.amount()),
 +                                current.requestSlotInfo(sourceSlot, source.netId()),
 +                                inventory.requestSlotInfo(
 +                                        destinationSlot,
@@ -2618,6 +2641,10 @@ index 000000000..2e1dc08af
 +        }
 +    }
 +
++    private static boolean hasServerIdentity(final BedrockItem item) {
++        return item.netId() != null && item.netId() > 0;
++    }
++
 +    public record Binding(Container menu, long generation, long presentationSequence) {
 +
 +        public Binding {
@@ -2642,11 +2669,11 @@ index 000000000..2e1dc08af
 +            ItemStackRequestAction.PlaceAction action) {
 +
 +        public BedrockItem sourceAfter() {
-+            if (this.sourceBefore.amount() == 1) {
++            if (this.sourceBefore.amount() == this.action.count()) {
 +                return BedrockItem.empty();
 +            }
 +            final BedrockItem result = this.sourceBefore.copy();
-+            result.setAmount(result.amount() - 1);
++            result.setAmount(result.amount() - this.action.count());
 +            return result;
 +        }
 +
@@ -2655,9 +2682,55 @@ index 000000000..2e1dc08af
 +                    this.destinationBefore.isEmpty()
 +                            ? this.sourceBefore.copy()
 +                            : this.destinationBefore.copy();
-+            result.setAmount(this.destinationBefore.amount() + 1);
++            result.setAmount(this.destinationBefore.amount() + this.action.count());
 +            return result;
 +        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeTransferQuantity.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeTransferQuantity.java
+new file mode 100644
+index 000000000..735aae93a
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeTransferQuantity.java
+@@ -0,0 +1,40 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container;
++
++/** Native transfer quantity decoding, after source validation and available-count resolution. */
++public record NativeTransferQuantity(int kind, int value) {
++
++    public static final NativeTransferQuantity ALL = new NativeTransferQuantity(1, 0);
++    public static final NativeTransferQuantity HALF = new NativeTransferQuantity(1, 1);
++    public static final NativeTransferQuantity ONE = new NativeTransferQuantity(1, 2);
++
++    /**
++     * Resolve the descriptor before source-count and destination-capacity limits are applied.
++     * The native executor narrows its resolved available count to an unsigned byte here.
++     * In particular, the one modes return one even for zero at this internal boundary;
++     * callers must reject an empty source before decoding a transfer.
++     */
++    public int count(final int available) {
++        final int count = available & 0xFF;
++        return switch (this.kind) {
++            case 0 -> Math.max(0, Math.min(count, this.value));
++            case 1 -> switch (this.value) {
++                case 0 -> count;
++                case 1 -> (count + 1) >>> 1;
++                case 2 -> 1;
++                default -> 0;
++            };
++            case 2 -> switch (this.value) {
++                case 0 -> count;
++                case 1 -> 1;
++                default -> 0;
++            };
++            default -> 0;
++        };
 +    }
 +
 +}
@@ -17013,10 +17086,10 @@ index 000000000..c093868a2
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSessionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSessionTest.java
 new file mode 100644
-index 000000000..507adac07
+index 000000000..3be14d14e
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSessionTest.java
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,128 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -17087,6 +17160,19 @@ index 000000000..507adac07
 +        org.mockito.Mockito.when(game.isInventoryServerAuthoritative()).thenReturn(false);
 +        check(!session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, sender));
 +        org.mockito.Mockito.when(game.isInventoryServerAuthoritative()).thenReturn(true);
++        for (final Integer networkId : java.util.Arrays.asList(null, 0, -3)) {
++            final var unresolved = item(4, 1008);
++            unresolved.setNetId(networkId);
++            requests.setPredictingClick(true);
++            menu.setItem(9, unresolved);
++            requests.setPredictingClick(false);
++            check(!session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, sender));
++            check(sent.get() == 0 && !requests.hasPending() && !requests.isPredictingClick());
++            check(menu.getItem(9).amount() == 4 && inventory.getInventoryContainer().getItem(0).isEmpty());
++        }
++        requests.setPredictingClick(true);
++        menu.setItem(9, item(4, 1008));
++        requests.setPredictingClick(false);
 +        check(session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, sender));
 +        check(
 +                menu.getItem(9).amount() == 3
@@ -17134,10 +17220,10 @@ index 000000000..507adac07
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacementTest.java
 new file mode 100644
-index 000000000..e1077ab98
+index 000000000..35a42fdf6
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacementTest.java
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,165 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -17241,6 +17327,32 @@ index 000000000..e1077ab98
 +        return item;
 +    }
 +
++    @org.junit.jupiter.api.Test
++    void refusesUnresolvedSourceIdentitiesAndSkipsUnresolvedMergeDestinations() {
++        final var source = new ChestContainer(null, (byte) 6, null, null, 27);
++        final var inventory = new Player();
++        final var binding = new NativeContainerAutoPlacement.Binding(source, 7, 8);
++        for (final Integer networkId : Arrays.asList(null, 0, -3, Integer.MIN_VALUE)) {
++            final var unresolved = item(4, 1);
++            unresolved.setNetId(networkId);
++            source.items[0] = unresolved;
++            org.junit.jupiter.api.Assertions.assertNull(
++                    NativeContainerAutoPlacement.plan(binding, source, 7, 8, 0, inventory, 64));
++            check(source.getItem(0).amount() == 4 && inventory.getItem(0).isEmpty());
++            source.items[0] = item(4, 1008);
++            inventory.put(0, unresolved);
++            final var plan = NativeContainerAutoPlacement.plan(binding, source, 7, 8, 0, inventory, 64);
++            check(plan.destinationSlot() == 1 && plan.action().destination().stackNetworkId() == 0);
++            check(inventory.getItem(0).amount() == 4 && inventory.getItem(1).isEmpty());
++            inventory.put(0, BedrockItem.empty());
++        }
++        source.items[0] = item(255, Integer.MAX_VALUE);
++        inventory.put(0, item(254, Integer.MAX_VALUE - 1));
++        final var plan = NativeContainerAutoPlacement.plan(binding, source, 7, 8, 0, inventory, 255);
++        check(plan.action().count() == 1 && plan.sourceAfter().amount() == 254 && plan.destinationAfter().amount() == 255);
++        check(source.getItem(0).amount() == 255 && inventory.getItem(0).amount() == 254);
++    }
++
 +    private static void check(final boolean condition) {
 +        org.junit.jupiter.api.Assertions.assertTrue(condition);
 +    }
@@ -17274,6 +17386,72 @@ index 000000000..e1077ab98
 +        protected boolean canPlaceItem(final int slot, final BedrockItem item) {
 +            return slot != this.forbidden;
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/NativeTransferQuantityTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeTransferQuantityTest.java
+new file mode 100644
+index 000000000..be76ce6df
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeTransferQuantityTest.java
+@@ -0,0 +1,60 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container;
++
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeTransferQuantityTest {
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_TRANSFER_QUANTITIES", matches = ".+")
++    void matchesOriginalNativeDecoderIncludingRejectedDescriptors() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(
++                System.getenv("STACKANVIL_NATIVE_TRANSFER_QUANTITIES")))).getAsJsonObject();
++        final var rows = reference.getAsJsonArray("rows");
++        assertFalse(rows.isEmpty());
++        for (final var element : rows) {
++            final var row = element.getAsJsonObject();
++            final var quantity = new NativeTransferQuantity(row.get("kind").getAsInt(), row.get("value").getAsInt());
++            assertEquals(row.get("result").getAsInt(), quantity.count(row.get("available").getAsInt()), row::toString);
++        }
++    }
++
++    @Test
++    void preservesTheDistinctNativeDescriptorDomains() {
++        assertEquals(4, new NativeTransferQuantity(0, 4).count(9));
++        assertEquals(9, new NativeTransferQuantity(0, Integer.MAX_VALUE).count(9));
++        assertEquals(0, new NativeTransferQuantity(0, Integer.MIN_VALUE).count(9));
++        assertEquals(9, NativeTransferQuantity.ALL.count(9));
++        assertEquals(5, NativeTransferQuantity.HALF.count(9));
++        assertEquals(1, NativeTransferQuantity.ONE.count(9));
++        assertEquals(9, new NativeTransferQuantity(2, 0).count(9));
++        assertEquals(1, new NativeTransferQuantity(2, 1).count(9));
++        assertEquals(0, new NativeTransferQuantity(2, 2).count(9));
++        assertEquals(0, new NativeTransferQuantity(1, -1).count(9));
++        assertEquals(0, new NativeTransferQuantity(3, 0).count(9));
++        // This is the decoder boundary. The executor's empty-source guard precedes it.
++        assertEquals(1, NativeTransferQuantity.ONE.count(0));
++        assertEquals(0, NativeTransferQuantity.ALL.count(0));
++    }
++
++    @Test
++    void narrowsAvailableCountsBeforeQuantitySelection() {
++        assertEquals(255, NativeTransferQuantity.ALL.count(-1));
++        assertEquals(128, NativeTransferQuantity.HALF.count(-1));
++        assertEquals(0, NativeTransferQuantity.ALL.count(256));
++        assertEquals(1, NativeTransferQuantity.ALL.count(257));
++        assertEquals(255, new NativeTransferQuantity(0, 300).count(511));
 +    }
 +
 +}

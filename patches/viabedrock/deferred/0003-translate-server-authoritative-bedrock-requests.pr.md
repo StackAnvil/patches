@@ -555,3 +555,27 @@ The shared loader now reads those fields instead of returning at the marker.
 Both item wire formats retain the fields, and a truncated tail retains earlier completed fields.
 The target 1.26.51.1 generic reader and shield reader establish this control flow.
 Positive legacy NBT markers and invalid-version behavior remain outside this correction.
+
+
+## Native transfer quantities and request identities
+
+Pickup requests and authored count-one transfers now share the native quantity decoder.
+It preserves explicit counts, the two distinct descriptor domains, unsigned-byte narrowing, and rejection of unknown values.
+Source validity, maximum-stack resolution, permissions and destination capacity remain separate steps.
+
+The native count-one backend rejects sources without a positive server stack network ID.
+It skips occupied merge destinations with unresolved IDs and retains zero for empty destinations.
+These guards prevent a missing-ID exception and requests with unresolved identities before prediction starts.
+
+A private fixture executes the unchanged decoder in Bedrock 1.26.51.1, build 51061372, protocol 2193.
+The comparison covers 1,638 cases, including signed extremes, byte narrowing, invalid descriptors and the separate one branch.
+All 28 selected Java tests pass with the native fixture enabled. Both Checkstyle tasks pass.
+The fixture establishes the internal quantity calculation. It excludes source validation, permission callbacks, destination limits, mutation, requests and UI behavior.
+Native cooking dispatch, item return behavior and authored workstation controls remain unfinished.
+
+The complete four-project build passes 2,348 Java tests, with 152 optional skips and no failures or errors.
+All 102 core patches and 38 client patches replay cleanly. Tooling checks, 264 regressions and patch metadata checks pass.
+
+A fresh strict-BDS ViaProxy run passes both authored chest transfers, ordinary chest transfer, pickup-all, and all three cooking controls.
+Initial join and same-world reconnect also pass. The runner stops its private display normally.
+These controls verify the existing request paths with the rebuilt artifacts. They do not establish authored cooking control or native visual parity.
