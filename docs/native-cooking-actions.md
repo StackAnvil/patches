@@ -28,6 +28,7 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Repeated recipe placement | 30 input steps and snapshots | Capacity, selection clearing, return to player inventory, and placement after return |
 | Predicted request payload identities | 5 complete payloads | Native identity callbacks assign request references after slot mutation |
 | Owned request finalization and flush | 1 cooking payload plus an empty flush | Native ownership release, queue removal, packet construction, serialization, and cleanup |
+| Isolated primary phases | 3 controls | Phase-zero transfers, phase-one-only rejection, and distinct retained controller states |
 | Cooking item-return planner | 1,500 cases | Original-slot deficits and the remaining count passed to auto-placement |
 | Physical-slot snapshot producer | 45 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
 | Registered cooking providers | 3 ingredient descriptors | Eleven registrations, native model import, skip callbacks, and 76-slot capture order |
@@ -236,6 +237,15 @@ The first-placement fixture's recipe, world, model-owner, and external interface
 Other recipes, Item definitions, input modes, complete serialization, server acceptance, and visual parity remain unverified.
 The Java recipe-book planner's one-increment mode does not implement this authored primary action.
 
+Three fresh controls isolate primary event delivery with owned prediction and no explicitly opened request.
+Phase `0` alone moves twelve ingredients through two requests, then returns to state `1`.
+The original transition observer records `1` to `25`, then `25` to `1`.
+Phase `1` alone moves nothing and remains in state `1`.
+The combined phase `0`, then phase `1` input moves twelve ingredients once and retains state `25`.
+Native flush serializes each nonempty queue and preserves its request references.
+These controls supply the raw flags from the input-delivery table. They do not establish physical device mappings.
+A primary command alone therefore does not establish a retained selected state.
+
 ## Request payload identities
 
 The enabled prediction fixture executes the native client manager and its container identity callbacks.
@@ -319,6 +329,31 @@ Native flush serializes both requests in one packet and preserves the reference 
 The input-child vector remains empty, and the complete screen registration method does not execute.
 An enclosing frame scope or deferred recipe component can change this batching.
 This omission control therefore does not establish full application request grouping.
+
+The native configuration registry defaults `enable_client_container_simulation` to false.
+Registration `0x140911d59` associates configuration ID `35` with the ContainerScreenSimulation description.
+A fresh fixture reads that original registry and executes gate `0x1433f91d0` without changing its flag.
+The gate returns false, and cooking initializer `0x14c53ded0` leaves its simulation helper absent.
+This excludes that helper from the fixture's default path. Independent frame scopes and full controller construction remain unverified.
+
+## Reconcile ordinary transfer batches
+
+The core request tracker can retain separately scoped ordinary transfers as one pending batch.
+Each request captures its own intermediate prediction before the next transfer changes the containers.
+The sender preserves those captures when it writes the batch.
+
+The tracker buffers responses until every request receives a result, then processes them in request order.
+It restores the oldest snapshots and replays accepted deltas before applying each server response.
+A later rejection therefore preserves earlier accepted counts and confirmed stack IDs.
+Server revisions protect newer contents, and menu generations protect replacement menus.
+Each buffered response retains the server revision from its arrival.
+Later contents supersede earlier buffered acknowledgments before reconciliation.
+Queued clicks wait for the complete batch. A rejection discards them.
+If packet submission throws, the tracker restores the snapshots and releases pending ownership.
+
+Targeted tests cover reversed and duplicate responses, partial rejection, complete rejection, newer server contents, and replacement menus.
+Craft-result requests retain their separate synchronization path.
+The authored cooking backend still needs to construct and submit these transfers.
 
 ## Transfer quantities
 

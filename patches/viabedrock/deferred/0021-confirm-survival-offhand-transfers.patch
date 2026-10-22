@@ -1,4 +1,4 @@
-From 5dcb3957248d7c07dcd1d6741981db87c12621cb Mon Sep 17 00:00:00 2001
+From c9ca50059785798f6f00a36a58abaaa13925ce89 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] fix(inventory): confirm survival offhand transfers from
@@ -288,10 +288,10 @@ index 5ffd06945..3c5986599 100644
                          final var status = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, wrapper.user());
                          status.write(Types.STRING, NativeContainerStatus.CHANNEL);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
-index 8ec946ec8..c695b43ce 100644
+index 195eb1538..6690c6cd5 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
-@@ -43,6 +43,7 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+@@ -45,6 +45,7 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
  import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseContainerInfo;
  import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseInfo;
  import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseSlotInfo;
@@ -299,9 +299,9 @@ index 8ec946ec8..c695b43ce 100644
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  
  import java.util.ArrayDeque;
-@@ -71,6 +72,10 @@ public class InventoryRequestTracker extends StoredObject {
-     private boolean predictingClick;
-     private CraftedItemSynchronization craftedItemSynchronization;
+@@ -77,6 +78,10 @@ public class InventoryRequestTracker extends StoredObject {
+     private TransferBatch transferBatch;
+     private Set<Container> batchChanges;
      private MineBlockRequest mineBlockRequest;
 +    private PendingLegacyOffhand pendingLegacyOffhand;
 +    private PendingLegacyCursorPlacement pendingLegacyCursorPlacement;
@@ -310,7 +310,7 @@ index 8ec946ec8..c695b43ce 100644
  
      public InventoryRequestTracker(final UserConnection user) {
          super(user);
-@@ -99,13 +104,85 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -165,13 +170,85 @@ public class InventoryRequestTracker extends StoredObject {
      }
  
      public boolean canStartRecipePlacement() {
@@ -397,7 +397,7 @@ index 8ec946ec8..c695b43ce 100644
      public void setPredictingClick(final boolean predictingClick) {
          this.predictingClick = predictingClick;
      }
-@@ -125,7 +202,7 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -191,7 +268,7 @@ public class InventoryRequestTracker extends StoredObject {
  
      public boolean queueClick(final Container container, final int revision, final short slot,
                                final byte button, final ContainerInput action) {
@@ -406,7 +406,7 @@ index 8ec946ec8..c695b43ce 100644
      }
  
      public boolean isWaitingForInventoryOpen() {
-@@ -164,15 +241,17 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -230,15 +307,17 @@ public class InventoryRequestTracker extends StoredObject {
  
      public void handleInventoryOpen(final Container container) {
          for (final InventoryOpenClick click : this.pendingInventoryOpenClicks.drain()) {
@@ -427,7 +427,7 @@ index 8ec946ec8..c695b43ce 100644
                  PacketFactory.sendJavaContainerSetContent(this.user(), container);
              }
          }
-@@ -234,6 +313,28 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -303,6 +382,28 @@ public class InventoryRequestTracker extends StoredObject {
      }
  
      public void tick() {
@@ -456,7 +456,7 @@ index 8ec946ec8..c695b43ce 100644
          if (this.pendingInventoryOpenClicks.expire(
                  System.nanoTime(), RESPONSE_TIMEOUT_NANOS)) {
              this.clearQueuedInteractions();
-@@ -246,6 +347,11 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -315,6 +416,11 @@ public class InventoryRequestTracker extends StoredObject {
              this.mineBlockRequest = null;
          }
          if (!this.hasPending()) {
@@ -468,7 +468,7 @@ index 8ec946ec8..c695b43ce 100644
              return;
          }
          final long now = System.nanoTime();
-@@ -301,13 +407,15 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -370,7 +476,7 @@ public class InventoryRequestTracker extends StoredObject {
                  this.closeTemporaryInventoryIfIdle();
              }
          }
@@ -477,15 +477,16 @@ index 8ec946ec8..c695b43ce 100644
              return;
          }
          final InventoryTracker tracker = this.user().get(InventoryTracker.class);
-         if (this.recovery.observe(container, tracker.getHudContainer(), fullContent, slot)) {
+@@ -378,6 +484,8 @@ public class InventoryRequestTracker extends StoredObject {
              this.requests.clear();
+             this.transferBatch = null;
              this.craftedItemSynchronization = null;
 +            this.recoveringLegacyOffhand = false;
 +            this.legacyOffhandCursor = null;
              this.resetRecovery();
              tracker.getInventoryContainer().updateCraftingOutput();
              PacketFactory.sendJavaContainerSetContent(this.user(), tracker.getInventoryContainer());
-@@ -539,7 +647,8 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -672,7 +780,8 @@ public class InventoryRequestTracker extends StoredObject {
  
      void drainQueuedInteractions() {
          final InventoryTracker tracker = this.user().get(InventoryTracker.class);
@@ -495,7 +496,7 @@ index 8ec946ec8..c695b43ce 100644
                  && !this.isWaitingForInventoryOpen()
                  && !this.queuedInteractions.isEmpty()) {
              final QueuedInteraction interaction = this.queuedInteractions.removeFirst();
-@@ -556,6 +665,29 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -689,6 +798,29 @@ public class InventoryRequestTracker extends StoredObject {
      private record MineBlockRequest(int requestId, int hotbarSlot, int stackNetworkId,
                                      long sentAtNanos) { }
  
@@ -525,7 +526,7 @@ index 8ec946ec8..c695b43ce 100644
      static final class PendingInventoryOpenClicks {
  
          private final ArrayDeque<InventoryOpenClick> clicks = new ArrayDeque<>();
-@@ -631,12 +763,14 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -782,12 +914,14 @@ public class InventoryRequestTracker extends StoredObject {
          boolean apply();
      }
  

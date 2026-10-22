@@ -579,3 +579,26 @@ All 102 core patches and 38 client patches replay cleanly. Tooling checks, 264 r
 A fresh strict-BDS ViaProxy run passes both authored chest transfers, ordinary chest transfer, pickup-all, and all three cooking controls.
 Initial join and same-world reconnect also pass. The runner stops its private display normally.
 These controls verify the existing request paths with the rebuilt artifacts. They do not establish authored cooking control or native visual parity.
+
+## Ordinary transfer batches
+
+The request tracker can retain separately scoped ordinary transfers as one pending batch.
+Each request preserves its intermediate prediction. Responses wait for the complete batch and reconcile in request order.
+Reconciliation restores the oldest snapshots and replays accepted deltas before server acknowledgments.
+A later rejection preserves earlier accepted counts and confirmed stack IDs.
+Newer server revisions and replacement menu generations retain their existing protections.
+Queued clicks remain blocked until the batch completes. A rejection discards them.
+
+Eight regressions cover reversed and duplicate responses, queued input, partial and complete rejection, newer contents, menu replacement, registration guards, and failed submission.
+Each buffered response retains its arrival revision, so newer contents supersede an earlier acknowledgment before batch completion.
+Failed packet submission restores the snapshots and releases pending ownership.
+All 22 selected inventory tests pass, and both Checkstyle tasks pass before stack replay.
+
+A fresh pinned native control confirms the false default for `enable_client_container_simulation` and executes the original disabled cooking initializer.
+The controlled input still emits two owned requests in one packet, with the second destination referencing the first request ID.
+The complete native controller, model owner, and independent frame scopes remain unverified.
+This batch API does not activate authored cooking controls. Their backend remains unfinished.
+
+The full four-project build passes 2,399 tests, with 213 optional skips and no failures or errors.
+All 104 core patches replay. Offline validation passes.
+All 1,392 core classes match the add-on's embedded core byte for byte.
