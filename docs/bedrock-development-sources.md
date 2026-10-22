@@ -68,6 +68,7 @@ Read the local generated checkout before changing a patch. The links to `main` h
 | [ViaFabricPlus Bedrock add-on](https://github.com/ViaVersionAddons/viafabricplus-bedrock) | Check client integration, network hooks, rendering, and account UI. |
 | [ViaVersion](https://github.com/ViaVersion/ViaVersion) | Check the translation API and Java protocol mappings. |
 | [StackAnvil patch workflow](patch-workflow.md) | Edit the generated checkout and rebuild the patch series. |
+| [Native cooking action reference](native-cooking-actions.md) | Check verified cooking dispatch, source, quantity, and item-return behavior and its remaining limits. |
 
 For a specific feature, search the local `protocol/packet`, `protocol/types`, and `protocol/data` directories. For maps, skins, login, and resource packs, start with `MapPackets`, `SkinType`, `LoginPackets`, and `ResourcePackPackets`. Some of these files are StackAnvil patches and do not exist on upstream `main`.
 
