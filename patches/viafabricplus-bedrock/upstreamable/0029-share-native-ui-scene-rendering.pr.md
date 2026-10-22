@@ -120,8 +120,11 @@ Those symptoms remain under investigation.
 The capture lab cannot copy a private profile with the currently available disk space.
 No new live client or server was launched for this report.
 
-## Recipe control states
+## Recipe and toggle states
 
 Recipe action annotations now select authored hover and locked branches without requiring an unrelated close annotation.
 The shared CPU presentation regression covers enabled, disabled, pointed, and unpointed states.
 This change does not establish native button pixels or physical device mapping.
+
+Native toggle groups select checked/unchecked hover and locked branches without a form response annotation.
+The presentation regression covers all eight checked, enabled, and pointer combinations. Native pixels and device equivalence remain separate gates.

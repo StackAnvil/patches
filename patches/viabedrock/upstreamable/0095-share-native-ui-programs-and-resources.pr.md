@@ -19,6 +19,12 @@ The full stack replays and all four projects build.
 Java verification passes 2,204 tests, with 152 optional skips and no failures or errors.
 The focused cooking, transport and container suite passes all 61 tests.
 
+The cooking controller now supplies its seven native tab and layout constants.
+The pinned publisher at `0x146c44040` assigns food/items/blocks/search/inventory indices `1..5` and survival/recipe-book layouts `1/2`.
+Without these globals, grouped toggles lose their forced indices during scene resolution.
+The bundled-scene regression checks resolved navigation and layout groups across export/import in all three cooking families.
+It fails before this change. This restores control identity; complete pointer, keyboard, controller, and visual behavior require separate evidence.
+
 ## Brewing program and counters
 
 The pinned Bedrock 1.26.51.1 assets supply the brewing screen, three indexed bottle cells, and fixed ingredient and fuel collections.
