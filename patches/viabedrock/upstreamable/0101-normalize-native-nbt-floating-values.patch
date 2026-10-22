@@ -1,0 +1,242 @@
+From 7cc20ef55adc3e60890aba8b36704a5ba9b35bfd Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 17:53:48 +0200
+Subject: [PATCH] fix(nbt): normalize native binary floating values
+
+Bedrock binary NBT loads float NaNs and non-finite doubles as positive
+zero, while preserving float infinities, signed zero and finite bits.
+Apply the same scalar rules when reading and writing little-endian NBT
+so item userdata and outgoing inventory snapshots use native values.
+Keep generic little-endian and network-NBT IO unchanged, and normalize
+at the stream boundary without mutating the authoritative tag tree.
+
+Evidence: Bedrock 1.26.51.1, protocol 2193, executable SHA-256
+537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7.
+The complete binary userdata loader at 0x1424d06e0 and actual writer
+normalization instructions at 0x14254b9f0 and 0x14254b2e0 agree on all
+28 tested scalar bit patterns. The writer probe stops before abstract
+output dispatch; it does not establish full native packet serialization.
+
+Tests cover each native value directly and inside a compound/list, retain
+source tag bits, and protect the generic little-endian IO behavior.
+---
+ .../protocol/types/primitive/TagLeType.java   |  44 +++++-
+ .../types/primitive/TagLeTypeTest.java        | 141 ++++++++++++++++++
+ 2 files changed, 183 insertions(+), 2 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeTypeTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeType.java
+index a3762f984..1c15a8214 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeType.java
+@@ -44,7 +44,7 @@ public class TagLeType extends Type<Tag> {
+ 
+         try {
+             BedrockTypes.UTF8_STRING.read(buffer);
+-            return TagRegistry.read(id, new LittleEndianByteBufInputStream(buffer), TagLimiter.noop(), 0);
++            return TagRegistry.read(id, new TagInput(buffer), TagLimiter.noop(), 0);
+         } catch (final IOException e) {
+             throw new UncheckedIOException(e);
+         }
+@@ -60,10 +60,50 @@ public class TagLeType extends Type<Tag> {
+         buffer.writeByte(value.getTagId());
+         BedrockTypes.UTF8_STRING.write(buffer, "");
+         try {
+-            value.write(new LittleEndianByteBufOutputStream(buffer));
++            value.write(new TagOutput(buffer));
+         } catch (final IOException e) {
+             throw new UncheckedIOException(e);
+         }
+     }
+ 
++    // Binary NBT preserves float infinities, but replaces float NaNs and all
++    // non-finite doubles with positive zero. Keep this out of generic LE IO.
++    private static final class TagInput extends LittleEndianByteBufInputStream {
++
++        private TagInput(final ByteBuf buffer) {
++            super(buffer);
++        }
++
++        @Override
++        public float readFloat() {
++            final float value = super.readFloat();
++            return Float.isNaN(value) ? 0F : value;
++        }
++
++        @Override
++        public double readDouble() {
++            final double value = super.readDouble();
++            return Double.isFinite(value) ? value : 0D;
++        }
++
++    }
++
++    private static final class TagOutput extends LittleEndianByteBufOutputStream {
++
++        private TagOutput(final ByteBuf buffer) {
++            super(buffer);
++        }
++
++        @Override
++        public void writeFloat(final float value) {
++            super.writeFloat(Float.isNaN(value) ? 0F : value);
++        }
++
++        @Override
++        public void writeDouble(final double value) {
++            super.writeDouble(Double.isFinite(value) ? value : 0D);
++        }
++
++    }
++
+ }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeTypeTest.java
+new file mode 100644
+index 000000000..238db0566
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeTypeTest.java
+@@ -0,0 +1,141 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.types.primitive;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.DoubleTag;
++import com.viaversion.nbt.tag.FloatTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.Tag;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.io.LittleEndianByteBufInputStream;
++import net.raphimc.viabedrock.api.io.LittleEndianByteBufOutputStream;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.Arguments;
++import org.junit.jupiter.params.provider.MethodSource;
++
++import java.util.List;
++import java.util.stream.Stream;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class TagLeTypeTest {
++
++    @ParameterizedTest
++    @MethodSource("nativeNumbers")
++    void matchesNativeBinaryNbtWithoutMutatingSourceTags(final int kind, final long input, final long expected) {
++        for (final boolean nested : new boolean[]{false, true}) {
++            final ByteBuf buffer = Unpooled.buffer();
++            final ByteBuf encoded = Unpooled.buffer();
++            try {
++                writeHeader(buffer, kind, nested);
++                if (kind == 5) {
++                    buffer.writeIntLE((int) input);
++                } else {
++                    buffer.writeLongLE(input);
++                }
++                if (nested) {
++                    buffer.writeByte(0);
++                }
++                final Tag decoded = BedrockTypes.TAG_LE.read(buffer);
++                assertEquals(expected, bits(scalar(decoded, nested)));
++                assertFalse(buffer.isReadable());
++
++                final Tag original = kind == 5 ? new FloatTag(Float.intBitsToFloat((int) input)) : new DoubleTag(Double.longBitsToDouble(input));
++                final Tag source;
++                if (nested) {
++                    final CompoundTag compound = new CompoundTag();
++                    compound.put("n", new ListTag<>(List.of(original)));
++                    source = compound;
++                } else {
++                    source = original;
++                }
++                BedrockTypes.TAG_LE.write(encoded, source);
++                buffer.clear();
++                writeHeader(buffer, kind, nested);
++                assertEquals(buffer, encoded.readSlice(buffer.readableBytes()));
++                assertEquals(expected, kind == 5 ? encoded.readUnsignedIntLE() : encoded.readLongLE());
++                if (nested) {
++                    assertEquals(0, encoded.readByte());
++                }
++                assertFalse(encoded.isReadable());
++                assertEquals(input, bits(original));
++            } finally {
++                buffer.release();
++                encoded.release();
++            }
++        }
++    }
++
++    @Test
++    void keepsGenericLittleEndianIoUnchanged() {
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            final var output = new LittleEndianByteBufOutputStream(buffer);
++            output.writeFloat(Float.intBitsToFloat(0xFFC00001));
++            output.writeDouble(Double.NEGATIVE_INFINITY);
++            final var input = new LittleEndianByteBufInputStream(buffer);
++            assertEquals(0xFFC00001, Float.floatToRawIntBits(input.readFloat()));
++            assertEquals(Double.NEGATIVE_INFINITY, input.readDouble());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    private static void writeHeader(final ByteBuf buffer, final int kind, final boolean nested) {
++        buffer.writeByte(nested ? 10 : kind).writeShortLE(0);
++        if (nested) {
++            buffer.writeByte(9).writeShortLE(1).writeByte('n').writeByte(kind).writeIntLE(1);
++        }
++    }
++
++    private static Tag scalar(final Tag root, final boolean nested) {
++        return nested ? ((CompoundTag) root).getListTag("n").getValue().getFirst() : root;
++    }
++
++    private static long bits(final Tag tag) {
++        return tag instanceof FloatTag value ? Integer.toUnsignedLong(Float.floatToRawIntBits(value.asFloat())) : Double.doubleToRawLongBits(((DoubleTag) tag).asDouble());
++    }
++
++    // Bedrock 1.26.51.1, protocol 2193: complete binary userdata loader
++    // 0x1424D06E0 and scalar writer normalization at 0x14254B9F0/0x14254B2E0.
++    private static Stream<Arguments> nativeNumbers() {
++        return Stream.of(
++                Arguments.of(5, 0x0L, 0x0L),
++                Arguments.of(5, 0x80000000L, 0x80000000L),
++                Arguments.of(5, 0x1L, 0x1L),
++                Arguments.of(5, 0x80000001L, 0x80000001L),
++                Arguments.of(5, 0x7FFFFFL, 0x7FFFFFL),
++                Arguments.of(5, 0x800000L, 0x800000L),
++                Arguments.of(5, 0x3F800000L, 0x3F800000L),
++                Arguments.of(5, 0x7F7FFFFFL, 0x7F7FFFFFL),
++                Arguments.of(5, 0x7F800000L, 0x7F800000L),
++                Arguments.of(5, 0xFF800000L, 0xFF800000L),
++                Arguments.of(5, 0x7FC00000L, 0x0L),
++                Arguments.of(5, 0xFFC00000L, 0x0L),
++                Arguments.of(5, 0x7F800001L, 0x0L),
++                Arguments.of(5, 0xFF800001L, 0x0L),
++                Arguments.of(6, 0x0L, 0x0L),
++                Arguments.of(6, 0x8000000000000000L, 0x8000000000000000L),
++                Arguments.of(6, 0x1L, 0x1L),
++                Arguments.of(6, 0x8000000000000001L, 0x8000000000000001L),
++                Arguments.of(6, 0xFFFFFFFFFFFFFL, 0xFFFFFFFFFFFFFL),
++                Arguments.of(6, 0x10000000000000L, 0x10000000000000L),
++                Arguments.of(6, 0x3FF0000000000000L, 0x3FF0000000000000L),
++                Arguments.of(6, 0x7FEFFFFFFFFFFFFFL, 0x7FEFFFFFFFFFFFFFL),
++                Arguments.of(6, 0x7FF0000000000000L, 0x0L),
++                Arguments.of(6, 0xFFF0000000000000L, 0x0L),
++                Arguments.of(6, 0x7FF8000000000000L, 0x0L),
++                Arguments.of(6, 0xFFF8000000000000L, 0x0L),
++                Arguments.of(6, 0x7FF0000000000001L, 0x0L),
++                Arguments.of(6, 0xFFF0000000000001L, 0x0L)
++        );
++    }
++
++}
+-- 
+2.56.0
+

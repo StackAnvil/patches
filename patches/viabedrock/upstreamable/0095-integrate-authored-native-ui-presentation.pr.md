@@ -247,3 +247,27 @@ The full four-project build passes 2,371 tests, with 152 optional tests skipped 
 A 180-second live Fabric capture reaches the Galaxite lobby and receives three game-selection forms after two responses.
 It contains no container-open packet and does not exercise the new chest adapter.
 Live server acceptance of that adapter remains unverified.
+
+## Native stack queries for authored transfers
+
+Both authority modes now use the complete network-loaded native stack query matcher.
+The transfer planner passes the destination as the query and the source as the candidate.
+It supports wildcard auxiliary values, query-sided Block identity, numeric NBT equality, canonical restriction sets, and blocking ticks.
+Cooking output admission shares this implementation through `ItemRewriter.matchesStackQuery`.
+The former cooking-specific class and API are removed.
+
+The target native transfer helper calls comparator `0x14248dac0` before submitting the action.
+Its subtype and durability rules differ from the native item-return predicates.
+The planner keeps those return rules separate.
+Its scope covers retained network-loaded userdata, including derived charged children.
+Independently mutated native child stacks remain outside this representation.
+
+The moved native controls pass 3,278 valid-UTF-8 NBT comparisons, 361 populated-userdata cases, and 96 output-admission controls.
+A planner regression checks merge selection across blocking ticks, restriction differences, mismatched Block pointers, wildcard auxiliary values, and signed floating zero.
+It also checks destination metadata, source metadata, and count conservation.
+These tests do not establish full native controller behavior or live server acceptance.
+
+The full 104-patch core stack replays, and the complete four-project build passes.
+This run passes 2,342 tests, skips 212 optional cases, and reports no failures or errors.
+It enables the three private native matcher fixtures named above; other optional fixture controls remain skipped.
+Offline tooling, regression tests, and patch metadata validation also pass.

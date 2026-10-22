@@ -1,4 +1,4 @@
-From 1e691aae000140625987fa9e91a43e31d852da63 Mon Sep 17 00:00:00 2001
+From b785ed8dea243c6bb4d7deb57319944903b48e3e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -457,6 +457,12 @@ ID and skip unresolved occupied merge destinations. Do not unbox a
 missing ID or send a predicted request with an unresolved identity.
 Keep empty destinations at network ID zero and derive predicted counts
 from the actual emitted action.
+
+Pass the connection-owned native stack query matcher into authored
+count-one placement. Use the destination as query, matching the ordinary
+native transfer comparator rather than Java tag object equality. Keep
+modern network-ID and placement-permission checks in this authority
+adapter; the shared planner contains no raw-equality fallback.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   65 +-
@@ -464,8 +470,8 @@ from the actual emitted action.
  .../model/container/ContainerOpenContext.java |   19 +
  .../api/model/container/HorseContainer.java   |  239 +++
  .../NativeContainerActionBackend.java         |   96 ++
- .../NativeContainerActionSession.java         |  133 ++
- .../NativeContainerAutoPlacement.java         |  101 ++
+ .../NativeContainerActionSession.java         |  136 ++
+ .../NativeContainerAutoPlacement.java         |  103 ++
  .../container/NativeTransferQuantity.java     |   40 +
  .../model/container/block/AnvilContainer.java |  178 ++
  .../container/block/BeaconContainer.java      |  238 +++
@@ -506,7 +512,7 @@ from the actual emitted action.
  .../protocol/packet/JoinPackets.java          |    2 +-
  .../protocol/packet/MultiStatePackets.java    |   13 +-
  .../protocol/packet/WorldPackets.java         |   12 +
- .../protocol/rewriter/ItemRewriter.java       |  297 +++-
+ .../protocol/rewriter/ItemRewriter.java       |  288 +++-
  .../rewriter/item/BundleItemRewriter.java     |   58 +-
  .../storage/CraftedItemSynchronization.java   |  128 ++
  .../protocol/storage/CraftingDataTracker.java |  206 +++
@@ -520,8 +526,8 @@ from the actual emitted action.
  .../viabedrock/data/custom/block_tags.json    |   16 +-
  .../api/model/container/ContainerTest.java    |  198 +++
  .../model/container/HorseContainerTest.java   |  187 ++
- .../NativeContainerActionSessionTest.java     |  128 ++
- .../NativeContainerAutoPlacementTest.java     |  165 ++
+ .../NativeContainerActionSessionTest.java     |  132 ++
+ .../NativeContainerAutoPlacementTest.java     |  170 ++
  .../NativeContainerLegacyActionsTest.java     |    5 +-
  .../container/NativeTransferQuantityTest.java |   60 +
  .../block/BrewingStandContainerTest.java      |   29 +
@@ -556,7 +562,7 @@ from the actual emitted action.
  .../InventoryRequestTrackerQueueTest.java     |  136 ++
  .../storage/InventoryRequestTrackerTest.java  |  385 +++++
  .../storage/InventoryTrackerTest.java         |  124 ++
- .../NativeAutoPlacementRecoveryTest.java      |  120 ++
+ .../NativeAutoPlacementRecoveryTest.java      |  126 ++
  .../NativeContainerActionBackendTest.java     |   95 ++
  .../storage/NativeContainerResponseTest.java  |  287 ++++
  .../storage/StonecutterRecipePacketTest.java  |   53 +
@@ -564,7 +570,7 @@ from the actual emitted action.
  .../item/NetworkItemConstructionTest.java     |  165 ++
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 106 files changed, 15320 insertions(+), 981 deletions(-)
+ 106 files changed, 15335 insertions(+), 977 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionBackend.java
@@ -2315,10 +2321,10 @@ index 000000000..769c7365c
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSession.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSession.java
 new file mode 100644
-index 000000000..924239bd3
+index 000000000..3a67dd108
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSession.java
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,136 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2338,6 +2344,7 @@ index 000000000..924239bd3
 +
 +import java.util.List;
 +import java.util.Set;
++import java.util.function.BiPredicate;
 +import java.util.function.Consumer;
 +import java.util.function.Supplier;
 +import java.util.function.ToIntFunction;
@@ -2378,6 +2385,7 @@ index 000000000..924239bd3
 +                revision,
 +                sourceSlot,
 +                user.get(net.raphimc.viabedrock.protocol.rewriter.ItemRewriter.class)::maxStackSize,
++                user.get(net.raphimc.viabedrock.protocol.rewriter.ItemRewriter.class)::matchesStackQuery,
 +                request ->
 +                        net.raphimc.viabedrock.api.util.PacketFactory.sendBedrockInventoryRequest(
 +                                user, new ItemStackRequestInfo[] {request}));
@@ -2390,6 +2398,7 @@ index 000000000..924239bd3
 +            final int revision,
 +            final int sourceSlot,
 +            final ToIntFunction<BedrockItem> maximumStackSize,
++            final BiPredicate<BedrockItem, BedrockItem> matchesStackQuery,
 +            final Consumer<ItemStackRequestInfo> sender) {
 +        final InventoryTracker inventory = user.get(InventoryTracker.class);
 +        final InventoryRequestTracker requests = user.get(InventoryRequestTracker.class);
@@ -2415,7 +2424,7 @@ index 000000000..924239bd3
 +                        sequence,
 +                        sourceSlot,
 +                        player,
-+                        maximumStackSize.applyAsInt(source.getItem(sourceSlot)));
++                        maximumStackSize.applyAsInt(source.getItem(sourceSlot)), matchesStackQuery);
 +        if (plan == null) {
 +            return false;
 +        }
@@ -2454,10 +2463,10 @@ index 000000000..924239bd3
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacement.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacement.java
 new file mode 100644
-index 000000000..235c61a2a
+index 000000000..ac59b3fa9
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacement.java
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,103 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2465,6 +2474,7 @@ index 000000000..235c61a2a
 + */
 +package net.raphimc.viabedrock.api.model.container;
 +
++import java.util.function.BiPredicate;
 +import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 +import net.raphimc.viabedrock.api.model.container.block.Generic3x3Container;
 +import net.raphimc.viabedrock.api.model.container.block.HopperContainer;
@@ -2485,7 +2495,8 @@ index 000000000..235c61a2a
 +            final long presentationSequence,
 +            final int sourceSlot,
 +            final InventoryContainer inventory,
-+            final int maximumStackSize) {
++            final int maximumStackSize,
++            final BiPredicate<BedrockItem, BedrockItem> matchesStackQuery) {
 +        if (!binding.current(current, generation, presentationSequence)) {
 +            throw new IllegalArgumentException("Native container action belongs to a stale menu");
 +        }
@@ -2501,7 +2512,7 @@ index 000000000..235c61a2a
 +        if (source.isEmpty() || !hasServerIdentity(source)) {
 +            return null;
 +        }
-+        final var transfer = NativeContainerTransfer.plan(source, inventory.getItems(), maximumStackSize,
++        final var transfer = NativeContainerTransfer.plan(source, inventory.getItems(), maximumStackSize, matchesStackQuery,
 +                slot -> inventory.canPlaceItem(slot, source)
 +                        && (inventory.getItem(slot).isEmpty() || hasServerIdentity(inventory.getItem(slot))));
 +        if (transfer == null) {
@@ -9889,7 +9900,7 @@ index 85cdb3dee..a98ad8137 100644
  
                      final BlockEntity javaBlockEntity = BlockEntityRewriter.toJava(wrapper.user(), chunkTracker.getBlockState(bedrockBlockEntity.position()), bedrockBlockEntity);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index 3d3f0140a..e984d0f67 100644
+index 2cff65487..26b3b21e9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -36,6 +36,7 @@ import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
@@ -9899,8 +9910,8 @@ index 3d3f0140a..e984d0f67 100644
 +
  import net.raphimc.viabedrock.ViaBedrock;
  import net.raphimc.viabedrock.api.model.BlockState;
- import net.raphimc.viabedrock.api.model.NativeItemStackData;
-@@ -46,9 +47,12 @@ import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
+ import net.raphimc.viabedrock.api.model.container.NativeItemStackMatcher;
+@@ -47,9 +48,12 @@ import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
  import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
  import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomItemTags;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
@@ -9914,7 +9925,7 @@ index 3d3f0140a..e984d0f67 100644
  import net.raphimc.viabedrock.protocol.model.ItemCooldown;
  import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
  import net.raphimc.viabedrock.protocol.model.ItemArmorData;
-@@ -60,16 +64,19 @@ import net.raphimc.viabedrock.protocol.storage.MapTracker;
+@@ -61,16 +65,19 @@ import net.raphimc.viabedrock.protocol.storage.MapTracker;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  import net.raphimc.viabedrock.protocol.types.array.ArrayType;
@@ -9933,21 +9944,20 @@ index 3d3f0140a..e984d0f67 100644
 -public class ItemRewriter extends StoredObject {
 +public class ItemRewriter extends StoredObject implements NetworkItemStackContext {
  
-     private final Map<String, ItemAnimationData> animationData = new HashMap<>();
-     private final Map<String, ItemArmorData> armorData = new HashMap<>();
-@@ -82,8 +89,10 @@ public class ItemRewriter extends StoredObject {
+     private final ItemRegistry registry;
+ 
+@@ -85,8 +92,9 @@ public class ItemRewriter extends StoredObject {
  
      private static final Map<String, NbtRewriter> ITEM_NBT_REWRITERS = new HashMap<>();
  
 -    private final BiMap<String, Integer> items;
-+    private final ItemRegistry registry;
      private final Map<String, ItemStackingProperties> stackingProperties;
 +    private final Map<String, ItemCookingProperties> cookingProperties;
 +    private final BiMap<String, Integer> items;
      private final Set<String> componentItems;
      private final Int2ObjectMap<IntSortedSet> blockItemValidBlockStates;
      private final Type<BedrockItem> itemType;
-@@ -92,6 +101,8 @@ public class ItemRewriter extends StoredObject {
+@@ -95,6 +103,8 @@ public class ItemRewriter extends StoredObject {
      private final Type<BedrockItem> newItemType;
      private final Type<BedrockItem> optionalNewItemType;
      private final Type<BedrockItem[]> newItemArrayType;
@@ -9956,26 +9966,18 @@ index 3d3f0140a..e984d0f67 100644
  
      static {
          // TODO: Add missing item nbt rewriters
-@@ -123,11 +134,13 @@ public class ItemRewriter extends StoredObject {
-     public ItemRewriter(final UserConnection user, final ItemEntry[] itemEntries) {
-         super(user);
- 
--        final var registry = new ItemRegistry(itemEntries);
--        this.items = registry.ids();
--        this.componentItems = registry.componentItems();
--        this.stackingProperties = registry.stackingProperties();
+@@ -130,7 +140,9 @@ public class ItemRewriter extends StoredObject {
+         this.items = this.registry.ids();
+         this.componentItems = this.registry.componentItems();
+         this.stackingProperties = this.registry.stackingProperties();
 -        for (ItemEntry itemEntry : itemEntries) {
-+        this.registry = new ItemRegistry(itemEntries);
-+        this.items = this.registry.ids();
-+        this.componentItems = this.registry.componentItems();
-+        this.stackingProperties = this.registry.stackingProperties();
 +        final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
 +        this.cookingProperties = this.registry.cookingProperties(blockStateRewriter::registeredBlockIdentifier);
 +        for (ItemEntry itemEntry : this.registry.registrations()) {
              if (itemEntry.componentData() != null
                      && itemEntry.componentData().get("components") instanceof CompoundTag components) {
                  this.animationData.put(itemEntry.identifier(), ItemAnimationData.fromNetworkComponents(components));
-@@ -138,33 +151,49 @@ public class ItemRewriter extends StoredObject {
+@@ -141,33 +153,49 @@ public class ItemRewriter extends StoredObject {
                      this.cooldowns.put(itemEntry.identifier(), cooldown);
                  }
              }
@@ -10032,7 +10034,7 @@ index 3d3f0140a..e984d0f67 100644
      }
  
      public Item javaItem(final BedrockItem bedrockItem) {
-@@ -174,13 +203,18 @@ public class ItemRewriter extends StoredObject {
+@@ -177,13 +205,18 @@ public class ItemRewriter extends StoredObject {
  
          final String identifier = this.items.inverse().get(bedrockItem.identifier());
          if (identifier == null) {
@@ -10053,7 +10055,7 @@ index 3d3f0140a..e984d0f67 100644
          if (blockItemMappings != null) {
              final BlockState displayState;
              if (bedrockItem.hasBlockState()) {
-@@ -193,17 +227,27 @@ public class ItemRewriter extends StoredObject {
+@@ -196,17 +229,27 @@ public class ItemRewriter extends StoredObject {
              javaItemMapping = displayState != null ? blockItemMappings.get(displayState) : null;
          } else {
              final int meta = bedrockItem.data() & 0xFFFF;
@@ -10086,7 +10088,7 @@ index 3d3f0140a..e984d0f67 100644
                  if (metaItemMappings != null) {
                      if (!metaItemMappings.containsKey(meta)) {
                          if ((metaItemMappings.size() != 1 || meta != 0)
-@@ -227,36 +271,82 @@ public class ItemRewriter extends StoredObject {
+@@ -230,36 +273,82 @@ public class ItemRewriter extends StoredObject {
                  ItemDataRewriter.applyJavaOverride(javaItemMapping.overrideTag(), data, BedrockProtocol.MAPPINGS.getJavaRegistries());
              }
              if (javaItemMapping.name() != null) {
@@ -10181,7 +10183,7 @@ index 3d3f0140a..e984d0f67 100644
          }
  
          ItemCooldown cooldown = this.cooldowns.get(identifier);
-@@ -272,12 +362,20 @@ public class ItemRewriter extends StoredObject {
+@@ -275,12 +364,20 @@ public class ItemRewriter extends StoredObject {
  
          final CompoundTag bedrockTag = bedrockItem.tag();
          if (bedrockTag != null) {
@@ -10206,7 +10208,7 @@ index 3d3f0140a..e984d0f67 100644
                  }
              }
          }
-@@ -289,6 +387,8 @@ public class ItemRewriter extends StoredObject {
+@@ -292,6 +389,8 @@ public class ItemRewriter extends StoredObject {
              ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
          }
  
@@ -10215,7 +10217,7 @@ index 3d3f0140a..e984d0f67 100644
          javaItem.dataContainer().set(StructuredDataKey.USE_EFFECTS, this.useModifiers(bedrockItem).javaComponent());
  
          CustomAttachableResourceRewriter.applyItemModel(this.user().get(ResourcePackStorage.class), identifier, javaItem);
-@@ -304,7 +404,8 @@ public class ItemRewriter extends StoredObject {
+@@ -307,7 +406,8 @@ public class ItemRewriter extends StoredObject {
              return null;
          }
          final CompoundTag javaTag = new CompoundTag();
@@ -10225,7 +10227,7 @@ index 3d3f0140a..e984d0f67 100644
          javaTag.put("id", new StringTag(javaId));
          javaTag.put("count", new IntTag(javaItem.amount()));
          if (javaItem.tag() != null) {
-@@ -318,28 +419,31 @@ public class ItemRewriter extends StoredObject {
+@@ -321,28 +421,31 @@ public class ItemRewriter extends StoredObject {
              return null;
          }
  
@@ -10268,7 +10270,7 @@ index 3d3f0140a..e984d0f67 100644
      }
  
      public Item[] javaItems(final BedrockItem[] bedrockItems) {
-@@ -351,7 +455,33 @@ public class ItemRewriter extends StoredObject {
+@@ -354,7 +457,33 @@ public class ItemRewriter extends StoredObject {
      }
  
      public BedrockItem bedrockItem(final Item javaItem) {
@@ -10303,7 +10305,7 @@ index 3d3f0140a..e984d0f67 100644
      }
  
      public BedrockItem[] bedrockItems(final Item[] javaItems) {
-@@ -366,8 +496,52 @@ public class ItemRewriter extends StoredObject {
+@@ -369,8 +498,52 @@ public class ItemRewriter extends StoredObject {
          return this.items;
      }
  
@@ -10357,8 +10359,8 @@ index 3d3f0140a..e984d0f67 100644
 +        return this.registry;
      }
  
-     public int maxStackSize(final BedrockItem item) {
-@@ -379,6 +553,18 @@ public class ItemRewriter extends StoredObject {
+     /** Match network-loaded stack queries while their connection registry remains current. */
+@@ -392,6 +565,18 @@ public class ItemRewriter extends StoredObject {
          return properties == null ? 0 : properties.maximum();
      }
  
@@ -10377,7 +10379,7 @@ index 3d3f0140a..e984d0f67 100644
      public Type<BedrockItem> itemType() {
          return this.itemType;
      }
-@@ -403,10 +589,13 @@ public class ItemRewriter extends StoredObject {
+@@ -416,10 +601,13 @@ public class ItemRewriter extends StoredObject {
          return this.newItemArrayType;
      }
  
@@ -12796,10 +12798,10 @@ index 000000000..c093868a2
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSessionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSessionTest.java
 new file mode 100644
-index 000000000..3be14d14e
+index 000000000..d445537ed
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSessionTest.java
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,132 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -12864,11 +12866,11 @@ index 000000000..3be14d14e
 +                            sent.incrementAndGet();
 +                            requests.getRequest(request.requestId()).capturePrediction(inventory);
 +                        };
-+        check(!session.autoPlaceOne(user, 7, 8, 0, 9, item -> 64, sender));
-+        check(!session.autoPlaceOne(user, 6, 9, 0, 9, item -> 64, sender));
-+        check(!session.autoPlaceOne(user, 6, 8, 0, 26, item -> 64, sender));
++        check(!session.autoPlaceOne(user, 7, 8, 0, 9, item -> 64, NativeContainerActionSessionTest::matches, sender));
++        check(!session.autoPlaceOne(user, 6, 9, 0, 9, item -> 64, NativeContainerActionSessionTest::matches, sender));
++        check(!session.autoPlaceOne(user, 6, 8, 0, 26, item -> 64, NativeContainerActionSessionTest::matches, sender));
 +        org.mockito.Mockito.when(game.isInventoryServerAuthoritative()).thenReturn(false);
-+        check(!session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, sender));
++        check(!session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, NativeContainerActionSessionTest::matches, sender));
 +        org.mockito.Mockito.when(game.isInventoryServerAuthoritative()).thenReturn(true);
 +        for (final Integer networkId : java.util.Arrays.asList(null, 0, -3)) {
 +            final var unresolved = item(4, 1008);
@@ -12876,20 +12878,20 @@ index 000000000..3be14d14e
 +            requests.setPredictingClick(true);
 +            menu.setItem(9, unresolved);
 +            requests.setPredictingClick(false);
-+            check(!session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, sender));
++            check(!session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, NativeContainerActionSessionTest::matches, sender));
 +            check(sent.get() == 0 && !requests.hasPending() && !requests.isPredictingClick());
 +            check(menu.getItem(9).amount() == 4 && inventory.getInventoryContainer().getItem(0).isEmpty());
 +        }
 +        requests.setPredictingClick(true);
 +        menu.setItem(9, item(4, 1008));
 +        requests.setPredictingClick(false);
-+        check(session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, sender));
++        check(session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, NativeContainerActionSessionTest::matches, sender));
 +        check(
 +                menu.getItem(9).amount() == 3
 +                        && inventory.getInventoryContainer().getItem(0).amount() == 1
 +                        && inventory.getHudContainer().getItem(0).amount() == 4
 +                        && sent.get() == 1);
-+        check(!session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, sender));
++        check(!session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, NativeContainerActionSessionTest::matches, sender));
 +        requests.removeRequest(-3);
 +        try {
 +            session.autoPlaceOne(
@@ -12898,7 +12900,7 @@ index 000000000..3be14d14e
 +                    8,
 +                    0,
 +                    9,
-+                    item -> 64,
++                    item -> 64, NativeContainerActionSessionTest::matches,
 +                    request -> {
 +                        throw new IllegalStateException("Transport failed");
 +                    });
@@ -12912,8 +12914,12 @@ index 000000000..3be14d14e
 +        }
 +        inventory.setCurrentContainerClosed(false);
 +        inventory.setCurrentContainer(new ChestContainer(user, (byte) 6, null, null, 27));
-+        check(!session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, sender));
++        check(!session.autoPlaceOne(user, 6, 8, 0, 9, item -> 64, NativeContainerActionSessionTest::matches, sender));
 +        check(sent.get() == 1 && inventory.getHudContainer().getItem(0).netId() == 5001);
++    }
++
++    private static boolean matches(final BedrockItem query, final BedrockItem candidate) {
++        return NativeItemStackMatcher.matches(query, candidate, ignored -> null, ignored -> Set.of());
 +    }
 +
 +    private static BedrockItem item(final int count, final int netId) {
@@ -12930,10 +12936,10 @@ index 000000000..3be14d14e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacementTest.java
 new file mode 100644
-index 000000000..e2184f5e1
+index 000000000..520dcfdf6
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerAutoPlacementTest.java
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,170 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -12941,6 +12947,7 @@ index 000000000..e2184f5e1
 + */
 +package net.raphimc.viabedrock.api.model.container;
 +
++import java.util.Set;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
 +import net.raphimc.viabedrock.api.model.container.block.FurnaceContainer;
 +import net.raphimc.viabedrock.api.model.container.block.Generic3x3Container;
@@ -12961,7 +12968,7 @@ index 000000000..e2184f5e1
 +        source.items[9] = item(4, 1008);
 +        inventory.put(1, item(63, 2012));
 +        final var cursor = item(4, 5001);
-+        final var plan = NativeContainerAutoPlacement.plan(binding, source, 7, 8, 9, inventory, 64);
++        final var plan = NativeContainerAutoPlacement.plan(binding, source, 7, 8, 9, inventory, 64, NativeContainerAutoPlacementTest::matches);
 +        check(plan.transfer().destinationSlot() == 1 && plan.action().count() == 1);
 +        check(
 +                plan.action().source().stackNetworkId() == 1008
@@ -12976,17 +12983,17 @@ index 000000000..e2184f5e1
 +                        && cursor.amount() == 4);
 +        inventory.put(1, item(64, 2012));
 +        final var emptyPlan =
-+                NativeContainerAutoPlacement.plan(binding, source, 7, 8, 9, inventory, 64);
++                NativeContainerAutoPlacement.plan(binding, source, 7, 8, 9, inventory, 64, NativeContainerAutoPlacementTest::matches);
 +        check(
 +                emptyPlan.transfer().destinationSlot() == 0
 +                        && emptyPlan.action().destination().stackNetworkId() == 0);
 +        inventory.forbid(0);
 +        check(
-+                NativeContainerAutoPlacement.plan(binding, source, 7, 8, 9, inventory, 64)
++                NativeContainerAutoPlacement.plan(binding, source, 7, 8, 9, inventory, 64, NativeContainerAutoPlacementTest::matches)
 +                                .transfer().destinationSlot()
 +                        == 2);
 +        Arrays.fill(inventory.items, item(64, 2012));
-+        check(NativeContainerAutoPlacement.plan(binding, source, 7, 8, 9, inventory, 64) == null);
++        check(NativeContainerAutoPlacement.plan(binding, source, 7, 8, 9, inventory, 64, NativeContainerAutoPlacementTest::matches) == null);
 +        reject(
 +                () ->
 +                        NativeContainerAutoPlacement.plan(
@@ -12996,10 +13003,10 @@ index 000000000..e2184f5e1
 +                                8,
 +                                9,
 +                                inventory,
-+                                64));
-+        reject(() -> NativeContainerAutoPlacement.plan(binding, source, 8, 8, 9, inventory, 64));
-+        reject(() -> NativeContainerAutoPlacement.plan(binding, source, 7, 9, 9, inventory, 64));
-+        reject(() -> NativeContainerAutoPlacement.plan(binding, source, 7, 8, 27, inventory, 64));
++                                64, NativeContainerAutoPlacementTest::matches));
++        reject(() -> NativeContainerAutoPlacement.plan(binding, source, 8, 8, 9, inventory, 64, NativeContainerAutoPlacementTest::matches));
++        reject(() -> NativeContainerAutoPlacement.plan(binding, source, 7, 9, 9, inventory, 64, NativeContainerAutoPlacementTest::matches));
++        reject(() -> NativeContainerAutoPlacement.plan(binding, source, 7, 8, 27, inventory, 64, NativeContainerAutoPlacementTest::matches));
 +    }
 +
 +    @org.junit.jupiter.api.Test
@@ -13019,15 +13026,19 @@ index 000000000..e2184f5e1
 +            source.items[0] = item(4, 1008);
 +            final var inventory = new Player();
 +            final var binding = new NativeContainerAutoPlacement.Binding(source, 7, 8);
-+            final var plan = NativeContainerAutoPlacement.plan(binding, source, 7, 8, 0, inventory, 64);
++            final var plan = NativeContainerAutoPlacement.plan(binding, source, 7, 8, 0, inventory, 64, NativeContainerAutoPlacementTest::matches);
 +            org.junit.jupiter.api.Assertions.assertEquals(source.requestSlotInfo(0, 1008), plan.action().source());
 +            check(plan.transfer().sourceAfter().amount() == 3 && plan.transfer().destinationAfter().amount() == 1);
 +            check(source.getItem(0).amount() == 4 && inventory.getItem(0).isEmpty());
-+            reject(() -> NativeContainerAutoPlacement.plan(binding, source, 7, 8, source.size(), inventory, 64));
++            reject(() -> NativeContainerAutoPlacement.plan(binding, source, 7, 8, source.size(), inventory, 64, NativeContainerAutoPlacementTest::matches));
 +        }
 +        final var furnace = new FurnaceContainer(null, (byte) 6, null, null);
 +        reject(() -> NativeContainerAutoPlacement.plan(new NativeContainerAutoPlacement.Binding(furnace, 7, 8),
-+                furnace, 7, 8, 0, new Player(), 64));
++                furnace, 7, 8, 0, new Player(), 64, NativeContainerAutoPlacementTest::matches));
++    }
++
++    private static boolean matches(final BedrockItem query, final BedrockItem candidate) {
++        return NativeItemStackMatcher.matches(query, candidate, ignored -> null, ignored -> Set.of());
 +    }
 +
 +    private static BedrockItem item(final int count, final int networkId) {
@@ -13047,18 +13058,18 @@ index 000000000..e2184f5e1
 +            unresolved.setNetId(networkId);
 +            source.items[0] = unresolved;
 +            org.junit.jupiter.api.Assertions.assertNull(
-+                    NativeContainerAutoPlacement.plan(binding, source, 7, 8, 0, inventory, 64));
++                    NativeContainerAutoPlacement.plan(binding, source, 7, 8, 0, inventory, 64, NativeContainerAutoPlacementTest::matches));
 +            check(source.getItem(0).amount() == 4 && inventory.getItem(0).isEmpty());
 +            source.items[0] = item(4, 1008);
 +            inventory.put(0, unresolved);
-+            final var plan = NativeContainerAutoPlacement.plan(binding, source, 7, 8, 0, inventory, 64);
++            final var plan = NativeContainerAutoPlacement.plan(binding, source, 7, 8, 0, inventory, 64, NativeContainerAutoPlacementTest::matches);
 +            check(plan.transfer().destinationSlot() == 1 && plan.action().destination().stackNetworkId() == 0);
 +            check(inventory.getItem(0).amount() == 4 && inventory.getItem(1).isEmpty());
 +            inventory.put(0, BedrockItem.empty());
 +        }
 +        source.items[0] = item(255, Integer.MAX_VALUE);
 +        inventory.put(0, item(254, Integer.MAX_VALUE - 1));
-+        final var plan = NativeContainerAutoPlacement.plan(binding, source, 7, 8, 0, inventory, 255);
++        final var plan = NativeContainerAutoPlacement.plan(binding, source, 7, 8, 0, inventory, 255, NativeContainerAutoPlacementTest::matches);
 +        check(plan.action().count() == 1 && plan.transfer().sourceAfter().amount() == 254 && plan.transfer().destinationAfter().amount() == 255);
 +        check(source.getItem(0).amount() == 255 && inventory.getItem(0).amount() == 254);
 +    }
@@ -13100,10 +13111,10 @@ index 000000000..e2184f5e1
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerLegacyActionsTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerLegacyActionsTest.java
-index b83d87eaf..7879e0261 100644
+index edad88073..52e3afb5d 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerLegacyActionsTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerLegacyActionsTest.java
-@@ -24,7 +24,7 @@ import net.raphimc.viabedrock.protocol.storage.NativeContainerUiState;
+@@ -26,7 +26,7 @@ import net.raphimc.viabedrock.protocol.storage.NativeContainerUiState;
  import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
  import net.raphimc.viabedrock.protocol.types.item.NetworkItemStackDescriptorType;
@@ -13112,7 +13123,7 @@ index b83d87eaf..7879e0261 100644
  import io.netty.buffer.Unpooled;
  import org.junit.jupiter.api.Test;
  import static org.junit.jupiter.api.Assertions.*;
-@@ -71,8 +71,7 @@ final class NativeContainerLegacyActionsTest {
+@@ -73,8 +73,7 @@ final class NativeContainerLegacyActionsTest {
          final var itemRewriter = mock(ItemRewriter.class);
          when(fixture.user.get(ItemRewriter.class)).thenReturn(itemRewriter);
          when(itemRewriter.newItemType()).thenReturn(
@@ -18965,10 +18976,10 @@ index 000000000..9574382a1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeAutoPlacementRecoveryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeAutoPlacementRecoveryTest.java
 new file mode 100644
-index 000000000..6e3383a36
+index 000000000..d43d9f79a
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeAutoPlacementRecoveryTest.java
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,126 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -18976,6 +18987,8 @@ index 000000000..6e3383a36
 + */
 +package net.raphimc.viabedrock.protocol.storage;
 +
++import java.util.Set;
++import net.raphimc.viabedrock.api.model.container.NativeItemStackMatcher;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +
 +import net.raphimc.viabedrock.api.model.container.ChestContainer;
@@ -19025,7 +19038,7 @@ index 000000000..6e3383a36
 +                        1,
 +                        9,
 +                        inventory.getInventoryContainer(),
-+                        64);
++                        64, NativeAutoPlacementRecoveryTest::matches);
 +        final var previous =
 +                new InventoryRequestStorage(
 +                        new ItemStackRequestInfo(
@@ -19075,6 +19088,10 @@ index 000000000..6e3383a36
 +        check(
 +                inventory.getHudContainer().getItem(0).amount() == 4
 +                        && inventory.getHudContainer().getItem(0).netId() == 5001);
++    }
++
++    private static boolean matches(final BedrockItem query, final BedrockItem candidate) {
++        return NativeItemStackMatcher.matches(query, candidate, ignored -> null, ignored -> Set.of());
 +    }
 +
 +    private static BedrockItem item(final int count, final int netId) {
