@@ -162,6 +162,23 @@ They also reject an early client exit, cancellation, or a logged disconnect or p
 Inspect the private screenshot and server logs before reporting a live playable session.
 Gameplay acknowledgments can arrive after a transport timeout while the client drains queued packets.
 
+For a live Java add-on survey that follows server transfers, add `--allow-transfers`:
+
+```bash
+bun run server-replay record public --target host:port --client addon --allow-transfers --seconds 300 --software-rendering
+```
+
+The first connection keeps the session's `packets.sbr` and `packs/` paths.
+Later connections use private `connection-2/`, `connection-3/`, and subsequent directories.
+Each directory contains its own journal and exported packs.
+The session manifest lists the later connections and their gameplay checks.
+The timer starts at the first playable scene and includes later loading time.
+Render observations remain session totals. Inspect screenshots and each journal before attributing a result to a destination.
+
+This option accepts the exact normal transfer notice. Other disconnects and packet errors still fail the run.
+It applies only to live add-on recordings. Offline replays retain the single-connection guard.
+To replay a destination, pass its connection directory to `server-replay replay`.
+
 Camera preset observations wait until core finishes its custom-block resource-pack gate.
 Both direct and ViaProxy recorders retain the latest preset table until its decoder runs.
 This prevents the observer from treating an intentionally queued packet as an unhandled packet.

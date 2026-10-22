@@ -6,6 +6,8 @@ Raw packets, account data, downloaded packs, and screenshots remain private.
 Each recording contains one connection. Enchanted's destination was tested through a fresh direct connection to its supplied transfer address.
 Continuous transfer verification remains open.
 
+The 22 October follow-up below verifies a continuous Mineville-to-Zeqa transfer with separate connection journals.
+
 ## Observed results
 
 | Server | Reached | Result |
@@ -155,3 +157,39 @@ These observations confirm graph execution and renderer use. Cosmetic-preview bo
 All four projects build with 2,151 passing tests and 152 optional skips.
 All 38 client patches replay cleanly. Offline validation passes 263 tooling tests and metadata checks.
 All four replay self-test groups pass. The six owned live-test processes close normally.
+
+## Mineville and Zeqa follow-up
+
+On 22 October, a fresh catalog admission reached Mineville's hub with the last validated add-on build.
+Its game selector opened, but showed `@mineville/gamemodes_menu` in the title, clipped labels, and repeated glyphs.
+The observed ray hit a lobby NPC's interaction entity before the click.
+Right-click produced no confirmed response. Left-click moved the player to Earth SMP within the same connection.
+The `/lobby` command returned to the hub.
+
+Earth SMP loaded its terrain after the player moved clear of the spawn obstruction.
+Its tutorial showed `%obj/Tutorial` as a raw title. Its city menu showed `@mineville/other_main_menu`, malformed text, and empty buttons.
+The survey did not create a city or buy an advertised bundle.
+
+The hub's PvP selector then transferred the same running client to Zeqa.
+The second connection reached StartGame, spawn, local-player initialization, and movement input.
+Its terrain and lobby models loaded. Menu labels and HUD text contained square glyphs and repeated microphone icons.
+The Free For All menu responded, and its first button opened the CrystalPvP spawn selector.
+The run ended before a destination in that selector was tested.
+
+Mineville's logs repeatedly report `Expected IDENTIFIER, found FLOAT` during render-controller evaluation.
+The accepted pack contains resource references such as `Texture.num.0` and `Geometry.digit.1`.
+The shared parser rejects their numeric suffixes. Correct resource-name lookup still needs implementation and target-client verification.
+Floating pig models and default player appearances also need a native comparison before classification as rendering defects.
+
+The original recorder rejected the second connection. Transfer-enabled live recordings now keep separate journals and exported packs for each connection.
+The runner accepts the exact normal transfer notice and still rejects other disconnects or packet errors.
+Offline replays retain the single-connection guard.
+The completed 240-second run passes gameplay checks for both connections. All six owned processes close normally.
+The tooling suite passes 264 tests. Replay self-tests cover journal separation, overwrite protection, and the existing replay guard.
+
+A fresh Dimension Clash admission fails before a playable scene.
+Its packet decoder exhausts a 1,584,889-byte packet while reading a string. No rendering verdict is possible.
+All six owned test processes close normally.
+
+OneBlockOnline also fails before a playable scene, while reading a string at the end of a 4,234,154-byte packet.
+No entity, block, item, or GUI rendering verdict is possible. All six owned test processes close normally.
