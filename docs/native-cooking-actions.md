@@ -20,7 +20,7 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Selected-recipe release | 90 cases | Exit conditions, actual base-state reset, and handled result |
 | Initial-state recipe dispatch | 1,620 cases | Command, held-item, source-permission, and controlled input-mode conditions |
 | Cooking item-return planner | 1,500 cases | Original-slot deficits and the remaining count passed to auto-placement |
-| Physical-slot snapshot producer | 36 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
+| Physical-slot snapshot producer | 45 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
 
 These checks cover different boundaries. Their case counts do not measure native gameplay or visual parity.
 
@@ -116,7 +116,8 @@ The return helper separately destroys and clears its previous entries before req
 The fixture supplies provider traversal order, skip results, sizes, and item accessors.
 It executes the original producer, item constructors, copies, vector growth, and entry destruction.
 Real native shared ownership supplies reference locking and release.
-All 36 cases pass and restore the checked ownership counts.
+All 45 cases pass and restore the checked ownership counts.
+Cases include long collection keys, full 36-slot player captures, and aligned vector growth.
 Actual provider registration order and complete controller construction remain outside this probe.
 
 Two additional controls copy ordinary non-block items with zero count, both with and without retained source identity.
@@ -126,7 +127,7 @@ Do not generalize them into an unconditional rule for every empty stack field.
 
 The selection callback at `0x146c46900` also captures separate before and after vectors.
 It passes copied vectors to comparator `0x1450d98b0` through its controller callback.
-The 36-case probe does not execute that callback or comparator.
+The 45-case probe does not execute that callback or comparator.
 It does not establish history filtering or the complete history lifecycle.
 Keep snapshot capture, history replacement, and selection effects as distinct verification boundaries.
 
