@@ -9579,3 +9579,32 @@ A fresh strict-BDS ViaProxy run passes all three cooking stations and same-world
 Both launched profiles and the rebuilt proxy match all 1,368 core classes and both block-item resources.
 The run exits successfully and stops the private display normally.
 These controls use Java cooking screens and do not establish native presentation parity.
+
+## Native cooking input construction (October 22, 2026)
+
+Cooking availability and placement now share constructed count-one input queries with auxiliary zero.
+The target resolves a named descriptor's declared auxiliary value first, then visits its owning Item definition to construct the query.
+A valid block variant therefore produces the Item's default association; a null associated state rejects the descriptor.
+The previous cooking path matched the raw declaration and could select a different inventory variant.
+
+The complete native extractor, output matcher, descriptor visitor and ItemInstance constructor execute 252 controlled cases.
+These include 108 ordinary/concrete/named expansions, 48 associated-default constructions and 96 output-selection controls.
+Java matches all 96 named or unknown-name expansions.
+Targeted regressions also verify explicit block runtime zero, default versus alternate block identity, source wildcards and the selected transfer.
+
+Recipe registry trees, world and result accessors, an empty unlock context, captured Item registry storage, warm associated caches and runtime services are supplied boundaries.
+Full factory installation, tag/Molang visitation order and matching nonempty output data remain unverified.
+Tag and Molang membership retain their existing predicates.
+The full displayed-output catalog, authored controls and native action quantity/cursor semantics remain unfinished.
+The remaining inventory, movement, mount, camera and rendering requirements also remain active.
+
+All 37 targeted tests and Checkstyle pass.
+All four projects build with 2,323 passing tests, 152 optional skips and no failures or errors.
+All 102 core patches replay. Tooling checks, all 264 regressions and patch metadata validation pass.
+The native comparison runs without skips.
+
+A fresh strict-BDS ViaProxy run passes all three cooking stations and same-world reconnect.
+Both launched profiles and the rebuilt proxy match all 1,369 core classes and both block-item resources.
+The run exits successfully and stops the private display normally.
+These controls use ordinary recipes and Java cooking screens.
+The declared-metadata correction is verified by the native fixture and targeted transfer regression; visible native parity remains unverified.
