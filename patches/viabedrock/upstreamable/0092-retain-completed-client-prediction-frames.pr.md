@@ -90,17 +90,17 @@ Native protocol 2193 captures confirm the layout and zero-velocity corrections a
 The movement guide describes immediate application outside available history.
 The pinned correction receiver has the more specific admission gates below.
 
-Core previously discarded motion outside gliding and canceled corrections outside its tick window.
-It now applies absolute motion for every player pose, including zero-velocity resets.
+Core previously discarded motion outside gliding and used an age-based tick window.
+It now applies absolute motion for accepted corrections in every player pose, including zero-velocity resets.
 Unknown rewind types cancel the Java output before logging the unsupported value.
 The gliding-only implementation moves out of the deferred rocket patch into this general correction handler.
 
-Seven parameterized cases cover zero, past, current, future, and unsigned boundary ticks.
+Ten parameterized cases cover zero, expired, retained, current, future, and unsigned boundary ticks.
 Each case exercises both gliding states and zero and nonzero motion through the actual packet mapping.
 They verify position, motion, relative flags, grounded state, and complete packet consumption.
 Tick zero consumes the packet without a position update or negotiated correction payload.
 
-**Incomplete:** Core applies nonzero corrections immediately because it has no usable movement history for replay.
+**Incomplete:** Core applies accepted nonzero corrections immediately because it has no usable component and input history for replay.
 Corrections inside history still need rewind and input resimulation.
 Vehicle velocity, angular velocity, and movement-related metadata, attributes, and effects need matching reconciliation.
 
@@ -123,8 +123,61 @@ Packet regressions failed before both changes.
 The probe supplies ECS storage, relation resolution, allocation, and the command dispatch boundary.
 It does not execute command application, retained snapshot restoration, input replay, or world physics.
 The original generic replay probes remain useful evidence for those separate paths.
-Current core still lacks matching historical admission and resimulation.
+Current core implements the clock admission rule described below.
+Historical component restoration and physics resimulation remain incomplete.
 The 28 recorded effect activity mismatches remain reproducible against the current build.
+
+## Retained correction clocks, October 22, 2026
+
+Core now configures clock retention from the `START_GAME` history size, bounded to 1 through 1,000 entries.
+Every emitted input retains its clock, including inputs without a completed prediction payload.
+Such inputs evict old bindings without assigning an unrelated client frame.
+Clock gaps, duplicates, and backward changes start a new history.
+Contiguous unsigned wrap preserves the history.
+The connection frame watermark survives history changes.
+
+The correction handler rejects zero and unsigned clocks older than the oldest retained input before any player or vehicle mutation.
+Rejected packets emit neither motion nor a negotiated correction payload.
+Future clocks remain eligible because the native receiver has no corresponding upper-bound rejection.
+These clocks describe emitted inputs. They do not provide historical component snapshots or replay physics.
+
+Twelve controls execute the original native installer block and history constructor.
+They verify the capacity bound across the native ushort range.
+They do not establish conversion from malformed signed wire sizes into that native field.
+The earlier 344 capture controls establish clock continuity, null-input capture, eviction, and unsigned wrap.
+
+A new 512-case probe joins the original receiver, target selector, unsigned lookup, queue insertion, comparator, client/server policy, and replay loop.
+Historical position commands compare against the next retained snapshot and enter its command queue when a difference requires replay.
+The original client policy marks that frame dirty, then replay applies the correction before its captured input.
+The probe completes 84 historical replays and observes no immediate position-command application at receipt.
+Current-clock commands enter the pending queue. Future commands enter the current frame queue without an immediate dirty mark in these controls.
+
+The probe supplies ECS stores, snapshot storage, captured input methods, allocation, metrics, and grounded-tag insertion.
+Its physics step uses explicit float32 position addition as an ordering witness.
+It does not execute native world physics or prove client trajectories.
+The cached snapshot-blob descriptor path also remains outside this probe.
+
+A separate 16-control probe continues current-tick corrections through the original pending-command transfer block.
+Fourteen changed controls transfer their commands, set the movement mask, and mark the next captured frame dirty.
+Replay then applies each correction before that frame's input. Two unchanged controls queue no command.
+Frame construction, snapshot storage, input methods, and arithmetic physics remain explicit fixture boundaries.
+This probe does not execute the complete capture function or native world physics.
+
+Regression tests fail against the previous missing-frame retention and stale correction handling.
+The new tests cover server capacity, clock discontinuities, unsigned boundaries, missing frames, and stale player, boat, and horse corrections.
+Production clock admission also matches 1,500 checks derived from 300 native capture and wrap controls.
+After integration with the newer cooking controls, the four-project build passes 2,382 tests, with 212 optional skips and no failures or errors.
+All 104 core patches replay, and all 1,386 embedded core classes match the rebuilt core.
+Offline validation passes.
+Full historical replay, component reconciliation, and the reported pearl/wind-charge rollback remain unfinished.
+
+A fresh 30-second BDS recording reaches gameplay and produces a structurally complete journal.
+It records 90 player corrections and two vehicle corrections, so movement mismatches remain visible.
+Each correction matches the last emitted input tick or trails it by one tick, which makes current-tick command transfer a required next step.
+The client does not stop after the recorder sends SIGTERM. The recorder correctly refuses to release its runtime dependencies.
+After private thread diagnostics, only the birth-verified recording JVM requires forced termination.
+The remaining owned launcher, server, and display stop, then the runtime copies release.
+This capture remains incomplete because normal teardown fails. It does not establish movement parity or resolve the shutdown cause.
 
 ## Vehicle correction motion, October 22, 2026
 
