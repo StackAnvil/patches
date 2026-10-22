@@ -248,3 +248,32 @@ The 288 uniform-result and 96 independent-result controls preserve phase order a
 The router remains a recording boundary in these fixtures.
 These checks do not establish physical input mapping, recipe-provider index validity, native selection effects, transactions, or live acceptance.
 The [cooking reference](../../../docs/native-cooking-actions.md#input-event-delivery) records the raw fields and remaining boundaries.
+
+## Bind recipe authority to the displayed cell
+
+The scope validator previously accepted any visible recipe ID, independently of the control's collection index.
+A control could name another visible recipe or omit its native index and still receive action authority.
+The validator now compares both fields with the exact sorted and filtered visible collection.
+It rejects missing, real-valued, negative, out-of-range, and mismatched indices.
+Recipe previews retain their separate identity and cannot become inventory slot actions.
+
+Two behavioral regressions fail against the previous implementation.
+They cover cross-cell identity changes, compacted visible indices, missing fields, JSON types, and integer bounds.
+The focused cooking scene, message, and action suite passes 37 tests before the final stack replay.
+
+A fresh native fixture separately passes 240 source-resolution controls and six installed selection/release steps.
+The original cooking manager, registered input graph, ingredient matcher, selected Item/name update, and release reset execute.
+Matching ingredients select the output without item transfers; release clears the input state while retaining that selected output.
+The fixture supplies recipe data and external game interfaces. It does not establish placement, repeated selection, full controller ownership, or live acceptance.
+The [cooking reference](../../../docs/native-cooking-actions.md#resolve-recipe-event-sources) records the source map and evidence limits.
+
+All 104 core patches replay successfully after the change.
+The full build passes 2,368 tests, with 212 optional skips and no failures or errors.
+Main and test Checkstyle pass, as does offline stack validation.
+All 1,386 core classes match the core JAR embedded in the Fabric add-on.
+
+A separate fresh first-placement fixture also reaches native request action assembly.
+A single raw recipe click moves seven hotbar items, then five inventory items, into the empty ingredient slot.
+The second Place action retains the first source's positive stack ID as its destination ID.
+This result covers controlled native action objects, not complete request serialization or live acceptance.
+The [first-placement reference](../../../docs/native-cooking-actions.md#controlled-first-placement) records the fixture boundaries.

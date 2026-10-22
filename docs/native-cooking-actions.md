@@ -22,6 +22,9 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Registered recipe input delivery | 48 cases | Raw event fields select phases through original registrations and callbacks |
 | Typed recipe event payloads | 576 cases | Integer index decoding and retained selection, command, source, and position fields |
 | Recipe input result propagation | 288 plus 96 controls | Delivered phases retain their order; callback results combine with bitwise OR |
+| Native event source resolution | 240 controls | Active-tab recipe sources through the original event callbacks |
+| Installed cooking selection and release | 6 sequence steps | Real selection-only effects and release through the original input graph |
+| Installed first recipe placement | 1 controlled click | Two native Place actions, retained destination identity, and final ingredient count |
 | Cooking item-return planner | 1,500 cases | Original-slot deficits and the remaining count passed to auto-placement |
 | Physical-slot snapshot producer | 45 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
 | Registered cooking providers | 3 ingredient descriptors | Eleven registrations, native model import, skip callbacks, and 76-slot capture order |
@@ -106,6 +109,33 @@ These checks cover the supplied `recipe_food` source and screen coordinates `11`
 The source lookup, focus value, raw events, and router results remain explicit fixture boundaries.
 The fixtures do not establish physical input mapping, complete cooking-controller installation, recipe effects, wire requests, or live acceptance.
 
+## Resolve recipe event sources
+
+The original source accessor at `0x146c45d70` reads `#collection_name` from the event payload.
+Its native tab map comes from initializer `0x146c9c340`.
+The accessor resolves `recipe_book` through the active tab, except for tab `5`:
+
+| Tab | Event source for `recipe_book` | Slot descriptor source for `recipe_book` |
+| ---: | --- | --- |
+| `1` | `recipe_food` | `recipe_food` |
+| `2` | `recipe_items_furnace` | `recipe_items_furnace` |
+| `3` | `recipe_blocks` | `recipe_blocks` |
+| `4` | `recipe_search` | `recipe_search` |
+| `5` | `recipe_book` | `inventory_items` |
+
+The separate slot resolver at `0x146c46140` uses the map for every listed tab.
+Event source resolution and slot descriptor resolution therefore differ at tab `5`.
+Other tested collection names pass through the event accessor unchanged, including long custom names.
+All 240 event controls run the original source accessor inside the registered phase callbacks.
+Their focus accessor and router results remain supplied boundaries.
+
+Recipe authority also requires the exact displayed cell identity.
+The shared scope validator matches each recipe ID against its index in the sorted, visible recipe collection.
+An ID from another visible cell cannot replace that identity.
+Filtering and category selection compact the visible indices before this comparison.
+Missing, non-integer, negative, out-of-range, and mismatched indices reject the control.
+The validator does not authorize an inventory slot from a recipe preview.
+
 ## Selection and ingredient placement
 
 The selection predicate checks the physical ingredient first.
@@ -127,6 +157,46 @@ The action source vector does not include the cursor.
 Held-item handling belongs to the controller dispatch path.
 The existing Java recipe-book planner has separate quantity and placement behavior.
 It cannot establish native action parity.
+
+Six further controls connect raw input to the original cooking state graph and selection-only effects.
+The fixture constructs the original cooking manager at `0x14c53c710` over installed providers and owned physical storage.
+It supplies one concrete recipe with a matching five-item ingredient and one output item.
+The original ingredient matcher, source lookup, selected Item assignment, and selected name lookup execute.
+
+For the primary command, raw flags `0,1` with mask `1` deliver phases `0` and `1` and leave state `25`.
+The result is `1`, and the manager retains the selected output.
+Raw flags `1,0` with mask `0` deliver phase `2`, return result `4`, and restore state `1`.
+The selected output remains in the cooking manager after this release.
+The tested secondary and tertiary sequences leave state `1` and return zero.
+All six steps preserve the physical items and append no inventory action.
+
+These controls run the real router and selection callback instead of recording their intended effects.
+The recipe cache, registry tree, world/recipe interfaces, raw events, and focus accessor remain supplied.
+Full cooking-controller and model-owner construction, first placement, repeated selection, transactions, and live acceptance remain unverified by these controls.
+
+## Controlled first placement
+
+A separate fresh fixture connects the installed input graph to the original placement and request code.
+It starts with seven matching items in hotbar slot `0`, five in inventory slot `9`, and an empty furnace ingredient slot.
+A primary recipe click returns `1` and leaves state `25`.
+The native code appends these Place actions:
+
+| Count | Source collection and slot | Source stack ID | Destination collection and slot | Destination stack ID |
+| ---: | --- | ---: | --- | ---: |
+| `7` | Hotbar `28`, slot `0` | `1000` | Furnace ingredient `25`, slot `0` | `0` |
+| `5` | Inventory `29`, slot `9` | `1009` | Furnace ingredient `25`, slot `0` | `1000` |
+
+The native snapshot then contains twelve items in the ingredient slot and empty player slots.
+The selected output remains in the cooking manager.
+The second action uses the retained positive stack ID from the first source.
+This observation concerns native action objects before complete request serialization.
+It does not determine whether later serialization rewrites those IDs.
+
+The fixture supplies consistent recipe caches, station data, and world interfaces.
+It uses the original FurnaceModel vtable over controlled fields, without the complete model-owner constructor.
+The original chunk lookup, native backing wrapper, destination guards, ingredient watcher, result lookup, transfer executor, and action append code execute.
+The world interface supplies a controlled block-entity component rather than a constructed native furnace entity.
+Other quantities, repeated selection, complete controller ownership, wire serialization, server acceptance, and visual parity remain unverified.
 
 ## Transfer quantities
 
