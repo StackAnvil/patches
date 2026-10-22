@@ -20,6 +20,7 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Selected-recipe release | 90 cases | Exit conditions, actual base-state reset, and handled result |
 | Initial-state recipe dispatch | 1,620 cases | Command, held-item, source-permission, and controlled input-mode conditions |
 | Cooking item-return planner | 1,500 cases | Original-slot deficits and the remaining count passed to auto-placement |
+| Physical-slot snapshot producer | 36 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
 
 These checks cover different boundaries. Their case counts do not measure native gameplay or visual parity.
 
@@ -96,13 +97,43 @@ It restores the deficit between the stored count and the current destination cou
 It then passes the remaining ingredient to generic auto-placement with an all-items descriptor.
 
 The return fixture supplies transfer effects at explicit capacities and records the generic auto-placement call.
-It does not execute generic auto-placement or establish the original snapshot producer's ordering.
+It does not execute generic auto-placement or establish actual provider registration order.
 The implementation must verify those parts before reusing this planner for native transactions.
+
+## Capture physical slots
+
+The complete native snapshot producer is `0x1433f7c60`.
+It traverses the manager's provider entries and locks each available provider reference.
+A nonzero result from the provider's skip callback excludes that provider.
+The callback's broader meaning remains unverified.
+
+For each included provider, capture every slot in ascending index order, including empty slots.
+Each entry contains an independent item copy, collection key, slot index, comparison flag, and empty flag.
+The producer initializes the comparison flag to false and derives the empty flag from the source count.
+It appends to the supplied vector and preserves existing entries.
+The return helper separately destroys and clears its previous entries before requesting the next capture.
+
+The fixture supplies provider traversal order, skip results, sizes, and item accessors.
+It executes the original producer, item constructors, copies, vector growth, and entry destruction.
+Real native shared ownership supplies reference locking and release.
+All 36 cases pass and restore the checked ownership counts.
+Actual provider registration order and complete controller construction remain outside this probe.
+
+Two additional controls copy ordinary non-block items with zero count, both with and without retained source identity.
+Both copies clear the Item identity and auxiliary value.
+These controls do not cover populated userdata or the separate associated-block wildcard constructor path.
+Do not generalize them into an unconditional rule for every empty stack field.
+
+The selection callback at `0x146c46900` also captures separate before and after vectors.
+It passes copied vectors to comparator `0x1450d98b0` through its controller callback.
+The 36-case probe does not execute that callback or comparator.
+It does not establish history filtering or the complete history lifecycle.
+Keep snapshot capture, history replacement, and selection effects as distinct verification boundaries.
 
 ## Implementation boundaries
 
 The [shared UI patch](../patches/viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.patch) owns the cooking messages, scene contracts, and presentation authority.
 The [inventory request patch](../patches/viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.patch) owns request prediction, response reconciliation, and transfer quantities.
 
-Remaining work includes the complete input pipeline, snapshot production, return and transfer execution, revision-bound action handling, and authored client controls.
+Remaining work includes the complete input pipeline, provider registration order, history lifecycle, return and transfer execution, revision-bound action handling, and authored client controls.
 Native visual comparisons remain separate from these instruction-level checks.
