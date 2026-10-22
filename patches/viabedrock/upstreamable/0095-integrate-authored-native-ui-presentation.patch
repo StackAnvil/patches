@@ -1,4 +1,4 @@
-From 170a9e1172b8de380d5f66c45b56ea3f0098c987 Mon Sep 17 00:00:00 2001
+From 707175fe7458c9db46eddd00a707a6d683dd06b3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -414,6 +414,16 @@ the existing canonical descriptor resolver; unresolved subtype metadata
 cannot establish occupied-slot compatibility. Registry replacement
 lifetimes, restriction hash collisions, specialized Item overrides and
 complete controller/wire/live behavior remain unverified.
+
+Require the converted resource pack to be loaded on the Java client before
+publishing a native container program. A negotiated payload channel alone
+does not make its hashed images available. Without those resources, the
+client skips every missing panel image while still drawing inventory items.
+Keep the ordinary menu until resource loading succeeds, without consuming
+a presentation sequence. A packet regression fails before this guard and
+passes after it, then proves the first loaded presentation still uses
+sequence one. This identifies a missing-background failure path, not the
+confirmed cause of the reported WildMC screenshot.
 ---
  Data Asset Sources.md                         |    9 +
  .../api/model/NativeItemStacking.java         |   85 +
@@ -435,7 +445,7 @@ complete controller/wire/live behavior remain unverified.
  .../model/ItemStackingProperties.java         |   36 +
  .../model/LegacyItemStackingProperties.java   |   54 +
  .../protocol/packet/HudPackets.java           |   51 +-
- .../protocol/packet/InventoryPackets.java     |  649 ++-
+ .../protocol/packet/InventoryPackets.java     |  653 ++-
  .../protocol/packet/JoinPackets.java          |    3 +-
  .../protocol/packet/MultiStatePackets.java    |   38 +
  .../protocol/packet/NpcDialoguePackets.java   |  417 +-
@@ -455,11 +465,11 @@ complete controller/wire/live behavior remain unverified.
  .../api/resourcepack/ui/HudTitleUiTest.java   |  176 +
  .../protocol/model/ItemRegistryTest.java      |  305 ++
  .../packet/ModalFormTransitionTest.java       |  123 +
- .../NativeContainerOpeningPacketTest.java     |  449 ++
+ .../NativeContainerOpeningPacketTest.java     |  485 +++
  .../protocol/packet/NativeHudPacketTest.java  |  160 +
  .../packet/NpcDialoguePacketTest.java         |  301 +-
  .../storage/NativeContainerUiStateTest.java   |   85 +
- 44 files changed, 8332 insertions(+), 328 deletions(-)
+ 44 files changed, 8372 insertions(+), 328 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemStacking.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSlots.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerLegacyActions.java
@@ -1679,7 +1689,7 @@ index 6d9d3f9d7..d42057443 100644
                      case Clear, Reset -> {
                          wrapper.setPacketType(ClientboundPackets26_3.CLEAR_TITLES);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index 39b8a7e4e..2b1cbdf0b 100644
+index 39b8a7e4e..d22d76165 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -17,6 +17,14 @@
@@ -2081,7 +2091,7 @@ index 39b8a7e4e..2b1cbdf0b 100644
              inventoryTracker.setCurrentForm(null);
              if (payload.contains("exit") && payload.getBoolean("exit")) {
                  wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, formId); // id
-@@ -633,6 +618,338 @@ public final class InventoryPackets {
+@@ -633,6 +618,342 @@ public final class InventoryPackets {
          });
      }
  
@@ -2141,8 +2151,12 @@ index 39b8a7e4e..2b1cbdf0b 100644
 +        if (!nativeActions && !families && !channels.hasChannel(NativeContainerMessage.CHANNEL)) {
 +            return;
 +        }
++        final var resources = wrapper.user().get(ResourcePackStorage.class);
++        if (!resources.isLoadedOnJavaClient()) {
++            return;
++        }
 +        final var state = wrapper.user().get(NativeContainerUiState.class);
-+        final var ui = wrapper.user().get(ResourcePackStorage.class).getContainerUi();
++        final var ui = resources.getContainerUi();
 +        final var message = nativeActions ? state.prepareActions(wrapper.get(Types.VAR_INT, 0), kind, title, ui,
 +                value -> net.raphimc.viabedrock.api.model.container.NativeContainerLegacyActions.create(wrapper.user(), value))
 +                : state.prepare(wrapper.get(Types.VAR_INT, 0), kind, title, ui, List.of());
@@ -2420,7 +2434,7 @@ index 39b8a7e4e..2b1cbdf0b 100644
      private static void sendBookEdits(final UserConnection user, final int slot,
              final List<String> previousPages, final List<String> pages, final String title) {
          for (int index = 0; index < pages.size(); index++) {
-@@ -687,4 +1004,12 @@ public final class InventoryPackets {
+@@ -687,4 +1008,12 @@ public final class InventoryPackets {
      private InventoryPackets() {
      }
  
@@ -8790,10 +8804,10 @@ index 000000000..51cdb2bf1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeContainerOpeningPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeContainerOpeningPacketTest.java
 new file mode 100644
-index 000000000..149dd3afc
+index 000000000..3472fd3b4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeContainerOpeningPacketTest.java
-@@ -0,0 +1,449 @@
+@@ -0,0 +1,485 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -8903,7 +8917,43 @@ index 000000000..149dd3afc
 +                 "large_chest_panel@chest.small_chest_panel":{}}
 +                """);
 +        content.putString("texts/en_US.lang", "actor.key=Social Menu\n");
-+        return new ResourcePackStorage(List.of(new ResourcePack(content)));
++        final var resources = new ResourcePackStorage(List.of(new ResourcePack(content)));
++        resources.setLoadedOnJavaClient();
++        return resources;
++    }
++
++    @Test
++    void withholdsNativePresentationUntilItsConvertedResourcesLoad() throws Exception {
++        final var user = mock(UserConnection.class);
++        final var channels = new ChannelStorage();
++        channels.addChannels(List.of(NativeContainerMessage.CHANNEL));
++        final var resources = spy(packs());
++        when(resources.isLoadedOnJavaClient()).thenReturn(false);
++        final Map<Class<?>, Object> storage = Map.of(ChannelStorage.class, channels,
++                NativeContainerUiState.class, new NativeContainerUiState(), ResourcePackStorage.class, resources);
++        when(user.get(any())).thenAnswer(call -> storage.get(call.getArgument(0)));
++        final var sent = new ArrayList<byte[]>();
++        final var open = outbound(ClientboundPackets26_3.OPEN_SCREEN, user, sent);
++        open.write(Types.VAR_INT, 7);
++        try (var factory = mockStatic(PacketWrapper.class)) {
++            factory.when(() -> PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user))
++                    .thenAnswer(call -> outbound(ClientboundPackets26_3.CUSTOM_PAYLOAD, user, sent));
++            InventoryPackets.sendNativeContainerPresentation(open, ContainerUi.Kind.CHEST_3_ROWS, new ContainerUi.Title("", false));
++            assertFalse(open.isCancelled());
++            assertTrue(sent.isEmpty());
++            when(resources.isLoadedOnJavaClient()).thenReturn(true);
++            InventoryPackets.sendNativeContainerPresentation(open, ContainerUi.Kind.CHEST_3_ROWS, new ContainerUi.Title("", false));
++            assertTrue(open.isCancelled());
++            assertEquals(2, sent.size());
++            final var payload = Unpooled.wrappedBuffer(sent.get(1));
++            try {
++                Types.VAR_INT.readPrimitive(payload);
++                Types.STRING.read(payload);
++                assertEquals(1, NativeContainerMessage.TYPE.read(payload).sequence());
++            } finally {
++                payload.release();
++            }
++        }
 +    }
 +
 +    @Test

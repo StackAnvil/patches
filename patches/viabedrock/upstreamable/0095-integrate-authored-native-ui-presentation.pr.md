@@ -325,3 +325,26 @@ It passes 1,485 tests, with 90 optional tests skipped and no failures.
 The run includes the 756 merge cases, native tag comparisons, populated-userdata controls and cooking-admission controls.
 Main, test and tool Checkstyle and Maven POM generation pass.
 All 104 exported core patches replay to the tested source tree.
+
+## Inventory image failure report
+
+The current release report shows inventory items without their panel background.
+The opening action and active client screen type are unknown.
+A verified failure path allowed a native container program before the converted pack loaded.
+The core now keeps its ordinary menu until those resources load, without advancing presentation identity.
+The shared client image loader now reports missing or corrupt pack images through the existing screen failure handler.
+It preserves asynchronous remote-image loading and can recover when a new pack source supplies valid pixels.
+
+Both regressions fail before their fixes and pass after them.
+The full core build passes 1,494 tests with 90 optional skips, including the concurrent cooking return fix.
+The paired add-on build passes 843 tests with 122 optional skips.
+Both have zero failures or errors.
+All 104 core and 38 add-on patches replay to their identical tested source trees.
+Main, test and tool Checkstyle, both publication POMs, add-on access-widener validation and four patch metadata tests pass.
+
+This fixes two asset-failure paths and does not confirm the screenshot's exact cause.
+It does not establish native pixels or GUI scale parity.
+The same report includes pearl/wind-charge rollback, repeated eating and a missing locator bar.
+Those symptoms remain under investigation.
+The capture lab cannot copy a private profile with the currently available disk space.
+No new live client or server was launched for this report.
