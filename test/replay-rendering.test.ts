@@ -111,3 +111,12 @@ test("live transfers keep later disconnects and packet failures visible", () => 
   }
   expect(clientSessionFailed(transfer.trimEnd() + ": unexpected", true)).toBeTrue();
 });
+
+test("connection failures terminate capture even before gameplay or transfer", () => {
+  const connectionError = "[20:04:19] [Server Connector #1/ERROR]: Couldn't connect to server\n";
+  for (const allowTransfers of [false, true]) {
+    expect(clientSessionFailed(connectionError, allowTransfers)).toBeTrue();
+    expect(clientSessionFailed(connectionError.replaceAll("\n", "\r\n"), allowTransfers)).toBeTrue();
+    expect(clientSessionFailed("[20:04:19] [Render thread/INFO]: [CHAT] Couldn't connect to server\n", allowTransfers)).toBeFalse();
+  }
+});

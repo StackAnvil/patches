@@ -1,5 +1,58 @@
 import { expect, test } from "bun:test";
-import { cleanupReplaySession, type ReplaySessionCleanup } from "../src/replay/session-cleanup.ts";
+import { cleanupReplaySession, stopReplayJavaProcesses, type ReplaySessionCleanup } from "../src/replay/session-cleanup.ts";
+import { OwnedProcesses, type ProcessEntry } from "../src/replay/owned-processes.ts";
+
+function launcherFixture() {
+  const entries = new Map<number, ProcessEntry>([
+    [10, { pid: 10, parent: 1, startTicks: "100" }],
+    [20, { pid: 20, parent: 10, startTicks: "200" }],
+    [30, { pid: 30, parent: 1, startTicks: "300" }],
+  ]);
+  const signals: number[] = [];
+  const processes = new OwnedProcesses({
+    read: pid => entries.get(pid),
+    ids: () => [...entries.keys()],
+    signal: pid => { signals.push(pid); },
+  });
+  processes.capture(10);
+  return { processes, entries, signals };
+}
+
+test("keeps the launcher alive throughout asynchronous game shutdown", async () => {
+  const { processes, entries, signals } = launcherFixture();
+  const exiting = Promise.withResolvers<void>();
+  const stopping = stopReplayJavaProcesses(processes, 20, async pids => {
+    if (pids.length === 1) {
+      expect(processes.alive(10)).toBe(true);
+      await exiting.promise;
+    }
+    for (const pid of pids) entries.delete(pid);
+  });
+  expect(signals).toEqual([20]);
+  expect(entries.has(10)).toBe(true);
+  exiting.resolve();
+  await stopping;
+  expect(signals).toEqual([20, 10]);
+  expect([...entries.keys()]).toEqual([30]);
+});
+
+test("preserves the launcher and refuses further teardown when the game cannot stop", async () => {
+  const { processes, entries, signals } = launcherFixture();
+  const failure = new Error();
+  const result = await stopReplayJavaProcesses(processes, 20, async () => { throw failure; }).catch(error => error);
+  expect(result).toBe(failure);
+  expect(signals).toEqual([20]);
+  expect([...entries.keys()]).toEqual([10, 20, 30]);
+});
+
+test("stops captured launcher descendants when startup never identified a game", async () => {
+  const { processes, entries, signals } = launcherFixture();
+  await stopReplayJavaProcesses(processes, undefined, async pids => {
+    for (const pid of pids) entries.delete(pid);
+  });
+  expect(signals).toEqual([20, 10]);
+  expect([...entries.keys()]).toEqual([30]);
+});
 
 function fixture() {
   const state = { running: true, dependencies: true, display: true };

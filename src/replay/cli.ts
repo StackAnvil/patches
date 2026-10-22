@@ -46,7 +46,7 @@ import {
 } from "./native-offline.ts";
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
-import { cleanupReplaySession } from "./session-cleanup.ts";
+import { cleanupReplaySession, stopReplayJavaProcesses } from "./session-cleanup.ts";
 import { hiveTarget, publicTarget } from "./targets.ts";
 import {
   hasGameplayAcknowledgments,
@@ -576,18 +576,7 @@ async function launchNative(
 
 async function stopAll(gamePid?: number): Promise<void> {
   if (javaCleanup) {
-    javaCleanup.captureDescendants();
-    if (gamePid) javaCleanup.signal(gamePid, "SIGTERM");
-    for (const identity of javaCleanup.all().toReversed())
-      javaCleanup.signal(identity.pid, "SIGTERM");
-    const until = Date.now() + 15_000;
-    while (
-      Date.now() < until &&
-      javaCleanup.all().some((identity) => javaCleanup!.alive(identity.pid))
-    )
-      await Bun.sleep(100);
-    if (javaCleanup.all().some((identity) => javaCleanup!.alive(identity.pid)))
-      throw new Error("Owned Java processes did not stop normally; forced cleanup refused.");
+    await stopReplayJavaProcesses(javaCleanup, gamePid);
     return;
   }
   if (nativeClient && alive(nativeClient.pid)) {

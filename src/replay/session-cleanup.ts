@@ -1,3 +1,26 @@
+import type { OwnedProcesses } from "./owned-processes.ts";
+
+/** Keep Prism draining the game's output until the JVM has finished shutting down. */
+export async function stopReplayJavaProcesses(
+  processes: OwnedProcesses,
+  gamePid?: number,
+  waitForExit: (pids: number[]) => Promise<void> = async (pids) => {
+    const until = Date.now() + 15_000;
+    while (Date.now() < until && pids.some((pid) => processes.alive(pid))) await Bun.sleep(100);
+    if (pids.some((pid) => processes.alive(pid)))
+      throw new Error("Owned Java processes did not stop normally; forced cleanup refused.");
+  },
+): Promise<void> {
+  processes.captureDescendants();
+  if (gamePid !== undefined) {
+    processes.signal(gamePid, "SIGTERM");
+    await waitForExit([gamePid]);
+  }
+  processes.captureDescendants();
+  for (const identity of processes.all().toReversed()) processes.signal(identity.pid, "SIGTERM");
+  await waitForExit(processes.all().map((identity) => identity.pid));
+}
+
 export interface ReplaySessionCleanup {
   recordOwnership(): Promise<void>;
   stopProcesses(): Promise<void>;
