@@ -9518,3 +9518,30 @@ Join and same-world reconnect pass. Both installed profiles match all 1,363 rebu
 The runtime probe mutates three temporary Items before the fix and preserves all three afterward. No observer errors occur.
 The run exits successfully and stops the private display normally.
 These controls use Java cooking screens; native workstation presentation and the other goal areas remain open.
+
+## Native cooking source collection (October 22, 2026)
+
+Furnace, smoker and blast-furnace recipe placement now use a shared native source collector.
+It groups constructed Items by concrete descriptor hash before checking eligibility.
+The first nonempty stack determines whether each group counts, including rejection for an enchantment list or a nonzero byte lock.
+Groups retain their source container and slot identities and sort by descending count with native tie ordering.
+Placement still checks full stack compatibility before merging or transferring items.
+
+The unchanged target executable supplies 3,789 collection cases.
+They cover wildcard metadata, unsigned counts, decisions cached across containers and the native sort boundaries.
+Within that total, 1,176 cases execute the actual typed-byte lookup over supplied compound trees.
+Byte locks differ from short and integer tags; zero and negative-byte controls are included.
+Ordinary Item ownership, container vectors, generic NBT presence, allocation, CRT, destruction and result-name construction remain supplied seams.
+Native compound construction, block-derived collection cases, full controller execution and visible parity remain unverified.
+
+All fourteen targeted collection, placement and request-rollback tests pass, along with Checkstyle.
+All four projects build with 2,314 passing tests, 152 optional skips and no failures or errors.
+The native collection comparison runs without skips.
+All 102 core patches replay, and tooling checks, 264 regressions and patch metadata validation pass.
+The authored cooking catalog, evaluator, screen activation and controls remain unfinished.
+The movement, mount, camera and rendering requirements of the five-area goal also remain active.
+
+A fresh strict-BDS ViaProxy run passes recipe selection, cooking and result transfer on all three cooking stations.
+Join and same-world reconnect pass, and the private display stops normally.
+Both launched profiles and the rebuilt proxy match all 1,367 current core classes and both block-item resources.
+These controls use Java cooking screens and do not establish native presentation parity.

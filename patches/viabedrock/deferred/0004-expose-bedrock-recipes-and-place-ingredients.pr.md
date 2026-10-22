@@ -72,3 +72,31 @@ Recipe results now use the same connection constructor as inventory stacks and r
 The complete signed-short count sweep uses the registry constructor for all 65,536 inputs.
 Both wire auxiliary values 0 and 8 construct canonical metadata 0 before the production grid matcher checks the default and alternate axis.
 The full build and eleven inventory controls pass; the authored cooking catalog and native controls remain unfinished.
+
+## Native cooking source collection (October 22, 2026)
+
+Furnace, smoker and blast-furnace placement now collect sources through the constructed Item's concrete descriptor hash.
+The first nonempty stack in each group determines eligibility, including rejection.
+An enchantment ListTag or a nonzero ByteTag lock rejects that initial stack.
+Later stacks with the same descriptor retain the cached decision.
+Groups sort by descending count with native tie ordering, while each group retains its source container and slot order.
+Rejected groups remain in the sort because removing them can change ties.
+
+The collector does not authorize merging different stack data.
+Placement retains full stack compatibility, positive server IDs, slot restrictions, request ownership and rollback checks.
+The authored cooking catalog and screen activation remain unfinished.
+
+The pinned executable supplies 3,789 collection cases.
+These include count boundaries, wildcard metadata, cache decisions across containers and insertion/partition sort boundaries.
+Of these cases, 1,176 execute the actual typed-byte lookup over supplied compound trees.
+They distinguish byte locks from short and integer values, including zero and negative-byte controls.
+Generic NBT presence, ordinary Item ownership, container vectors, allocation, CRT, destruction and result-name construction remain supplied seams.
+Native compound construction, block-derived collection cases, full transactions and visible parity remain outside the fixture.
+The optional comparison reads `STACKANVIL_NATIVE_COOKING_SOURCES`.
+
+All fourteen targeted tests and Checkstyle pass.
+The full build passes 2,314 tests with 152 optional skips and no failures or errors.
+All 102 core patches replay, and offline tooling and metadata checks pass.
+A fresh strict-BDS ViaProxy run passes all three cooking stations and same-world reconnect.
+Both launched profiles and the proxy match all 1,367 rebuilt core classes and both block-item resources.
+The private display stops normally. These controls use Java cooking screens.

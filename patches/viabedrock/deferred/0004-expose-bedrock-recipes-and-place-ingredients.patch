@@ -1,4 +1,4 @@
-From 1f95403baad93f70c87d35dfb7df554ae9b6c0a6 Mon Sep 17 00:00:00 2001
+From 75100b463fafbde40602d55d6feaa46d849e5b7e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -127,11 +127,30 @@ Verify the complete signed-short count sweep through the native registry
 constructor, rather than a numeric-only stand-in. The stripped-wood grid
 regression constructs both wire auxiliary values 0 and 8 into canonical
 stack metadata 0 before comparing the default Block and another axis.
+
+Collect cooking sources by the constructed Item's concrete descriptor hash.
+Cache the first nonempty stack's eligibility for later matching descriptors,
+including rejected groups. Exclude an initial enchantment ListTag or nonzero
+ByteTag item lock, then sort groups by descending available count with the
+native tie ordering. Retain source container and slot identities.
+
+Use this collector in furnace, smoker and blast-furnace recipe placement.
+Keep full stack compatibility and authoritative request/rollback checks at
+the transfer boundary; a descriptor group does not authorize merging NBT.
+
+The unchanged pinned 1.26.51.1 cooking collector verifies 3,789 private
+cases, including 1,176 cases through its actual typed-byte lookup over
+supplied compound trees. The fixture supplies ownership, container access,
+generic NBT presence, allocation/CRT/destruction and result-name seams.
+It excludes native compound construction, block-derived collection cases,
+full transaction/controller execution and visible native parity. Authored
+cooking catalog and screen activation remain follow-up work.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 ++
+ .../model/container/CookingRecipeSources.java |  87 +++
  .../model/container/CraftingOutputPlan.java   | 109 ++++
  .../model/container/CraftingPlacement.java    | 229 +++++++
- .../container/FurnaceRecipePlacement.java     | 194 ++++++
+ .../container/FurnaceRecipePlacement.java     | 205 +++++++
  .../block/CraftingTableContainer.java         | 100 +--
  .../container/block/FurnaceContainer.java     |  57 ++
  .../model/container/player/HudContainer.java  |   3 +
@@ -158,9 +177,10 @@ stack metadata 0 before comparing the default Block and another axis.
  .../types/model/FurnaceOptionsType.java       |  34 ++
  .../types/recipe/CraftingDataReader.java      |  66 +-
  .../api/model/NativeFurnaceOptionsTest.java   |  57 ++
+ .../container/CookingRecipeSourcesTest.java   | 146 +++++
  .../container/CraftingOutputPlanTest.java     |  84 +++
  .../container/CraftingPlacementTest.java      | 161 +++++
- .../container/FurnaceRecipePlacementTest.java | 271 +++++++++
+ .../container/FurnaceRecipePlacementTest.java | 314 ++++++++++
  .../player/InventoryContainerTest.java        | 131 ++++
  .../model/recipe/MolangTagQueryTest.java      |  53 ++
  .../model/recipe/RecipeOwnershipTest.java     |  52 ++
@@ -169,13 +189,14 @@ stack metadata 0 before comparing the default Block and another axis.
  .../storage/CookingRecipeBookTest.java        | 154 +++++
  .../protocol/storage/CraftingCursorTest.java  | 158 +++++
  .../storage/CraftingDataTrackerTest.java      | 400 ++++++++++++
- .../storage/FurnaceRecipeRequestTest.java     | 126 ++++
+ .../storage/FurnaceRecipeRequestTest.java     | 133 ++++
  ...NativeRecipeRegistrationReferenceTest.java | 104 ++++
  .../item/BedrockRecipeResultTypeTest.java     | 106 ++++
  .../types/model/FurnaceOptionsTypeTest.java   |  75 +++
  .../types/recipe/CraftingDataReaderTest.java  |  81 ++-
- 46 files changed, 4358 insertions(+), 159 deletions(-)
+ 48 files changed, 4652 insertions(+), 159 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeSources.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CraftingPlacement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
@@ -185,6 +206,7 @@ stack metadata 0 before comparing the default Block and another axis.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockRecipeResultType.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/types/model/FurnaceOptionsType.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptionsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/CookingRecipeSourcesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlanTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/CraftingPlacementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java
@@ -249,6 +271,99 @@ index 000000000..712ddc8a3
 +    };
 +
 +    private NativeFurnaceOptions() { }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeSources.java b/src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeSources.java
+new file mode 100644
+index 000000000..b2409a86a
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeSources.java
+@@ -0,0 +1,87 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container;
++
++import com.viaversion.nbt.tag.ByteTag;
++import com.viaversion.nbt.tag.ListTag;
++import net.raphimc.viabedrock.api.resourcepack.ui.CookingRecipeOrder;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeKey;
++
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.function.Function;
++import java.util.function.Predicate;
++
++/** Native cooking collection caches eligibility by concrete descriptor before ordering source groups. */
++public final class CookingRecipeSources {
++
++    private CookingRecipeSources() { }
++
++    public static <C> Result<C> collect(final List<C> containers, final Function<C, BedrockItem[]> contents,
++                                        final Function<BedrockItem, ItemRecipeKey> identity,
++                                        final Predicate<BedrockItem> matches) {
++        final Map<Integer, Group<C>> groups = new LinkedHashMap<>();
++        for (final C container : containers) {
++            if (container == null) {
++                continue;
++            }
++            final BedrockItem[] items = contents.apply(container);
++            for (int slot = 0; slot < items.length; slot++) {
++                final BedrockItem item = items[slot];
++                if (item.amount() == 0) {
++                    continue;
++                }
++                final ItemRecipeKey key = identity.apply(item);
++                final int hash = key != null ? key.descriptorHash() : 0;
++                final Group<C> group = groups.computeIfAbsent(hash, ignored -> new Group<>(
++                        key != null && eligible(item) && matches.test(item)));
++                if (group.accepted) {
++                    group.sources.add(new Source<>(container, slot));
++                    group.amount += item.amount();
++                }
++            }
++        }
++        final List<Source<C>> sources = new ArrayList<>();
++        int amount = 0;
++        // Rejected groups stay in the sort: removing them first changes equal-count tie order.
++        for (final Group<C> group : CookingRecipeOrder.sorted(new ArrayList<>(groups.values()), entry -> -entry.amount)) {
++            if (group.amount > 0) {
++                sources.addAll(group.sources);
++                amount += group.amount;
++            }
++        }
++        return new Result<>(sources, amount);
++    }
++
++    private static boolean eligible(final BedrockItem item) {
++        return item.tag() == null || !(item.tag().get("ench") instanceof ListTag<?>)
++                && !(item.tag().get("minecraft:item_lock") instanceof ByteTag lock && lock.asByte() != 0);
++    }
++
++    public record Source<C>(C container, int slot) { }
++
++    public record Result<C>(List<Source<C>> sources, int amount) {
++
++        public Result {
++            sources = List.copyOf(sources);
++        }
++    }
++
++    private static final class Group<C> {
++
++        private final boolean accepted;
++        private final List<Source<C>> sources = new ArrayList<>();
++        private int amount;
++
++        private Group(final boolean accepted) {
++            this.accepted = accepted;
++        }
++    }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java b/src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java
@@ -603,10 +718,10 @@ index 000000000..a6c19807a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java b/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
 new file mode 100644
-index 000000000..668c87af5
+index 000000000..f072561ea
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,205 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -621,6 +736,7 @@ index 000000000..668c87af5
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestSlotInfo;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeKey;
 +import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
 +import net.raphimc.viabedrock.protocol.storage.CraftingDataStorage;
 +
@@ -632,6 +748,7 @@ index 000000000..668c87af5
 +import java.util.Map;
 +import java.util.Set;
 +import java.util.function.BiPredicate;
++import java.util.function.Function;
 +import java.util.function.ToIntFunction;
 +
 +/** Plans ingredient transfers only. Cooking, fuel consumption and output remain server owned. */
@@ -641,7 +758,8 @@ index 000000000..668c87af5
 +
 +    public static Plan plan(final CraftingDataStorage data, final FurnaceContainer furnace,
 +            final InventoryContainer inventory, final boolean maxItems,
-+            final ToIntFunction<BedrockItem> maximum, final BiPredicate<ItemDescriptor, BedrockItem> matches) {
++            final ToIntFunction<BedrockItem> maximum, final Function<BedrockItem, ItemRecipeKey> identity,
++            final BiPredicate<ItemDescriptor, BedrockItem> matches) {
 +        if (!furnace.acceptsRecipe(data) || inventory.size() != 36) {
 +            return null;
 +        }
@@ -689,7 +807,10 @@ index 000000000..668c87af5
 +                return null;
 +            }
 +        }
-+        final List<BedrockItem> candidates = input.isEmpty() ? Arrays.asList(available) : List.of(input);
++        final var sources = CookingRecipeSources.collect(List.<BedrockItem[]>of(available), Function.identity(),
++                identity, item -> matches.test(ingredient, item)).sources();
++        final List<BedrockItem> candidates = input.isEmpty()
++                ? sources.stream().map(source -> available[source.slot()]).toList() : List.of(input);
 +        BedrockItem selected = null;
 +        int target = 0;
 +        for (final BedrockItem candidate : candidates) {
@@ -699,9 +820,10 @@ index 000000000..668c87af5
 +            }
 +            final int limit = Math.min(255, maximum.applyAsInt(candidate));
 +            int total = input.amount();
-+            for (final BedrockItem item : available) {
++            for (final var source : sources) {
++                final BedrockItem item = available[source.slot()];
 +                if (!item.isEmpty() && hasServerId(item) && !item.isDifferent(candidate)
-+                        && matches.test(ingredient, item) && furnace.canPlaceItem(0, item)) {
++                        && furnace.canPlaceItem(0, item)) {
 +                    total += item.amount();
 +                }
 +            }
@@ -721,10 +843,14 @@ index 000000000..668c87af5
 +        if (selected == null) {
 +            return null;
 +        }
-+        for (int slot = 0; slot < available.length && input.amount() < target; slot++) {
++        for (final var reference : sources) {
++            if (input.amount() >= target) {
++                break;
++            }
++            final int slot = reference.slot();
 +            final BedrockItem source = available[slot];
 +            if (source.isEmpty() || !hasServerId(source) || source.isDifferent(selected)
-+                    || !matches.test(ingredient, source) || !furnace.canPlaceItem(0, source)) {
++                    || !furnace.canPlaceItem(0, source)) {
 +                continue;
 +            }
 +            final int count = Math.min(source.amount(), target - input.amount());
@@ -978,7 +1104,7 @@ index fec81fe6c..178d1ef15 100644
 -
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
-index 09fb14352..dee6d28a8 100644
+index 09fb14352..a509f9375 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
 @@ -22,11 +22,24 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -1035,7 +1161,7 @@ index 09fb14352..dee6d28a8 100644
 +        final InventoryContainer player = inventory.getInventoryContainer();
 +        final var items = this.user.get(ItemRewriter.class);
 +        final var plan = FurnaceRecipePlacement.plan(data, this, player, maxItems,
-+                items::maxStackSize, (descriptor, item) -> descriptor.matchesItem(this.user, item));
++                items::maxStackSize, items::recipeKey, (descriptor, item) -> descriptor.matchesItem(this.user, item));
 +        if (plan == null) {
 +            return false;
 +        }
@@ -3079,6 +3205,158 @@ index 000000000..71312816c
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/CookingRecipeSourcesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/CookingRecipeSourcesTest.java
+new file mode 100644
+index 000000000..4bfe26b70
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/container/CookingRecipeSourcesTest.java
+@@ -0,0 +1,146 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ItemEntry;
++import net.raphimc.viabedrock.protocol.model.ItemRegistry;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeKey;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.Arrays;
++import java.util.List;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.function.Function;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class CookingRecipeSourcesTest {
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_COOKING_SOURCES", matches = ".+")
++    void matchesCompleteNativeCollectionAcrossGroupCacheAndSortBoundaries() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(
++                System.getenv("STACKANVIL_NATIVE_COOKING_SOURCES")))).getAsJsonObject();
++        final var registry = registry();
++        final var rows = reference.getAsJsonArray("rows");
++        assertFalse(rows.isEmpty());
++        for (final var element : rows) {
++            final var row = element.getAsJsonObject();
++            final var auxiliary = row.getAsJsonArray("auxiliary");
++            final BedrockItem[] items = new BedrockItem[auxiliary.size()];
++            for (int slot = 0; slot < items.length; slot++) {
++                items[slot] = item(auxiliary.get(slot).getAsInt(), row.getAsJsonArray("counts").get(slot).getAsInt());
++                if (row.getAsJsonArray("blocked").get(slot).getAsBoolean()) {
++                    items[slot].setTag(enchantments());
++                }
++                if (row.has("locks") && !row.getAsJsonArray("locks").get(slot).isJsonNull()) {
++                    final var lock = row.getAsJsonArray("locks").get(slot).getAsJsonArray();
++                    final var tag = items[slot].tag() != null ? items[slot].tag() : new CompoundTag();
++                    final int value = lock.get(1).getAsInt();
++                    switch (lock.get(0).getAsInt()) {
++                        case 1 -> tag.putByte("minecraft:item_lock", (byte) value);
++                        case 2 -> tag.putShort("minecraft:item_lock", (short) value);
++                        case 3 -> tag.putInt("minecraft:item_lock", value);
++                        default -> fail("Unsupported fixture tag type");
++                    }
++                    items[slot].setTag(tag);
++                }
++            }
++            final var containers = items.length == 2
++                    ? List.of(new BedrockItem[]{items[0]}, new BedrockItem[]{items[1]})
++                    : List.of(items, new BedrockItem[0]);
++            final var query = new ItemRecipeKey(1, row.get("queryAuxiliary").getAsShort());
++            final var result = CookingRecipeSources.collect(containers, Function.identity(),
++                    item -> registry.recipeKey(item, null), item -> query.matches(registry.recipeKey(item, null), ignored -> null));
++            assertEquals(row.get("total").getAsInt(), result.amount(), row::toString);
++            final var expected = row.getAsJsonArray("sources");
++            assertEquals(expected.size(), result.sources().size(), row::toString);
++            for (int index = 0; index < expected.size(); index++) {
++                final var source = expected.get(index).getAsJsonArray();
++                assertSame(containers.get(source.get(0).getAsInt()), result.sources().get(index).container(), row::toString);
++                assertEquals(source.get(1).getAsInt(), result.sources().get(index).slot(), row::toString);
++            }
++        }
++    }
++
++    @Test
++    void firstNonemptyDescriptorCachesEligibilityAcrossContainers() {
++        final var first = item(0, 255);
++        final var enchanted = item(0, 128);
++        enchanted.setTag(enchantments());
++        final var locked = item(0, 1);
++        final var lock = new CompoundTag();
++        lock.putByte("minecraft:item_lock", (byte) 2);
++        locked.setTag(lock);
++        final var skipped = item(0, 0);
++        skipped.setTag(enchantments());
++        final var containers = List.of(new BedrockItem[]{skipped, first}, new BedrockItem[]{enchanted, locked});
++        final var registry = registry();
++        final var calls = new AtomicInteger();
++        final var result = CookingRecipeSources.collect(containers, Function.identity(), item -> registry.recipeKey(item, null), item -> {
++            calls.incrementAndGet();
++            return true;
++        });
++        assertEquals(384, result.amount());
++        assertEquals(1, calls.get());
++        assertEquals(List.of(1, 0, 1), result.sources().stream().map(CookingRecipeSources.Source::slot).toList());
++        assertSame(containers.getFirst(), result.sources().getFirst().container());
++        assertSame(containers.getLast(), result.sources().getLast().container());
++        assertThrows(UnsupportedOperationException.class, () -> result.sources().clear());
++        assertEquals(255, first.amount());
++        for (final var rejected : List.of(enchanted, locked)) {
++            final var blocked = CookingRecipeSources.collect(List.<BedrockItem[]>of(new BedrockItem[]{rejected, first}),
++                    Function.identity(), item -> registry.recipeKey(item, null), item -> fail("Cached rejection must skip query evaluation"));
++            assertEquals(0, blocked.amount());
++            assertTrue(blocked.sources().isEmpty());
++        }
++    }
++
++    @Test
++    void locksRequireNonzeroBytesAndEnchantmentListsNeedNotContainEntries() {
++        final var registry = registry();
++        final BedrockItem[] items = new BedrockItem[5];
++        Arrays.setAll(items, slot -> item(slot, 1));
++        final var zero = new CompoundTag();
++        zero.putByte("minecraft:item_lock", (byte) 0);
++        items[0].setTag(zero);
++        final var wrongType = new CompoundTag();
++        wrongType.putInt("minecraft:item_lock", 2);
++        wrongType.putInt("ench", 1);
++        items[1].setTag(wrongType);
++        final var negative = new CompoundTag();
++        negative.putByte("minecraft:item_lock", (byte) -1);
++        items[2].setTag(negative);
++        items[3].setTag(enchantments());
++        final var result = CookingRecipeSources.collect(List.<BedrockItem[]>of(items), Function.identity(),
++                item -> registry.recipeKey(item, null), item -> true);
++        assertEquals(3, result.amount());
++        assertEquals(List.of(0, 1, 4), result.sources().stream().map(CookingRecipeSources.Source::slot).toList());
++    }
++
++    private static ItemRegistry registry() {
++        return new ItemRegistry(new ItemEntry[]{new ItemEntry("test:ordinary", 1, false, ItemVersion.Legacy, null)});
++    }
++
++    private static BedrockItem item(final int metadata, final int amount) {
++        return new BedrockItem(1, (short) metadata, (byte) amount);
++    }
++
++    private static CompoundTag enchantments() {
++        final var tag = new CompoundTag();
++        tag.put("ench", new ListTag<>(CompoundTag.class));
++        return tag;
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlanTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlanTest.java
 new file mode 100644
 index 000000000..544fbd37b
@@ -3338,10 +3616,10 @@ index 000000000..bb3b16e1d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java
 new file mode 100644
-index 000000000..db4d761b2
+index 000000000..69d0cb8c0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,314 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3350,6 +3628,7 @@ index 000000000..db4d761b2
 +package net.raphimc.viabedrock.api.model.container;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import net.raphimc.viabedrock.api.model.container.block.BlastFurnaceContainer;
 +import net.raphimc.viabedrock.api.model.container.block.FurnaceContainer;
@@ -3360,6 +3639,7 @@ index 000000000..db4d761b2
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptorType;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeKey;
 +import net.raphimc.viabedrock.protocol.model.recipe.RecipeType;
 +import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
 +import net.raphimc.viabedrock.protocol.storage.CraftingDataStorage;
@@ -3548,6 +3828,46 @@ index 000000000..db4d761b2
 +    }
 +
 +    @Test
++    void placementUsesLargestDescriptorGroupBeforeEarlierSmallVariants() {
++        final UserConnection user = user();
++        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        final InventoryContainer inventory = inventory(user);
++        inventory.setItem(0, item(1, 4, 11));
++        inventory.setItem(1, item(2, 2, 12));
++        inventory.setItem(9, item(2, 3, 13));
++        final var plan = plan(recipe("furnace", 0, 1), furnace, inventory, false, 64);
++        assertNotNull(plan);
++        final var action = (ItemStackRequestAction.PlaceAction) plan.actions(-3).getFirst();
++        assertEquals(12, action.source().stackNetworkId());
++        plan.apply(furnace, inventory);
++        assertEquals(2, furnace.getItem(0).identifier());
++        assertEquals(4, inventory.getItem(0).amount());
++        assertEquals(1, inventory.getItem(1).amount());
++    }
++
++    @Test
++    void placementExcludesGroupsSeededByEnchantmentListsOrLocks() {
++        final UserConnection user = user();
++        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        final InventoryContainer inventory = inventory(user);
++        for (final boolean enchanted : new boolean[]{true, false}) {
++            final var blocked = item(2, 1, 11);
++            final var tag = new CompoundTag();
++            if (enchanted) {
++                tag.put("ench", new ListTag<>(CompoundTag.class));
++            } else {
++                tag.putByte("minecraft:item_lock", (byte) 1);
++            }
++            blocked.setTag(tag);
++            inventory.setItem(0, blocked);
++            inventory.setItem(1, item(2, 64, 12));
++            assertNull(plan(recipe("furnace", 2, 1), furnace, inventory, false, 64));
++            assertTrue(furnace.getItem(0).isEmpty());
++            assertEquals(64, inventory.getItem(1).amount());
++        }
++    }
++
++    @Test
 +    void nonemptyStacksRequireKnownPositiveServerIds() {
 +        final UserConnection user = user();
 +        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
@@ -3567,6 +3887,7 @@ index 000000000..db4d761b2
 +    private static FurnaceRecipePlacement.Plan plan(final CraftingDataStorage recipe,
 +            final FurnaceContainer furnace, final InventoryContainer inventory, final boolean max, final int limit) {
 +        return FurnaceRecipePlacement.plan(recipe, furnace, inventory, max, item -> limit,
++                item -> new ItemRecipeKey(item.identifier(), item.data()),
 +                (descriptor, item) -> descriptor.matchesItem(null, item));
 +    }
 +
@@ -4981,10 +5302,10 @@ index 000000000..6da0ed14c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
 new file mode 100644
-index 000000000..a840d1914
+index 000000000..423d48d2a
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,133 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4997,12 +5318,15 @@ index 000000000..a840d1914
 +import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 +import net.raphimc.viabedrock.api.util.PacketFactory;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ItemEntry;
++import net.raphimc.viabedrock.protocol.model.ItemRegistry;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseInfo;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseContainerInfo;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseSlotInfo;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackNetResult;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
 +import net.raphimc.viabedrock.protocol.model.recipe.RecipeType;
 +import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
@@ -5029,6 +5353,10 @@ index 000000000..a840d1914
 +        final InventoryTracker inventory = new InventoryTracker(user);
 +        final InventoryRequestTracker requests = new InventoryRequestTracker(user);
 +        final ItemRewriter items = mock(ItemRewriter.class);
++        final var registry = new ItemRegistry(new ItemEntry[]{
++            new ItemEntry("test:input", 2, false, ItemVersion.Legacy, null),
++            new ItemEntry("test:previous", 3, false, ItemVersion.Legacy, null)});
++        when(items.recipeKey(any())).thenAnswer(call -> registry.recipeKey(call.getArgument(0), null));
 +        when(items.maxStackSize(any())).thenReturn(64);
 +        when(items.matchesRecipeItem(eq("test:input"), eq(0), any()))
 +                .thenAnswer(call -> ((BedrockItem) call.getArgument(2)).identifier() == 2);
