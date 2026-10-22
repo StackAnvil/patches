@@ -385,3 +385,38 @@ The Java client also reconnects to the same world.
 Both launched profiles embed the rebuilt core, with all 1,354 core classes matching the distributable JAR.
 The run exits successfully and stops its private display normally.
 These checks use Java cooking screens and do not establish native screen or visual parity.
+
+
+## Canonical block-item descriptors (October 22, 2026)
+
+Core now retains block-item descriptors alongside connection runtime block IDs.
+Built-in descriptors use the legacy IDs and canonical state order already stored in the pinned block palette.
+Each property's first transition determines its bit position; non-power-of-two domains retain sparse slots.
+A separate per-block ID or offset table is unnecessary.
+Generic custom blocks retain their supplied legacy ID, original sparse metadata, and exact state object identity.
+An equal copy cannot claim another custom slot's descriptor.
+Custom archetype descriptors remain unresolved until their constructors are verified.
+
+A fresh target executable reference initializes the native property definitions and calls their original serializers.
+It acquires 708 ordinal values across 118 property names.
+Chalkboards register sixteen `direction` values despite that property's declared default count of four.
+Production validates each observed domain against these native serialized prefixes.
+
+Saved-item auxiliary lookup, built-in default overrides, network Item construction, cooking grouping, and the live catalog producer remain unfinished.
+This descriptor API does not establish native cooking screen or visual parity.
+
+
+A second executable reference runs the complete base Legacy constructor, property registration, palette builder, Block constructor, and state serialization.
+All 1,477 supplied palettes and 22,091 constructed states match production descriptor lookup.
+Names, legacy IDs, property sets, registration order, and domain counts come from the pinned palette.
+The probe uses actual native property definitions with supplied allocator/CRT context and no optional component owner.
+It does not independently establish built-in archetype selection or default overrides.
+
+All 102 core patches replay cleanly, and all four projects build.
+Final tests pass 2,286 cases with 152 optional skips and no failures or errors.
+The new native descriptor comparison runs without skips.
+Tooling checks, 264 offline regressions, and patch metadata checks pass.
+A fresh live run passes all six workstation/chest cases and same-world reconnect.
+Both client profiles embed all 1,357 rebuilt core classes and the matching property-value resource.
+The run exits successfully and stops its private display normally.
+These live checks use Java cooking screens.
