@@ -465,3 +465,35 @@ Java matches all 116 qualified and unqualified builtin resolution cases.
 A regression also covers primary/group collisions, partial groups, aliases, duplicates and case-sensitive lookup.
 Native factory installation and pointer-hash collisions remain unverified.
 The optional comparison reads `STACKANVIL_NATIVE_RESTRICTION_GROUPS`.
+
+
+## Galaxite conversion failures
+
+The saved protocol-2193 Galaxite recording declares 3,661 custom states.
+The previous carrier limit maps 734 states to coarse dirt.
+The expanded pool provides 3,500 carriers and assigns all states to 3,340 visuals.
+Existing note and wire carrier ordering stays stable.
+Unused powered doors and mushroom face combinations supply the extra carriers.
+Occupied vanilla mappings remain excluded.
+An independent Java 26.3 asset comparison verifies 4,246 selectors across 27 block types.
+That comparison includes 701 custom assignments and preserves every unassigned selector.
+
+The recording also exposes 88 states with orphaned geometry bones.
+Preserve their remaining local transforms and retain cycle rejection.
+One block references geometry stored under `models/entity`.
+Block lookup now resolves identifiers throughout the pack's `models` directory.
+These checks establish conversion coverage, not complete native orphan-loading parity.
+
+Eight fancy-table states contain vertices outside Java's cuboid range.
+Core preserves their vertices and marks the elements for the client add-on.
+The extension rejects non-finite coordinates and values beyond its bounded 64-block envelope.
+Clients without the add-on retain Java's loader limitation.
+Live rendering and broader native comparisons remain separate validation.
+
+
+The combined build now passes 2,354 tests across all four projects.
+There are 152 optional fixture skips and no failures or errors.
+A fresh default-OpenGL Galaxite run reaches spawn and completes a 30-second playable capture.
+The accepted server packs produce no mapping, geometry-conversion, or Java model-loading errors.
+Forced software Vulkan and a later longer run disconnect before spawn.
+The [survey follow-up](../../../docs/lobby-survey.md#galaxite-block-conversion-follow-up-22-october) records the validation limits and broader audit.

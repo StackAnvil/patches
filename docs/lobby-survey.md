@@ -371,3 +371,38 @@ All 26 recorded process identities closed normally across these four runs.
 Screenshots, packet journals, ray observations, and accepted packs remain private.
 The attempted video capture did not produce a valid recording.
 These survey results add reproductions, without a claim that the rendering defects are fixed.
+
+
+## Galaxite block conversion follow-up, 22 October
+
+The saved Galaxite palette contains 3,661 custom states.
+The old 2,629-carrier limit leaves 734 states mapped to coarse dirt.
+The expanded pool provides 3,500 carriers and assigns every recorded state to 3,340 visuals.
+The compiler also checks reusable visuals after reaching capacity.
+
+The same recording exposes 88 states with orphaned geometry bones.
+The compiler now preserves their remaining local transforms and retains cycle rejection.
+One block references geometry stored under `models/entity`.
+Block geometry lookup now covers the complete `models` directory.
+
+Eight fancy-table states have vertices outside Java's cuboid range.
+Core marks those elements, and the add-on preserves their authored coordinates during model loading.
+Ordinary Java models retain their existing validation.
+Malformed, non-finite, and oversized coordinates remain invalid.
+
+An independent comparison against Java 26.3 assets verifies 4,246 block-state selectors across 27 block types.
+It checks 701 custom assignments and preserves every unassigned vanilla selector.
+The full build passes 2,354 tests, with 152 optional fixture skips and no failures or errors.
+
+A fresh default-OpenGL Galaxite connection reaches a playable lobby and completes its 30-second capture.
+Its journal includes spawn, player initialization, and movement acknowledgments.
+The client reports no custom-block mapping, geometry-conversion, or model-loading errors.
+The screenshot is partly occluded by another player.
+This verifies scene loading and model acceptance, but does not establish complete native appearance parity.
+A forced software-Vulkan attempt and a later longer run disconnect before spawn.
+Their failures remain separate from the successful recording.
+
+The broader audit includes 29 saved public-server connections, with their recorded pack order and bundled native images.
+Mob Maze still exceeds the expanded carrier capacity with its much larger declared palette.
+Other retained failures include missing pack assets, unsupported material methods, and unresolved legacy custom visuals.
+These remain active work, alongside live interaction checks and the earlier entity, UI, and item findings.

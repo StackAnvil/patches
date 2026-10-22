@@ -272,4 +272,20 @@ A preserved old-artifact runtime control fails on the nonzero-strength flat path
 Final route verification is recorded in the coverage ledger.
 Native global graphics-setting dispatch, actual world classification, propagation, enhanced lighting, and native visible comparisons remain required.
 
-Final direct and ViaProxy plain runs each pass 1,200 exact corner checks and 120 actual flat dispatches. Both Iris routes pass actual enable, disable, re-enable, and resource reload controls, preserving ordinary rendering and later emissive processing. Software Mesa compatibility does not establish native visible lighting parity.\nThe [combined runtime record](../../../docs/bedrock-coverage.md#final-combined-runtime-verification) retains the complete scene gates and remaining requirements.\n
+Final direct and ViaProxy plain runs each pass 1,200 exact corner checks and 120 actual flat dispatches. Both Iris routes pass actual enable, disable, re-enable, and resource reload controls, preserving ordinary rendering and later emissive processing. Software Mesa compatibility does not establish native visible lighting parity.
+The [combined runtime record](../../../docs/bedrock-coverage.md#final-combined-runtime-verification) retains the complete scene gates and remaining requirements.
+
+
+## Extended converted geometry
+
+Eight recorded Galaxite fancy-table states contain vertices at -17 or 33.
+Java rejects their models because its cuboid range is -16 through 32.
+Read core's explicit extended-bounds annotation and preserve those vertices.
+Ordinary Java models retain their existing validation.
+Malformed arrays, non-finite values, and oversized coordinates remain invalid.
+The parser uses the same bounded coordinate envelope as core.
+
+The focused tests cover coordinate preservation and invalid input.
+The combined build passes 2,354 tests, with 152 optional fixture skips and no failures or errors.
+A fresh playable Galaxite recording accepts the converted packs without Java model-loading errors.
+This exercises the injected loader, while complete native appearance parity remains unverified.

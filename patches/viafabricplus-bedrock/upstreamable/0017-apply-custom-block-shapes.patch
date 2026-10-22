@@ -1,4 +1,4 @@
-From f625921820f3cac48453fe6d558e7af0d446a47f Mon Sep 17 00:00:00 2001
+From 5aee61f21e2d726baee2b95127f01046dc8b624f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): apply native custom block shapes and lighting
@@ -165,8 +165,24 @@ selection must not silently replace nonzero native material sampling.
 Remove the obsolete flat directional-expression hook. Ordinary states
 and unannotated faces retain Java behavior. Native global graphics-setting
 dispatch remains a separate verification requirement.
+
+Read the core compiler's explicit extended-bounds annotation when loading
+converted cuboids. Preserve native vertices beyond Java's -16..32 range
+without changing ordinary model validation. Reject malformed, non-finite,
+or excessively large coordinates before model baking.
+
+The protocol-2193 Galaxite pack contains eight fancy-table states with
+vertices at -17 and 33. Java otherwise rejects those models completely.
+The hook uses the same bounded coordinate envelope as core and retains
+ordinary faces, rotations, culling, and lighting. Core's expanded carrier
+pool and geometry lookup repairs remain separate responsibilities.
+
+Targeted tests cover exact preserved coordinates, unmarked models,
+invalid array sizes, nulls, infinities and oversized vertices. Runtime
+verification must also exercise the injected Java model loader.
 ---
  .../bedrock/block/BedrockBlockFace.java       |  22 +++
+ .../block/BedrockBlockModelBounds.java        |  38 ++++
  .../block/BedrockCustomBlockResources.java    |  81 +++++++++
  .../bedrock/block/BedrockCustomBlocks.java    | 137 +++++++++++++++
  .../bedrock/block/BedrockCustomCulling.java   |  50 ++++++
@@ -181,6 +197,7 @@ dispatch remains a separate verification requirement.
  .../mixin/features/block/MixinBlockFace.java  |  44 +++++
  .../features/block/MixinBlockFaceBakery.java  |  41 +++++
  .../block/MixinBlockFaceDeserializer.java     |  35 ++++
+ .../MixinBlockModelElementDeserializer.java   |  26 +++
  .../block/MixinCustomBlockCollisions.java     |  39 +++++
  .../block/MixinCustomBlockConnection.java     |  24 +++
  .../block/MixinCustomBlockCulling.java        |  34 ++++
@@ -189,14 +206,16 @@ dispatch remains a separate verification requirement.
  .../block/MixinCustomBlockSession.java        |  24 +++
  .../features/block/MixinCustomBlockState.java | 162 ++++++++++++++++++
  .../block/MixinRedstoneWireBlock.java         |  29 ++++
- .../viafabricplus-bedrock.mixins.json         |  16 ++
+ .../viafabricplus-bedrock.mixins.json         |  17 ++
+ .../block/BedrockBlockModelBoundsTest.java    |  32 ++++
  .../block/BedrockCustomBlockLightingTest.java |  54 ++++++
  .../BedrockCustomBlockResourcesTest.java      |  91 ++++++++++
  .../block/BedrockCustomBlocksTest.java        |  89 ++++++++++
  .../block/BedrockCustomCullingTest.java       |  51 ++++++
  .../block/BedrockTerrainLightingTest.java     | 142 +++++++++++++++
- 29 files changed, 1545 insertions(+)
+ 32 files changed, 1642 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockFace.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockModelBounds.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomCulling.java
@@ -211,6 +230,7 @@ dispatch remains a separate verification requirement.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockFace.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockFaceBakery.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockFaceDeserializer.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockModelElementDeserializer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCollisions.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockConnection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCulling.java
@@ -219,6 +239,7 @@ dispatch remains a separate verification requirement.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockSession.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinRedstoneWireBlock.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockModelBoundsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockLightingTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResourcesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java
@@ -253,6 +274,50 @@ index 0000000..a21e2ec
 +    void viaFabricPlusBedrock$lighting(CustomBlockLighting lighting);
 +}
 +
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockModelBounds.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockModelBounds.java
+new file mode 100644
+index 0000000..ca9480f
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockModelBounds.java
+@@ -0,0 +1,38 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.block;
++
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParseException;
++import net.minecraft.util.GsonHelper;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockModel;
++import org.jetbrains.annotations.Nullable;
++import org.joml.Vector3f;
++
++/** Reads explicitly annotated native vertices without changing ordinary Java model validation. */
++public final class BedrockBlockModelBounds {
++
++    private BedrockBlockModelBounds() {
++    }
++
++    public static @Nullable Vector3f position(final JsonObject element, final String key) {
++        if (!GsonHelper.getAsBoolean(element, CustomBlockModel.EXTENDED_BOUNDS, false)) {
++            return null;
++        }
++        final var coordinates = GsonHelper.getAsJsonArray(element, key);
++        if (coordinates.size() != 3) {
++            throw new JsonParseException("Expected three custom block coordinates");
++        }
++        final float[] values = new float[3];
++        for (int axis = 0; axis < values.length; axis++) {
++            values[axis] = GsonHelper.convertToFloat(coordinates.get(axis), key);
++            if (!Float.isFinite(values[axis]) || Math.abs(values[axis]) > CustomBlockModel.MAX_COORDINATE) {
++                throw new JsonParseException("Custom block geometry exceeds supported bounds");
++            }
++        }
++        return new Vector3f(values);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
 new file mode 100644
 index 0000000..0681cfb
@@ -1017,6 +1082,38 @@ index 0000000..882640c
 +        }
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockModelElementDeserializer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockModelElementDeserializer.java
+new file mode 100644
+index 0000000..76ea1f0
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockModelElementDeserializer.java
+@@ -0,0 +1,26 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.google.gson.JsonObject;
++import com.viaversion.viafabricplus.bedrock.block.BedrockBlockModelBounds;
++import org.joml.Vector3f;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++@Mixin(targets = "net.minecraft.client.resources.model.cuboid.CuboidModelElement$Deserializer")
++public abstract class MixinBlockModelElementDeserializer {
++
++    @Inject(method = "getPosition", at = @At("HEAD"), cancellable = true)
++    private static void readNativePosition(final JsonObject element, final String key, final CallbackInfoReturnable<Vector3f> cir) {
++        final Vector3f position = BedrockBlockModelBounds.position(element, key);
++        if (position != null) {
++            cir.setReturnValue(position);
++        }
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCollisions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCollisions.java
 new file mode 100644
 index 0000000..11c2108
@@ -1466,7 +1563,7 @@ index 0000000..c05289d
 +
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 4c04e2b..c4bc0d1 100644
+index 4c04e2b..6132c97 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
 @@ -6,6 +6,10 @@
@@ -1480,7 +1577,7 @@ index 4c04e2b..c4bc0d1 100644
      "jjwt.MixinClasses",
      "jjwt.MixinDefaultJwtParserBuilder",
      "core.access.MixinConfirmScreen",
-@@ -30,10 +34,21 @@
+@@ -30,10 +34,22 @@
      "features.block.MixinBambooStalkBlock",
      "features.block.MixinBedBlock",
      "features.block.MixinBlockBehaviour_Properties",
@@ -1494,6 +1591,7 @@ index 4c04e2b..c4bc0d1 100644
 +    "features.block.MixinCustomBlockResources",
 +    "features.block.MixinBlockFace",
 +    "features.block.MixinBlockFaceDeserializer",
++    "features.block.MixinBlockModelElementDeserializer",
 +    "features.block.MixinBlockFaceBakery",
 +    "features.block.MixinCustomBlockCulling",
 +    "features.block.MixinCustomBlockConnection",
@@ -1502,7 +1600,7 @@ index 4c04e2b..c4bc0d1 100644
      "features.block.MixinDoorBlock",
      "features.block.MixinDragonEggBlock",
      "features.block.MixinEndPortalFrameBlock",
-@@ -41,6 +56,7 @@
+@@ -41,6 +57,7 @@
      "features.block.MixinLadderBlock",
      "features.block.MixinLanternBlock",
      "features.block.MixinLecternBlock",
@@ -1510,6 +1608,44 @@ index 4c04e2b..c4bc0d1 100644
      "features.block.MixinSeaPickleBlock",
      "features.block.MixinTrapDoorBlock",
      "features.creative.MixinCreativeModeInventoryScreen",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockModelBoundsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockModelBoundsTest.java
+new file mode 100644
+index 0000000..140eeb9
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockModelBoundsTest.java
+@@ -0,0 +1,32 @@
++package com.viaversion.viafabricplus.bedrock.block;
++
++import com.google.gson.JsonParser;
++import com.google.gson.JsonParseException;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockModel;
++import org.joml.Vector3f;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockBlockModelBoundsTest {
++
++    @Test
++    void retainsExplicitExtendedCoordinatesAndLeavesOrdinaryValidationToJava() {
++        final var element = JsonParser.parseString("{\"from\":[4,2,-17],\"to\":[12,5,33]}").getAsJsonObject();
++        assertNull(BedrockBlockModelBounds.position(element, "from"));
++        element.addProperty(CustomBlockModel.EXTENDED_BOUNDS, true);
++        assertEquals(new Vector3f(4, 2, -17), BedrockBlockModelBounds.position(element, "from"));
++        assertEquals(new Vector3f(12, 5, 33), BedrockBlockModelBounds.position(element, "to"));
++        element.addProperty(CustomBlockModel.EXTENDED_BOUNDS, false);
++        assertNull(BedrockBlockModelBounds.position(element, "to"));
++    }
++
++    @Test
++    void rejectsMalformedOrUnboundedExtendedGeometry() {
++        for (String coordinates : new String[]{"[]", "[1,2]", "[1,2,3,4]", "[null,0,0]", "[4096,0,0]", "[0,-4096,0]", "[0,0,1e400]"}) {
++            final var element = JsonParser.parseString("{\"from\":" + coordinates + "}").getAsJsonObject();
++            element.addProperty(CustomBlockModel.EXTENDED_BOUNDS, true);
++            assertThrows(JsonParseException.class, () -> BedrockBlockModelBounds.position(element, "from"));
++        }
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockLightingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockLightingTest.java
 new file mode 100644
 index 0000000..49dcd6e
