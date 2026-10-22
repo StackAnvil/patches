@@ -2020,3 +2020,38 @@ Terrain and scoreboards appear in each destination. A verified ray hit on the co
 The player graph resolves 200 animations and 12 controllers and produces changing sampled poses without graph-loading errors.
 All 191 skins and supplied geometry records install, with 4,993 remote-player render frames and 107,666 custom-actor render frames.
 The six owned processes close normally. Native visual parity, including cosmetic-preview facing direction, remains open.
+
+
+## Particle atlas paths outside the textures folder
+
+Particle definitions now accept validated paths relative to the resource pack root.
+They no longer require the `textures/` prefix in either the emitter parser or the image lookup.
+This fixes Galaxite's `galaxite:gem_bag_particle`, which selects the existing `font/glyph_E1.png` atlas.
+The shared native actor archive already retains PNG and TGA images outside the textures folder.
+Existing archive path validation and image limits remain in place.
+
+Native evidence comes from Bedrock 1.26.51.1, protocol 2193, executable SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Function `142152f40` reads the texture field and copies its string without adding or checking a folder prefix.
+A private probe executes instructions `142153906..142153a4b` with the original native JSON and string helpers.
+Nine string cases retain their values, including font, custom-folder, root-level, long, and Unicode paths.
+Three non-string cases fail the native type check.
+The probe enters after material dispatch and excludes complete schema loading, later resource lookup, and rendering.
+CRT byte/string operations, allocation, frees, and diagnostic backends use declared host boundaries.
+Field admission alone does not prove that a later native resource lookup succeeds.
+
+Validation:
+
+- All 38 add-on patches replay successfully.
+- Converter, core, and add-on builds pass 2,353 tests, with 152 optional skips and no failures or errors.
+- A targeted test carries generated PNGs through the native actor archive, pack reconstruction, image decoding, and emitter output.
+- That test covers font, custom-folder, and root-level paths, retained alpha, and rejected traversal paths.
+- A content-hash audit checks 1,516 particle documents across 82 exported pack archives from 29 recorded connections.
+- Outside the textures folder, it finds the Galaxite atlas and five invisible underscore placeholders.
+- The complete plain Galaxite replay passes transport checks and extracts 4,112 gem-bag particle quads across 384 native particle frames.
+- The matching Iris replay passes transport checks and extracts 1,614 gem-bag quads across 73 native particle frames.
+- Both routes have no particle-load or observer errors.
+
+The broader rendering check still fails on unresolved marker geometry and the camera item texture.
+A missing waterlogged block-state warning also remains in the client log.
+This change does not establish native pixel parity or complete particle material behavior under arbitrary shader packs.
+Raw packs, native exports, observer code, and recordings remain private.

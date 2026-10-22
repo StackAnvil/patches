@@ -358,7 +358,8 @@ Validation:
 - A private shader pack that omits entity programs exercises Iris fallback shaders.
 - GL readbacks verify native 0.5 and Java 0.1 within one shared FallbackShader program.
 
-The broader Galaxite rendering check still fails because `galaxite:gem_bag_particle` supplies a rejected texture path.
+The broader Galaxite rendering check still fails on unresolved marker geometry and a missing camera item texture.
+Those Iris runs also reject the font atlas in `galaxite:gem_bag_particle`; the owning particle patch addresses that separate loader failure.
 The fallback diagnostic also intentionally differs from the locked shader pack and fails that profile check.
 This change carries the alpha reference through Iris.
 It does not establish parity for shader-pack comparison overrides, post-shader alpha, source-texture sampling, or native image output.
