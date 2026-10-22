@@ -10,6 +10,18 @@ Tests cover each bundled scene's visible-control validation, actual menu identit
 Native visual and direct/ViaProxy transaction comparisons remain unverified.
 Failed presentation restores the original ordinary screen; this remains an unresolved parity defect for a supported scene.
 
+Pointer close commands require the authored source input and a pressed mapping.
+A slot's cancel binding no longer closes the menu on left or right clicks.
+Slot and close-button input share clipped bounds and draw order, including controls with equal layers.
+An overlapping close button blocks the covered slot, while disabled and transparent buttons do not receive pointer input.
+
+Headless screen tests exercise both pointer buttons across 63 constructed slots with the furnace-style cancel mapping.
+The original handler fails this regression because ordinary slot clicks close the menu.
+Geometry tests cover overlapping controls, clipping, ignored bindings, and disabled or transparent buttons.
+These checks do not establish native device mappings or visual parity.
+The three-project build passes 2,412 tests, with 213 optional skips and no failures.
+All 1,401 embedded core classes match the rebuilt core.
+
 ## Brewing stand
 
 Version 4 adds the authored brewing screen over a real `BrewingStandMenu`.

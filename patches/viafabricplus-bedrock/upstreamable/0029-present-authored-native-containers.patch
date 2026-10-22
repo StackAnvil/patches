@@ -1,4 +1,4 @@
-From dbb47f051485592f6dd97e6171072b4dd489069f Mon Sep 17 00:00:00 2001
+From b3c7b5f253055f80c1e16d3936815dc6e301f3b8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -115,6 +115,15 @@ and cover menu reuse, reconnects, invalid conversion and progress updates.
 Ordinary cooking controls remain installed: native activation, quantity
 and cursor semantics, search/navigation and the remaining authored input
 handlers must be implemented before replacing the actual screen.
+
+Match authored close commands to their source input and pressed mapping.
+Cooking slot buttons also map menu_cancel to try_menu_exit; that mapping
+must not close a menu on an ordinary primary or secondary pointer click.
+Use one clipped, front-to-back control order for close buttons and slots,
+including equal-layer overlays, disabled controls and transparent frames.
+A headless screen regression covers both pointer buttons on 63 real menu
+slots with the cooking cancel mapping and fails with the original handler.
+Native cooking activation and remaining controls are still incomplete.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   4 +
  .../access/IBedrockGuiItemOpacity.java        |  12 +
@@ -125,14 +134,14 @@ handlers must be implemented before replacing the actual screen.
  .../render/MixinNativeGuiItemState.java       |  19 +
  .../render/MixinNativeGuiOversizedItem.java   |  31 +
  .../container/BedrockFurnacePreferences.java  |  55 ++
- .../BedrockNativeContainerScreen.java         | 623 ++++++++++++++++++
+ .../BedrockNativeContainerScreen.java         | 626 ++++++++++++++++++
  .../container/BedrockNativeContainers.java    | 262 ++++++++
  .../container/BedrockNativeCooking.java       |  77 +++
  .../NativeContainerActionPayload.java         |  30 +
  .../NativeContainerCurrentPayload.java        |  30 +
  .../container/NativeContainerDataPayload.java |  30 +
  .../NativeContainerFamiliesPayload.java       |  30 +
- .../container/NativeContainerGeometry.java    | 100 +++
+ .../container/NativeContainerGeometry.java    | 121 ++++
  .../container/NativeContainerPayload.java     |  22 +
  .../container/NativeContainerPending.java     |  65 ++
  .../NativeContainerPresentation.java          |  44 ++
@@ -153,8 +162,8 @@ handlers must be implemented before replacing the actual screen.
  .../NativeInventoryPresentation.java          |  27 +
  .../container/NativeInventoryProgress.java    |  70 ++
  .../viafabricplus-bedrock.mixins.json         |   6 +
- .../BedrockNativeContainerScreenTest.java     | 542 +++++++++++++++
- .../NativeContainerGeometryTest.java          | 129 ++++
+ .../BedrockNativeContainerScreenTest.java     | 606 +++++++++++++++++
+ .../NativeContainerGeometryTest.java          | 178 +++++
  ...veContainerPresentationControllerTest.java |  91 +++
  .../container/NativeContainerScrollTest.java  |  51 ++
  .../container/NativeContainerSessionTest.java |  40 ++
@@ -166,7 +175,7 @@ handlers must be implemented before replacing the actual screen.
  .../NativeInventoryItemPresentationTest.java  |  67 ++
  .../NativeInventoryProgressTest.java          |  83 +++
  .../bedrock/screen/ui/NativeUiFontTest.java   | 133 ++++
- 50 files changed, 4023 insertions(+)
+ 50 files changed, 4160 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemOpacity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerPresentation.java
@@ -536,10 +545,10 @@ index 0000000..73d9065
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..4af590e
+index 0000000..0d5aada
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
-@@ -0,0 +1,623 @@
+@@ -0,0 +1,626 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1081,9 +1090,12 @@ index 0000000..4af590e
 +            this.refreshSafely();
 +            return true;
 +        }
-+        for (final var draw : this.draws.reversed()) if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && draw.enabled() && draw.alpha() > 0
-+            && draw.box().node().string("inventory_command", "").equals("close")
-+            && draw.box().visibleBounds().contains(event.x(), event.y())) { this.onClose(); return true; }
++        final String input = switch (event.button()) {
++            case InputConstants.MOUSE_BUTTON_LEFT -> "button.menu_select";
++            case InputConstants.MOUSE_BUTTON_RIGHT -> "button.menu_secondary_select";
++            default -> "";
++        };
++        if (this.geometry.closes(event.x(), event.y(), input)) { this.onClose(); return true; }
 +        if (this.actionScope.subset()) {
 +            if (this.activated && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 +                final int slot = this.geometry.hovered(event.x(), event.y());
@@ -1660,10 +1672,10 @@ index 0000000..3387649
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerGeometry.java
 new file mode 100644
-index 0000000..d82572a
+index 0000000..5b46946
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerGeometry.java
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,121 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1681,30 +1693,47 @@ index 0000000..d82572a
 +import java.util.List;
 +import java.util.Set;
 +
-+/** One authored, clipped slot rectangle for drawing, tooltip picking and every vanilla menu event. */
++/** Authored, clipped controls share one front-to-back policy for slot and command input. */
 +final class NativeContainerGeometry {
-+    private final List<SlotRegion> slots;
++    private final List<ControlRegion> controls;
 +    private final Set<Integer> registered = new HashSet<>();
 +
 +    NativeContainerGeometry(final List<NativeUiPresentation.Draw> draws, final int slotCount) {
-+        final List<SlotRegion> regions = new ArrayList<>();
++        final List<ControlRegion> regions = new ArrayList<>();
 +        for (final var draw : draws) {
 +            final var box = draw.box();
 +            final var node = box.node();
 +            validateActions(node);
-+            if (!node.properties().has("inventory_actions")
-+                    || !node.properties().has("inventory_slot")) continue;
-+            final int slot = node.properties().get("inventory_slot").getAsInt();
-+            if (slot < 0 || slot >= slotCount)
++            final boolean mappedSlot = node.properties().has("inventory_actions") && node.properties().has("inventory_slot");
++            final boolean command = node.type().equals("button") && node.string("inventory_command", "").equals("close");
++            if (!mappedSlot && !command) continue;
++            final int slot = mappedSlot ? node.properties().get("inventory_slot").getAsInt() : -1;
++            if (mappedSlot && (slot < 0 || slot >= slotCount))
 +                throw new IllegalArgumentException("Invalid native inventory slot");
 +            // A mapped control remains registered while its entrance animation has zero extent.
 +            // Pointer regions below still require visible, non-empty geometry.
-+            this.registered.add(slot);
++            if (mappedSlot) this.registered.add(slot);
 +            if (draw.enabled() && draw.alpha() > 0 && box.visibleBounds().width() > 0 && box.visibleBounds().height() > 0)
-+                regions.add(new SlotRegion(slot, box.bounds(), box.clip(), box.layer()));
++                regions.add(new ControlRegion(slot, closeInputs(node), box.bounds(), box.clip(), box.layer()));
 +        }
-+        regions.sort(Comparator.comparingDouble(SlotRegion::layer).reversed());
-+        this.slots = List.copyOf(regions);
++        // Later draws cover earlier controls when their authored layers are equal.
++        final var frontToBack = new ArrayList<>(regions.reversed());
++        frontToBack.sort(Comparator.comparingDouble(ControlRegion::layer).reversed());
++        this.controls = List.copyOf(frontToBack);
++    }
++
++    private static Set<String> closeInputs(final NativeUiScene.Node node) {
++        if (!node.string("inventory_command", "").equals("close") || !node.properties().has("button_mappings")) return Set.of();
++        final Set<String> inputs = new HashSet<>();
++        for (final var element : node.properties().getAsJsonArray("button_mappings")) {
++            final var mapping = element.getAsJsonObject();
++            if (mapping.has("ignored") && mapping.get("ignored").getAsBoolean()) continue;
++            if (!NativeUiScene.string(mapping, "mapping_type", "").equals("pressed")) continue;
++            if (Set.of("button.menu_exit", "button.try_menu_exit").contains(NativeUiScene.string(mapping, "to_button_id", "")))
++                inputs.add(NativeUiScene.string(mapping, "from_button_id", ""));
++        }
++        inputs.remove("");
++        return Set.copyOf(inputs);
 +    }
 +
 +    private static void validateActions(final NativeUiScene.Node node) {
@@ -1729,12 +1758,16 @@ index 0000000..d82572a
 +    }
 +
 +    int hovered(final double x, final double y) {
-+        for (final var region : this.slots) if (region.contains(x, y)) return region.slot;
++        for (final var region : this.controls) if (region.contains(x, y)) return region.slot;
 +        return -1;
 +    }
 +
 +    boolean contains(final int slot, final double x, final double y) {
-+        for (final var region : this.slots) if (region.slot == slot && region.contains(x, y)) return true;
++        return slot >= 0 && this.hovered(x, y) == slot;
++    }
++
++    boolean closes(final double x, final double y, final String input) {
++        for (final var region : this.controls) if (region.contains(x, y)) return region.closeInputs.contains(input);
 +        return false;
 +    }
 +
@@ -1760,7 +1793,7 @@ index 0000000..d82572a
 +        }
 +    }
 +
-+    record SlotRegion(int slot, NativeUiLayout.Rect bounds, NativeUiLayout.Rect clip, float layer) {
++    private record ControlRegion(int slot, Set<String> closeInputs, NativeUiLayout.Rect bounds, NativeUiLayout.Rect clip, float layer) {
 +        boolean contains(final double x, final double y) { return this.bounds.intersect(this.clip).contains(x, y); }
 +    }
 +}
@@ -2935,10 +2968,10 @@ index 04bf573..b297bb8 100644
      "features.inventory.MixinBedrockCartographyScreen",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreenTest.java
 new file mode 100644
-index 0000000..63cd4e6
+index 0000000..0f5577a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreenTest.java
-@@ -0,0 +1,542 @@
+@@ -0,0 +1,606 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2986,6 +3019,67 @@ index 0000000..63cd4e6
 +import java.util.List;
 +
 +final class BedrockNativeContainerScreenTest {
++    @Test
++    void inventoryPointerEventsDoNotDispatchTheirCancelBinding() throws Exception {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++        final var player = mock(LocalPlayer.class);
++        final var inventory = new Inventory(player, new EntityEquipment());
++        final var menu = ChestMenu.threeRows(7, inventory);
++        player.containerMenu = menu;
++        final var game = mock(Minecraft.class);
++        game.player = player;
++        game.gameMode = mock(MultiPlayerGameMode.class);
++        final var gui = Minecraft.class.getField("gui");
++        gui.setAccessible(true);
++        gui.set(game, mock(net.minecraft.client.gui.Gui.class));
++        final var options = Minecraft.class.getDeclaredField("options");
++        options.setAccessible(true);
++        options.set(game, mock(net.minecraft.client.Options.class));
++        final var pick = net.minecraft.client.Options.class.getDeclaredField("keyPickItem");
++        pick.setAccessible(true);
++        pick.set(game.options, mock(net.minecraft.client.KeyMapping.class));
++        final var clock = new java.util.concurrent.atomic.AtomicLong();
++        try (var singleton = mockStatic(Minecraft.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(game);
++            final var ordinary = new ContainerScreen(menu, inventory, Component.empty());
++            final var screen = new BedrockNativeContainerScreen(mock(ClientPacketListener.class), ordinary, inventory,
++                    Component.empty(), new NativeContainerPresentation(program(), ContainerUi.Kind.CHEST_3_ROWS, List.of()),
++                    false, 1, clock::get, () -> true);
++            final var minecraft = Screen.class.getDeclaredField("minecraft");
++            minecraft.setAccessible(true);
++            minecraft.set(screen, game);
++            screen.prepare(mock(Font.class), 640, 320);
++            clock.set(1_000_000_000);
++            screen.containerTick();
++            final var drawsField = BedrockNativeContainerScreen.class.getDeclaredField("draws");
++            drawsField.setAccessible(true);
++            @SuppressWarnings("unchecked")
++            final var draws = (List<NativeUiPresentation.Draw>) drawsField.get(screen);
++            int clicked = 0;
++            for (final var draw : draws) {
++                final var node = draw.box().node();
++                final var bounds = draw.box().visibleBounds();
++                if (!node.properties().has("inventory_actions") || !node.string("inventory_command", "").equals("close")
++                        || !draw.enabled() || draw.alpha() <= 0 || bounds.width() <= 0 || bounds.height() <= 0) continue;
++                final double x = bounds.x() + bounds.width() / 2;
++                final double y = bounds.y() + bounds.height() / 2;
++                assertNotNull(screen.nativeHoveredSlot(x, y));
++                for (final int button : List.of(com.mojang.blaze3d.platform.InputConstants.MOUSE_BUTTON_LEFT,
++                        com.mojang.blaze3d.platform.InputConstants.MOUSE_BUTTON_RIGHT)) {
++                    final var event = new net.minecraft.client.input.MouseButtonEvent(x, y,
++                            new net.minecraft.client.input.MouseButtonInfo(button, 0));
++                    assertTrue(screen.mouseClicked(event, false));
++                    screen.mouseReleased(event);
++                }
++                clicked++;
++            }
++            assertTrue(clicked >= menu.slots.size());
++            verify(player, never()).closeContainer();
++            screen.discard();
++        }
++    }
++
 +    @Test
 +    void bundledStorageScenesPassTheNativeVisibleControlGate() {
 +        org.junit.jupiter.api.Assumptions.assumeTrue(
@@ -3411,7 +3505,10 @@ index 0000000..63cd4e6
 +        final var cell =
 +                com.viaversion.viaversion.libs.gson.JsonParser.parseString(
 +                                """
-+                                {"type":"button","size":[18,18],"button_mappings":[{"from_button_id":"button.menu_select","to_button_id":"button.container_take_all_place_all","mapping_type":"pressed"}]}
++                                {"type":"button","size":[18,18],"button_mappings":[
++                                  {"from_button_id":"button.menu_cancel","to_button_id":"button.try_menu_exit","mapping_type":"pressed"},
++                                  {"from_button_id":"button.menu_select","to_button_id":"button.container_take_all_place_all","mapping_type":"pressed"}
++                                ]}
 +                                """)
 +                        .getAsJsonObject();
 +        final var cellDefinition = new com.viaversion.viaversion.libs.gson.JsonObject();
@@ -3483,10 +3580,10 @@ index 0000000..63cd4e6
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerGeometryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerGeometryTest.java
 new file mode 100644
-index 0000000..1b5de93
+index 0000000..6c1238a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerGeometryTest.java
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,178 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3505,6 +3602,55 @@ index 0000000..1b5de93
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class NativeContainerGeometryTest {
++    @Test
++    void cancelMappingsDoNotTurnInventoryClicksIntoCloseCommands() {
++        final var slot = draw(0, true, 1, 0, 0, 18, new NativeUiLayout.Rect(0, 0, 100, 100), 1);
++        final var props = slot.box().node().properties();
++        props.addProperty("inventory_command", "close");
++        props.add("button_mappings", com.google.gson.JsonParser.parseString("""
++            [{"from_button_id":"button.menu_cancel","to_button_id":"button.try_menu_exit","mapping_type":"pressed"},
++             {"from_button_id":"button.menu_select","to_button_id":"button.take_all_place_all","mapping_type":"pressed"}]
++            """));
++        props.getAsJsonArray("inventory_actions").add(props.getAsJsonArray("button_mappings").get(1).deepCopy());
++        final var geometry = new NativeContainerGeometry(List.of(slot), 1);
++        assertEquals(0, geometry.hovered(1, 1));
++        assertFalse(geometry.closes(1, 1, "button.menu_select"));
++        assertFalse(geometry.closes(1, 1, "button.menu_secondary_select"));
++        assertTrue(geometry.closes(1, 1, "button.menu_cancel"));
++    }
++
++    @Test
++    void closeCommandsAndSlotsUseTheSameClippedPainterOrder() {
++        final var slot = draw(0, true, 1, 0, 0, 18, new NativeUiLayout.Rect(0, 0, 100, 100), 1);
++        final var properties = new JsonObject();
++        properties.addProperty("inventory_command", "close");
++        properties.add("button_mappings", com.google.gson.JsonParser.parseString("""
++            [{"from_button_id":"button.menu_select","to_button_id":"button.menu_exit","mapping_type":"pressed"},
++             {"from_button_id":"button.menu_secondary_select","to_button_id":"button.menu_exit","mapping_type":"pressed","ignored":true}]
++            """));
++        final var node = new NativeUiScene.Node("close", "button", properties, List.of(), Integer.MIN_VALUE);
++        final var rect = new NativeUiLayout.Rect(0, 0, 18, 18);
++        final var box = new NativeUiLayout.Box(node, rect, new NativeUiLayout.Rect(8, 0, 10, 18),
++                new NativeUiLayout.Size(18, 18), rect, 1, List.of());
++        final var close = new NativeUiPresentation.Draw(box, 1, 1, true);
++        final var front = new NativeContainerGeometry(List.of(slot, close), 1);
++        assertEquals(0, front.hovered(1, 1));
++        assertFalse(front.closes(1, 1, "button.menu_select"));
++        assertEquals(-1, front.hovered(9, 1));
++        assertFalse(front.contains(0, 9, 1));
++        assertTrue(front.closes(9, 1, "button.menu_select"));
++        assertFalse(front.closes(9, 1, "button.menu_secondary_select"));
++        final var covered = new NativeContainerGeometry(List.of(close, slot), 1);
++        assertEquals(0, covered.hovered(9, 1));
++        assertFalse(covered.closes(9, 1, "button.menu_select"));
++        for (final var inactive : List.of(new NativeUiPresentation.Draw(box, 0, 1, true),
++                new NativeUiPresentation.Draw(box, 1, 1, false))) {
++            final var geometry = new NativeContainerGeometry(List.of(slot, inactive), 1);
++            assertEquals(0, geometry.hovered(9, 1));
++            assertFalse(geometry.closes(9, 1, "button.menu_select"));
++        }
++    }
++
 +    @Test
 +    void itemBoundsDoNotReplaceClippedSlotInputBounds() {
 +        final var button = draw(0, true, 1, 10, 10, 18, new NativeUiLayout.Rect(12, 10, 16, 18), 1);
