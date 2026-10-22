@@ -155,3 +155,36 @@ It records 187 valid frames, including 171 applied progress observations, with a
 Both runtime inventories match 2,390 core and client classes plus four resources.
 The three ordinary cooking gameplay cases and same-world reconnect pass. The private observer is removed after normal cleanup.
 These observations verify receiver ownership and CPU presentation frames, without establishing authored screen drawing or native action execution.
+
+## Cooking action transport and gesture lifetime
+
+The Fabric client registers the version-four action and result payloads.
+Initial input requires a resolved recipe scope, an empty cursor, the exact current menu, and the advertised action capability.
+Follow-up phases retain their original snapshot identity and command permissions across newer item frames.
+Replies match the complete pending action, including its request sequence and phase.
+The sender records pending input before transport, including bridges that return replies immediately.
+
+Rejected or consumed authority requires a newer resolved frame before another gesture starts.
+Capability withdrawal, menu replacement, ambiguous transport errors, and a ten-second response timeout retire pending input.
+The opening sequence floor survives same-listener menu reuse and capability changes.
+Targeted regressions cover these transitions, out-of-order replies, duplicate phases, forged reply identities, and reentrant sends.
+
+The ordinary cooking screen remains installed.
+Authored device bindings, search, navigation, remaining controls, and cross-input prediction remain unfinished.
+This transport does not establish a complete native cooking screen or visual parity.
+
+
+The combined four-project build passes 2,430 tests, with 213 optional skips and no failures or errors.
+All 104 core and 38 add-on patches replay. Offline tooling and metadata validation pass.
+All 1,401 embedded core classes match the rebuilt core.
+
+A private live probe calls the production sender and observes the production reply handler against BDS 1.26.51.1.
+It completes secondary and tertiary command cycles in furnace, smoker, and blast-furnace menus.
+All 22 replies match pending actions: 19 commands succeed, and three stale snapshots receive rejection replies.
+Accepted commands preserve all 39 actual slots and the cursor.
+Both client sessions match 2,439 core and add-on classes plus four resources.
+The three ordinary cooking cases and same-world reconnect pass. Normal cleanup removes the private observer.
+
+The probe resolves recipe scopes on the CPU while ordinary Java screens remain installed.
+It sends no primary item-moving action or authored device input.
+These results establish production transport and reply handling, without establishing completed cooking controls or native parity.

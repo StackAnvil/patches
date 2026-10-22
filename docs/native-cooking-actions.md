@@ -64,7 +64,8 @@ A release can retire that gesture after prediction changes the presentation snap
 Request sequences reject duplicate input, and menu generations protect replacement menus.
 Intermediate Java-content publication waits until the action finishes. Selection highlights follow the current visible recipe order.
 
-The Fabric presentation remains passive, and each input batch waits for its responses before another batch can start.
+The Fabric client has typed action and result transport with revision-bound gesture handling.
+The presentation remains passive, and each input batch waits for its responses before another batch can start.
 Physical device bindings, nonempty-cursor branches, cross-input prediction, authoritative model watchers, and live route acceptance remain unfinished.
 The original full controller, model owner, and independent frame scopes also remain outside the native fixtures.
 
@@ -93,6 +94,14 @@ Only phases `0`, `1`, and `2` are accepted.
 Phase-free version `3` actions reject instead of receiving a default phase.
 Replies echo the complete action, including its phase.
 These payloads do not establish physical input mapping or activate authored cooking controls.
+
+The Fabric action session authorizes initial input from its resolved recipe scope.
+Follow-up phases retain the original cell, command permissions, and snapshot identity after newer frames arrive.
+The sender records pending input before transport, so immediate bridge replies cannot precede that registration.
+Replies must match the complete pending action. Rejected or consumed authority requires a newer resolved frame before another gesture starts.
+Menu replacement, capability withdrawal, ambiguous transport errors, and a ten-second response timeout retire the session.
+These client rules do not establish native physical input bindings or cross-input prediction.
+
 Negative-index cases are internal controls. They do not authorize invalid recipe identities.
 
 Inherited container rules precede the cooking rule at equal priority.
