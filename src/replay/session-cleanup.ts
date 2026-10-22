@@ -1,4 +1,19 @@
+import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { OwnedProcesses } from "./owned-processes.ts";
+
+/** Let Minecraft disconnect on its render thread before the JVM enters its exit safepoint. */
+export async function requestReplayJavaStop(
+  directory: string,
+  signalStartup: () => void,
+): Promise<void> {
+  if (existsSync(join(directory, "client-control-ready"))) {
+    await writeFile(join(directory, "stop-client"), "", { mode: 0o600 });
+  } else {
+    signalStartup();
+  }
+}
 
 /** Keep Prism draining the game's output until the JVM has finished shutting down. */
 export async function stopReplayJavaProcesses(
@@ -10,10 +25,14 @@ export async function stopReplayJavaProcesses(
     if (pids.some((pid) => processes.alive(pid)))
       throw new Error("Owned Java processes did not stop normally; forced cleanup refused.");
   },
+  requestStop?: () => Promise<void>,
 ): Promise<void> {
   processes.captureDescendants();
   if (gamePid !== undefined) {
-    processes.signal(gamePid, "SIGTERM");
+    if (processes.alive(gamePid)) {
+      if (requestStop) await requestStop();
+      else processes.signal(gamePid, "SIGTERM");
+    }
     await waitForExit([gamePid]);
   }
   processes.captureDescendants();

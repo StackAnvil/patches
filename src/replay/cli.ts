@@ -46,7 +46,11 @@ import {
 } from "./native-offline.ts";
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
-import { cleanupReplaySession, stopReplayJavaProcesses } from "./session-cleanup.ts";
+import {
+  cleanupReplaySession,
+  requestReplayJavaStop,
+  stopReplayJavaProcesses,
+} from "./session-cleanup.ts";
 import { hiveTarget, publicTarget } from "./targets.ts";
 import {
   hasGameplayAcknowledgments,
@@ -243,6 +247,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
         "MixinReplayCamera",
         "MixinPlayerFrame",
         "MixinMovementAudit",
+        "MixinClientShutdown",
       ],
     }),
     { mode: 0o600 },
@@ -574,9 +579,12 @@ async function launchNative(
   return { pid: child.pid, log };
 }
 
-async function stopAll(gamePid?: number): Promise<void> {
+async function stopAll(directory: string, gamePid?: number): Promise<void> {
   if (javaCleanup) {
-    await stopReplayJavaProcesses(javaCleanup, gamePid);
+    const processes = javaCleanup;
+    await stopReplayJavaProcesses(processes, gamePid, undefined, () =>
+      requestReplayJavaStop(directory, () => processes.signal(gamePid!, "SIGTERM")),
+    );
     return;
   }
   if (nativeClient && alive(nativeClient.pid)) {
@@ -962,7 +970,7 @@ Live add-on recordings accept --allow-transfers to save each connection separate
               { mode: 0o600 },
             );
         },
-        stopProcesses: () => stopAll(gamePid),
+        stopProcesses: () => stopAll(directory, gamePid),
         releaseDependencies: async () => {
           if (javaDataCleanup) {
             await javaDataCleanup();
