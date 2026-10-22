@@ -87,20 +87,72 @@ The rest of the movement matrix remains unverified by these cases.
 `CORRECT_PLAYER_MOVE_PREDICTION` carries position, motion, grounded state, and a simulation tick.
 The [nearby packet reference](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/packets/correct-player-move-prediction-packet/) describes this layout for protocol 2192.
 Native protocol 2193 captures confirm the layout and zero-velocity corrections around fixture teleports.
-The movement guide requires immediate application when the correction tick lies outside available history.
+The movement guide describes immediate application outside available history.
+The pinned correction receiver has the more specific admission gates below.
 
 Core previously discarded motion outside gliding and canceled corrections outside its tick window.
 It now applies absolute motion for every player pose, including zero-velocity resets.
 Unknown rewind types cancel the Java output before logging the unsupported value.
 The gliding-only implementation moves out of the deferred rocket patch into this general correction handler.
 
-Four parameterized test cases cover zero, past, current, and future ticks.
+Seven parameterized cases cover zero, past, current, future, and unsigned boundary ticks.
 Each case exercises both gliding states and zero and nonzero motion through the actual packet mapping.
 They verify position, motion, relative flags, grounded state, and complete packet consumption.
+Tick zero consumes the packet without a position update or negotiated correction payload.
 
-**Incomplete:** Core applies corrections immediately because it has no usable movement history for replay.
+**Incomplete:** Core applies nonzero corrections immediately because it has no usable movement history for replay.
 Corrections inside history still need rewind and input resimulation.
 Vehicle velocity, angular velocity, and movement-related metadata, attributes, and effects need matching reconciliation.
+
+## Native correction admission, October 22, 2026
+
+The pinned 1.26.51.1 receiver rejects tick zero before command allocation.
+An 864-case instruction probe verifies the original correction entry, target selector, replay lookup, and command payload copy.
+The cases cover player and vehicle targets, unknown rewind types, grounded state, unsigned tick boundaries, and retained history bounds.
+
+Packet getter `143901ab0` returns ID 161 for vtable `14e897660`.
+Dispatcher `1417342f0` selects recipient slot `0x230`, which calls `14131ab90` and then `144359100`.
+Selector `144358dd0` requires the matching player or vehicle replay component.
+Lookup `144358cd0` rejects zero and compares the correction tick with the oldest retained clock as unsigned values.
+
+Core now consumes tick-zero packets without moving the player or emitting a correction payload.
+The shared correction payload also preserves the upper half of the unsigned tick range.
+Negative Java longs retain those wire bits instead of failing validation.
+Packet regressions failed before both changes.
+
+The probe supplies ECS storage, relation resolution, allocation, and the command dispatch boundary.
+It does not execute command application, retained snapshot restoration, input replay, or world physics.
+The original generic replay probes remain useful evidence for those separate paths.
+Current core still lacks matching historical admission and resimulation.
+The 28 recorded effect activity mismatches remain reproducible against the current build.
+
+## Vehicle correction motion, October 22, 2026
+
+Core now sends authoritative vehicle motion before the Java vehicle position update.
+Both nonzero corrections and zero resets preserve the chosen boat or horse identity.
+The Java position packet carries no motion field.
+Java 26.3 bytecode confirms that entity motion updates delta movement and that vehicle position updates preserve this value.
+
+A separate 48-case probe executes the complete native correction command `144373f30`.
+It verifies position and velocity writes in the original `StateVectorComponent` path.
+It also verifies conditional vehicle rotation and optional angular writes.
+The fixture supplies typed storage providers and the grounded-tag setter boundary.
+No hooks replace the position, velocity, rotation, angular, or bounding-box writes.
+
+The packet regression failed before motion delivery existed.
+It covers a nonzero correction followed by a zero reset for both a boat and a horse.
+Full historical replay, paired client ground state, angular state, and native trajectory comparisons remain open.
+
+Final validation passes 1,498 core tests and 843 add-on tests, with 212 optional skips and no failures or errors.
+All 104 core patches reproduce the tested source tree.
+All 1,386 core classes match the core embedded in the rebuilt add-on.
+The full four-project build passes.
+
+A fresh 45-second NetherNet recording against BDS 1.26.51.1 completes with gameplay acknowledgments and normal cleanup.
+It records 873 mounted inputs, including 40 moving inputs, and 43 actual vehicle corrections.
+The client stays mounted and connected, but repeated corrections demonstrate a remaining movement mismatch.
+This recording does not establish native boat trajectories or historical replay parity.
+
 
 ## Authoritative grounded state
 
@@ -1091,7 +1143,8 @@ The runtime candidate remains private; no installation or gameplay launch occurs
 Original instructions pass 560 vehicle-view checks, 22 sender cases, six sender transitions, 192 controlling-seat writer cases and 24 prediction callbacks.
 Thirty cleanup controls establish generation-valid erase dispatch for supplied movement-tick markers.
 Actual storage erasure and cleanup execution order remain unresolved.
-Native corrected vehicle velocity application, complete prediction replay, collision and strict-BDS/native trajectories also remain unresolved.
+Full historical vehicle correction, client ground and angular state, collision, and strict-BDS/native trajectories remain unresolved.
+The later vehicle correction section records standard motion delivery.
 Add-on0025 must provide the negotiated completed local mount sample before this optional core path can activate in a real client.
 
 ### Keep the sparse metadata hook with its consumer
