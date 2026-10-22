@@ -23,6 +23,8 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Physical-slot snapshot producer | 45 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
 | Registered cooking providers | 3 ingredient descriptors | Eleven registrations, native model import, skip callbacks, and 76-slot capture order |
 | Installed-provider history replacement | 7 cases plus 7 repeated-return controls | Inventory deficits precede hotbar deficits; each return replaces stored history |
+| Installed ordinary source policies | 480 cases | Typed item locks and source count limits for hotbar and inventory |
+| Installed ordinary transfer executor | 30 cases | Native permissions, owned slot mutation, request allocation, and Place-action assembly |
 
 These checks cover different boundaries. Their case counts do not measure native gameplay or visual parity.
 
@@ -101,7 +103,7 @@ It then passes the remaining ingredient to generic auto-placement with an all-it
 The return fixture supplies transfer effects at explicit capacities and records the generic auto-placement call.
 It does not execute generic auto-placement.
 The installed-provider fixture below separately establishes capture order and history replacement with supplied transfer effects.
-Transfer execution still needs verification before this planner can drive native transactions.
+Cooking-source transfer execution still needs verification before this planner can drive native transactions.
 
 ## Capture physical slots
 
@@ -181,10 +183,50 @@ Generic auto-placement records its inputs without moving items.
 The complete cooking subclass, enclosing selection callbacks, physical input mapping, transfer permissions, transaction assembly, and live acceptance remain unverified.
 The variant controls cover empty capture order; they do not execute blast-furnace or smoker returns.
 
+## Installed ordinary transfer execution
+
+The ordinary transfer fixture binds original hotbar and inventory providers to a constructed native backing container.
+The backing constructor is `0x147c96d60`; provider binding uses `0x143434050`.
+The standard policy installer at `0x1431afb60` registers their slot ranges and source filters.
+Construction and binding alone leave the source-validity map empty, so the executor rejects transfers.
+
+The complete source check at `0x147c98300` then passes 480 controlled cases.
+These cases vary source count, requested quantity, absent userdata, empty compounds, and ByteTag, ShortTag, and IntTag lock values.
+Both generic and typed NBT lookups execute original instructions over supplied compound trees.
+
+For hotbar and inventory sources, a ByteTag `minecraft:item_lock` value of `1` prevents removal.
+Values `0`, `2`, `127`, `128`, and `255` permit removal when the source count covers the requested quantity.
+Missing tags and tested non-ByteTag values also permit removal.
+Cooking ingredient selection uses a separate rule that rejects every nonzero ByteTag lock value.
+Keep these permission rules separate.
+
+Thirty additional cases execute the original transfer executor at `0x1433e8380` from hotbar slot zero to inventory slot zero.
+They cover empty and compatible occupied destinations, explicit quantities `0`, `1`, and `3`, and five source-lock states.
+The lock states are absent userdata and ByteTag values `0`, `1`, `2`, and `255`.
+Rejected or zero-quantity moves leave both slots unchanged and append no action.
+Accepted moves update backing storage and provider caches and append the expected Place action.
+
+The native request manager constructor at `0x1425aa270` receives fixture flags `1` and `0`.
+The original request-start function allocates negative request IDs and constructs each current request.
+Original descriptor construction, permission checks, ordinary item merging, owned item copies, request validation, and action append execute together.
+The fixture checks transfer counts, collection IDs, physical slot indices, and supplied stack-network IDs in the resulting actions.
+A fresh process reproduces all 480 policy cases and 30 executor cases.
+
+These fixtures supply a generic Item definition, synchronized initial slot values, numeric stack-network IDs, and compound trees.
+They also supply storage read/size interfaces, an abstract game context, and an empty notification subscriber list.
+Three diagnostic string-formatting functions return empty strings.
+The request-manager flag combination omits its separate world-subscription path.
+Provider content synchronization remains a supplied boundary; the combined inventory view is outside these transfer cases.
+No transfer, permission, merge, item-copy, request-allocation, request-validation, or action-append function is substituted.
+
+These results cover hotbar and inventory sources.
+The server-menu helper starts from `container_items`, which has separate source-policy registration.
+Cooking-source transfers, generic auto-placement, full controller input, wire serialization, server acceptance, and graphical behavior remain unverified by these fixtures.
+
 ## Implementation boundaries
 
 The [shared UI patch](../patches/viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.patch) owns the cooking messages, scene contracts, and presentation authority.
 The [inventory request patch](../patches/viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.patch) owns request prediction, response reconciliation, and transfer quantities.
 
-Remaining work includes complete controller initialization, the input pipeline, selection-history boundaries, transfer execution, revision-bound action handling, and authored client controls.
+Remaining work includes complete controller initialization, the input pipeline, selection-history boundaries, cooking-source transfer execution, revision-bound action handling, and authored client controls.
 Native visual comparisons remain separate from these instruction-level checks.
