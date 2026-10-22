@@ -9653,3 +9653,39 @@ A fresh strict-BDS ViaProxy run passes all three cooking stations and same-world
 Both launched profiles and the proxy match all 1,371 rebuilt core classes and four block metadata resources.
 The run exits successfully and stops its private display normally.
 These controls use Java cooking screens and do not establish authored presentation or native action parity.
+
+## Cooking model publication (October 22, 2026)
+
+Core now publishes authoritative cooking snapshots to clients that negotiate the cooking model and progress channels.
+Each snapshot contains the station catalog, translated recipe previews, category counts, preferences, item counts and raw progress.
+The producer reuses one cooking catalog per snapshot.
+The current add-on does not yet register these channels or replace its Java cooking screens.
+
+Publication waits for the opened container's first authoritative contents.
+The producer flushes the real Java content update before its derived cooking snapshot.
+It binds the snapshot to the inventory owner, container lifetime, item revisions, recipe revision, resource program and preferences.
+Deep item copies also detect predictions that change stacks without a server revision.
+A state change during item conversion rejects the candidate snapshot.
+Close, recovery and channel withdrawal retire publication ownership.
+
+A separate progress message retains all four signed native properties and their data revision.
+Progress updates keep the item update identity, so burn ticks do not repeatedly retire activation authority.
+The tests cover all three families, wire round trips, category deduplication, slot order, progress, prediction, reload, preferences and tracker replacement.
+They also cover reused menu IDs, failed conversion, recursive publication and packet order.
+
+All four projects build with 2,338 passing tests, 152 optional skips and no failures or errors.
+All 102 core and 38 client patches replay.
+Client screen activation, authored controls, search, selection and native quantity/cursor actions remain unfinished.
+These producer checks do not establish visible native parity.
+All other inventory, movement, mount, camera and rendering requirements remain active.
+
+A private Fabric observer receives the production payloads while Java cooking screens handle the live controls.
+It validates 46 snapshots and 1,278 progress updates across all three cooking families, with no observation failures.
+All snapshots resolve authored scenes with 39 inventory slot identities.
+The CPU resolver reports recipe-action scopes in 39 snapshots.
+Both running clients match all 1,376 rebuilt core classes and four block metadata resources through their class loaders.
+The client profiles and proxy also match those artifacts.
+All three cooking controls and same-world reconnect pass.
+The run exits normally, stops its private display and removes the private observer mod.
+These observations verify publication and CPU resolution, not authored screen rendering or native action parity.
+Offline tooling checks, all 264 regressions and patch metadata validation pass.

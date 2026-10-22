@@ -189,3 +189,17 @@ Offline validation passes all 263 tooling tests and patch metadata checks.
 ## Upstream prerequisites
 
 Requires [0015-transport-native-resources-and-sound-commands.patch](0015-transport-native-resources-and-sound-commands.pr.md): Land accepted native resource transport before loading shared UI programs.
+
+## Cooking progress transport (October 22, 2026)
+
+Cooking progress now has a separate bounded message.
+It retains four signed int32 properties and binds them to the exact menu, presentation, item update and data revision.
+A progress update therefore does not replace the recipe/inventory authority or restart activation.
+Wire tests preserve extreme signed values and reject truncated or trailing fields.
+This contract does not establish authored screen behavior or native visual parity.
+
+Recipe-action validation now examines only paths that own recipe controls.
+A missing enabled binding on an unrelated search field no longer rejects valid recipe actions.
+Every active recipe path still requires known visibility and enabled values, including its ancestors.
+Tests cover unrelated unknown fields, unknown owning parents and hidden controls.
+This change does not supply missing search-input behavior or establish native control parity.
