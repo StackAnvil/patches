@@ -231,3 +231,20 @@ Core passes 1,496 tests; the add-on passes 843.
 Main/test Checkstyle and offline validation pass.
 All 1,386 embedded core class entries match the newly built core.
 These transport prerequisites do not advertise cooking actions or complete their input and transaction backend.
+
+## Registered recipe input evidence
+
+A fresh private fixture runs the original service registry and scheduler startup before the base input and router constructors.
+Eight native worker entries initialize their own readiness fields and reach condition waits with separate stacks and TLS.
+The original scheduler publishes the queue lifetime handle; the fixture does not supply game readiness or lifetime flags.
+Ordinary OS, CRT, allocation, and authored source/focus access remain explicit external boundaries.
+
+Original recipe registration, callback cloning, callback maps, event dispatch, and phase callbacks pass 48 raw-event controls.
+Another 576 controls parse typed payloads through the original JsonCpp reader and parser.
+Integer collection indices survive. Real `7.0`, strings, Boolean values, and other tested non-integer types yield index `-1`.
+Phase `1` retains the index, command, source, and supplied screen coordinates; phase `2` clears the retained index.
+
+The 288 uniform-result and 96 independent-result controls preserve phase order and combine callback results with bitwise OR.
+The router remains a recording boundary in these fixtures.
+These checks do not establish physical input mapping, recipe-provider index validity, native selection effects, transactions, or live acceptance.
+The [cooking reference](../../../docs/native-cooking-actions.md#input-event-delivery) records the raw fields and remaining boundaries.

@@ -19,6 +19,9 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Native state storage | 101 registrations | Higher priorities run first. Equal priorities retain registration order. |
 | Selected-recipe release | 90 cases | Exit conditions, actual base-state reset, and handled result |
 | Initial-state recipe dispatch | 1,620 cases | Command, held-item, source-permission, and controlled input-mode conditions |
+| Registered recipe input delivery | 48 cases | Raw event fields select phases through original registrations and callbacks |
+| Typed recipe event payloads | 576 cases | Integer index decoding and retained selection, command, source, and position fields |
+| Recipe input result propagation | 288 plus 96 controls | Delivered phases retain their order; callback results combine with bitwise OR |
 | Cooking item-return planner | 1,500 cases | Original-slot deficits and the remaining count passed to auto-placement |
 | Physical-slot snapshot producer | 45 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
 | Registered cooking providers | 3 ingredient descriptors | Eleven registrations, native model import, skip callbacks, and 76-slot capture order |
@@ -48,7 +51,7 @@ For valid recipe indices and input-mode field values `0`, `1`, or `3`, the initi
 
 The release transition executes the real base-state reset and returns handled bit `4`.
 The fixtures do not establish physical input-mode mappings or how Java mouse events produce native event phases.
-The mode-`2` path and complete input callback pipeline still need verification.
+The mode-`2` path, physical event producers, and complete recipe action pipeline still need verification.
 
 Cooking action and result payloads use version `4` and preserve the numeric event phase alongside the command and snapshot identity.
 Only phases `0`, `1`, and `2` are accepted.
@@ -59,6 +62,49 @@ Negative-index cases are internal controls. They do not authorize invalid recipe
 
 Inherited container rules precede the cooking rule at equal priority.
 The implementation must preserve that ordering instead of treating every recipe command as an immediate transfer.
+
+## Input event delivery
+
+The input fixture runs the original service registry, thread configuration, scheduler, and queue constructors before the base input constructor.
+Eight original worker entries initialize their own readiness fields and reach condition waits.
+The scheduler publishes the input queue's lifetime handle through its normal construction path.
+The fixture supplies ordinary OS and CRT services, separate worker stacks and TLS, and a single-processor environment.
+It does not supply game readiness flags or queue lifetime fields.
+
+The original base input constructor is `0x144816390`.
+The fixture separately constructs the router with `0x144634ae0` and registers all three recipe commands through `0x144dd48c0`.
+Original callback cloning, callback maps, the dispatcher at `0x144819aa0`, and recipe phase callbacks execute.
+Authored source lookup supplies `recipe_food`; the focus accessor supplies false.
+The router records its arguments and supplies a result instead of executing state transitions or recipe effects.
+
+For raw event kind `1`, bit zero of the byte at offset `0x28` delivers phase `0` first.
+The two bytes at offsets `0x10` and `0x11` determine an additional phase:
+
+| Byte at `0x10` | Byte at `0x11` | Additional phase |
+| ---: | ---: | --- |
+| `0` | `0` | None |
+| `0` | `1` | `1` |
+| `1` | `0` | `2` |
+| `1` | `1` | None |
+
+All 48 combinations of commands, byte values, and masks `0` through `3` pass.
+The 288 result controls preserve this phase order for supplied router results `0`, `1`, `2`, `4`, `8`, and `255`.
+Another 96 controls vary the two callback results independently.
+The dispatcher combines their result bits with bitwise OR.
+These raw fields do not establish physical mouse, keyboard, or controller meanings.
+
+The typed payload fixture parses JSON through the original JsonCpp reader and parser.
+It passes 576 cases across twelve payload shapes and the same command and event combinations.
+The callbacks accept tested integer `#collection_index` values from `-1` through `2147483647`.
+Missing, null, Boolean, string, array, object, fractional, and integral-real values yield index `-1`.
+For example, integer `7` survives; real `7.0` yields `-1`.
+Index decoding does not establish whether a recipe provider contains that index.
+
+Phase `1` retains the decoded index, command, collection source, and numeric screen coordinates.
+Phase `2` clears the retained index to `-1` before router delivery.
+These checks cover the supplied `recipe_food` source and screen coordinates `11` and `13`.
+The source lookup, focus value, raw events, and router results remain explicit fixture boundaries.
+The fixtures do not establish physical input mapping, complete cooking-controller installation, recipe effects, wire requests, or live acceptance.
 
 ## Selection and ingredient placement
 
