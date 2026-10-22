@@ -178,7 +178,7 @@ The run ended before a destination in that selector was tested.
 
 Mineville's logs repeatedly report `Expected IDENTIFIER, found FLOAT` during render-controller evaluation.
 The accepted pack contains resource references such as `Texture.num.0` and `Geometry.digit.1`.
-The shared parser rejects their numeric suffixes. Correct resource-name lookup still needs implementation and target-client verification.
+The shared parser rejected their numeric suffixes. The resource-alias correction below addresses that failure; target-client visual comparison remains open.
 Floating pig models and default player appearances also need a native comparison before classification as rendering defects.
 
 The original recorder rejected the second connection. Transfer-enabled live recordings now keep separate journals and exported packs for each connection.
@@ -193,3 +193,34 @@ All six owned test processes close normally.
 
 OneBlockOnline also fails before a playable scene, while reading a string at the end of a 4,234,154-byte packet.
 No entity, block, item, or GUI rendering verdict is possible. All six owned test processes close normally.
+
+## Mineville resource-alias correction
+
+Texture, geometry and material aliases now retain their complete name after the namespace.
+The old parser treated dots inside those names as nested object access.
+It rejected numeric segments and could silently lose word-only aliases such as `Texture.duels.background`.
+The correction preserves leading zeroes and numeric-looking suffixes without changing variable members, quoted values or decimal arithmetic.
+
+The semantic regression fails before the fix and passes afterward.
+A private target 1.26.51.1 expression-reader/compiler fixture verifies 26 admission cases.
+Allocation, CRT operations, diagnostics and service availability remain supplied boundaries.
+The fixture does not establish resource resolution, world context or visible parity.
+
+The actual accepted hologram pack resolves all six controllers across ten sample values.
+All 120 selected geometry and texture values refer to the entity's declared resources; material selections resolve too.
+All four projects build with 2,206 passing Java tests and 152 optional skips.
+Offline validation passes the 264 tooling tests and patch metadata checks.
+
+A 210-second software-rendered replay sends the complete scene and passes transport verification.
+It records 65,524 custom-actor render frames, 570 resolved models and no empty model updates.
+The installed parser matches the tested artifact. No render-controller or numeric-member parser errors occur.
+All seven owned process identities close, and the private display stops.
+
+Overall rendering verification still fails.
+`modelengine:adboard_discord` never reaches native model evaluation, and unresolved block, entity and texture mappings remain.
+The original live run and the replay both report missing block states after lobby transitions.
+Native images, material output and CubeCraft cosmetic-preview body direction still need comparison.
+
+The first replay window ended before the complete scene arrived.
+The host's out-of-memory killer stopped a longer attempt.
+The completed replay uses a private 3 GB heap, render distance 4 and disabled mipmaps.

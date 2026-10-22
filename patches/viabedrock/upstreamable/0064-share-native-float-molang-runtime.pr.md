@@ -1,5 +1,31 @@
 The shared float runtime owns parser semantics, bounded control flow and native math. Actor property binding and transport remain in the [following feature](0064-evaluate-named-actor-properties.pr.md). Existing native evidence and its limits follow.
 
+## Dotted resource aliases
+
+Mineville's protocol 2193 pack uses flat aliases such as `Texture.num.0`, `Texture.duels.background` and `Geometry.digit.1`.
+The parser previously treated each dot as another object member.
+Numeric segments caused errors; word-only segments could silently lose the selected model.
+Retain the complete contiguous alias after the texture, geometry or material namespace.
+Preserve its spelling, including leading zeroes and numeric-looking suffixes.
+Variable members, quoted values and decimal arithmetic keep their existing grammar.
+
+A private Bedrock 1.26.51.1 expression-reader/compiler fixture verifies 26 admission cases.
+Native symbol registries execute unchanged.
+Allocation, CRT operations, diagnostics and service availability remain supplied boundaries.
+The fixture does not establish resource resolution, actor world context or visible parity.
+The semantic regression failed before the fix and passes afterward.
+
+The actual accepted hologram pack resolves all six controllers across ten samples.
+The old parser loses the first dotted geometry selection; the fixed parser resolves all 120 geometry and texture selections and their materials.
+All four projects build with 2,206 passing Java tests and 152 optional skips.
+Offline validation passes 264 tooling tests and patch metadata checks.
+
+A complete 210-second replay passes transport verification and records no controller or numeric-member parser errors.
+It records 65,524 custom-actor render frames, 570 resolved models and no empty model updates.
+The private software-rendered client uses a 3 GB heap and render distance 4; all seven owned processes close.
+Overall rendering verification still fails because an actor never reaches model evaluation and unresolved block, entity and texture mappings remain.
+This result verifies the alias correction without establishing complete scene or native visual parity.
+
 Evaluate named actor properties before render controller selection. Saved CubeCraft controllers require string enum comparison and correct assignment and unary precedence. The shared Molang evaluator also supplies Geyser custom block permutations.
 
 Validation: semantic parser/property regressions and the full 246-test ViaBedrock suite pass. Typed wire decoding stays in the existing metadata patch.
