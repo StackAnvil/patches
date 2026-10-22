@@ -1,4 +1,4 @@
-From 71324fe549b260fc35838d346f7bfb306c63bb4c Mon Sep 17 00:00:00 2001
+From c0fd37794eba7755d4cef881f35282ce66802966 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -22,15 +22,16 @@ Verified against Geyser 2.11.3 source at
 https://github.com/GeyserMC/Geyser/blob/63a4e2b79b12f0d138777d5fd80176a112b4bd72/core/src/main/java/org/geysermc/geyser/translator/inventory/InventoryTranslator.java
 and focused request-order tests.
 
-Keep transmitted block item metadata in both the recipe/result item codec
-and the network stack descriptor. Native Bedrock 1.26.51.1 build 51061372,
-protocol 2193, on CubeCraft Pillars of Fortune sends stripped oak wood
-(runtime item ID -819) with aux 8; its appended plank recipe also requires
-aux 8. Resetting that field to zero prevents the player-grid matcher from
-selecting the advertised recipe. Block runtime-state validation remains
-independent of item metadata. The wire-to-ingredient regression reproduces
-8 becoming 0 before this change and matches a shifted player-grid ingredient
-after it. Preserve the existing server-assigned recipe IDs and request path.
+Keep transmitted block item metadata until connection-aware Item and
+BlockLegacy resolution. CubeCraft Pillars of Fortune sends stripped oak
+wood (runtime item ID -819) and its plank ingredient with auxiliary value
+8. Native recipe comparison resolves block identities: auxiliary 8 and
+canonical auxiliary 0 select the same default block. An executable check
+of the actual stripped-oak-wood constructor, pillar-axis registration and
+palette creation verifies canonical metadata 0/1/2 for y/x/z. The regression
+now executes the production matcher after both item codecs, accepts both
+0 and 8 for that default block, and rejects a different runtime axis.
+It preserves server-assigned recipe IDs and the request path.
 
 Expose protocol 2193 single-input furnace, blast-furnace and smoker recipes
 in their own Java recipe-book categories, with station-specific stable
@@ -162,13 +163,13 @@ not established by these probes. The private fixture records those limits.
  .../NativeFurnaceOptionsPacketTest.java       | 214 +++++++
  .../storage/CookingRecipeBookTest.java        | 154 +++++
  .../protocol/storage/CraftingCursorTest.java  | 158 +++++
- .../storage/CraftingDataTrackerTest.java      | 385 ++++++++++++
+ .../storage/CraftingDataTrackerTest.java      | 426 +++++++++++++
  .../storage/FurnaceRecipeRequestTest.java     | 126 ++++
  ...NativeRecipeRegistrationReferenceTest.java | 104 ++++
  .../item/BedrockRecipeResultTypeTest.java     |  86 +++
  .../types/model/FurnaceOptionsTypeTest.java   |  75 +++
  .../types/recipe/CraftingDataReaderTest.java  |  81 ++-
- 48 files changed, 4327 insertions(+), 161 deletions(-)
+ 48 files changed, 4368 insertions(+), 161 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CraftingOutputPlan.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CraftingPlacement.java
@@ -1358,10 +1359,10 @@ index 000000000..605d03d49
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java
-index eb263ea74..e7ea85b1a 100644
+index d62d7b11f..69e695e4e 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java
-@@ -133,8 +133,17 @@ public interface ItemDescriptor {
+@@ -123,8 +123,17 @@ public interface ItemDescriptor {
  
          @Override
          public boolean matchesItem(final UserConnection user, final BedrockItem item) {
@@ -1892,10 +1893,10 @@ index b405927ae..c4af7794c 100644
              if (channels.contains(LocatorBarSnapshot.CHANNEL) && wrapper.user().has(PlayerWaypointTracker.class)) {
                  wrapper.user().get(PlayerWaypointTracker.class).sendSnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index 52bf9d60c..88a8a8dcd 100644
+index 9bf45814b..6f4c87dde 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-@@ -64,6 +64,7 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+@@ -65,6 +65,7 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  import net.raphimc.viabedrock.protocol.types.array.ArrayType;
  import net.raphimc.viabedrock.protocol.types.inventory.ItemStackRequestResultType;
  import net.raphimc.viabedrock.protocol.types.item.BedrockItemType;
@@ -1903,7 +1904,7 @@ index 52bf9d60c..88a8a8dcd 100644
  import net.raphimc.viabedrock.protocol.types.item.NetworkItemStackDescriptorType;
  
  import java.util.HashMap;
-@@ -93,6 +94,8 @@ public class ItemRewriter extends StoredObject {
+@@ -94,6 +95,8 @@ public class ItemRewriter extends StoredObject {
      private final Set<String> componentItems;
      private final Int2ObjectMap<IntSortedSet> blockItemValidBlockStates;
      private final Type<BedrockItem> itemType;
@@ -1912,7 +1913,7 @@ index 52bf9d60c..88a8a8dcd 100644
      private final Type<BedrockItem> optionalItemType;
      private final Type<BedrockItem[]> itemArrayType;
      private final Type<BedrockItem> newItemType;
-@@ -180,6 +183,8 @@ public class ItemRewriter extends StoredObject {
+@@ -181,6 +184,8 @@ public class ItemRewriter extends StoredObject {
                          this.items.getOrDefault("minecraft:shield", 0),
                          this.blockItemValidBlockStates,
                          false);
@@ -1921,7 +1922,7 @@ index 52bf9d60c..88a8a8dcd 100644
          this.optionalItemType = new OptionalType<>(this.itemType);
          this.itemArrayType = new ArrayType<>(this.itemType, BedrockTypes.UNSIGNED_VAR_INT);
          this.newItemType =
-@@ -529,6 +534,14 @@ public class ItemRewriter extends StoredObject {
+@@ -548,6 +553,14 @@ public class ItemRewriter extends StoredObject {
          return this.itemType;
      }
  
@@ -2812,7 +2813,7 @@ index 6345518df..03c56ea71 100644
      public static final Type<Experiment[]> EXPERIMENT_ARRAY = new ArrayType<>(EXPERIMENT, UNSIGNED_INT_LE);
      public static final Type<EducationUriResource> EDUCATION_URI_RESOURCE = new EducationUriResourceType();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
-index e49f08f61..11e1a9ae0 100644
+index e49f08f61..01d892988 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
 @@ -56,7 +56,7 @@ public class BedrockItemType extends Type<BedrockItem> {
@@ -2820,7 +2821,7 @@ index e49f08f61..11e1a9ae0 100644
          final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(item.identifier());
          if (validBlockStates != null) { // Block item
 -            item.setData(0);
-+            // Recipes can require the transmitted aux value even for a distinct block item ID.
++            // Keep auxiliary metadata for connection-aware Item and BlockLegacy resolution.
              if (!validBlockStates.contains(item.blockRuntimeId())) {
                  item.setBlockRuntimeId(validBlockStates.firstInt());
              }
@@ -2856,7 +2857,7 @@ index 000000000..32fb5f1e8
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java
-index 3fbbbff46..3b59bdf94 100644
+index 3fbbbff46..41af303d5 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java
 @@ -52,7 +52,7 @@ public class NetworkItemStackDescriptorType extends Type<BedrockItem> {
@@ -2864,7 +2865,7 @@ index 3fbbbff46..3b59bdf94 100644
          final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(item.identifier());
          if (validBlockStates != null) { // Block item
 -            item.setData(0);
-+            // Recipes can require the transmitted aux value even for a distinct block item ID.
++            // Keep auxiliary metadata for connection-aware Item and BlockLegacy resolution.
              if (!validBlockStates.contains(item.blockRuntimeId())) {
                  item.setBlockRuntimeId(validBlockStates.firstInt());
              }
@@ -4597,10 +4598,10 @@ index 000000000..bb2efb764
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java
 new file mode 100644
-index 000000000..19cb21092
+index 000000000..ef65d1289
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java
-@@ -0,0 +1,385 @@
+@@ -0,0 +1,426 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4613,21 +4614,30 @@ index 000000000..19cb21092
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.google.common.collect.HashBiMap;
++import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
 +import com.viaversion.viaversion.libs.fastutil.ints.IntSortedSet;
 +import com.viaversion.viaversion.libs.fastutil.ints.IntSortedSets;
 +import io.netty.buffer.Unpooled;
 +import java.lang.reflect.Proxy;
-+import java.util.List;
 +import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
 +import java.util.UUID;
++import net.raphimc.viabedrock.api.chunk.blockstate.BlockItemDescriptor;
++import net.raphimc.viabedrock.api.model.BedrockBlockState;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ItemCookingProperties;
++import net.raphimc.viabedrock.protocol.model.ItemEntry;
++import net.raphimc.viabedrock.protocol.model.ItemRegistry;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptorType;
 +import net.raphimc.viabedrock.protocol.model.recipe.RecipeType;
 +import net.raphimc.viabedrock.protocol.model.recipe.ShapedRecipe;
 +import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 +import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +import net.raphimc.viabedrock.protocol.types.item.BedrockItemType;
@@ -4646,18 +4656,47 @@ index 000000000..19cb21092
 +
 +class CraftingDataTrackerTest {
 +
++    private static BedrockBlockState blockState(final String identifier, final String axis) {
++        final var tag = new CompoundTag();
++        tag.putString("name", identifier);
++        final var properties = new CompoundTag();
++        properties.putString("pillar_axis", axis);
++        tag.put("states", properties);
++        return BedrockBlockState.fromNbt(tag);
++    }
++
 +    @Test
-+    void blockItemWireMetadataMatchesPlayerGridIngredients() {
-+        // Native protocol 2193 PoF sends stripped oak wood with aux 8 and requires aux 8 for planks.
++    void wireMetadataResolvesToCanonicalBlockRecipeIdentity() throws Exception {
++        // PoF's aux-8 ingredient and canonical aux-0 inventory state resolve to the same native Block.
 +        final int itemId = -819;
 +        final var states = new Int2ObjectOpenHashMap<IntSortedSet>();
 +        states.put(itemId, IntSortedSets.singleton(123));
 +        final var user = Mockito.mock(UserConnection.class);
-+        final var rewriter = Mockito.mock(ItemRewriter.class);
-+        final var names = HashBiMap.<String, Integer>create();
-+        names.put("minecraft:stripped_oak_wood", itemId);
++        final var rewriter = Mockito.mock(ItemRewriter.class, Mockito.CALLS_REAL_METHODS);
++        final var blocks = Mockito.mock(BlockStateRewriter.class);
++        final String identifier = "minecraft:stripped_oak_wood";
++        final var registry = new ItemRegistry(new ItemEntry[]{new ItemEntry(identifier, itemId, false, ItemVersion.Legacy, null)});
++        for (final var fieldValue : Map.of(
++                "registry", registry,
++                "items", registry.ids(),
++                "cookingProperties", Map.of(identifier, new ItemCookingProperties(false, identifier, false))).entrySet()) {
++            final var field = ItemRewriter.class.getDeclaredField(fieldValue.getKey());
++            field.setAccessible(true);
++            field.set(rewriter, fieldValue.getValue());
++        }
++        final var defaultBlock = blockState(identifier, "y");
++        final var variantBlock = blockState(identifier, "x");
++        Mockito.doReturn(user).when(rewriter).user();
 +        Mockito.when(user.get(ItemRewriter.class)).thenReturn(rewriter);
-+        Mockito.when(rewriter.getItems()).thenReturn(names);
++        Mockito.when(user.get(BlockStateRewriter.class)).thenReturn(blocks);
++        Mockito.when(blocks.blockItemState(Mockito.eq(identifier), Mockito.anyShort()))
++                .thenAnswer(call -> (short) call.getArgument(1) == 1 ? variantBlock : defaultBlock);
++        Mockito.when(blocks.blockItemRecipeDescriptor(123)).thenReturn(
++                new BlockItemDescriptor(1074, (short) 0));
++        Mockito.when(blocks.blockItemRecipeDescriptor(124)).thenReturn(
++                new BlockItemDescriptor(1074, (short) 1));
++        Mockito.when(blocks.blockItemRecipeDescriptor(Mockito.eq(identifier), Mockito.anyShort())).thenReturn(
++                new BlockItemDescriptor(1074, (short) 0));
 +        final var ingredient = new ItemDescriptor.ItemNameDescriptor("minecraft:stripped_oak_wood", 8);
 +        for (final var codec : List.of(
 +                new BedrockItemType(0, states, false),
@@ -4689,6 +4728,9 @@ index 000000000..19cb21092
 +                assertArrayEquals(new int[]{0, 0, 1, 0}, CraftingDataTracker.matchShapeless(
 +                        List.of(ingredient), grid, (descriptor, item) -> descriptor.matchesItem(user, item)));
 +                decoded.setData(0);
++                assertArrayEquals(new int[]{0, 0, 1, 0}, CraftingDataTracker.matchShapeless(
++                        List.of(ingredient), grid, (descriptor, item) -> descriptor.matchesItem(user, item)));
++                decoded.setBlockRuntimeId(124);
 +                assertNull(CraftingDataTracker.matchShapeless(List.of(ingredient), grid,
 +                        (descriptor, item) -> descriptor.matchesItem(user, item)));
 +            } finally {
@@ -4988,7 +5030,7 @@ index 000000000..19cb21092
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
 new file mode 100644
-index 000000000..686cd6c65
+index 000000000..a840d1914
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
 @@ -0,0 +1,126 @@
@@ -4999,7 +5041,6 @@ index 000000000..686cd6c65
 + */
 +package net.raphimc.viabedrock.protocol.storage;
 +
-+import com.google.common.collect.HashBiMap;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import net.raphimc.viabedrock.api.model.container.block.FurnaceContainer;
 +import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
@@ -5038,7 +5079,8 @@ index 000000000..686cd6c65
 +        final InventoryRequestTracker requests = new InventoryRequestTracker(user);
 +        final ItemRewriter items = mock(ItemRewriter.class);
 +        when(items.maxStackSize(any())).thenReturn(64);
-+        when(items.getItems()).thenReturn(HashBiMap.create(Map.of("test:input", 2)));
++        when(items.matchesRecipeItem(eq("test:input"), eq(0), any()))
++                .thenAnswer(call -> ((BedrockItem) call.getArgument(2)).identifier() == 2);
 +        storage.put(InventoryTracker.class, inventory);
 +        storage.put(InventoryRequestTracker.class, requests);
 +        storage.put(ItemRewriter.class, items);

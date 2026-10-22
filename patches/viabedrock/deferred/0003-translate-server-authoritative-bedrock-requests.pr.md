@@ -479,3 +479,34 @@ The new native-reference comparisons run without skips. Tooling checks, 264 regr
 A fresh ViaProxy run passes furnace, smoker, blast furnace, brewing, authored chest placement, ordinary chest transfer, and same-world reconnect.
 Both launched profiles match all 1,360 rebuilt core classes and both block-item resources.
 The live run exits successfully and stops its private display normally. These controls use Java cooking screens.
+
+## Production recipe matching (October 22, 2026)
+
+Named ingredients now use the connection Item registry and the native network-stack descriptor conversion.
+The matcher compares associated blocks by exact palette ownership.
+Different auxiliary values can select the same block; a different axis still fails the match.
+Both descriptor positions accept wildcard 32767.
+Named metadata narrows to signed-short storage and clamps negative values to zero.
+Value -1 therefore does not act as a wildcard.
+
+A fresh executable fixture verifies 440 cases against Bedrock 1.26.51.1, build 51061372.
+It executes parsed Cereal conversion, named construction, deferred resolution, canonical registry lookup, descriptor construction and query-first comparison.
+Warm auxiliary caches, empty alias maps, allocation, CRT, TLS and locks are supplied boundaries.
+The Java comparison covers all 440 cases, including negative and wide int32 metadata before signed-short narrowing.
+A separate regression executes the production matcher after both item codecs and checks the stripped-wood default and alternate axis.
+
+Production raw-header retention remains incomplete: existing codecs still replace invalid runtime IDs before registry resolution.
+Actual alias initialization, unmodeled custom archetypes, saved-item construction and the native cooking-source collector also remain open.
+These changes establish recipe matching progress, not complete native inventory or cooking-screen parity.
+
+All four projects build with 2,301 passing tests, 152 optional skips, and no failures or errors.
+The expanded native-reference and consumer tests pass all 43 selected cases without skips.
+Tooling checks and all 264 regressions pass. The complete 102-patch core stack replays.
+
+A fresh ViaProxy run passes the three cooking stations, brewing, authored chest placement, chest transfer, manual crafting and bulk crafting.
+Its recipe-book check selects the unavailable bamboo recipe instead of the plank recipe and fails its item-count assertion.
+The test now filters craftable entries before selection.
+A focused rerun places both planks and produces four sticks; reconnect passes in both runs.
+All nine gameplay actions therefore pass across the two recordings; the initial recording retains its failed test result.
+All four launched profiles match the 1,360 rebuilt core classes and both block-item resources.
+Both runs stop their private displays normally. These controls use Java screens and do not establish native UI parity.

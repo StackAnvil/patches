@@ -1,4 +1,4 @@
-From 3c1db79cce1f7b39e3d898299021ae1978958200 Mon Sep 17 00:00:00 2001
+From 1f06c8a99ed0a821dc6570aa023f3afb9e6d6926 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -394,6 +394,23 @@ complete parsed native ItemStack constructor followed by descriptor and
 hash conversion. The fixture supplies warm associated defaults/caches,
 registry/palette storage and an empty user-data load boundary; actual
 built-in/archetype initialization and cold auxiliary mapping stay open.
+
+Resolve named recipe ingredients through the connection Item registry and
+construct candidate descriptor identity through the native network-header
+rules. Compare associated block states by exact palette ownership rather
+than auxiliary-number equality. Native matching accepts different metadata
+that resolve to the same Block, and recognizes the wildcard on either
+side. Narrow named metadata to signed-short storage before clamping it;
+negative one is not the native wildcard. Keep packet metadata unchanged.
+
+An executable fixture of Bedrock 1.26.51.1 build 51061372 verifies 240
+named-construction, deferred-resolution and concrete-comparison cases.
+It executes the actual captured canonical Item registry lookup and
+query-first comparison, with warm supplied BlockLegacy auxiliary caches
+and allocator/CRT/TLS/lock boundaries. Alias initialization, binary packet
+parsing and native UI remain outside that fixture. This connects existing
+descriptor construction to production recipe matching; complete raw-header
+retention and native cooking-source collection remain follow-up work.
 ---
  Data Asset Sources.md                         |    8 +
  build.gradle                                  |    3 +-
@@ -435,17 +452,18 @@ built-in/archetype initialization and cold auxiliary mapping stay open.
  .../protocol/model/ItemBlockPlacer.java       |   56 +
  .../protocol/model/ItemCookingProperties.java |   58 +
  .../viabedrock/protocol/model/ItemEntry.java  |   10 +
- .../protocol/model/ItemRegistry.java          |  211 +
+ .../protocol/model/ItemRegistry.java          |  217 +
  .../model/ItemStackingProperties.java         |   36 +
  .../model/LegacyItemStackingProperties.java   |   54 +
- .../protocol/model/recipe/ItemRecipeKey.java  |   82 +
+ .../protocol/model/recipe/ItemDescriptor.java |   12 +-
+ .../protocol/model/recipe/ItemRecipeKey.java  |   94 +
  .../protocol/packet/ClientPlayerPackets.java  |   60 +-
  .../protocol/packet/InteractionPackets.java   |   49 +-
  .../protocol/packet/InventoryPackets.java     | 1508 +++++--
  .../protocol/packet/JoinPackets.java          |    2 +-
  .../protocol/packet/MultiStatePackets.java    |   32 +
  .../protocol/packet/WorldPackets.java         |   12 +
- .../protocol/rewriter/ItemRewriter.java       |  274 +-
+ .../protocol/rewriter/ItemRewriter.java       |  293 +-
  .../rewriter/item/BundleItemRewriter.java     |   58 +-
  .../storage/CraftedItemSynchronization.java   |  128 +
  .../protocol/storage/CraftingDataTracker.java |  206 +
@@ -468,9 +486,9 @@ built-in/archetype initialization and cold auxiliary mapping stay open.
  .../api/util/ContainerContentPacketTest.java  |   95 +
  .../ComponentItemStackingPropertiesTest.java  |  173 +
  .../model/ItemCookingPropertiesTest.java      |  201 +
- .../protocol/model/ItemRegistryTest.java      |  495 +++
+ .../protocol/model/ItemRegistryTest.java      |  519 +++
  .../LegacyItemStackingPropertiesTest.java     |  104 +
- .../model/recipe/ItemRecipeKeyTest.java       |   89 +
+ .../model/recipe/ItemRecipeKeyTest.java       |  108 +
  .../packet/BundleSelectionPacketTest.java     |  225 +
  .../packet/ClientPlayerPacketsTest.java       |   30 +
  .../packet/ContainerDataPacketTest.java       |  119 +
@@ -494,7 +512,7 @@ built-in/archetype initialization and cold auxiliary mapping stay open.
  .../NativeContainerActionBackendTest.java     |   95 +
  .../storage/NativeContainerResponseTest.java  |  287 ++
  .../storage/StonecutterRecipePacketTest.java  |   53 +
- 99 files changed, 19225 insertions(+), 815 deletions(-)
+ 100 files changed, 19306 insertions(+), 826 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionBackend.java
@@ -7742,10 +7760,10 @@ index 319d0e8e8..fb504c391 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
 new file mode 100644
-index 000000000..3aa370fa3
+index 000000000..e90df5691
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,217 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7819,6 +7837,12 @@ index 000000000..3aa370fa3
 +    public ItemEntry definition(final int id) {
 +        final String identifier = this.ids.inverse().get(id);
 +        return identifier != null ? this.definitions.get(identifier) : null;
++    }
++
++    /** Named descriptors narrow to signed-short metadata before resolving concrete identity. */
++    public ItemRecipeKey namedRecipeKey(final String identifier, final int metadata) {
++        final ItemEntry entry = this.definition(identifier);
++        return entry != null ? new ItemRecipeKey(entry.id() & 0xFFFF, (short) Math.max(0, (short) metadata)) : null;
 +    }
 +
 +    /** Convert an already constructed native stack with its exact block ownership. */
@@ -8059,12 +8083,42 @@ index 000000000..2922971d7
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java
+index eb263ea74..d62d7b11f 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java
+@@ -37,10 +37,6 @@ public interface ItemDescriptor {
+ 
+     ItemDescriptor withAmount(int amount);
+ 
+-    static boolean matchesAuxValue(final int auxValue, final BedrockItem item) {
+-        return auxValue == -1 || auxValue == Short.MAX_VALUE || auxValue == item.data();
+-    }
+-
+     record ItemNameDescriptor(String fullName, int auxValue, int amount) implements ItemDescriptor {
+ 
+         public ItemNameDescriptor(final String fullName, final int auxValue) {
+@@ -54,13 +50,7 @@ public interface ItemDescriptor {
+ 
+         @Override
+         public boolean matchesItem(final UserConnection user, final BedrockItem item) {
+-            if (item.isEmpty()) {
+-                return false;
+-            }
+-            final Integer id = user.get(ItemRewriter.class).getItems().get(this.fullName);
+-            return id != null
+-                    && id == item.identifier()
+-                    && ItemDescriptor.matchesAuxValue(this.auxValue, item);
++            return user.get(ItemRewriter.class).matchesRecipeItem(this.fullName, this.auxValue, item);
+         }
+ 
+         @Override
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKey.java b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKey.java
 new file mode 100644
-index 000000000..304932d40
+index 000000000..24c348177
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKey.java
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,94 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -8140,6 +8194,18 @@ index 000000000..304932d40
 +
 +    private static short normalize(final short metadata) {
 +        return (short) Math.max(0, metadata);
++    }
++
++    /** Compare query-first, using exact canonical Block ownership for associated block items. */
++    public boolean matches(final ItemRecipeKey candidate, final IntFunction<?> blockStates) {
++        if (candidate == null || this.identifier != candidate.identifier) {
++            return false;
++        }
++        if (this.metadata == Short.MAX_VALUE || candidate.metadata == Short.MAX_VALUE) {
++            return true;
++        }
++        final Object queryBlock = blockStates.apply(this.metadata);
++        return queryBlock != null ? queryBlock == blockStates.apply(candidate.metadata) : this.metadata == candidate.metadata;
 +    }
 +
 +    public int descriptorHash() {
@@ -10121,7 +10187,7 @@ index 85cdb3dee..a98ad8137 100644
  
                      final BlockEntity javaBlockEntity = BlockEntityRewriter.toJava(wrapper.user(), chunkTracker.getBlockState(bedrockBlockEntity.position()), bedrockBlockEntity);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index 773425e21..52bf9d60c 100644
+index 773425e21..9bf45814b 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -18,7 +18,6 @@
@@ -10140,7 +10206,7 @@ index 773425e21..52bf9d60c 100644
  import net.raphimc.viabedrock.ViaBedrock;
  import net.raphimc.viabedrock.api.model.BlockState;
  import net.raphimc.viabedrock.api.model.NativeItemStackData;
-@@ -45,10 +45,12 @@ import net.raphimc.viabedrock.api.util.TextUtil;
+@@ -45,10 +45,13 @@ import net.raphimc.viabedrock.api.util.TextUtil;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
  import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
@@ -10149,12 +10215,13 @@ index 773425e21..52bf9d60c 100644
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
  import net.raphimc.viabedrock.protocol.model.ItemEntry;
 +import net.raphimc.viabedrock.protocol.model.ItemRegistry;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeKey;
 +import net.raphimc.viabedrock.protocol.model.ItemStackingProperties;
 +import net.raphimc.viabedrock.protocol.model.ItemCookingProperties;
  import net.raphimc.viabedrock.protocol.model.ItemCooldown;
  import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
  import net.raphimc.viabedrock.protocol.model.ItemArmorData;
-@@ -60,12 +62,14 @@ import net.raphimc.viabedrock.protocol.storage.MapTracker;
+@@ -60,12 +63,14 @@ import net.raphimc.viabedrock.protocol.storage.MapTracker;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  import net.raphimc.viabedrock.protocol.types.array.ArrayType;
@@ -10169,7 +10236,7 @@ index 773425e21..52bf9d60c 100644
  import java.util.Set;
  import java.util.logging.Level;
  
-@@ -82,6 +86,9 @@ public class ItemRewriter extends StoredObject {
+@@ -82,6 +87,9 @@ public class ItemRewriter extends StoredObject {
  
      private static final Map<String, NbtRewriter> ITEM_NBT_REWRITERS = new HashMap<>();
  
@@ -10179,7 +10246,7 @@ index 773425e21..52bf9d60c 100644
      private final BiMap<String, Integer> items;
      private final Set<String> componentItems;
      private final Int2ObjectMap<IntSortedSet> blockItemValidBlockStates;
-@@ -91,6 +98,8 @@ public class ItemRewriter extends StoredObject {
+@@ -91,6 +99,8 @@ public class ItemRewriter extends StoredObject {
      private final Type<BedrockItem> newItemType;
      private final Type<BedrockItem> optionalNewItemType;
      private final Type<BedrockItem[]> newItemArrayType;
@@ -10188,7 +10255,7 @@ index 773425e21..52bf9d60c 100644
  
      static {
          // TODO: Add missing item nbt rewriters
-@@ -122,11 +131,13 @@ public class ItemRewriter extends StoredObject {
+@@ -122,11 +132,13 @@ public class ItemRewriter extends StoredObject {
      public ItemRewriter(final UserConnection user, final ItemEntry[] itemEntries) {
          super(user);
  
@@ -10207,7 +10274,7 @@ index 773425e21..52bf9d60c 100644
              if (itemEntry.componentData() != null
                      && itemEntry.componentData().get("components") instanceof CompoundTag components) {
                  this.animationData.put(itemEntry.identifier(), ItemAnimationData.fromNetworkComponents(components));
-@@ -137,36 +148,49 @@ public class ItemRewriter extends StoredObject {
+@@ -137,36 +149,49 @@ public class ItemRewriter extends StoredObject {
                      this.cooldowns.put(itemEntry.identifier(), cooldown);
                  }
              }
@@ -10267,7 +10334,7 @@ index 773425e21..52bf9d60c 100644
      }
  
      public Item javaItem(final BedrockItem bedrockItem) {
-@@ -176,32 +200,53 @@ public class ItemRewriter extends StoredObject {
+@@ -176,32 +201,53 @@ public class ItemRewriter extends StoredObject {
  
          final String identifier = this.items.inverse().get(bedrockItem.identifier());
          if (identifier == null) {
@@ -10331,7 +10398,7 @@ index 773425e21..52bf9d60c 100644
                  if (metaItemMappings != null) {
                      if (!metaItemMappings.containsKey(meta)) {
                          if ((metaItemMappings.size() != 1 || meta != 0)
-@@ -225,36 +270,82 @@ public class ItemRewriter extends StoredObject {
+@@ -225,36 +271,82 @@ public class ItemRewriter extends StoredObject {
                  ItemDataRewriter.applyJavaOverride(javaItemMapping.overrideTag(), data, BedrockProtocol.MAPPINGS.getJavaRegistries());
              }
              if (javaItemMapping.name() != null) {
@@ -10426,7 +10493,7 @@ index 773425e21..52bf9d60c 100644
          }
  
          ItemCooldown cooldown = this.cooldowns.get(identifier);
-@@ -270,12 +361,20 @@ public class ItemRewriter extends StoredObject {
+@@ -270,12 +362,20 @@ public class ItemRewriter extends StoredObject {
  
          final CompoundTag bedrockTag = bedrockItem.tag();
          if (bedrockTag != null) {
@@ -10451,7 +10518,7 @@ index 773425e21..52bf9d60c 100644
                  }
              }
          }
-@@ -287,6 +386,8 @@ public class ItemRewriter extends StoredObject {
+@@ -287,6 +387,8 @@ public class ItemRewriter extends StoredObject {
              ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
          }
  
@@ -10460,7 +10527,7 @@ index 773425e21..52bf9d60c 100644
          javaItem.dataContainer().set(StructuredDataKey.USE_EFFECTS, this.useModifiers(bedrockItem).javaComponent());
  
          CustomAttachableResourceRewriter.applyItemModel(this.user().get(ResourcePackStorage.class), identifier, javaItem);
-@@ -302,7 +403,8 @@ public class ItemRewriter extends StoredObject {
+@@ -302,7 +404,8 @@ public class ItemRewriter extends StoredObject {
              return null;
          }
          final CompoundTag javaTag = new CompoundTag();
@@ -10470,7 +10537,7 @@ index 773425e21..52bf9d60c 100644
          javaTag.put("id", new StringTag(javaId));
          javaTag.put("count", new IntTag(javaItem.amount()));
          if (javaItem.tag() != null) {
-@@ -316,28 +418,31 @@ public class ItemRewriter extends StoredObject {
+@@ -316,28 +419,31 @@ public class ItemRewriter extends StoredObject {
              return null;
          }
  
@@ -10513,7 +10580,7 @@ index 773425e21..52bf9d60c 100644
      }
  
      public Item[] javaItems(final BedrockItem[] bedrockItems) {
-@@ -349,7 +454,33 @@ public class ItemRewriter extends StoredObject {
+@@ -349,7 +455,33 @@ public class ItemRewriter extends StoredObject {
      }
  
      public BedrockItem bedrockItem(final Item javaItem) {
@@ -10548,13 +10615,31 @@ index 773425e21..52bf9d60c 100644
      }
  
      public BedrockItem[] bedrockItems(final Item[] javaItems) {
-@@ -364,6 +495,32 @@ public class ItemRewriter extends StoredObject {
+@@ -364,6 +496,50 @@ public class ItemRewriter extends StoredObject {
          return this.items;
      }
  
 +    public boolean isBundle(final BedrockItem item) {
 +        return item != null && !item.isEmpty() && CustomItemTags.BUNDLE.equals(
 +                BedrockProtocol.MAPPINGS.getBedrockCustomItemTags().get(this.items.inverse().get(item.identifier())));
++    }
++
++    public boolean matchesRecipeItem(final String identifier, final int metadata, final BedrockItem item) {
++        final ItemRecipeKey query = this.registry.namedRecipeKey(identifier, metadata);
++        if (query == null || item == null || item.isEmpty()) {
++            return false;
++        }
++        final BlockStateRewriter blocks = this.user().get(BlockStateRewriter.class);
++        final String associated = this.cookingProperties(item).blockIdentifier();
++        final ItemRecipeKey candidate = this.registry.networkRecipeKey(item,
++                item.blockRuntimeId() != 0 ? blocks.blockItemRecipeDescriptor(item.blockRuntimeId()) : null,
++                associated != null ? blocks.blockItemRecipeDescriptor(associated, item.data()) : null);
++        final String queryAssociation = this.cookingProperties.getOrDefault(identifier, ItemCookingProperties.NONE).blockIdentifier();
++        if (queryAssociation != null && blocks.blockItemState(queryAssociation, (short) metadata) == null) {
++            return false;
++        }
++        return query.matches(candidate, auxiliary -> queryAssociation != null
++                ? blocks.blockItemState(queryAssociation, (short) auxiliary) : null);
 +    }
 +
 +    public ItemRegistry getItemRegistry() {
@@ -10581,7 +10666,7 @@ index 773425e21..52bf9d60c 100644
      public Set<String> getComponentItems() {
          return this.componentItems;
      }
-@@ -392,10 +549,13 @@ public class ItemRewriter extends StoredObject {
+@@ -392,10 +568,13 @@ public class ItemRewriter extends StoredObject {
          return this.newItemArrayType;
      }
  
@@ -17673,10 +17758,10 @@ index 000000000..80861941e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemRegistryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemRegistryTest.java
 new file mode 100644
-index 000000000..0d7feaf13
+index 000000000..62e4994bc
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemRegistryTest.java
-@@ -0,0 +1,495 @@
+@@ -0,0 +1,519 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -17707,6 +17792,30 @@ index 000000000..0d7feaf13
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class ItemRegistryTest {
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_NAMED_MATCHING", matches = ".+")
++    void namedRecipeMatchingAgreesWithNativeResolutionAndBlockComparison() throws Exception {
++        final var registry = new ItemRegistry(new ItemEntry[]{
++                entry("test:block", 1, false, ItemVersion.Legacy),
++                entry("test:other", 2, false, ItemVersion.Legacy),
++                entry("test:ordinary", 321, false, ItemVersion.Legacy)});
++        final Object defaultBlock = new Object();
++        final Object variantBlock = new Object();
++        final var reference = JsonParser.parseString(Files.readString(Path.of(
++                System.getenv("STACKANVIL_NATIVE_NAMED_MATCHING")))).getAsJsonObject();
++        final var rows = reference.getAsJsonArray("rows");
++        assertFalse(rows.isEmpty());
++        for (final var entry : rows) {
++            final var row = entry.getAsJsonObject();
++            final String identifier = registry.ids().inverse().get(row.get("identifier").getAsInt());
++            final var query = registry.namedRecipeKey(identifier, row.get("queryAux").getAsInt());
++            final var candidate = registry.recipeKey(new BedrockItem(row.get("candidateId").getAsInt(),
++                    (short) row.get("candidateAux").getAsInt(), (byte) 1), null);
++            assertEquals(row.get("matches").getAsBoolean(), query.matches(candidate,
++                    metadata -> row.get("associated").getAsBoolean() ? metadata == 3 ? variantBlock : defaultBlock : null), row::toString);
++        }
++    }
 +
 +    @Test
 +    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_NETWORK_STACKS", matches = ".+")
@@ -18284,10 +18393,10 @@ index 000000000..f05fad85f
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKeyTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKeyTest.java
 new file mode 100644
-index 000000000..0e704f082
+index 000000000..aa6717cc4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKeyTest.java
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,108 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -18309,6 +18418,25 @@ index 000000000..0e704f082
 +import static org.junit.jupiter.api.Assumptions.assumeTrue;
 +
 +class ItemRecipeKeyTest {
++
++    @Test
++    void ingredientComparisonUsesBlockIdentityAndBothWildcardPositions() {
++        final Object defaultBlock = new Object();
++        final Object variantBlock = new Object();
++        final var query = new ItemRecipeKey(1, (short) 8);
++        final var candidate = new ItemRecipeKey(1, (short) 0);
++        assertTrue(query.matches(candidate, metadata -> defaultBlock));
++        assertFalse(query.matches(candidate, metadata -> metadata == 8 ? defaultBlock : variantBlock));
++        assertFalse(query.matches(candidate, metadata -> null));
++        assertFalse(query.matches(new ItemRecipeKey(2, (short) 8), metadata -> defaultBlock));
++        assertFalse(query.matches(null, metadata -> defaultBlock));
++        assertTrue(query.matches(new ItemRecipeKey(1, Short.MAX_VALUE), metadata -> null));
++        assertTrue(new ItemRecipeKey(1, Short.MAX_VALUE).matches(candidate, metadata -> null));
++        // Equal values from different registries cannot stand in for the same native Block.
++        record State(int value) { }
++
++        assertFalse(query.matches(candidate, metadata -> new State(1)));
++    }
 +
 +    @Test
 +    void networkConstructionValidatesRuntimeOwnershipBeforeAssociationAndWildcardResolution() {

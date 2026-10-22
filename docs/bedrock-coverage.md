@@ -142,6 +142,13 @@ The complete build passes 2,262 tests with 152 optional skips.
 Fresh BDS checks pass all three Java cooking screens, brewing, authored chest placement and ordinary chest transfer.
 Join and reconnect checks pass; the owned test services close normally.
 
+Named ingredients now consume native network descriptor keys and compare associated blocks by exact registered ownership.
+Auxiliary values 8 and 0 can match the same default block; a different runtime axis still fails.
+Named metadata uses signed-short narrowing and clamps negative values to zero. Both descriptor positions recognize wildcard 32767.
+A fresh native reference verifies 440 deferred-name resolution and concrete-comparison cases.
+The production regression exercises both item codecs and the real matcher with supplied registry and block lookup context.
+Existing codecs still replace invalid runtime IDs before connection-aware construction; complete raw-header retention remains unfinished.
+
 The authored cooking catalog, controls and client screen remain incomplete.
 
 Local BDS tests select recipes from the furnace, smoker and blast-furnace books.
@@ -9433,3 +9440,37 @@ A fresh ViaProxy run passes all six workstation/chest controls and same-world re
 Both launched profiles match all 1,360 rebuilt core classes and both block-item resources.
 The run exits successfully and stops its private display normally.
 These live controls use ordinary valid counts and Java cooking screens; malformed-count coverage comes from the codec and native-constructor tests.
+
+## Native named-recipe comparison (October 22, 2026)
+
+Production named ingredients now use the connection Item registry and the existing network-stack descriptor conversion.
+Concrete comparison checks item ownership, wildcards on either side, and exact registered block identity.
+This replaces raw auxiliary equality for block ingredients.
+The stripped-oak-wood regression preserves packet metadata while accepting both auxiliary 8 and canonical auxiliary 0 for the default block.
+Changing the runtime block to another pillar axis rejects the ingredient.
+
+The pinned Bedrock 1.26.51.1 executable supplies 440 fresh named-resolution and concrete-comparison cases.
+The probe executes parsed Cereal conversion, native named construction, deferred resolution, captured canonical registry lookup and query-first comparison.
+Warm auxiliary caches, empty alias maps, allocator/CRT/TLS and locks are supplied boundaries.
+It does not establish binary ingredient parsing, alias initialization, actual builtin construction or visible parity.
+
+A separate native factory probe constructs stripped oak wood through its original builtin factory and pillar-axis registration.
+The complete palette, Block/NBT construction and virtual default selection produce metadata 0, 1 and 2 for axes y, x and z.
+The probe supplies a null-material vector and empty optional component ownership.
+This proves that builtin's canonical metadata independently of inferred palette ordering.
+It does not establish other builtin class defaults or runtime-ID assignment.
+
+Native Item construction still needs complete raw-header retention before registry resolution.
+The native cooking-source collector, authored workstation controls, movement, camera and rendering requirements remain active.
+
+All four projects build with 2,301 passing tests, 152 optional skips, and no failures or errors.
+The expanded native-reference and consumer tests pass all 43 selected cases without skips.
+Tooling checks and all 264 regressions pass. The complete 102-patch core stack replays.
+
+A fresh ViaProxy run passes the three cooking stations, brewing, authored chest placement, chest transfer, manual crafting and bulk crafting.
+Its recipe-book check selects the unavailable bamboo recipe instead of the plank recipe and fails its item-count assertion.
+The test now filters craftable entries before selection.
+A focused rerun places both planks and produces four sticks; reconnect passes in both runs.
+All nine gameplay actions therefore pass across the two recordings; the initial recording retains its failed test result.
+All four launched profiles match the 1,360 rebuilt core classes and both block-item resources.
+Both runs stop their private displays normally. These controls use Java screens and do not establish native UI parity.

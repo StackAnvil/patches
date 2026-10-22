@@ -54,3 +54,16 @@ Native images and complete route parity remain unverified.
 The shared network codec now owns signed-short count clamping for inventory items and recipe results alike.
 The recipe-only type retains its clientbound write guard and no longer duplicates count conversion.
 The codec patch records the fresh native constructor comparison and regression.
+
+## Block ingredient identity (October 22, 2026)
+
+The stripped-oak-wood regression now uses resolved block identity rather than raw auxiliary equality.
+It executes the production matcher after both network item codecs.
+The advertised ingredient accepts auxiliary 8 and canonical auxiliary 0 for the default block.
+A runtime state on another axis fails the match.
+The request rollback test supplies its ingredient predicate separately so it continues to test request ownership and acknowledgments.
+
+The pinned native stripped-oak-wood factory, property registration, palette construction and virtual default selection execute in a separate fixture.
+They produce canonical metadata 0, 1 and 2 for axes y, x and z.
+The fixture supplies a null-material vector and empty optional component ownership.
+It does not establish other builtin class constructors, runtime-ID assignment or visible parity.
