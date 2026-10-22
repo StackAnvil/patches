@@ -352,3 +352,36 @@ Rendering verification still fails on unresolved mappings. These observations do
 All four projects build with 2,149 passing tests and 152 optional skips.
 All 102 core patches replay. Offline validation passes 263 tooling tests and metadata checks.
 All four replay self-test groups pass. The seven owned test processes close normally.
+
+
+## Native custom-state registration
+
+Custom blocks now retain separate runtime slots when their serialized properties match.
+The previous bidirectional map removed earlier slots when repeated enum values or multiblock aliases produced equal states.
+Trait domains now use native value types and ordering before custom domains.
+Sparse auxiliary positions remain intact, with a maximum of 65,536 palette slots.
+Raw trait names retain their first definition; ASCII case variants follow native bucket insertion and rehash ordering.
+Unknown reflected trait names no longer disconnect the client.
+
+Fresh executable references use Bedrock 1.26.51.1 build 51061372.
+They cover 600 typed legacy-ID reads and 12 sparse layouts containing 131,222 constructed metadata slots.
+They also cover 788 trait flag cases, 13 serialized domains, 256 multiblock ordinals, and 37 name maps.
+The largest name map contains 256 case variants and exercises table growth.
+Java tests compare these references and preserve equal-state object identity and occupied hash successors.
+
+The probes supply storage, constructor context, and allocator/CRT boundaries.
+Trait component wiring, complete network property decoding, and native runtime-hash collision assignment remain outside their scope.
+These changes provide state registration needed by rendering and cooking descriptors.
+They do not complete native cooking catalog integration or establish visual parity on the surveyed servers.
+
+
+All 102 core patches replay cleanly, and all four projects build.
+The combined build passes 2,281 tests with 152 optional skips and no failures or errors.
+The new native-reference comparisons run without skips.
+Tooling checks, 264 offline regressions, and patch metadata checks pass.
+
+A fresh Bedrock 1.26.51.1 connection passes furnace, smoker, blast furnace, brewing, authored chest, and chest-transfer checks.
+The Java client also reconnects to the same world.
+Both launched profiles embed the rebuilt core, with all 1,354 core classes matching the distributable JAR.
+The run exits successfully and stops its private display normally.
+These checks use Java cooking screens and do not establish native screen or visual parity.
