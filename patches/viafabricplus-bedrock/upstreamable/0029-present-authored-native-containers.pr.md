@@ -119,3 +119,27 @@ Schema version three preserves Block presence independently of runtime ID zero.
 The complete core and add-on build together; eleven strict-BDS inventory controls and same-world reconnect pass.
 The rebuilt profiles embed the matching 1,363 core classes and both block-item resources.
 These controls retain the existing Java cooking screens and do not establish native workstation presentation.
+
+## Cooking receiver and presentation frames (October 22, 2026)
+
+The production client now receives authoritative cooking snapshots and separate raw progress updates.
+It binds them to the play listener, actual menu object, cooking family, opening sequence, and item-update sequence.
+Retired updates cannot bind to a later menu with the same numeric ID.
+An invalid newer item conversion retires the previous authority.
+
+Ordinary containers and cooking models share presentation frames and the existing renderer.
+Cooking previews retain copied translated stacks, independently of actual inventory-slot identities.
+The layout test retains all 39 inventory slots and distinct recipe identities.
+Progress changes do not change the original inventory authority.
+
+The ordinary cooking screen remains installed.
+Native activation, recipe quantity and cursor behavior, search, navigation, and remaining authored input handlers still need implementation.
+These changes do not establish a completed native cooking screen or visual parity.
+
+All four projects build with 2,344 passing tests and 152 optional skips.
+The 102 core patches and 38 client patches replay successfully. Offline tooling and metadata validation pass.
+A read-only live observer verifies the production receiver across furnace, smoker, and blast-furnace menus.
+It records 187 valid frames, including 171 applied progress observations, with all 39 actual inventory slots.
+Both runtime inventories match 2,390 core and client classes plus four resources.
+The three ordinary cooking gameplay cases and same-world reconnect pass. The private observer is removed after normal cleanup.
+These observations verify receiver ownership and CPU presentation frames, without establishing authored screen drawing or native action execution.

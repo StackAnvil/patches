@@ -203,3 +203,14 @@ A missing enabled binding on an unrelated search field no longer rejects valid r
 Every active recipe path still requires known visibility and enabled values, including its ancestors.
 Tests cover unrelated unknown fields, unknown owning parents and hidden controls.
 This change does not supply missing search-input behavior or establish native control parity.
+
+## Cooking command identity (October 22, 2026)
+
+The recipe-action envelope now retains the authored primary, secondary, or tertiary input command.
+Version three rejects earlier envelopes because they cannot identify that command.
+Results echo the complete action, including its input mode. Wire tests cover every mode, strict flags, truncation, and unknown modes.
+This contract does not establish native quantity or cursor behavior.
+
+The complete four-project build passes 2,344 tests, with 152 optional skips.
+Core Checkstyle and the mode-preserving request/result codec tests pass.
+All 102 core patches replay successfully. Offline tooling and patch metadata validation pass.
