@@ -3,13 +3,14 @@ package com.enderdash.agent.replay;
 import com.google.gson.Gson;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.type.Types;
+import com.viaversion.viaversion.api.protocol.packet.State;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.model.CameraPreset;
 import net.raphimc.viabedrock.protocol.model.CameraPresetRegistry;
 import net.raphimc.viabedrock.protocol.storage.CameraEffectsStorage;
-import net.raphimc.viabedrock.protocol.storage.CustomBlockPackStorage;
+import net.raphimc.viabedrock.protocol.storage.WorldPacketBuffer;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -36,8 +37,11 @@ public final class CameraPresetAudit {
 
     public static boolean afterPacket(UserConnection user, byte[] received, Path directory) throws IOException {
         if (received == null) return true;
-        // Core owns decoding after the Java client acknowledges the custom-block pack.
-        if (user.get(CustomBlockPackStorage.class) != null) return false;
+        // Core owns decoding after pack loading and Java play-listener initialization.
+        if (user.get(WorldPacketBuffer.class) != null) return false;
+        // BedrockProtocol ignores presets received before START_GAME. Observing that packet
+        // must not turn an otherwise valid server join into a recorder-induced disconnect.
+        if (user.getProtocolInfo().getServerState() != State.PLAY) return true;
         CameraEffectsStorage storage = user.get(CameraEffectsStorage.class);
         if (storage == null) throw new IOException("Core camera storage is unavailable after the preset packet");
         CameraPresetRegistry registry = storage.presets();

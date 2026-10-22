@@ -80,6 +80,8 @@ Use `bun run stack status <project>` to see its pinned upstream commit and patch
 
 Use the [Quickemu platform guide](docs/platform-testing.md) for manual Windows and macOS launcher tests from Linux. Start with `bun run lab vm doctor`. The VM commands provide private installation media, guest input, screenshots, artifact transfer, and graceful shutdown.
 
+Use [automated validation](docs/automated-validation.md) for patch health reports, offline regressions, release evidence, and repeated local resource-pack checks. Start with `bun run validate offline` or `bun run stack health all`.
+
 ## Showcase videos
 
 The `video/` submodule contains the Remotion editor for recorded gameplay showcases. It supports narration, aligned captions, overlays, transitions, original music, and YouTube exports.

@@ -323,3 +323,145 @@ Keep all native terrain atlas variants for explicit auxiliary-value lookup.
 Scalar server overrides apply to every variant.
 The existing first-path block API retains its behavior.
 Native glass-pane item conversion uses the indexed lookup for all sixteen stained-glass colors.
+
+## Wait for the Java play listener
+
+The Enchanted lobby recording sends custom particles before Fabric registers its play channels.
+Fabric networking API 6.3.8 sends that registration after Java login.
+Minecraft 26.3 handles the following ping on the same client packet thread before sending pong.
+The existing ping acknowledgement therefore provides an initialization boundary without a fixed delay.
+
+Separate supplemental-pack acknowledgement from the bounded world packet buffer.
+Keep world packets in order through pack loading and play-listener initialization.
+Release them after pong, including joins without a supplemental custom-block pack.
+Preserve pre-StartGame skin handling and ordinary Java translation fallbacks.
+Ignore callbacks for replaced buffers or disconnected connections.
+The camera observer now waits for both buffering phases before checking retained preset bytes.
+
+Targeted tests cover ordered delivery across both phases, registration before release,
+one-shot release, replacement and disconnect isolation, immutable payloads, and packet bounds.
+
+
+The 130-second Enchanted replay records 2,196 native particle render frames across ten effect identifiers,
+with up to 99 particles in 68 emitters. This includes the font, sparkle, and child highlight effects.
+Startup unknown-particle warnings fall from ten to zero, with no particle loading or initialization errors.
+The kits menu still sends form ID 2 with response index 2 after clicking its third card.
+All 273 skins and 270 supplied geometry records install; transport passes.
+Rendering verification still fails on unresolved mappings. These observations do not establish native visual parity.
+
+All four projects build with 2,149 passing tests and 152 optional skips.
+All 102 core patches replay. Offline validation passes 263 tooling tests and metadata checks.
+All four replay self-test groups pass. The seven owned test processes close normally.
+
+
+## Native custom-state registration
+
+Custom blocks now retain separate runtime slots when their serialized properties match.
+The previous bidirectional map removed earlier slots when repeated enum values or multiblock aliases produced equal states.
+Trait domains now use native value types and ordering before custom domains.
+Sparse auxiliary positions remain intact, with a maximum of 65,536 palette slots.
+Raw trait names retain their first definition; ASCII case variants follow native bucket insertion and rehash ordering.
+Unknown reflected trait names no longer disconnect the client.
+
+Fresh executable references use Bedrock 1.26.51.1 build 51061372.
+They cover 600 typed legacy-ID reads and 12 sparse layouts containing 131,222 constructed metadata slots.
+They also cover 788 trait flag cases, 13 serialized domains, 256 multiblock ordinals, and 37 name maps.
+The largest name map contains 256 case variants and exercises table growth.
+Java tests compare these references and preserve equal-state object identity and occupied hash successors.
+
+The probes supply storage, constructor context, and allocator/CRT boundaries.
+Trait component wiring, complete network property decoding, and native runtime-hash collision assignment remain outside their scope.
+These changes provide state registration needed by rendering and cooking descriptors.
+They do not complete native cooking catalog integration or establish visual parity on the surveyed servers.
+
+
+All 102 core patches replay cleanly, and all four projects build.
+The combined build passes 2,281 tests with 152 optional skips and no failures or errors.
+The new native-reference comparisons run without skips.
+Tooling checks, 264 offline regressions, and patch metadata checks pass.
+
+A fresh Bedrock 1.26.51.1 connection passes furnace, smoker, blast furnace, brewing, authored chest, and chest-transfer checks.
+The Java client also reconnects to the same world.
+Both launched profiles embed the rebuilt core, with all 1,354 core classes matching the distributable JAR.
+The run exits successfully and stops its private display normally.
+These checks use Java cooking screens and do not establish native screen or visual parity.
+
+
+## Canonical block-item descriptors (October 22, 2026)
+
+Core now retains block-item descriptors alongside connection runtime block IDs.
+Built-in descriptors use the legacy IDs and canonical state order already stored in the pinned block palette.
+Each property's first transition determines its bit position; non-power-of-two domains retain sparse slots.
+A separate per-block ID or offset table is unnecessary.
+Generic custom blocks retain their supplied legacy ID, original sparse metadata, and exact state object identity.
+An equal copy cannot claim another custom slot's descriptor.
+Custom archetype descriptors remain unresolved until their constructors are verified.
+
+A fresh target executable reference initializes the native property definitions and calls their original serializers.
+It acquires 708 ordinal values across 118 property names.
+Chalkboards register sixteen `direction` values despite that property's declared default count of four.
+Production validates each observed domain against these native serialized prefixes.
+
+Saved-item auxiliary lookup, built-in default overrides, network Item construction, cooking grouping, and the live catalog producer remain unfinished.
+This descriptor API does not establish native cooking screen or visual parity.
+
+
+A second executable reference runs the complete base Legacy constructor, property registration, palette builder, Block constructor, and state serialization.
+All 1,477 supplied palettes and 22,091 constructed states match production descriptor lookup.
+Names, legacy IDs, property sets, registration order, and domain counts come from the pinned palette.
+The probe uses actual native property definitions with supplied allocator/CRT context and no optional component owner.
+It does not independently establish built-in archetype selection or default overrides.
+
+All 102 core patches replay cleanly, and all four projects build.
+Final tests pass 2,286 cases with 152 optional skips and no failures or errors.
+The new native descriptor comparison runs without skips.
+Tooling checks, 264 offline regressions, and patch metadata checks pass.
+A fresh live run passes all six workstation/chest cases and same-world reconnect.
+Both client profiles embed all 1,357 rebuilt core classes and the matching property-value resource.
+The run exits successfully and stops its private display normally.
+These live checks use Java cooking screens.
+
+## Block-item auxiliary lookup (October 22, 2026)
+
+Core now resolves block-item auxiliary values through the shared block-name registry.
+The resolver keeps registered state objects, including distinct custom slots with equal properties.
+An exact-object runtime lookup preserves their original registration IDs.
+Generic custom blocks use their registered default. Unverified custom archetypes remain unresolved.
+
+A fresh BDS 1.26.51.1 Script API query checks all 1,477 built-in defaults.
+The comparison excludes virtual legacy accessors from network state properties.
+Exactly 26 defaults differ from the first canonical palette state.
+A second probe compares command-created items against canonical states with `ItemStack.matches`.
+All 4,950 successful comparisons across 75 block types match the resolver.
+The probe corrects 63 glow-lichen mappings; auxiliary value 4 selects face bits 16.
+Another 26 block types reject the command syntax, so these probes do not verify their auxiliary mappings.
+Three additional door types remain outside that sweep.
+
+Tests cover alias lookup, invalid auxiliary values, canonical legacy-state objects, and equal custom-state identities.
+The references establish server API behavior for the target build.
+They do not establish Windows client cold-cache behavior or all remaining curated auxiliary mappings.
+Network Item construction and cooking consumers remain unfinished.
+
+All four projects build with 2,296 passing tests, 152 optional skips, and no failures or errors.
+The new native-reference comparisons run without skips. Tooling checks, 264 regressions, and patch metadata checks pass.
+A fresh ViaProxy run passes furnace, smoker, blast furnace, brewing, authored chest placement, ordinary chest transfer, and same-world reconnect.
+Both launched profiles match all 1,360 rebuilt core classes and both block-item resources.
+The live run exits successfully and stops its private display normally. These controls use Java cooking screens.
+
+Runtime block-item numeric ownership is now separate from auxiliary descriptor encoding.
+Custom archetypes retain their supplied legacy ID even while their canonical descriptor remains unverified.
+This API prepares native Item construction without assigning a fake auxiliary value to those archetypes.
+
+## Item restriction groups (October 22, 2026)
+
+Item restrictions now use a separate case-sensitive lookup path.
+The target 1.26.51.1 registry expands 58 builtin groups before exact primary names and aliases.
+A missing member stops its group, while earlier members remain present.
+The resolver deduplicates canonical registered block identities.
+These rules differ from ordinary block-name lookup, which retains its folding and namespace fallback.
+
+The original target initializer, description constructors, registry installer and restriction resolver supply the builtin metadata.
+Java matches all 116 qualified and unqualified builtin resolution cases.
+A regression also covers primary/group collisions, partial groups, aliases, duplicates and case-sensitive lookup.
+Native factory installation and pointer-hash collisions remain unverified.
+The optional comparison reads `STACKANVIL_NATIVE_RESTRICTION_GROUPS`.

@@ -43,8 +43,11 @@ export interface Series {
   deferred: DeferredPatch[];
 }
 
-export async function getTargets(): Promise<Record<string, Target>> {
-  return JSON.parse(await readFile(join(root, "targets.json"), "utf8")) as Record<string, Target>;
+export async function getTargets(repository = root): Promise<Record<string, Target>> {
+  return JSON.parse(await readFile(join(repository, "targets.json"), "utf8")) as Record<
+    string,
+    Target
+  >;
 }
 
 export async function getTarget(id: string): Promise<Target> {
@@ -58,9 +61,9 @@ export async function targetIds(): Promise<string[]> {
   return Object.keys(await getTargets());
 }
 
-export async function getSeries(id: string): Promise<Series> {
+export async function getSeries(id: string, repository = root): Promise<Series> {
   const series = JSON.parse(
-    await readFile(join(root, "patches", id, "series.json"), "utf8"),
+    await readFile(join(repository, "patches", id, "series.json"), "utf8"),
   ) as Series;
   const files = [
     ...series.setup.map((file) => join("setup", file)),
@@ -70,7 +73,7 @@ export async function getSeries(id: string): Promise<Series> {
   if (new Set(files).size !== files.length) throw new Error(`Duplicate patch in ${id}/series.json`);
   for (const file of files) {
     if (!file.endsWith(".patch")) throw new Error(`Invalid patch name: ${file}`);
-    const patch = await readFile(join(root, "patches", id, file), "utf8");
+    const patch = await readFile(join(repository, "patches", id, file), "utf8");
     const upstreamable = series.upstreamable.find(
       ({ file: name }) => file === join("upstreamable", name),
     );
@@ -87,7 +90,7 @@ export async function getSeries(id: string): Promise<Series> {
       throw new Error(`${id}/deferred/${deferred.file} needs a reason in series.json`);
     }
   }
-  const targets = await getTargets();
+  const targets = await getTargets(repository);
   for (const patch of series.upstreamable) {
     for (const prerequisite of patch.prerequisites ?? []) {
       if (
@@ -98,7 +101,7 @@ export async function getSeries(id: string): Promise<Series> {
         throw new Error(`Invalid prerequisite for ${id}/${patch.file}`);
       }
       await readFile(
-        join(root, "patches", prerequisite.project, "upstreamable", prerequisite.patch),
+        join(repository, "patches", prerequisite.project, "upstreamable", prerequisite.patch),
       );
     }
   }

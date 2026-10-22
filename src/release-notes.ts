@@ -35,6 +35,8 @@ const lines = [
   "# StackAnvil builds",
   "",
   ...releaseDownloadSection(repository, tag, assets),
+  "Validation results and coverage limits are attached as `validation.json` and `validation.md`. These reports do not establish native Bedrock parity.",
+  "",
   "The StackAnvil JARs contain experimental patch stacks. The ViaFabricPlus JAR is an unchanged, pinned upstream Jenkins build.",
   "",
   "Setup patches prepare StackAnvil builds. Upstreamable patches can become our PRs. Deferred patches track work that another contributor already owns upstream.",

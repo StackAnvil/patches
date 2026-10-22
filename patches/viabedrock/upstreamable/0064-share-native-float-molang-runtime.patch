@@ -1,24 +1,37 @@
-From f214a8c6e9165ed9cacd011826501a5ee701086e Mon Sep 17 00:00:00 2001
+From f854af27e36b3ee089b7a508d8728496de4aef97 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(molang): share bounded native float evaluation
 
 Move the interpreter migration, native trigonometry, parser and control-flow bounds into the shared runtime prerequisite. Preserve undefined values, float rounding and return/break behavior for both core and client consumers. Require the preceding Java 25 language baseline and adapt existing custom-entity imports without introducing actor transport.
+
+Resolve texture, geometry and material resource aliases as flat names.
+Mineville's protocol 2193 pack uses Texture.num.0 and Geometry.digit.1.
+Nested member parsing rejects the numeric segment or silently loses
+word-only dotted aliases, removing the selected custom models.
+
+Preserve contiguous alias spelling after its first identifier, including
+dots, leading zeroes and numeric-looking suffixes. Variable members and
+numeric literals retain their existing grammar. A private target 1.26.51.1
+expression-reader/compiler fixture verifies 26 admission cases. Symbol
+registries execute unchanged; allocation, CRT operations, diagnostics and
+service availability remain supplied boundaries. Resource resolution,
+world context and visible native parity are outside that fixture.
 ---
  build.gradle                                  |   4 +-
  .../api/model/entity/CustomEntity.java        |  10 +-
- .../viabedrock/api/util/BedrockSineTable.java |  81 +++++
+ .../viabedrock/api/util/BedrockSineTable.java |  81 ++++
  .../api/util/BedrockTrigonometry.java         |  29 ++
- .../api/util/MoLangControlFlow.java           | 256 +++++++++++++
- .../viabedrock/api/util/MoLangEngine.java     | 128 +++++--
- .../viabedrock/api/util/MoLangMath.java       | 248 +++++++++++++
- .../viabedrock/api/util/MoLangParser.java     | 314 ++++++++++++++++
+ .../api/util/MoLangControlFlow.java           | 256 ++++++++++++
+ .../viabedrock/api/util/MoLangEngine.java     | 128 ++++--
+ .../viabedrock/api/util/MoLangMath.java       | 248 +++++++++++
+ .../viabedrock/api/util/MoLangParser.java     | 345 ++++++++++++++++
  .../META-INF/licenses/bedrock-sine-table.txt  |  26 ++
  .../META-INF/licenses/mochafloats.txt         |  24 ++
  .../api/util/BedrockTrigonometryTest.java     |  93 +++++
- .../viabedrock/api/util/MoLangEngineTest.java | 338 ++++++++++++++++++
+ .../viabedrock/api/util/MoLangEngineTest.java | 384 ++++++++++++++++++
  .../viabedrock/api/util/MoLangMathTest.java   | 115 ++++++
- 13 files changed, 1628 insertions(+), 38 deletions(-)
+ 13 files changed, 1705 insertions(+), 38 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/BedrockSineTable.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/MoLangControlFlow.java
@@ -868,10 +881,10 @@ index 000000000..875d51eca
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java
 new file mode 100644
-index 000000000..30f5d3090
+index 000000000..ea3292b7a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java
-@@ -0,0 +1,314 @@
+@@ -0,0 +1,345 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -910,18 +923,21 @@ index 000000000..30f5d3090
 +    private static final Pattern FLOAT_SUFFIX =
 +            Pattern.compile("(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?[fF](?![\\w.])");
 +    private final MolangLexer lexer;
++    private final String source;
 +    private int depth;
 +    private boolean complex;
 +    private TokenKind previous;
 +
-+    private MoLangParser(final MolangLexer lexer) {
++    private MoLangParser(final MolangLexer lexer, final String source) {
 +        this.lexer = lexer;
++        this.source = source;
 +    }
 +
 +    public static List<Expression> parse(final String source) throws IOException {
-+        try (MolangLexer lexer = MolangLexer.lexer(numericSuffixes(source))) {
++        final String expression = numericSuffixes(source);
++        try (MolangLexer lexer = MolangLexer.lexer(expression)) {
 +            lexer.next();
-+            final MoLangParser parser = new MoLangParser(lexer);
++            final MoLangParser parser = new MoLangParser(lexer, expression);
 +            if (parser.kind() == TokenKind.SEMICOLON) {
 +                throw parser.error("An expression cannot begin with a semicolon");
 +            }
@@ -1001,10 +1017,7 @@ index 000000000..30f5d3090
 +            Expression left = this.prefix();
 +            while (true) {
 +                if (this.kind() == TokenKind.DOT) {
-+                    this.next();
-+                    final String property = this.lexer.current().value();
-+                    this.expect(TokenKind.IDENTIFIER);
-+                    left = new AccessExpression(left, property);
++                    left = this.member(left);
 +                } else if (this.kind() == TokenKind.LPAREN) {
 +                    this.next();
 +                    final List<Expression> arguments = new ArrayList<>();
@@ -1065,6 +1078,37 @@ index 000000000..30f5d3090
 +        } finally {
 +            this.depth--;
 +        }
++    }
++
++    private Expression member(final Expression object) throws IOException {
++        this.next();
++        if (this.kind() != TokenKind.IDENTIFIER) {
++            throw this.error("Expected " + TokenKind.IDENTIFIER);
++        }
++        if (object instanceof IdentifierExpression identifier
++                && (identifier.name().equalsIgnoreCase("texture") || identifier.name().equalsIgnoreCase("geometry")
++                        || identifier.name().equalsIgnoreCase("material"))) {
++            // Resource namespaces bind flat aliases. Later dots and numeric
++            // segments belong to that name, including their original spelling.
++            final int start = this.lexer.current().start();
++            int end = this.lexer.current().end();
++            while (end < this.source.length() && resourceNamePart(this.source.charAt(end))) {
++                end++;
++            }
++            final String property = this.source.substring(start, end);
++            do {
++                this.next();
++            } while (this.kind() != TokenKind.EOF && this.lexer.current().start() < end);
++            return new AccessExpression(object, property);
++        }
++        final String property = this.lexer.current().value();
++        this.next();
++        return new AccessExpression(object, property);
++    }
++
++    private static boolean resourceNamePart(final char value) {
++        return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z'
++                || value >= '0' && value <= '9' || value == '_' || value == '.';
 +    }
 +
 +    private Expression prefix() throws IOException {
@@ -1350,10 +1394,10 @@ index 000000000..dbf1f687a
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
 new file mode 100644
-index 000000000..6759ef095
+index 000000000..478afb2e2
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
-@@ -0,0 +1,338 @@
+@@ -0,0 +1,384 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1380,6 +1424,52 @@ index 000000000..6759ef095
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class MoLangEngineTest {
++
++    @Test
++    void resolvesDottedResourceAliasesAsOneNameWithoutChangingNumericExpressions() throws Exception {
++        final Scope scope = scope();
++        for (final String namespace : List.of("texture", "geometry", "material")) {
++            final var resources = new MutableObjectBinding();
++            resources.set("num.0", Value.of(7));
++            resources.set("num.00", Value.of(8));
++            resources.set("num.1.5", Value.of(9));
++            resources.set("num.0f", Value.of(10));
++            resources.set("num.1a", Value.of(11));
++            resources.set("num..0", Value.of(12));
++            resources.block();
++            scope.set(namespace, resources);
++            assertEquals(7, MoLangEngine.eval(scope, namespace + ".num.0").getAsNumber());
++            assertEquals(8, MoLangEngine.eval(scope, namespace + ".num.00").getAsNumber());
++            assertEquals(9, MoLangEngine.eval(scope, namespace + ".num.1.5").getAsNumber());
++            assertEquals(10, MoLangEngine.eval(scope, namespace + ".num.0f").getAsNumber());
++            assertEquals(11, MoLangEngine.eval(scope, namespace + ".num.1a").getAsNumber());
++            assertEquals(12, MoLangEngine.eval(scope, namespace + ".num..0").getAsNumber());
++            assertEquals(8, MoLangEngine.eval(scope, "0 ? " + namespace + ".num.0 : " + namespace + ".num.00").getAsNumber());
++            assertEquals(9.5F, MoLangEngine.eval(scope, namespace + ".num.0 + 2.5").getAsNumber());
++            assertEquals(7.5F, MoLangEngine.eval(scope, namespace + ".num.0 + .5").getAsNumber());
++            assertEquals(9, MoLangEngine.eval(scope, namespace + ".num.0 + 2f").getAsNumber());
++        }
++        assertEquals(7, MoLangEngine.eval(scope, "Texture.num.0").getAsNumber());
++        assertEquals("Texture.num.0", MoLangEngine.eval(scope, "'Texture.num.0'").getAsString());
++        assertThrows(ParseException.class, () -> MoLangParser.parse("texture.0"));
++        assertThrows(ParseException.class, () -> MoLangParser.parse("t.a.0"));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_RESOURCE_ALIASES", matches = ".+")
++    void matchesNativeResourceAliasAdmission() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_RESOURCE_ALIASES")))).getAsJsonObject();
++        for (final var element : fixture.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            final String source = row.get("source").getAsString();
++            if (row.get("accepted").getAsBoolean()) {
++                assertDoesNotThrow(() -> MoLangParser.parse(source), source);
++            } else {
++                assertThrows(IOException.class, () -> MoLangParser.parse(source), source);
++            }
++        }
++        assertFalse(fixture.getAsJsonArray("cases").isEmpty());
++    }
 +
 +    @Test
 +    void abortsUnsetTemporaryReadsWithoutUndoingEarlierWrites() throws Exception {

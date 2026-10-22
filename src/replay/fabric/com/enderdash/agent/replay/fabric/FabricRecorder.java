@@ -3,6 +3,7 @@ package com.enderdash.agent.replay.fabric;
 import com.enderdash.agent.replay.CameraPresetAudit;
 import com.enderdash.agent.replay.PacketJournal;
 import com.enderdash.agent.replay.PrivateFiles;
+import com.enderdash.agent.replay.RecordingConnections;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.type.Types;
@@ -21,14 +22,20 @@ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class FabricRecorder {
-    private static final AtomicBoolean USED = new AtomicBoolean();
+    private static RecordingConnections connections;
+
+    private static synchronized Path nextDirectory(Path root) throws IOException {
+        if (connections == null) {
+            connections = new RecordingConnections(root, Files.exists(root.resolve("allow-transfers"))
+                    && !Files.exists(root.resolve("replay-self-uuid.txt")));
+        }
+        return connections.next();
+    }
 
     public static void install(ChannelHandlerContext context) throws IOException {
-        Path directory = Path.of(Files.readString(Path.of("stackanvil-replay-directory.txt")).trim());
-        if (!USED.compareAndSet(false, true)) throw new IOException("The replay fixture permits one connection");
+        Path directory = nextDirectory(Path.of(Files.readString(Path.of("stackanvil-replay-directory.txt")).trim()));
         Path identityFile = directory.resolve("replay-self-uuid.txt");
         UUID replayIdentity = Files.exists(identityFile) ? UUID.fromString(Files.readString(identityFile).trim()) : null;
         PacketJournal journal = new PacketJournal(directory.resolve("packets.sbr"), ProtocolConstants.BEDROCK_PROTOCOL_VERSION);

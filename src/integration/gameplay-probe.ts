@@ -5,6 +5,8 @@ import { root } from "../model.ts";
 import { geyserCaseIds, geyserNegativeControlIds } from "./geyser.ts";
 import { complexGameplayCaseIds } from "./ranged-observation.ts";
 import type { IncomingProjectileObservation } from "./projectile-observation.ts";
+import { chestViewport, containerPoint, type ContainerWindow } from "./container-viewport.ts";
+import { authoredInventoryCaseIds, isAuthoredInventoryCase } from "./inventory-ui-probe.ts";
 
 const prefix = "[ViaBedrock Gameplay Probe] ";
 
@@ -35,6 +37,7 @@ export const gameplayCaseIds = [
   "respawn",
   "dimension-change",
   "chest-transfer",
+  ...authoredInventoryCaseIds,
   "chest-rapid-transfer",
   "chest-pickup-all",
   "lab-table-then-chest",
@@ -42,6 +45,10 @@ export const gameplayCaseIds = [
   "chest-minecart-transfer",
   "furnace-quick-move-log",
   "furnace-quick-move-coal",
+  "brewing-stand",
+  "furnace-book-cook",
+  "smoker-book-cook",
+  "blast-furnace-book-cook",
   "enchant-basic",
   "offhand-ineligible-block",
   "offhand-shield-use",
@@ -68,7 +75,15 @@ export type GameplayPhase = "prepare" | "start" | "verify" | "invalidate";
 export function gameplayCasesForBackend(geyser: boolean): GameplayCaseId[] {
   return geyser
     ? gameplayCaseIds
-        .filter((id) => id !== "lab-table-then-chest")
+        .filter(
+          (id) =>
+            id !== "lab-table-then-chest" &&
+            id !== "brewing-stand" &&
+            id !== "furnace-book-cook" &&
+            id !== "smoker-book-cook" &&
+            id !== "blast-furnace-book-cook" &&
+            !isAuthoredInventoryCase(id),
+        )
         .map((id) => (id === "offhand-ineligible-block" ? "offhand-block-place" : id))
     : [...gameplayCaseIds];
 }
@@ -275,7 +290,7 @@ async function respawnJavaClient(ui: Ui): Promise<void> {
 
 async function clickGui(
   ui: Ui,
-  window: { width: number; height: number },
+  window: ContainerWindow,
   imageWidth: number,
   imageHeight: number,
   offsetX: number,
@@ -283,14 +298,12 @@ async function clickGui(
   button: "left" | "right" = "left",
   doubleClick = false,
 ): Promise<void> {
-  const scale = 2;
-  const left = (window.width - imageWidth * scale) / 2;
-  const top = (window.height - imageHeight * scale) / 2;
+  const [x, y] = containerPoint(window, imageWidth, imageHeight, offsetX, offsetY);
   await ui([
     "ui",
     doubleClick ? "double-click" : "click",
-    String((left + offsetX * scale) / window.width),
-    String((top + offsetY * scale) / window.height),
+    String(x),
+    String(y),
     button,
     "--client",
     "java",
@@ -487,41 +500,8 @@ async function rejectIneligibleOffhandBlock(ui: Ui): Promise<void> {
     );
 }
 
-async function openChest(ui: Ui, sneak = false): Promise<{ width: number; height: number }> {
+async function openChest(ui: Ui, sneak = false): Promise<ContainerWindow> {
   const window = await javaWindow(ui);
-  const left = (window.width - 176 * 2) / 2;
-  const top = (window.height - 168 * 2) / 2;
-  const screenVisible = async () => {
-    // Check blank parts of both the header and footer. The world's color at one
-    // pixel can match the panel, especially when looking at a chest boat.
-    const pixels = await Promise.all(
-      (
-        [
-          [10, 15],
-          [150, 15],
-          [10, 162],
-          [150, 162],
-        ] as const
-      ).map(async ([x, y]) =>
-        (
-          await ui([
-            "ui",
-            "pixel",
-            String((left + x * 2) / window.width),
-            String((top + y * 2) / window.height),
-            "--client",
-            "java",
-          ])
-        )
-          .trim()
-          .split(/\s+/)
-          .map(Number),
-      ),
-    );
-    return pixels.every(
-      (pixel) => pixel.length === 3 && pixel.every((channel) => Math.abs(channel - 198) <= 2),
-    );
-  };
   if (sneak) {
     await Promise.all([
       ui(["ui", "key-hold", "Shift_L", "1000", "--client", "java"]),
@@ -534,10 +514,16 @@ async function openChest(ui: Ui, sneak = false): Promise<{ width: number; height
     await uiMouse(ui, "right");
   }
   await Bun.sleep(500);
-  if (!(await screenVisible())) {
+  const viewport = await chestViewport(window, async (x, y) =>
+    (await ui(["ui", "pixel", String(x), String(y), "--client", "java"]))
+      .trim()
+      .split(/\s+/)
+      .map(Number),
+  );
+  if (!viewport) {
     throw new Error("The Java chest screen did not open after right click.");
   }
-  return window;
+  return viewport;
 }
 
 async function chestTransfer(ui: Ui, sneak = false, slots: readonly number[] = [0]): Promise<void> {
@@ -588,6 +574,201 @@ async function furnaceQuickMove(ui: Ui): Promise<void> {
   await uiKey(ui, "Escape");
 }
 
+async function cookFromBook(ui: Ui, id: GameplayCaseId): Promise<void> {
+  const window = { ...(await javaWindow(ui)), containerScale: 2 };
+  let offset = 0;
+  const panel = async (candidate: number) => {
+    const pixels = await Promise.all(
+      (
+        [
+          [5, 15],
+          [170, 15],
+          [5, 161],
+          [170, 161],
+        ] as const
+      ).map(async ([x, y]) => {
+        const point = containerPoint(window, 176, 166, x, y);
+        return (
+          await ui([
+            "ui",
+            "pixel",
+            String(point[0] + candidate / (window.width - 1)),
+            String(point[1]),
+            "--client",
+            "java",
+          ])
+        )
+          .trim()
+          .split(/\s+/)
+          .map(Number);
+      }),
+    );
+    return pixels.every(
+      (pixel) => pixel.length === 3 && pixel.every((channel) => Math.abs(channel - 198) <= 2),
+    );
+  };
+  const click = async (x: number, y: number) => {
+    const point = containerPoint(window, 176, 166, x, y);
+    await ui([
+      "ui",
+      "click",
+      String(point[0] + offset / (window.width - 1)),
+      String(point[1]),
+      "left",
+      "--client",
+      "java",
+    ]);
+  };
+  const screenshot = (phase: string) =>
+    ui([
+      "ui",
+      "screenshot",
+      `${id}-${phase}`,
+      "--client",
+      "java",
+      "--output-dir",
+      join(root, ".stackanvil", "integration"),
+    ]);
+  await uiKey(ui, "2");
+  let opened = false;
+  for (let attempt = 0; attempt < 8 && !opened; attempt++) {
+    await uiMouse(ui, "right");
+    await Bun.sleep(500);
+    for (const candidate of [0, 154]) {
+      if (await panel(candidate)) {
+        offset = candidate;
+        opened = true;
+        break;
+      }
+    }
+  }
+  if (!opened) throw new Error("The cooking panel did not open after right click.");
+  await screenshot("open");
+  if (offset === 0) {
+    await click(20, 34);
+    await Bun.sleep(500);
+    if (!(await panel(154))) throw new Error("The Java cooking recipe book did not open.");
+    offset = 154;
+  }
+  await ui([
+    "ui",
+    "click",
+    String((window.width / 2 - 188) / window.width),
+    String((window.height / 2 - 126) / window.height),
+    "left",
+    "--client",
+    "java",
+  ]);
+  await ui([
+    "ui",
+    "type",
+    id === "blast-furnace-book-cook" ? "netherite scrap" : "steak",
+    "--client",
+    "java",
+  ]);
+  await Bun.sleep(500);
+  await screenshot("filtered");
+  await ui([
+    "ui",
+    "click",
+    String((window.width / 2 - 273) / window.width),
+    String((window.height / 2 - 80) / window.height),
+    "left",
+    "--client",
+    "java",
+  ]);
+  await Bun.sleep(1500);
+  await screenshot("progress");
+  await Bun.sleep(11_000);
+  await screenshot("complete");
+  await click(20, 34);
+  await Bun.sleep(300);
+  if (!(await panel(0)))
+    throw new Error("The cooking recipe book did not close before output transfer.");
+  offset = 0;
+  await Promise.all([
+    ui(["ui", "key-hold", "Shift_L", "900", "--client", "java"]),
+    (async () => {
+      await Bun.sleep(200);
+      await click(116, 35);
+    })(),
+  ]);
+  await Bun.sleep(500);
+  await screenshot("empty");
+  await uiKey(ui, "Escape");
+}
+
+async function brewingStand(ui: Ui): Promise<void> {
+  const window = await javaWindow(ui);
+  const native = {
+    ...window,
+    containerScale: Math.max(
+      1,
+      Math.min(8, Math.floor(window.width / 376), Math.floor(window.height / 250)),
+    ),
+  };
+  const screenshot = (name: string) =>
+    ui([
+      "ui",
+      "screenshot",
+      name,
+      "--client",
+      "java",
+      "--output-dir",
+      join(root, ".stackanvil", "integration"),
+    ]);
+  await uiKey(ui, "2");
+  let opened = false;
+  for (let attempt = 0; attempt < 8 && !opened; attempt++) {
+    await uiMouse(ui, "right");
+    await Bun.sleep(500);
+    const pixels = await Promise.all(
+      (
+        [
+          [5, 15],
+          [170, 15],
+          [5, 161],
+          [170, 161],
+        ] as const
+      ).map(async ([x, y]) => {
+        const point = containerPoint(native, 176, 166, x, y);
+        return (await ui(["ui", "pixel", String(point[0]), String(point[1]), "--client", "java"]))
+          .trim()
+          .split(/\s+/)
+          .map(Number);
+      }),
+    );
+    opened = pixels.every(
+      (pixel) => pixel.length === 3 && pixel.every((channel) => Math.abs(channel - 198) <= 2),
+    );
+  }
+  if (!opened) throw new Error("The authored brewing panel did not open after right click.");
+  await screenshot("brewing-before");
+  await clickGui(ui, native, 176, 166, 16, 152);
+  await Bun.sleep(200);
+  await clickGui(ui, native, 176, 166, 88, 25);
+  await Bun.sleep(1500);
+  await screenshot("brewing-progress");
+  await Bun.sleep(20_000);
+  await screenshot("brewing-complete");
+  await Promise.all([
+    ui(["ui", "key-hold", "Shift_L", "2000", "--client", "java"]),
+    (async () => {
+      await Bun.sleep(200);
+      for (const [x, y] of [
+        [83, 59],
+        [106, 66],
+        [129, 59],
+      ] as const) {
+        await clickGui(ui, native, 176, 166, x, y);
+        await Bun.sleep(200);
+      }
+    })(),
+  ]);
+  await screenshot("brewing-empty");
+  await uiKey(ui, "Escape");
+}
+
 async function creativeSelect(
   ui: Ui,
   mainInventory = false,
@@ -615,6 +796,7 @@ export async function driveGameplay(
   id: GameplayCaseId,
   ui: Ui,
   start?: () => Promise<void>,
+  capture?: (phase: string) => Promise<void>,
 ): Promise<void> {
   switch (id) {
     case "fishing-early-reel":
@@ -761,6 +943,20 @@ export async function driveGameplay(
     case "offhand-ineligible-block":
       await rejectIneligibleOffhandBlock(ui);
       return;
+    case "chest-authored-one-empty":
+    case "chest-authored-one-merge": {
+      if (!start) throw new Error("Authored inventory fixture needs its placement setup.");
+      await uiMouse(ui, "right");
+      await start();
+      const viewport = await openChest(ui);
+      await capture?.("open");
+      // A hidden slot must not inherit generic pickup, then the authored slot moves one item.
+      await clickGui(ui, viewport, 176, 168, 16, 29);
+      await clickGui(ui, viewport, 176, 168, 16, 47);
+      await Bun.sleep(500);
+      await uiKey(ui, "Escape");
+      return;
+    }
     case "chest-transfer":
     case "custom-item-transfer":
       await chestTransfer(ui);
@@ -785,6 +981,14 @@ export async function driveGameplay(
     case "furnace-quick-move-log":
     case "furnace-quick-move-coal":
       await furnaceQuickMove(ui);
+      return;
+    case "furnace-book-cook":
+    case "smoker-book-cook":
+    case "blast-furnace-book-cook":
+      await cookFromBook(ui, id);
+      return;
+    case "brewing-stand":
+      await brewingStand(ui);
       return;
     case "enchant-basic": {
       await uiMouse(ui, "right");
@@ -859,6 +1063,17 @@ export async function driveGameplay(
       {
         const window = await javaWindow(ui);
         await clickGui(ui, window, 176, 166, 12, 40);
+        await Bun.sleep(300);
+        // The bamboo recipe sorts before the plank recipe. Select only craftable entries.
+        await ui([
+          "ui",
+          "click",
+          String((window.width / 2 - 92) / window.width),
+          String((window.height / 2 - 126) / window.height),
+          "left",
+          "--client",
+          "java",
+        ]);
         await Bun.sleep(300);
         await ui([
           "ui",
@@ -1073,6 +1288,19 @@ export async function runGameplayCases(
     const log = async () => (await readFile(options.serverLog, "utf8")).slice(logStart);
     const alive = () => options.clientAlive() && serverAlive();
     const screenshots: string[] = [];
+    const capture = async (phase: string) => {
+      screenshots.push(
+        await options.ui([
+          "ui",
+          "screenshot",
+          `gameplay-${id}-${run}-${phase}`,
+          "--client",
+          "java",
+          "--output-dir",
+          options.artifactDir,
+        ]),
+      );
+    };
     let stopped = false;
     try {
       const connectionError = await options.connectionError?.();
@@ -1084,33 +1312,18 @@ export async function runGameplayCases(
       // Cancellation cases leave another cell selected. Set the input precondition
       // explicitly after the world is visible, rather than treating that as loading.
       await uiKey(options.ui, "1");
-      screenshots.push(
-        await options.ui([
-          "ui",
-          "screenshot",
-          `gameplay-${id}-${run}-before`,
-          "--client",
-          "java",
-          "--output-dir",
-          options.artifactDir,
-        ]),
+      await capture("before");
+      await driveGameplay(
+        id,
+        options.ui,
+        async () => {
+          options.server.stdin?.write(`scriptevent vbprobe:start ${id} ${run}\n`);
+          await waitForGameplayEvent(id, run, "start", log, alive, 30_000, 25);
+        },
+        capture,
       );
-      await driveGameplay(id, options.ui, async () => {
-        options.server.stdin?.write(`scriptevent vbprobe:start ${id} ${run}\n`);
-        await waitForGameplayEvent(id, run, "start", log, alive, 30_000, 25);
-      });
       await Bun.sleep(350);
-      screenshots.push(
-        await options.ui([
-          "ui",
-          "screenshot",
-          `gameplay-${id}-${run}-after`,
-          "--client",
-          "java",
-          "--output-dir",
-          options.artifactDir,
-        ]),
-      );
+      await capture("after");
       options.server.stdin?.write(`scriptevent vbprobe:verify ${id} ${run}\n`);
       const event = await waitForGameplayEvent(id, run, "verify", log, alive);
       if (id === "minecart-dismount" && !minecartDismountHasClearance(event.observed)) {

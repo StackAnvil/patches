@@ -136,3 +136,11 @@ Server overlays reuse immutable parsed built-in model declarations and parse onl
 Resolve the target client entity definition beneath accepted server packs. Animation-only and controller-only player overrides now inherit the native player definition, resource aliases, textures and geometry. Server files keep their precedence. Legacy geometry parents resolve against the complete inherited library.
 
 Tests cover animation-only player overrides, inherited resources and higher-priority crystal textures. Unsupported definitions retain the existing renderer fallback.
+
+## Shared effect resources for resolved actors
+
+Resolved actors retain the complete resource library alongside their filtered geometry storage.
+Player animation graphs and skin animation aliases now use that library directly.
+This preserves particle definitions, child effects, texture overlays and sound resources that the geometry filter omits.
+The shared library avoids copying all effect files into every actor's storage.
+The targeted regression delivers an animation cue through this boundary and resolves its parent, child and upper-pack texture.

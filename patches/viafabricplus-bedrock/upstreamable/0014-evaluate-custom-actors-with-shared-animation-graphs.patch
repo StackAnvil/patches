@@ -1,4 +1,4 @@
-From 8e0e9f18e6ad9f966685c8a299faea54db11dcc7 Mon Sep 17 00:00:00 2001
+From fa62121ee8eee7e702082d78cb31961f73753622 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(entities): evaluate custom actors with shared animation
@@ -90,13 +90,29 @@ Keep weak resource-cache locks limited to lookup and publication. Parse a missin
 
 Index effect locators once per accepted resource generation instead of scanning every model document for each geometry. Build animated effect models only after a locator resolves. Preserve pack override order, duplicate definitions, empty overrides and malformed-file behavior. Differential tests compare the index with the previous resolver and verify one parse across repeated requests.
 
+Start actor-bound animation emitters at their local origin. The attachment
+already supplies the world-space actor or locator transform, so passing
+the world position applies translation twice. Honor bind_to_actor=false
+by supplying the sampled world position without an attachment, matching
+the player renderer and the shared native attachment contract.
+
 Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.github.com>
+
+Bind sitting, saddle and dash-cooldown queries to native actor flags for
+custom and inherited actor graphs. On target 1.26.51.1, registration links
+query.is_sitting to 142217bd0 and query.has_dash_cooldown to 1422185f0.
+The saddle callback 142217870 selects flag 8. Their complete callbacks
+execute registry/sparse flag reader 141e14790 for flags 24/8/108. A private
+672-context probe also covers
+missing actor bindings, live/recycled generations and stale flags.
+The camel graph requires these values before its authored seat-locator
+pose can be sampled; this does not establish mount camera scheduling.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   5 +
- .../bedrock/render/BedrockActorFrame.java     |  53 +++++
- .../bedrock/render/BedrockActorState.java     |  16 +-
+ .../bedrock/render/BedrockActorFrame.java     |  56 +++++
+ .../bedrock/render/BedrockActorState.java     |  10 +
  .../render/BedrockActorUvAnimation.java       |  21 ++
- .../bedrock/render/BedrockEntityRenderer.java | 177 ++++++++++++++-
+ .../bedrock/render/BedrockEntityRenderer.java | 181 ++++++++++++++-
  .../bedrock/render/BedrockGeometry.java       |  17 +-
  .../render/BedrockModelLocatorIndex.java      |  77 +++++++
  .../bedrock/render/BedrockModelLocators.java  |   2 +-
@@ -106,7 +122,7 @@ Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.gith
  .../render/BedrockActorUvAnimationTest.java   |  63 ++++++
  .../render/BedrockCustomActorModelTest.java   |  57 +++++
  .../render/BedrockModelLocatorIndexTest.java  | 207 ++++++++++++++++++
- 14 files changed, 908 insertions(+), 13 deletions(-)
+ 14 files changed, 910 insertions(+), 12 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorFrame.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorIndex.java
@@ -117,10 +133,10 @@ Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.gith
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorIndexTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index eeba5f9..b33ea1c 100644
+index 248173e..d7edd29 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -28,6 +28,7 @@ import com.viaversion.viafabricplus.bedrock.render.NativeActorPayload;
+@@ -29,6 +29,7 @@ import com.viaversion.viafabricplus.bedrock.render.NativeActorBoundsPayload;
  import com.viaversion.viafabricplus.bedrock.render.NativeActorIdentityPayload;
  import com.viaversion.viafabricplus.bedrock.render.NativeActorPickingPayload;
  import com.viaversion.viafabricplus.bedrock.render.BedrockActorPicking;
@@ -128,23 +144,23 @@ index eeba5f9..b33ea1c 100644
  import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
  import com.viaversion.viafabricplus.bedrock.render.CustomEntityRenderStore;
  import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
-@@ -95,6 +96,10 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
-             ClientPlayNetworking.registerReceiver(NativeActorIdentityPayload.TYPE,
+@@ -100,6 +101,10 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+         ClientPlayConnectionEvents.INIT.register((listener, client) ->
+             ClientPlayNetworking.registerReceiver(NativeActorBoundsPayload.TYPE,
                  (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
-         ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockActorState.clear());
 +        PayloadTypeRegistry.clientboundPlay().register(NativeAnimationPayload.TYPE, NativeAnimationPayload.CODEC);
 +        ClientPlayConnectionEvents.INIT.register((listener, client) ->
 +            ClientPlayNetworking.registerReceiver(NativeAnimationPayload.TYPE,
 +                (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
          PayloadTypeRegistry.clientboundPlay().register(NativeBlockIdentifiersPayload.TYPE, NativeBlockIdentifiersPayload.CODEC);
-         ClientPlayNetworking.registerGlobalReceiver(NativeBlockIdentifiersPayload.TYPE,
-                 (payload, context) -> BedrockNativeBlocks.accept(payload.message()));
+         ClientPlayConnectionEvents.INIT.register((listener, client) ->
+             ClientPlayNetworking.registerReceiver(NativeBlockIdentifiersPayload.TYPE,
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorFrame.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorFrame.java
 new file mode 100644
-index 0000000..aa87681
+index 0000000..040a12a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorFrame.java
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,56 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -178,6 +194,9 @@ index 0000000..aa87681
 +            queries.put("is_sneaking", actor.flags().contains(ActorFlags.SNEAKING));
 +            queries.put("is_riding", actor.flags().contains(ActorFlags.RIDING));
 +            queries.put("is_baby", actor.flags().contains(ActorFlags.BABY));
++            queries.put("is_sitting", actor.flags().contains(ActorFlags.SITTING));
++            queries.put("is_saddled", actor.flags().contains(ActorFlags.SADDLED));
++            queries.put("has_dash_cooldown", actor.flags().contains(ActorFlags.HAS_DASH_COOLDOWN));
 +            queries.put("spellcolor", actor.spellColor() == null ? BedrockMolangColor.ZERO
 +                    : BedrockMolangColor.fromArgb(actor.spellColor()));
 +        }
@@ -199,41 +218,30 @@ index 0000000..aa87681
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
-index 993a394..e2fdd54 100644
+index de07020..cb1aa85 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
-@@ -10,6 +10,8 @@ import net.minecraft.client.Minecraft;
- import net.minecraft.network.Connection;
+@@ -11,6 +11,8 @@ import net.minecraft.network.Connection;
  import net.raphimc.viabedrock.api.model.NativeActorMessage;
+ import net.raphimc.viabedrock.api.model.NativeActorBoundsMessage;
  import net.raphimc.viabedrock.api.model.NativeActorStates;
 +import net.raphimc.viabedrock.api.model.NativeAnimationControllers;
 +import net.raphimc.viabedrock.api.model.NativeAnimationMessage;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
  
  import java.util.UUID;
-@@ -23,12 +25,20 @@ public final class BedrockActorState {
-     private BedrockActorState() {}
+@@ -33,6 +35,10 @@ public final class BedrockActorState {
  
-     public static void accept(final Connection connection, final NativeActorMessage message) {
-+        accept(connection, localPlayer -> apply(message, localPlayer));
-+    }
-+
+     public static NativeActorBoundsMessage bounds(final UUID uuid) { return ACTORS.bounds(uuid); }
+ 
 +    public static void accept(final Connection connection, final NativeAnimationMessage message) {
 +        accept(connection, localPlayer -> ACTORS.apply(message, localPlayer));
 +    }
 +
-+    private static void accept(final Connection connection, final java.util.function.Consumer<UUID> update) {
+     private static void accept(final Connection connection, final java.util.function.Consumer<UUID> update) {
          final long receivedGeneration = generation;
          Minecraft.getInstance().execute(() -> {
-             final var listener = Minecraft.getInstance().getConnection();
-             if (generation == receivedGeneration && connection.isConnected()
-                     && listener != null && listener.getConnection() == connection) {
--                apply(message, listener.getLocalGameProfile().id());
-+                update.accept(listener.getLocalGameProfile().id());
-             }
-         });
-     }
-@@ -57,6 +67,10 @@ public final class BedrockActorState {
+@@ -68,6 +74,10 @@ public final class BedrockActorState {
          return state == null ? null : state.lifetime();
      }
  
@@ -272,7 +280,7 @@ index 0000000..c7d9e7b
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-index 8c62842..fa135fc 100644
+index 8c62842..e81030d 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 @@ -19,6 +19,15 @@
@@ -390,7 +398,7 @@ index 8c62842..fa135fc 100644
          state.yaw = entity.getYRot();
      }
  
-@@ -140,32 +194,117 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -140,32 +194,121 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
                  final Model<EntityRenderState> model = this.models.computeIfAbsent(modelKey, _ -> BedrockGeometry.entityModel(geometry, material.getValue()));
                  final var alphaTest = this.materialDefinitions.alphaTest(material.getKey());
                  final RenderType type;
@@ -448,7 +456,11 @@ index 8c62842..fa135fc 100644
 +            final ResourcePackStorage resourceGeneration = this.currentPacks;
 +            for (final var particle : particles) {
 +                final String locator = particle.locator();
-+                particle.play(this.effectPosition(actor, locator, origin, state.yaw), () -> {
++                if (!particle.attached()) {
++                    particle.play(this.effectPosition(actor, locator, origin, state.yaw), null);
++                    continue;
++                }
++                particle.play(Vec3.ZERO, () -> {
 +                    final Interaction entity = owner.get();
 +                    if (entity == null || entity.isRemoved() || this.currentPacks != resourceGeneration
 +                            || CustomEntityRenderStore.get(entity.getUUID()) == null
@@ -512,7 +524,7 @@ index 8c62842..fa135fc 100644
      static void applyActorTransform(final PoseStack poseStack, final float yaw, final float scale) {
          // Scale around the native actor origin before compensating for the Java model origin.
          poseStack.scale(scale, scale, scale);
-@@ -176,17 +315,39 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -176,17 +319,39 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
  
      public static final class State extends EntityRenderState {
          private List<RenderedModel> models = List.of();
@@ -682,7 +694,7 @@ index 73a8827..0e8d0d3 100644
          if (!model.has("bones")) return Map.of();
          for (final var entry : model.getAsJsonArray("bones")) {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 7176ee7..a46b849 100644
+index 4018b14..19568ae 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -346,6 +346,7 @@ public final class BedrockPlayerSkins {

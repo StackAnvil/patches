@@ -1,4 +1,4 @@
-From 2f60a2d1f7c8fc9f786fc069e539a513115c47bd Mon Sep 17 00:00:00 2001
+From 9a0d642efa015ef3ed6e65135a983f6dbd4b67f3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] fix(entities): synchronize authoritative entity references
@@ -57,8 +57,8 @@ Java metadata on direct and ViaProxy connections.
  .../storage/EntityReferenceTracker.java       | 222 +++++++
  .../protocol/storage/EntityTracker.java       |  19 +
  .../api/model/NativeProjectileOwnersTest.java | 181 ++++++
- .../rewriter/EntityReferenceMetadataTest.java | 570 ++++++++++++++++++
- 11 files changed, 1228 insertions(+), 66 deletions(-)
+ .../rewriter/EntityReferenceMetadataTest.java | 575 ++++++++++++++++++
+ 11 files changed, 1233 insertions(+), 66 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeProjectileOwnerMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeProjectileOwners.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EntityReferenceTracker.java
@@ -284,7 +284,7 @@ index 000000000..7501bb791
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 116f90055..858b35f08 100644
+index c66bef8b3..9439629f2 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -49,6 +49,7 @@ import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
@@ -336,10 +336,10 @@ index 7648c69fa..a33fe4c5d 100644
              final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_3.SET_ENTITY_DATA, wrapper.user());
              setEntityData.write(Types.VAR_INT, entity.javaId()); // entity id
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index 19298ab73..6cb9df4f8 100644
+index 4653d8293..245f0da36 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-@@ -250,6 +250,10 @@ public final class MultiStatePackets {
+@@ -264,6 +264,10 @@ public final class MultiStatePackets {
              if (channels.contains(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
                  ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
              }
@@ -708,7 +708,7 @@ index 000000000..995874f83
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-index 35d8444cf..ac65e2b6c 100644
+index 1fcdc5f8e..b9a48f7ec 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 @@ -61,6 +61,8 @@ import java.util.logging.Level;
@@ -720,7 +720,7 @@ index 35d8444cf..ac65e2b6c 100644
      private final AtomicInteger idCounter = new AtomicInteger(2);
  
      private boolean nativeActorsJoined;
-@@ -386,6 +388,23 @@ public class EntityTracker extends StoredObject {
+@@ -390,6 +392,23 @@ public class EntityTracker extends StoredObject {
          return this.entities.get(uniqueId.longValue());
      }
  
@@ -933,10 +933,10 @@ index 000000000..c9cf61916
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java
 new file mode 100644
-index 000000000..f28ea9650
+index 000000000..4a02015ff
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java
-@@ -0,0 +1,570 @@
+@@ -0,0 +1,575 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -978,6 +978,7 @@ index 000000000..f28ea9650
 +import net.raphimc.viabedrock.api.model.entity.Entity;
 +import net.raphimc.viabedrock.api.model.NativeProjectileOwnerMessage;
 +import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import net.raphimc.viabedrock.protocol.storage.WorldPacketBuffer;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
 +import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
@@ -1050,6 +1051,10 @@ index 000000000..f28ea9650
 +                    final Class<?> type = (Class<?>) args[0];
 +                    if (type == EntityTracker.class) {
 +                        return storage.get();
++                    }
++                    if (type == WorldPacketBuffer.class) {
++                        // Play-ready fixtures do not install a resource or initialization buffer.
++                        return integrations.get(type);
 +                    }
 +                    if (!integrations.containsKey(type)) {
 +                        // Additional patch stacks can request storage without adding a dependency to this test.

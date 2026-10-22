@@ -1,4 +1,4 @@
-From e0948735c8f9f8946241cdbcc508350a273715cc Mon Sep 17 00:00:00 2001
+From 9b152c8a1abba3db4d8f11b290813f5ac26a5607 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(items): preserve native item context in Java data
@@ -42,8 +42,7 @@ Bedrock 1.26.51.1 build 51061372 classifier inspection establishes that
 these inputs affect native retained-hand decisions. Keep native classifier
 and final visual verification gaps explicit.
 
-Use snapshot schema version two to preserve the declared element types of
-empty user-data lists. ViaNBT serialization and Java 26.3 NbtIo discard
+Preserve the declared element types of empty user-data lists. ViaNBT serialization and Java 26.3 NbtIo discard
 those declarations. Carry explicit segmented paths and type IDs beside
 the original compound, then restore them on an independent copy. Validate
 paths, widths, duplicate targets, and declared types before restoration.
@@ -53,18 +52,40 @@ compares declared types even when empty. Float and double comparisons
 also distinguish NaNs while equating signed zero. The metadata preserves
 inputs for that future native comparison without changing Java NBT or
 using Java tag equality as a native classifier.
+
+Keep native Block presence independent of its uint32 runtime ID. Runtime
+slot zero is a valid registered Block when selected through associated
+BlockLegacy ownership; the network runtime field uses zero as a missing
+candidate. Store the constructed optional Block in BedrockItem explicitly
+and preserve that distinction in copies and equality.
+
+Use stack snapshot version three to carry Block presence through Java
+NBT. Require the typed presence byte and reject inconsistent absent-block
+runtime IDs. Client consumers must use the shared schema version; legacy
+snapshots do not silently become constructed native Item stacks.
+
+Keep Java mapping fallback local to presentation. Writing its default
+runtime state into a supplied Item manufactures native Block ownership
+and changes the snapshot retained before Java conversion. This can also
+change later recipe or creative-catalog matching of the same Item.
+A private runtime probe confirms that the old converter changes all three
+controlled no-Block Items while displaying stripped oak wood, oak logs
+and stone. The probe uses only ephemeral objects in an owned test proxy.
 ---
- .../api/model/NativeItemListTypes.java        | 131 ++++++++++++++
- .../api/model/NativeItemStackData.java        | 101 +++++++++++
- .../protocol/model/ItemAnimationData.java     |  88 ++++++++++
+ .../api/model/NativeItemListTypes.java        | 131 ++++++++++++
+ .../api/model/NativeItemStackData.java        | 110 ++++++++++
+ .../protocol/model/BedrockItem.java           |  19 +-
+ .../protocol/model/ItemAnimationData.java     |  88 ++++++++
  .../protocol/model/ItemUseDuration.java       |  25 +++
  .../protocol/rewriter/ItemDataRewriter.java   |  26 +++
- .../protocol/rewriter/ItemRewriter.java       |   9 +
- .../api/model/NativeItemStackDataTest.java    | 164 ++++++++++++++++++
- .../protocol/model/ItemAnimationDataTest.java |  90 ++++++++++
- .../protocol/model/ItemUseDurationTest.java   |  82 +++++++++
- .../protocol/rewriter/ItemIdentityTest.java   |  58 +++++++
- 10 files changed, 774 insertions(+)
+ .../protocol/rewriter/ItemRewriter.java       |  19 +-
+ .../protocol/types/item/BedrockItemType.java  |   2 +-
+ .../item/NetworkItemStackDescriptorType.java  |   2 +-
+ .../api/model/NativeItemStackDataTest.java    | 197 ++++++++++++++++++
+ .../protocol/model/ItemAnimationDataTest.java |  90 ++++++++
+ .../protocol/model/ItemUseDurationTest.java   |  82 ++++++++
+ .../protocol/rewriter/ItemIdentityTest.java   |  58 ++++++
+ 13 files changed, 837 insertions(+), 12 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemListTypes.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemAnimationData.java
@@ -213,10 +234,10 @@ index 000000000..b1e6abcf1
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java
 new file mode 100644
-index 000000000..72a887bc5
+index 000000000..6e529b758
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,110 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -225,6 +246,7 @@ index 000000000..72a887bc5
 +package net.raphimc.viabedrock.api.model;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ByteTag;
 +import com.viaversion.nbt.tag.IntTag;
 +import com.viaversion.nbt.tag.ListTag;
 +import com.viaversion.nbt.tag.LongTag;
@@ -237,10 +259,15 @@ index 000000000..72a887bc5
 +import java.util.List;
 +
 +/** Immutable decoded Bedrock stack data before Java conversion. Count stays in the Java stack. */
-+public record NativeItemStackData(int itemId, short auxiliaryValue, int blockRuntimeId, long blockingTicks,
++public record NativeItemStackData(int itemId, short auxiliaryValue, int blockRuntimeId, boolean hasBlockState, long blockingTicks,
 +                                  List<String> canPlace, List<String> canBreak, CompoundTag userData) {
 +
++    public static final int VERSION = 3;
++
 +    public NativeItemStackData {
++        if (!hasBlockState && blockRuntimeId != 0) {
++            throw new IllegalArgumentException("An absent block cannot have a runtime ID");
++        }
 +        canPlace = List.copyOf(canPlace);
 +        canBreak = List.copyOf(canBreak);
 +        userData = userData == null ? null : userData.copy();
@@ -252,16 +279,17 @@ index 000000000..72a887bc5
 +    }
 +
 +    public static NativeItemStackData fromItem(final BedrockItem item) {
-+        return new NativeItemStackData(item.identifier(), item.data(), item.blockRuntimeId(), item.blockingTicks(),
++        return new NativeItemStackData(item.identifier(), item.data(), item.blockRuntimeId(), item.hasBlockState(), item.blockingTicks(),
 +                Arrays.asList(item.canPlace()), Arrays.asList(item.canBreak()), item.tag());
 +    }
 +
 +    public CompoundTag toTag() {
 +        final CompoundTag tag = new CompoundTag();
-+        tag.putInt("version", 2);
++        tag.putInt("version", VERSION);
 +        tag.putInt("item_id", this.itemId);
 +        tag.putShort("auxiliary_value", this.auxiliaryValue);
 +        tag.putInt("block_runtime_id", this.blockRuntimeId);
++        tag.putByte("has_block_state", (byte) (this.hasBlockState ? 1 : 0));
 +        tag.putLong("blocking_ticks", this.blockingTicks);
 +        tag.put("can_place", strings(this.canPlace));
 +        tag.put("can_break", strings(this.canBreak));
@@ -277,10 +305,12 @@ index 000000000..72a887bc5
 +
 +    /** Unknown versions and malformed snapshots have no native comparison context. */
 +    public static NativeItemStackData fromTag(final CompoundTag tag) {
-+        if (tag == null || !(tag.get("version") instanceof IntTag version) || version.asInt() != 2
++        if (tag == null || !(tag.get("version") instanceof IntTag version) || version.asInt() != VERSION
 +                || !(tag.get("item_id") instanceof IntTag itemId)
 +                || !(tag.get("auxiliary_value") instanceof ShortTag auxiliary)
 +                || !(tag.get("block_runtime_id") instanceof IntTag blockRuntime)
++                || !(tag.get("has_block_state") instanceof ByteTag hasBlockState)
++                || hasBlockState.asByte() != 0 && hasBlockState.asByte() != 1
 +                || !(tag.get("blocking_ticks") instanceof LongTag blockingTicks)
 +                || tag.contains("user_data") && !(tag.get("user_data") instanceof CompoundTag)) {
 +            return null;
@@ -292,7 +322,7 @@ index 000000000..72a887bc5
 +        }
 +        try {
 +            final CompoundTag userData = NativeItemListTypes.restore(tag.getCompoundTag("user_data"), tag.get("user_data_list_types"));
-+            return new NativeItemStackData(itemId.asInt(), auxiliary.asShort(), blockRuntime.asInt(), blockingTicks.asLong(),
++            return new NativeItemStackData(itemId.asInt(), auxiliary.asShort(), blockRuntime.asInt(), hasBlockState.asByte() != 0, blockingTicks.asLong(),
 +                    canPlace, canBreak, userData);
 +        } catch (final IllegalArgumentException | IndexOutOfBoundsException invalid) {
 +            return null;
@@ -318,6 +348,69 @@ index 000000000..72a887bc5
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java b/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
+index 77d33f594..64ceb8da5 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
+@@ -33,7 +33,7 @@ public class BedrockItem implements Item {
+     private String[] canPlace;
+     private String[] canBreak;
+     private long blockingTicks;
+-    private int blockRuntimeId;
++    private Integer blockRuntimeId;
+     private Integer netId;
+ 
+     public BedrockItem(final int id) {
+@@ -45,10 +45,10 @@ public class BedrockItem implements Item {
+     }
+ 
+     public BedrockItem(final int id, final short data, final byte amount, final CompoundTag tag) {
+-        this(id, data, amount, tag, new String[0], new String[0], 0, 0, null);
++        this(id, data, amount, tag, new String[0], new String[0], 0, null, null);
+     }
+ 
+-    public BedrockItem(final int id, final short data, final byte amount, final CompoundTag tag, final String[] canPlace, final String[] canBreak, final long blockingTicks, final int blockRuntimeId, final Integer netId) {
++    public BedrockItem(final int id, final short data, final byte amount, final CompoundTag tag, final String[] canPlace, final String[] canBreak, final long blockingTicks, final Integer blockRuntimeId, final Integer netId) {
+         this.setIdentifier(id);
+         this.setData(data);
+         this.amount = amount;
+@@ -149,11 +149,16 @@ public class BedrockItem implements Item {
+         this.blockingTicks = blockingTicks;
+     }
+ 
++    /** The network representation uses zero for an absent Block. */
+     public int blockRuntimeId() {
+-        return this.blockRuntimeId;
++        return this.blockRuntimeId != null ? this.blockRuntimeId : 0;
+     }
+ 
+-    public void setBlockRuntimeId(final int blockRuntimeId) {
++    public boolean hasBlockState() {
++        return this.blockRuntimeId != null;
++    }
++
++    public void setBlockRuntimeId(final Integer blockRuntimeId) {
+         this.blockRuntimeId = blockRuntimeId;
+     }
+ 
+@@ -174,7 +179,7 @@ public class BedrockItem implements Item {
+         if (o == null) {
+             return true;
+         }
+-        return this.id != o.id || this.data != o.data || this.blockRuntimeId != o.blockRuntimeId || !Objects.equals(this.tag, o.tag);
++        return this.id != o.id || this.data != o.data || !Objects.equals(this.blockRuntimeId, o.blockRuntimeId) || !Objects.equals(this.tag, o.tag);
+     }
+ 
+     @Override
+@@ -191,7 +196,7 @@ public class BedrockItem implements Item {
+             return false;
+         }
+         final BedrockItem that = (BedrockItem) o;
+-        return this.id == that.id && this.data == that.data && this.amount == that.amount && this.blockingTicks == that.blockingTicks && this.blockRuntimeId == that.blockRuntimeId && Objects.equals(this.tag, that.tag) && Objects.deepEquals(this.canPlace, that.canPlace) && Objects.deepEquals(this.canBreak, that.canBreak) && Objects.equals(this.netId, that.netId);
++        return this.id == that.id && this.data == that.data && this.amount == that.amount && this.blockingTicks == that.blockingTicks && Objects.equals(this.blockRuntimeId, that.blockRuntimeId) && Objects.equals(this.tag, that.tag) && Objects.deepEquals(this.canPlace, that.canPlace) && Objects.deepEquals(this.canBreak, that.canBreak) && Objects.equals(this.netId, that.netId);
+     }
+ 
+     @Override
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemAnimationData.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemAnimationData.java
 new file mode 100644
 index 000000000..acdb84c58
@@ -495,7 +588,7 @@ index 4fbf0a35f..4b76624a5 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index e895868ce..84450cc9f 100644
+index e895868ce..af34960bf 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -39,6 +39,7 @@ import com.viaversion.viaversion.libs.fastutil.ints.IntSortedSet;
@@ -531,7 +624,7 @@ index e895868ce..84450cc9f 100644
                  final ItemCooldown cooldown = ItemCooldown.fromNetworkComponents(components);
                  if (cooldown != null) {
                      this.cooldowns.put(itemEntry.identifier(), cooldown);
-@@ -147,6 +152,7 @@ public class ItemRewriter extends StoredObject {
+@@ -147,14 +152,19 @@ public class ItemRewriter extends StoredObject {
              return StructuredItem.empty();
          }
  
@@ -539,7 +632,22 @@ index e895868ce..84450cc9f 100644
          final BedrockMappingData.JavaItemMapping javaItemMapping;
          final Map<BlockState, BedrockMappingData.JavaItemMapping> blockItemMappings = BedrockProtocol.MAPPINGS.getBedrockToJavaBlockItems().get(identifier);
          if (blockItemMappings != null) {
-@@ -254,6 +260,9 @@ public class ItemRewriter extends StoredObject {
+-            if (bedrockItem.blockRuntimeId() == 0) { // Manually constructed items might not have a valid block state set
++            final BlockState displayState;
++            if (bedrockItem.hasBlockState()) {
++                displayState = this.user().get(BlockStateRewriter.class).blockState(bedrockItem.blockRuntimeId());
++            } else {
+                 final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(bedrockItem.identifier());
+-                bedrockItem.setBlockRuntimeId(validBlockStates.firstInt());
++                displayState = validBlockStates != null && !validBlockStates.isEmpty()
++                        ? this.user().get(BlockStateRewriter.class).blockState(validBlockStates.firstInt()) : null;
+             }
+-            javaItemMapping = blockItemMappings.get(this.user().get(BlockStateRewriter.class).blockState(bedrockItem.blockRuntimeId()));
++            javaItemMapping = displayState != null ? blockItemMappings.get(displayState) : null;
+         } else {
+             final int meta = bedrockItem.data() & 0xFFFF;
+             final String newIdentifier = BedrockProtocol.MAPPINGS.getBedrockItemUpgrader().upgradeMetaItem(identifier, meta);
+@@ -254,6 +264,9 @@ public class ItemRewriter extends StoredObject {
          }
  
          CustomAttachableResourceRewriter.applyItemModel(this.user().get(ResourcePackStorage.class), identifier, javaItem);
@@ -549,12 +657,38 @@ index e895868ce..84450cc9f 100644
          return javaItem;
      }
  
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
+index 5bad42706..ca5d02f07 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
+@@ -61,7 +61,7 @@ public class BedrockItemType extends Type<BedrockItem> {
+                 item.setBlockRuntimeId(validBlockStates.firstInt());
+             }
+         } else { // Meta item
+-            item.setBlockRuntimeId(0);
++            item.setBlockRuntimeId(null);
+         }
+ 
+         final ByteBuf userData = buffer.readSlice(BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java
+index 416621e91..ddb9b0730 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java
+@@ -57,7 +57,7 @@ public class NetworkItemStackDescriptorType extends Type<BedrockItem> {
+                 item.setBlockRuntimeId(validBlockStates.firstInt());
+             }
+         } else { // Meta item
+-            item.setBlockRuntimeId(0);
++            item.setBlockRuntimeId(null);
+         }
+ 
+         final ByteBuf userData = buffer.readSlice(BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeItemStackDataTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeItemStackDataTest.java
 new file mode 100644
-index 000000000..354b81ebc
+index 000000000..48d0e4249
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeItemStackDataTest.java
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,197 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -610,7 +744,7 @@ index 000000000..354b81ebc
 +        final CompoundTag tag = new CompoundTag();
 +        tag.putInt("Damage", 17);
 +        final String[] restrictions = {"minecraft:stone"};
-+        final var source = new BedrockItem(17, (short) 3, (byte) 1, tag, restrictions, new String[0], 9, 0, null);
++        final var source = new BedrockItem(17, (short) 3, (byte) 1, tag, restrictions, new String[0], 9, null, null);
 +        final var snapshot = NativeItemStackData.fromItem(source);
 +        final var encoded = snapshot.toTag();
 +        final var decoded = NativeItemStackData.fromTag(encoded);
@@ -625,6 +759,30 @@ index 000000000..354b81ebc
 +        assertEquals(3, snapshot.auxiliaryValue());
 +        assertEquals(List.of("minecraft:stone"), snapshot.canPlace());
 +        assertThrows(UnsupportedOperationException.class, () -> snapshot.canPlace().add("minecraft:dirt"));
++    }
++
++    @Test
++    void retainsBlockPresenceAtRuntimeZeroThroughCopiesAndJavaNbt() {
++        final var absent = new BedrockItem(1);
++        final var present = absent.copy();
++        present.setBlockRuntimeId(0);
++        assertFalse(absent.hasBlockState());
++        assertTrue(present.hasBlockState());
++        assertTrue(absent.isDifferent(present));
++        assertTrue(present.copy().hasBlockState());
++        final var buffer = Unpooled.buffer();
++        try {
++            for (final var item : List.of(absent, present)) {
++                final var snapshot = NativeItemStackData.fromItem(item);
++                Types.TAG.write(buffer, snapshot.toTag());
++                assertEquals(snapshot, NativeItemStackData.fromTag((CompoundTag) Types.TAG.read(buffer)));
++            }
++        } finally {
++            buffer.release();
++        }
++        assertNotEquals(NativeItemStackData.fromItem(absent), NativeItemStackData.fromItem(present));
++        present.setBlockRuntimeId(null);
++        assertEquals(absent, present);
 +    }
 +
 +    @Test
@@ -645,7 +803,7 @@ index 000000000..354b81ebc
 +        final var source = NativeItemStackData.fromItem(new BedrockItem(1));
 +        assertNull(NativeItemStackData.fromTag(null));
 +        final var unknown = source.toTag();
-+        unknown.putInt("version", 3);
++        unknown.putInt("version", NativeItemStackData.VERSION + 1);
 +        assertNull(NativeItemStackData.fromTag(unknown));
 +        final var wrongWidth = source.toTag();
 +        wrongWidth.putInt("auxiliary_value", 0);
@@ -656,6 +814,15 @@ index 000000000..354b81ebc
 +        final var wrongRestrictions = source.toTag();
 +        wrongRestrictions.put("can_place", new ListTag<>(List.of(new IntTag(17))));
 +        assertNull(NativeItemStackData.fromTag(wrongRestrictions));
++        final var missingPresence = source.toTag();
++        missingPresence.remove("has_block_state");
++        assertNull(NativeItemStackData.fromTag(missingPresence));
++        final var invalidPresence = source.toTag();
++        invalidPresence.putByte("has_block_state", (byte) 2);
++        assertNull(NativeItemStackData.fromTag(invalidPresence));
++        final var absentBlock = source.toTag();
++        absentBlock.putInt("block_runtime_id", 1);
++        assertNull(NativeItemStackData.fromTag(absentBlock));
 +        final var missing = source.toTag();
 +        missing.remove("blocking_ticks");
 +        assertNull(NativeItemStackData.fromTag(missing));
@@ -671,7 +838,7 @@ index 000000000..354b81ebc
 +        data.put("lists", new ListTag<>(List.of(new ListTag<>(IntTag.class), new ListTag<>(CompoundTag.class))));
 +        data.put("compounds", new ListTag<>(List.of(nested.copy())));
 +        data.put("unspecified", new ListTag<>());
-+        final var source = new NativeItemStackData(1, (short) 0, 0, 0, List.of(), List.of(), data);
++        final var source = new NativeItemStackData(1, (short) 0, 0, false, 0, List.of(), List.of(), data);
 +        final var buffer = Unpooled.buffer();
 +        try {
 +            Types.TAG.write(buffer, source.toTag());
@@ -692,11 +859,11 @@ index 000000000..354b81ebc
 +        data.put("empty", new ListTag<>(FloatTag.class));
 +        data.put("full", new ListTag<>(List.of(new FloatTag(1))));
 +        data.put("nested", new ListTag<>(List.of(new ListTag<>(FloatTag.class))));
-+        final var source = new NativeItemStackData(1, (short) 0, 0, 0, List.of(), List.of(), data);
++        final var source = new NativeItemStackData(1, (short) 0, 0, false, 0, List.of(), List.of(), data);
 +        final var previousVersion = source.toTag();
 +        previousVersion.putInt("version", 1);
 +        assertNull(NativeItemStackData.fromTag(previousVersion));
-+        final var absent = new NativeItemStackData(1, (short) 0, 0, 0, List.of(), List.of(), null).toTag();
++        final var absent = new NativeItemStackData(1, (short) 0, 0, false, 0, List.of(), List.of(), null).toTag();
 +        absent.put("user_data_list_types", source.toTag().get("user_data_list_types"));
 +        assertNull(NativeItemStackData.fromTag(absent));
 +        for (final int type : List.of(0, -1, 127, IntTag.ID)) {

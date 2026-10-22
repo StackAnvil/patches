@@ -148,6 +148,10 @@ The October 6 audit found these limits:
 - Bundle containers and rewriting exist. End-to-end capacity, cursor, transfer, and rollback parity remain to verify.
 - Fluid physics, player posture, shield timing, boat movement, and rocket paths exist. The complete matrix above remains unverified.
 
+The October 22 follow-up binds ordinary and authored inventory replies to their request's menu lifetime.
+Tests cover late success, rejection, reused menus, workstation-to-HUD fallback, and replaced bundle registry objects.
+Player inventory and cursor reconciliation continue across screen transitions. Native response manager parity remains unverified.
+
 Keep authoritative state, packet construction, item requests, and corrections in ViaBedrock core.
 Use the add-on where native input, local physics, or presentation requires client integration.
 Retain ordinary Java and ViaProxy coverage where standard translation suffices.

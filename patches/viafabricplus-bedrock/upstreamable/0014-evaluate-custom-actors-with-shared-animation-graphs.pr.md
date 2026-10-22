@@ -167,3 +167,26 @@ These results establish stack replay and test behavior. Live server frame-time p
 ## Upstream prerequisites
 
 - [viafabricplus-bedrock patch](../../viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md): Land the shared graph runtime before adapting server custom actors.
+
+## Bound animation particle origins
+
+Bound animation emitters now start at the local origin.
+The sampled attachment supplies the world actor or locator transform, so passing a world position applies translation twice.
+Unbound declarations receive the sampled world position without a following supplier.
+This matches the existing player renderer and preserves the shared native attachment transforms.
+The world-actor integration fixture verifies the same binding through the mapped renderer; custom actor live placement remains a separate check.
+
+## Sitting, saddle and dash-cooldown queries
+
+Shared actor frames now bind `is_sitting`, `is_saddled` and `has_dash_cooldown` from retained native actor flags.
+The target registrations select callbacks `142217bd0`, `142217870` and `1422185f0`.
+Their native flag reader uses flags `24`, `8` and `108`.
+
+A private 672-context probe executes all three callbacks and the complete native flag reader.
+It covers absent actor bindings, live and recycled generations, stale flags, and independent flag combinations.
+The same probe checks vertical-speed and lava queries for the world actor adapter.
+Native actor pose timing and the camera's mount-offset scheduling remain separate work.
+
+The production world-query adapter matches 1,120 native scalar results across 224 live contexts.
+A private camel scene consumes both sitting and standing flags during native model submissions.
+The world actor patch records the full build and runtime results.

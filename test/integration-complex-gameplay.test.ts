@@ -21,7 +21,7 @@ mock.module("@minecraft/server", () => ({
     afterEvents: Object.fromEntries(
     ["itemStartUse", "itemReleaseUse", "itemCompleteUse", "itemStopUse", "itemUse", "entitySpawn",
       "projectileHitBlock", "projectileHitEntity", "effectAdd", "entityHitEntity", "entityHurt", "entityRemove",
-      "playerInteractWithEntity", "playerInteractWithBlock", "playerSpawn", "playerDimensionChange"]
+      "playerInteractWithEntity", "playerInteractWithBlock", "playerPlaceBlock", "playerSpawn", "playerDimensionChange"]
       .map((name) => [name, signal(name)])) },
 }));
 const { prepareGameplay } = await import(new URL("../test-packs/entity-probe/src/gameplay.ts", import.meta.url).href);

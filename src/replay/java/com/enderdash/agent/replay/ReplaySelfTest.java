@@ -279,6 +279,14 @@ public final class ReplaySelfTest {
         require(SceneFeatures.selfIdentity(classicLocal).orElseThrow().equals(local));
         appearanceCounts(classicLocal, 2, 1, 0);
 
+        for (String geometry : List.of("null", "null\n", " \t null\r\n")) {
+            appearanceCounts(List.of(startGame(999), playerList(local, 999, false), playerSkin(remote, geometry)), 2, 0, 0);
+        }
+        for (String geometry : List.of("{broken", "[]", "\"null\"", "NULL", "{\"minecraft:geometry\":[]}")) {
+            // Non-null payloads still require successful geometry installation, even when malformed.
+            appearanceCounts(List.of(startGame(999), playerList(local, 999, false), playerSkin(remote, geometry)), 2, 1, 0);
+        }
+
         present.add(unrelated);
         try { SceneFeatures.selfIdentity(present); throw new AssertionError("Accepted ambiguous local player identities"); }
         catch (IllegalArgumentException expected) { }
@@ -325,6 +333,10 @@ public final class ReplaySelfTest {
     }
 
     private static PacketJournal.Entry playerSkin(UUID uuid, boolean geometry) {
+        return playerSkin(uuid, geometry ? "{\"minecraft:geometry\":[]}" : "");
+    }
+
+    private static PacketJournal.Entry playerSkin(UUID uuid, String geometry) {
         ByteBuf packet = Unpooled.buffer();
         try {
             Types.VAR_INT.writePrimitive(packet, 93); BedrockTypes.UUID.write(packet, uuid); BedrockTypes.SKIN.write(packet, appearance(geometry));
@@ -334,8 +346,12 @@ public final class ReplaySelfTest {
     }
 
     private static SkinData appearance(boolean geometry) {
+        return appearance(geometry ? "{\"minecraft:geometry\":[]}" : "");
+    }
+
+    private static SkinData appearance(String geometry) {
         return new SkinData("fixture", "", "", new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB), List.of(), null,
-                geometry ? "{\"minecraft:geometry\":[]}" : "", "1.26.51", "", false, false, false, false,
+                geometry, "1.26.51", "", false, false, false, false,
                 "", "fixture", "Wide", "#FFFFFFFF", List.of(), List.of(), false, "", "");
     }
 

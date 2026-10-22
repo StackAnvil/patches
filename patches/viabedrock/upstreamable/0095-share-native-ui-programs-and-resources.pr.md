@@ -2,6 +2,36 @@ Share immutable UI programs, domain bindings, scene contracts and accepted resou
 
 Run evaluator, binding, texture and message codec tests before the transport integration.
 
+## Cooking program prerequisite
+
+Share the pinned furnace, blast-furnace and smoker declarations, fixed slots, recipe ordering, progress arithmetic and navigation transitions.
+Keep recipe preview references separate from real inventory slot addresses.
+Bounded snapshot and action contracts retain the menu, presentation and inventory revisions.
+These APIs do not advertise cooking screens or replace the existing workstation controls.
+The authoritative catalog, client producer and complete input handling still need integration.
+
+Native executable fixtures cover 2,700 tab queries, 140 tab callbacks, 64 layout transitions and 176 progress cases.
+The progress cases include two signed-division traps.
+The fixtures supply allocation, initialized models and downstream setter boundaries.
+They do not establish complete controller execution or visible parity.
+
+The full stack replays and all four projects build.
+Java verification passes 2,204 tests, with 152 optional skips and no failures or errors.
+The focused cooking, transport and container suite passes all 61 tests.
+
+## Brewing program and counters
+
+The pinned Bedrock 1.26.51.1 assets supply the brewing screen, three indexed bottle cells, and fixed ingredient and fuel collections.
+The shared controller binds all 41 real Java menu slots and the native empty-cell images.
+Bound `clip_ratio` values reach the image renderer for bubbles, brewing progress, and fuel.
+
+An executable probe covers 994 counter cases through the original target callbacks and helpers.
+All Java float bits match, including large counters and partial fuel updates with a zero total.
+The fixture supplies model and world lookup seams. It does not establish native GPU or complete controller parity.
+
+Format 4 carries workstation programs and initial counters. A separate counter payload retains signed int32 values and the presentation sequence.
+Older formats reject the new family before writing bytes. Storage formats remain unchanged.
+
 ## Prepare optional built-in UI assets
 
 Use an officially acquired package for the pinned version. The build tool reads its extracted resource packs and preserves native file contents.
@@ -85,6 +115,102 @@ This probe verifies resolution and action identities, but does not establish liv
 The final 99-patch core replay and build pass 1,027 tests: 997 passed and 30 optional skips.
 Main, test, and tool Checkstyle pass with no failures or errors.
 
+## Descendant declarations and texture filenames
+
+The captured Enchanted pack redirects the native form factory with a declaration named
+`main_screen_content/server_form_factory`. The resolver previously stored that declaration
+without applying it to the factory child. It selected the default native form instead.
+
+Apply descendant declarations within the current template and instance paths. Keep shared
+templates isolated between sibling instances, and include descendant declarations in exported
+programs. An explicit replacement parent supplies its namespace for relative child references.
+Inline instance properties remain available after that replacement.
+
+Six original-executable cases on Bedrock 1.26.51.1 confirm the control visitor's path construction.
+It appends slash-separated child names and removes their `@template` suffixes. Cases include
+nested siblings, heap strings, UTF-8 names, and a literal slash in a child name. This proves
+path construction, not native definition-store overlay precedence or rendered pixels. The
+existing layered overlay policy remains inferred from the versioned declarations.
+
+The same pack uses texture filenames containing `~`. Loading and scene validation now share
+the bounded relative-path check, so those images and their metadata survive conversion.
+Six new regression tests cover path scope, shared inheritance, replacement parents, relative
+namespaces, dynamic child arrays, export/import, factory responses, and texture pixels.
+The full UI test suite passes with the bundled native definitions.
+
+The captured Enchanted forms use locally counted factories after selecting their authored
+layout. The count and binding support described below lets those factories create their rows.
+
+## Locally counted factory collections
+
+Collection panels can generate rows from their own bound integer length or control-ID list.
+They do not require a server controller to supply that collection. The controller declares
+which collections contain its data; generated rows keep a separate scope. Nested form buttons
+retain their original response ordinals. Missing control IDs preserve the remaining list indices,
+and rows beyond controller data have no response action. Unknown collections without a local
+count still fail, and generated rows remain subject to the existing scene limits.
+
+Twelve fixtures execute the pinned client's original property update dispatcher and verify its
+stored collection count. They cover integers, ID lists, ignored real-valued updates, and empty
+or invalid values. The factory component is absent in these fixtures. Layout notifications and
+the external dirty-event sink use observation callbacks. These checks establish count conversion,
+not the complete child-factory, scheduler, or rendering lifecycle.
+
+Eight original expression cases show that boolean arithmetic retains an integer result.
+The Java evaluator now preserves that type, so predicates such as `1 * (not condition)` can
+activate a factory. Explicit real-valued inputs retain their real type.
+
+Rendered properties come from the current control's authored fields and local bindings.
+An ancestor's binding data can still feed an explicit reference, but it no longer replaces
+a child's own rendered text or texture. Panel texture bindings remain available as data
+without being treated as panel images. Enchanted uses that pattern for button visibility.
+
+Eight added behavioral tests cover local scope isolation, export/import, typed counts, sparse
+control IDs, nested response indices, missing controller rows, and rendered-property ownership.
+Controller-supplied factory events also remain available without a local count binding.
+The full UI suite passes with the bundled native definitions.
+
+All three captured Enchanted forms now resolve authored scenes. The advertisement retains
+visible responses 0 and 1; both kits forms retain responses 0 through 5. A referenced
+`progress.form_progress_loading_bars` template is still missing. Resolution and response
+identity do not establish native visual parity.
+
+A fresh local Java replay draws the advertisement and six-card kits layout. Escape closes
+the advertisement. A real pointer click on the third kit card sends Bedrock form ID 2 with
+response index 2. Transport verification passes, and all seven owned Java/display processes
+stop normally. The overall rendering verifier still fails on skin geometry, model processing,
+and unresolved mappings. This establishes authored drawing and client response dispatch;
+it does not establish public-server acceptance or native visual parity.
+
+All 102 core patches replay cleanly. The four full builds pass with 2,147 tests passed,
+152 optional skips, and no failures or errors. Core, test, and tool Checkstyle checks pass.
+Offline validation passes all 263 tooling tests and patch metadata checks.
+
 ## Upstream prerequisites
 
 Requires [0015-transport-native-resources-and-sound-commands.patch](0015-transport-native-resources-and-sound-commands.pr.md): Land accepted native resource transport before loading shared UI programs.
+
+## Cooking progress transport (October 22, 2026)
+
+Cooking progress now has a separate bounded message.
+It retains four signed int32 properties and binds them to the exact menu, presentation, item update and data revision.
+A progress update therefore does not replace the recipe/inventory authority or restart activation.
+Wire tests preserve extreme signed values and reject truncated or trailing fields.
+This contract does not establish authored screen behavior or native visual parity.
+
+Recipe-action validation now examines only paths that own recipe controls.
+A missing enabled binding on an unrelated search field no longer rejects valid recipe actions.
+Every active recipe path still requires known visibility and enabled values, including its ancestors.
+Tests cover unrelated unknown fields, unknown owning parents and hidden controls.
+This change does not supply missing search-input behavior or establish native control parity.
+
+## Cooking command identity (October 22, 2026)
+
+The recipe-action envelope now retains the authored primary, secondary, or tertiary input command.
+Version three rejects earlier envelopes because they cannot identify that command.
+Results echo the complete action, including its input mode. Wire tests cover every mode, strict flags, truncation, and unknown modes.
+This contract does not establish native quantity or cursor behavior.
+
+The complete four-project build passes 2,344 tests, with 152 optional skips.
+Core Checkstyle and the mode-preserving request/result codec tests pass.
+All 102 core patches replay successfully. Offline tooling and patch metadata validation pass.

@@ -1110,3 +1110,32 @@ It preserves frame watermarks and correction history.
 Actual unregister, re-register and subsequent tick tests reject stale motion while retaining those histories.
 The separate raw-input withdrawal behavior remains in its original patch 0080.
 The combined private core gate passes 1,015 cases, with 30 optional skips.
+
+## Native player position anchor
+
+Use `1.62001F` when converting between native player positions and Java feet positions.
+Camera eye vectors and pose offsets remain separate from this position anchor.
+The target 1.26.51.1 player constructor initializes this value from executable address `14e6ae444`.
+The executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+
+A private protocol 2193 BDS fixture teleports the player's feet to Y `70` through ScriptAPI.
+Its native position packet contains Y `71.62001037597656`, with float bits `428f3d72`.
+The previous `1.62F` conversion produces Java feet Y `70.00000762939453`.
+The recorded client movement audit contains that same error.
+The native offset restores feet Y `70` exactly.
+
+The regression translates that captured position into Java feet, then returns four completed frames to the same native position.
+It also preserves the ordinary Java movement route with the corrected offset.
+This establishes the shared position conversion, not complete native physics, aim selection, or camera update timing.
+Raw packets, player identities, and client observations remain private.
+
+The full dependency build passes 2,128 tests, with 152 optional skips.
+All 102 core patches replay, and Checkstyle passes.
+Offline validation passes all 261 tooling tests and patch metadata checks.
+
+The private client replay reaches playable spawn and completes the recorded scene.
+All 1,032 movement samples after the teleport have feet Y `70` exactly.
+All 1,032 outgoing auth-input packets retain native Y `71.62001037597656`.
+The first sample precedes the teleport and retains the recording's separate StartGame position.
+Every owned process completes normal cleanup.
+The general rendering audit reports unresolved mappings, so this run establishes movement conversion only.

@@ -1,24 +1,18 @@
-From 57be6a968b0e86f10ec830af41cfc410eae6e724 Mon Sep 17 00:00:00 2001
+From d57a7f7676c963968ba022dd8f85e2d54cfc9f9d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
-Subject: [PATCH] fix(resource-packs): load archives with a single pack
- directory
+Subject: [PATCH] fix(resource-packs): read complete server archives
 
-Some server archives place their manifest and assets beneath one pack
-folder. Select that root only when unambiguous, while preferring an
-existing root manifest. Normalize repeated Windows path separators before
-looking up manifests and assets; Geyser's advertised test pack uses those
-separators for terrain definitions and model paths.
+Some server archives put their manifest and assets beneath one pack directory. Select that root only when unambiguous, prefer an existing root manifest, and normalize repeated Windows separators before resolving assets. Minehut and Geyser recordings exercise those layouts.
 
-Minehut's hash-valid advertised ZIP exercises the nested-root case, and
-the saved Geyser pack exercises Windows paths. Both recordings can now be
-replayed locally without downloading them again. Archive tests preserve
-root preference and reject ambiguous nested manifests.
+Enchanted advertises a valid 1,251,017-byte ZIP with 58 stored files using data descriptors. ZipInputStream rejects that layout. Read the central directory through the existing Commons Compress dependency and an in-memory seekable channel, preserving physical entry order, size checks, and CRC verification. This also avoids scanning for descriptor signatures inside nested ZIP payloads.
+
+Archive regressions cover nested roots, root preference, Windows paths, stored descriptors with embedded ZIP signatures, and corrupted entry data. The private Enchanted download reproduces the old failure and loads all 58 files with this reader. Commons documents the seekable reader behavior at https://commons.apache.org/proper/commons-compress/zip .
 ---
- .../api/resourcepack/ResourcePack.java        | 15 ++++
- .../api/resourcepack/content/ZipContent.java  |  3 +-
- .../resourcepack/ResourcePackArchiveTest.java | 89 +++++++++++++++++++
- 3 files changed, 106 insertions(+), 1 deletion(-)
+ .../api/resourcepack/ResourcePack.java        |  15 ++
+ .../api/resourcepack/content/ZipContent.java  |  25 +++-
+ .../resourcepack/ResourcePackArchiveTest.java | 132 ++++++++++++++++++
+ 3 files changed, 165 insertions(+), 7 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
@@ -55,25 +49,53 @@ index ebab0034b..e4632f65f 100644
                  throw new IllegalStateException("Missing manifest.json");
              }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
-index d16e08e63..a16028bbf 100644
+index d16e08e63..60ce40840 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
-@@ -29,7 +29,8 @@ public class ZipContent extends InMemoryContent {
-             ZipEntry zipEntry;
-             while ((zipEntry = zipInputStream.getNextEntry()) != null) {
+@@ -17,19 +17,30 @@
+  */
+ package net.raphimc.viabedrock.api.resourcepack.content;
+ 
+-import java.io.ByteArrayInputStream;
+ import java.io.IOException;
+-import java.util.zip.ZipEntry;
+-import java.util.zip.ZipInputStream;
++import java.util.zip.CRC32;
++import java.util.zip.CheckedInputStream;
++import java.util.zip.ZipException;
++import org.apache.commons.compress.archivers.zip.ZipFile;
++import org.apache.commons.compress.utils.SeekableInMemoryByteChannel;
+ 
+ public class ZipContent extends InMemoryContent {
+ 
+     public ZipContent(final byte[] zipData) throws IOException {
+-        try (ZipInputStream zipInputStream = new ZipInputStream(new ByteArrayInputStream(zipData))) {
+-            ZipEntry zipEntry;
+-            while ((zipEntry = zipInputStream.getNextEntry()) != null) {
++        try (var channel = new SeekableInMemoryByteChannel(zipData);
++             var archive = ZipFile.builder().setSeekableByteChannel(channel).get()) {
++            final var entries = archive.getEntriesInPhysicalOrder();
++            while (entries.hasMoreElements()) {
++                final var zipEntry = entries.nextElement();
                  if (!zipEntry.isDirectory()) {
 -                    this.content.put(zipEntry.getName(), zipInputStream.readAllBytes());
 +                    final String path = zipEntry.getName().replace('\\', '/').replaceAll("/{2,}", "/");
-+                    this.content.put(path, zipInputStream.readAllBytes());
++                    try (var input = new CheckedInputStream(archive.getInputStream(zipEntry), new CRC32())) {
++                        final byte[] data = input.readAllBytes();
++                        if (data.length != zipEntry.getSize() || input.getChecksum().getValue() != zipEntry.getCrc()) {
++                            throw new ZipException("ZIP entry size or checksum does not match its central directory");
++                        }
++                        this.content.put(path, data);
++                    }
                  }
              }
          }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java
 new file mode 100644
-index 000000000..1ffcc9dd1
+index 000000000..2a2879570
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,132 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -101,10 +123,53 @@ index 000000000..1ffcc9dd1
 +
 +import java.util.UUID;
 +import java.awt.image.BufferedImage;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.nio.charset.StandardCharsets;
++import java.util.zip.CRC32;
++import java.util.zip.ZipException;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class ResourcePackArchiveTest {
++
++    @Test
++    void storedDescriptorEntriesPreserveEmbeddedZipSignatures() throws Exception {
++        final UUID id = UUID.randomUUID();
++        final InMemoryContent inner = new InMemoryContent();
++        inner.putJson("manifest.json", manifest(id));
++        inner.put("textures/probe.bin", new byte[]{0x50, 0x4B, 7, 8, 0x50, 0x4B, 3, 4});
++        final byte[] payload = inner.toZip();
++        final byte[] archive = storedWithDescriptor("nested.zip", payload);
++        final ZipContent content = new ZipContent(archive);
++        assertArrayEquals(payload, content.get("nested.zip"));
++        assertEquals(id, new ResourcePack(content).id());
++        archive[30 + "nested.zip".length()] ^= 1;
++        assertThrows(ZipException.class, () -> new ZipContent(archive));
++    }
++
++    /** A non-seekable writer's STORED entry: only its descriptor and central directory know its size. */
++    private static byte[] storedWithDescriptor(final String path, final byte[] content) {
++        final byte[] name = path.getBytes(StandardCharsets.UTF_8);
++        final CRC32 checksum = new CRC32();
++        checksum.update(content);
++        final int crc = (int) checksum.getValue();
++        final ByteBuffer zip = ByteBuffer.allocate(30 + name.length + content.length + 16 + 46 + name.length + 22)
++                .order(ByteOrder.LITTLE_ENDIAN);
++        zip.putInt(0x04034B50).putShort((short) 20).putShort((short) 8).putShort((short) 0)
++                .putInt(0).putInt(0).putInt(0).putInt(0).putShort((short) name.length).putShort((short) 0)
++                .put(name).put(content);
++        zip.putInt(0x08074B50).putInt(crc).putInt(content.length).putInt(content.length);
++        final int directory = zip.position();
++        zip.putInt(0x02014B50).putShort((short) 20).putShort((short) 20).putShort((short) 8).putShort((short) 0)
++                .putInt(0).putInt(crc).putInt(content.length).putInt(content.length)
++                .putShort((short) name.length).putShort((short) 0).putShort((short) 0).putShort((short) 0)
++                .putShort((short) 0).putInt(0).putInt(0).put(name);
++        final int directorySize = zip.position() - directory;
++        zip.putInt(0x06054B50).putShort((short) 0).putShort((short) 0).putShort((short) 1).putShort((short) 1)
++                .putInt(directorySize).putInt(directory).putShort((short) 0);
++        return zip.array();
++    }
 +
 +    @Test
 +    void archiveWithOnePackDirectoryPreservesRelativeAssets() throws Exception {

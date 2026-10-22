@@ -116,7 +116,7 @@ The newest overlay player definition has 68 animation aliases; the extracted bas
 
 Acquire `vanilla`, `vanilla_base`, and numeric vanilla directories from the pinned official package. The matching build supplies 57 layers. Older names such as `vanilla_1.14` imply patch version zero. Keep their paths and manifests separate. Cache format 5 refreshes base-only caches and validates pack UUIDs and overlay versions. Missing layers or mismatched manifests preserve the old cache.
 
-Resolve models, animations, and controllers by identifier in pack order. Merge client-entity description objects by key; higher lists and scalar values replace lower values. Equal duplicates within a pack share a definition. Conflicting definitions remain errors. Preserve each controller's format version so a higher pack cannot change another controller's first-frame behavior. Merge sound catalog entries across both catalog formats. Resolve sound banks, particle files, and textures by pack order. Namespaced block models no longer prevent library loading.
+Resolve models, animations, and controllers by identifier in pack order. Merge client-entity description objects by key; higher lists and scalar values replace lower values. Animation definitions replace earlier registrations within their pack. Conflicting models and other catalogs retain their ambiguity checks. Preserve each controller's format version so a higher pack cannot change another controller's first-frame behavior. Merge sound catalog entries across both catalog formats. Resolve sound banks, particle files, and textures by pack order. Namespaced block models no longer prevent library loading.
 
 The matching player file declares 68 aliases and comes from `vanilla_1.21.130`. The effective description retains four aliases from lower layers. Only references absent from the merged dictionary are undeclared during compilation and playback allocation. Declared resources that cannot resolve still contribute incomplete tracks. Compile script arrays as one bounded program. The matching 8,141-character pre-animation script spans conditional blocks across JSON strings. Preserve temporary scope and early returns. Bone expressions retain their smaller limits.
 
@@ -1861,3 +1861,162 @@ Shared controller commands also require the [core animation command contract](..
 ## Shared visibility declarations
 
 Use CubeConverter's public declaration parser after the client validates rule counts, pattern lengths and value types. Normalize null and boolean values to numeric expressions before parsing. This preserves the existing client fallback semantics while CubeConverter retains its original expression representation. Ordered wildcard rules and repeated declarations remain intact.
+
+
+## Shared physical bounds transport
+
+The shared actor bridge now owns the existing native-bounds payload, receiver, and lifetime-aware accessors.
+These declarations previously lived in the later UI patch.
+Camera targeting and UI actor views consume the same bounds state and register the channel once.
+This move preserves the payload format and does not change native dimension calculations.
+
+## Native world inputs
+
+The block mirror now consumes the core's negotiated `block_identifiers_v2` channel.
+It retains both native layers, runtime IDs and state properties for client world queries.
+Particle expiration continues to read only the primary layer.
+Its integration test verifies that changing the extra layer cannot change a primary-layer filter result.
+
+The receiver captures its connection and rejects queued work after disconnect or connection replacement.
+Dimension changes clear the mirrored data before new snapshots apply.
+These changes prepare the world source for aim assistance; target selection and reticle rendering remain unfinished.
+
+The live BDS 2193 control recorded 39 samples, including 30 with a local player.
+It exercised dry and wet stairs, rotation, removal and restoration.
+Observed runtime IDs match incoming block updates in order for each tested position and layer.
+The run completed normal cleanup, and its private observer and server script were restored.
+
+
+## Native scale for player actors
+
+A fresh CubeCraft recording exposed player-skin actors with scale updates that the Java renderer ignored.
+The server supplied the same skin pixels for four lobby actors and the local player.
+Each lobby actor started at scale `0.0001`.
+Later updates selected scale `1` for visible previews and scale `0` for a hidden actor.
+Java kept render scale `1` for the hidden actor despite its native scale `0`.
+
+The shared living renderer now reads the retained native scale during render-state extraction.
+This applies before the body, equipment layers and shadow extraction.
+It preserves zero and small values without the Java attribute clamp.
+Actors without a native snapshot retain their Java scale.
+The change does not alter actor yaw or replace the skin that the server supplied.
+
+A private replay compared the original artifact with the rebuilt artifact against the same protocol-2193 recording.
+Both runs used a private display, zero volume and a controlled camera view.
+The same hidden actor retained native scale `0` and Java attribute scale `1` in both runs.
+Its actual render state used scale `1` before the fix and scale `0` after the fix.
+Ordinary actors retained render scale `1`.
+The replay slices verify this render-state change, not complete native orientation or scene parity.
+The recording, skin pixels, observer, screenshots and actor identities remain private.
+
+All four projects build with 2,122 passing tests and 152 optional skips.
+Offline validation passes all 261 tooling tests and patch metadata checks.
+All four stack health reports contain no errors.
+
+
+## Native body rotation for remote players
+
+Use the target player's body control for remote player actors, including server NPCs.
+The generic mob body control has different rules and does not apply here.
+The player control keeps its movement threshold, turn smoothing, soft turn limit and passenger branch.
+It wraps angles with native float operations before Java extracts the render state.
+The adapter uses float positions and the existing translated swing state.
+
+Bedrock 1.26.51.1 supplies the versioned evidence.
+The player constructor selects its body control through virtual slot `0x558`.
+Its control callback is `14387a200`; the body-control system invokes it through `144893380`.
+The executable identity appears in the patch body.
+All 2,268 direct and 320 chained native system callbacks match the Java calculation bit for bit.
+The native fixtures use the original player control, system normalization and official UCRT math.
+They cover movement thresholds, standing half turns, swings and passengers.
+Native code and fixtures remain private.
+
+This change does not establish complete native movement interpolation or swing timing.
+
+A private lobby replay compared the previous scale-fixed artifact with the body-control artifact.
+The same player NPC retained its server yaw, head yaw and scale in both runs.
+Its body angle changed in both the entity and the extracted render state.
+The observer reported no errors, and every owned process completed normal cleanup.
+These short replay slices verify client integration; they do not prove complete scene parity or resolve the reported visible facing issue.
+
+All four projects build with 2,125 passing tests and 152 optional skips.
+Offline validation passes all 261 tooling tests and patch metadata checks.
+All four stack health reports contain no errors.
+
+## Grouped animation references
+
+The licensed 1.26.51.1 camel controller groups adult and baby animation aliases in one object.
+The previous reader rejects that valid object and prevents the whole graph from loading.
+Read every weighted alias in controller states and root animation entries.
+Keep declaration order and the existing total reference limit.
+
+The regression samples grouped root and controller references with conditional adult and baby weights.
+The bundled camel test uses the actual licensed controller through the ordinary world appearance resolver.
+These tests do not establish native evaluation order for object members with side effects.
+
+The grouped-reference regression and bundled camel standing/sitting tests pass.
+The complete dependency build passes 2,132 tests, with 152 optional skips.
+A private client comparison confirms native camel model submissions after the parser and query bindings are corrected together.
+The world actor patch records that runtime check and its limits.
+
+
+## Repeated animation identifiers in lobby packs
+
+CubeCraft's target-protocol recording contains two different definitions of `animation.cubecraft.logo.idle` in one pack.
+The shared library rejected the complete animation catalog, preventing the player graph from loading.
+The older server-animation path allowed replacements, so the two production paths disagreed.
+
+An executable fixture runs the original animation-definition registration helper in Bedrock 1.26.51.1 build 51061372.
+It covers nine registrations, including six replacements, with independent identifiers between replacements.
+Every replacement installs a new complete definition and destroys the old data without removing other identifiers.
+The fixture executes registration, native hash lookup and insertion, allocation, reference accounting, and replacement destruction.
+It supplies an initialized manager, non-owner metadata, uncontended mutex calls, allocator/free, CFG, and finite CRT helpers.
+Default Molang compilation is a fixture boundary. Whole-file decoding and native file enumeration are outside this probe.
+
+The shared library now replaces repeated animation identifiers in accepted file order.
+It preserves that order when grouping bundled files and retains each winning definition's format version.
+This gives the shared player-animation path the replacement behavior already used by the older server-animation factory.
+The existing controller-loading paths remain unchanged because their native conflict rules need separate verification.
+Tests sample bone poses after replacements and pack overrides, including discarded old bones and retained unrelated animations.
+Other resource catalogs keep their existing conflict policy; this fixture does not establish their native replacement rules.
+
+The probe also observes lowercase name construction in native animation registration.
+The definition-name follow-up below establishes the separate native rules for definition registration and reference lookup.
+The captured duplicate uses the same lowercase identifier in both files.
+
+
+The rebuilt client completes a 300-second CubeCraft replay through SkyWars EU1, MinerWare EU2, and Parkour EU1.
+Its player graph resolves 200 animations and 12 controllers; observed renderer playbacks produce changing bone poses.
+There are no player-graph or skin-alias loading errors. All 320 skins and geometry records install.
+The audit counts 26,716 remote-player render frames. Transport passes; rendering still fails on unresolved mappings.
+The final replay terrain is incomplete, unlike the original live Parkour screenshot. Replay terrain delivery needs further investigation.
+These checks establish restored graph loading and execution, not native visual parity.
+
+All four projects build with 2,150 passing tests and 152 optional skips.
+All 38 client patches replay. Offline validation passes 263 tooling tests and metadata checks.
+The four replay self-test groups pass. The seven owned test processes close normally.
+
+
+## Native animation definition names
+
+The Bedrock 1.26.51.1 definition converter folds ASCII uppercase bytes before animation registration.
+The original public group lookup keeps the reference spelling supplied by the caller.
+A private executable probe covers all 256 byte values in short and heap-sized strings, plus long ASCII and mixed Unicode input.
+All 514 conversion cases match ASCII folding. Four original group-lookup controls find the lowercase registration and leave differently cased references unresolved.
+The original registration, hash construction, lookup, reference accounting, and replacement logic execute.
+The fixture supplies manager metadata, allocation/free, uncontended mutexes, CFG, finite CRT helpers, and the default Molang compilation seam.
+File-schema admission, native file enumeration, and rendering parity remain outside this fixture.
+
+Animation registration now uses the verified conversion in shared libraries, the legacy server factory, and direct JSON graph input.
+Apply it before identifier replacement, so case-colliding definitions keep the last complete value.
+Preserve Unicode characters and reference spelling.
+Pose tests cover bundled and accepted libraries and direct JSON graphs, including replacement bones, retained unrelated animations, and unresolved differently cased references.
+
+All four projects build with 2,151 passing tests and 152 optional skips.
+All 38 client patches replay cleanly. Offline validation passes 263 tooling tests and metadata checks; all four replay self-test groups pass.
+
+A fresh 180-second live CubeCraft connection sends selector responses 2, 6, and 7 and reaches SkyWars EU1, MinerWare EU2, and Parkour EU2.
+Terrain and scoreboards appear in each destination. A verified ray hit on the cosmetics shop's interaction entity precedes an authored shop menu opening.
+The player graph resolves 200 animations and 12 controllers and produces changing sampled poses without graph-loading errors.
+All 191 skins and supplied geometry records install, with 4,993 remote-player render frames and 107,666 custom-actor render frames.
+The six owned processes close normally. Native visual parity, including cosmetic-preview facing direction, remains open.

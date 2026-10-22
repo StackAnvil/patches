@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { authoredInventoryCaseIds } from "../src/integration/inventory-ui-probe.ts";
 import { gameplayEvents, gameplayCasesForBackend, minecartDismountHasClearance, waitForGameplayEvent, waitForJavaWorldHud, type GameplayEvent } from "../src/integration/gameplay-probe.ts";
 
 test("gameplay events match their case, run, and phase", async () => {
@@ -80,6 +81,10 @@ test("world readiness fails if the client stops or never draws its HUD", async (
 });
 
 test("native item eligibility and delivered Geyser offhand snapshots select distinct cases", () => {
+  for (const id of authoredInventoryCaseIds) {
+    expect(gameplayCasesForBackend(false)).toContain(id);
+    expect(gameplayCasesForBackend(true)).not.toContain(id);
+  }
   expect(gameplayCasesForBackend(false)).toContain("offhand-ineligible-block");
   expect(gameplayCasesForBackend(false)).not.toContain("offhand-block-place");
   expect(gameplayCasesForBackend(true)).toContain("offhand-block-place");

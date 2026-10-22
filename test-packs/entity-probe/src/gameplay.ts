@@ -459,6 +459,52 @@ define("inventory-script-slot", "inventory", async (player) => {
   return { passed: remaining === 1, observed: { remaining }, expected: 1 };
 });
 
+for (const [id, initialPlayer] of [["chest-authored-one-empty", 0], ["chest-authored-one-merge", 62]]) {
+  define(id, "inventory", async (player) => {
+    await prepareArena(player);
+    blockAt(player.dimension, 0, 1, 2).setType("minecraft:stone");
+    const chest = new ItemStack("minecraft:chest", 1);
+    chest.nameTag = "StackAnvil count-one probe";
+    inventory(player).setItem(0, chest);
+    return { placed: undefined };
+  }, (player, fixture) => {
+    const storage = fixture.placed?.getComponent("minecraft:inventory")?.container;
+    if (!storage) throw new Error("Authored inventory probe storage is unavailable.");
+    const items = inventory(player);
+    const observed = {
+      source: storage.getItem(9)?.amount ?? 0,
+      hidden: storage.getItem(0)?.amount ?? 0,
+      emeralds: countItem(items, "minecraft:emerald"),
+      diamonds: countItem(items, "minecraft:diamond"),
+      destination: items.getItem(initialPlayer ? 15 : 0)?.amount ?? 0,
+      firstHotbar: items.getItem(0)?.amount ?? 0,
+    };
+    const expected = { source: 3, hidden: 2, emeralds: initialPlayer + 1, diamonds: 0,
+      destination: initialPlayer + 1, firstHotbar: initialPlayer ? 0 : 1 };
+    return { passed: Object.entries(expected).every(([key, value]) => observed[key] === value), observed, expected };
+  }, async (player, fixture) => {
+    for (let tick = 0; tick < 20 && !fixture.placed; tick++) await nextTick();
+    const storage = fixture.placed?.getComponent("minecraft:inventory")?.container;
+    if (!storage) throw new Error("The client did not place the named chest.");
+    storage.setItem(0, new ItemStack("minecraft:diamond", 2));
+    const emerald = new ItemStack("minecraft:emerald", 4);
+    emerald.nameTag = "Probe emerald";
+    storage.setItem(9, emerald);
+    if (initialPlayer) {
+      const destination = emerald.clone();
+      destination.amount = initialPlayer;
+      inventory(player).setItem(15, destination);
+    }
+    await nextTick();
+  });
+}
+
+world.afterEvents.playerPlaceBlock.subscribe((event) => {
+  if (!active?.scenario.id.startsWith("chest-authored-one-") || active.fixture.closed || event.player.name !== active.playerName
+      || event.block.typeId !== "minecraft:chest") return;
+  active.fixture.placed = event.block;
+});
+
 define("chest-transfer", "inventory", async (player) => {
   await prepareArena(player);
   blockAt(player.dimension, 0, 1, 2).setType("minecraft:chest");
@@ -473,6 +519,75 @@ define("chest-transfer", "inventory", async (player) => {
   const observed = { chest: countItem(chest, "minecraft:emerald"), player: countItem(inventory(player), "minecraft:emerald") };
   return { passed: observed.chest === 0 && observed.player === 4, observed, expected: { chest: 0, player: 4 } };
 });
+
+define("brewing-stand", "inventory", async (player) => {
+  await prepareArena(player);
+  blockAt(player.dimension, 0, 1, 2).setType("minecraft:brewing_stand");
+  await nextTick();
+  const brewing = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+  if (!brewing) throw new Error("Brewing inventory is unavailable.");
+  const water = new ItemStack("minecraft:potion");
+  const initialEffect = water.getComponent("minecraft:potion")?.potionEffectType.id;
+  if (!initialEffect) throw new Error("Water potion has no effect identity.");
+  for (const slot of [1, 2, 3]) brewing.setItem(slot, water);
+  brewing.setItem(4, new ItemStack("minecraft:blaze_powder"));
+  inventory(player).setItem(0, new ItemStack("minecraft:nether_wart"));
+  player.teleport(position(), { dimension: arena.dimension, facingLocation: position(0.5, -0.5, 2.5) });
+  return { initialEffect };
+}, (player, fixture) => {
+  const brewing = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+  if (!brewing) throw new Error("Brewing inventory is unavailable.");
+  const potions = [];
+  const bag = inventory(player);
+  for (let slot = 0; slot < bag.size; slot++) {
+    const item = bag.getItem(slot);
+    if (item?.typeId === "minecraft:potion") potions.push(item.getComponent("minecraft:potion")?.potionEffectType.id);
+  }
+  const observed = {
+    potions,
+    originalEffect: fixture.initialEffect,
+    remainingBottles: [1, 2, 3].filter((slot) => brewing.getItem(slot)).length,
+    ingredient: brewing.getItem(0)?.amount ?? 0,
+    playerIngredient: countItem(bag, "minecraft:nether_wart"),
+  };
+  return {
+    passed: potions.length === 3 && potions.every((effect) => effect && effect !== fixture.initialEffect)
+      && new Set(potions).size === 1 && observed.remainingBottles === 0 && observed.ingredient === 0 && observed.playerIngredient === 0,
+    observed,
+    expected: "Consume one nether wart, brew all three water bottles, then move the completed potions to player inventory.",
+  };
+});
+
+for (const [id, block, ingredient, result] of [
+  ["furnace-book-cook", "minecraft:furnace", "minecraft:beef", "minecraft:cooked_beef"],
+  ["smoker-book-cook", "minecraft:smoker", "minecraft:beef", "minecraft:cooked_beef"],
+  ["blast-furnace-book-cook", "minecraft:blast_furnace", "minecraft:ancient_debris", "minecraft:netherite_scrap"],
+]) {
+  define(id, "crafting", async (player) => {
+    await prepareArena(player);
+    blockAt(player.dimension, 0, 1, 2).setType(block);
+    await nextTick();
+    const cooking = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+    if (!cooking) throw new Error("Cooking inventory is unavailable.");
+    cooking.setItem(1, new ItemStack("minecraft:coal"));
+    inventory(player).setItem(0, new ItemStack(ingredient));
+    player.teleport(position(), { dimension: arena.dimension, facingLocation: position(0.5, -0.5, 2.5) });
+    return {};
+  }, (player) => {
+    const cooking = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+    if (!cooking) throw new Error("Cooking inventory is unavailable.");
+    const observed = {
+      playerInput: countItem(inventory(player), ingredient),
+      playerOutput: countItem(inventory(player), result),
+      input: cooking.getItem(0)?.amount ?? 0,
+      output: cooking.getItem(2)?.amount ?? 0,
+    };
+    return {
+      passed: observed.playerInput === 0 && observed.playerOutput === 1 && observed.input === 0 && observed.output === 0,
+      observed, expected: { playerInput: 0, playerOutput: 1, input: 0, output: 0 },
+    };
+  });
+}
 
 for (const [id, itemId, initialInput, expectedInput, expectedFuel, expectedPlayer] of [
   ["furnace-quick-move-log", "minecraft:oak_log", 63, 64, 0, 7],

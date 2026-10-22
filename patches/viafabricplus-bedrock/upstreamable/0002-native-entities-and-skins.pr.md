@@ -314,3 +314,22 @@ CubeConverter passes 18 tests and ViaProxy passes four tests.
 The standalone cache patch passes 45 tests and both Checkstyle tasks.
 TypeScript checking and patch whitespace checks also pass.
 These results establish stack replay and test behavior. Live server frame-time profiling remains separate.
+
+## JSON null skin geometry
+
+The Bedrock 1.26.51.1 Enchanted capture contains 273 skin records. Three standard 64×64
+skins supply `null` followed by a newline as their geometry data; the other 270 supply objects.
+Check the parsed JSON value before requesting an object. A JSON null value retains the
+existing standard-skin path without a parse warning. Supplied model selection remains unchanged.
+
+The replay inspector also excludes JSON null with ordinary JSON whitespace from its supplied
+geometry count. Malformed or non-null payloads still require geometry installation, so they
+continue to fail verification when installation fails. Eight additional self-test inputs cover
+that distinction through actual skin-packet encoding and decoding.
+
+All 38 add-on patches replay. The dependency build passes 18 converter tests, 1,300 core tests,
+and 825 add-on tests, with 152 optional skips and no failures. Replay self-tests and all 263
+tooling tests pass. The fresh 130-second client replay installs all 273 skins and 270 supplied
+geometry records, with no geometry-parse warnings. Transport verification passes, and all
+seven owned Java/display processes stop normally. Rendering verification still fails on
+unresolved mappings. These checks do not establish native visual parity.

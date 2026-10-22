@@ -1,4 +1,4 @@
-From fd4273224a0e16a954c6b18af55b9c6b5d40da41 Mon Sep 17 00:00:00 2001
+From 53f611c4d47f085b6176b8c439bbf80f5f2bfb10 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -421,6 +421,12 @@ Retain the difference between native and Java vehicle yaw when applying rider an
 
 Reuse resolved actor draws while the immutable model snapshot, accepted resources and Nether lighting remain unchanged. Bound retained snapshots to 1,024 actor identities. Clear the cache on resource or world replacement, while poses, UV animations, scale and yaw continue their existing frame evaluation. Targeted tests cover identity invalidation, failed resolution retries and least-recently-used eviction.
 
+Treat a parsed JSON null skin geometry value as absent, including ordinary
+JSON whitespace. The captured Enchanted scene supplies three standard skins
+with null followed by a newline. Preserve their existing standard geometry
+path without a spurious parse warning; malformed non-null payloads still
+report a failure.
+
 Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.github.com>
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |  17 ++
@@ -444,7 +450,7 @@ Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.gith
  .../render/MixinPlayerSkinWidget.java         |  28 ++
  .../render/MixinPlayerTabOverlay.java         |  22 ++
  .../render/BedrockAcceptedResources.java      |  53 ++++
- .../BedrockActorMaterialDefinitions.java      | 151 ++++++++++
+ .../BedrockActorMaterialDefinitions.java      | 151 +++++++++
  .../bedrock/render/BedrockActorMaterials.java |  56 ++++
  .../render/BedrockActorRenderTypes.java       |  87 ++++++
  .../bedrock/render/BedrockActorResources.java |  43 +++
@@ -456,7 +462,7 @@ Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.gith
  .../bedrock/render/BedrockNameTagAnchors.java |  75 +++++
  .../bedrock/render/BedrockNameTags.java       |  76 +++++
  .../bedrock/render/BedrockPlayerRenderer.java |  53 ++++
- .../bedrock/render/BedrockPlayerSkins.java    | 283 ++++++++++++++++++
+ .../bedrock/render/BedrockPlayerSkins.java    | 287 ++++++++++++++++++
  .../render/BedrockRenderSnapshotCache.java    |  48 +++
  .../bedrock/render/BedrockRidingAnchors.java  |  73 +++++
  .../bedrock/render/BedrockShaderEmission.java | 181 +++++++++++
@@ -469,13 +475,13 @@ Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.gith
  .../shaders/core/bedrock_actor.vsh            |  47 +++
  .../viafabricplus-bedrock.accesswidener       |   6 +
  .../viafabricplus-bedrock.mixins.json         |  17 ++
- .../render/BedrockAcceptedResourcesTest.java  | 118 ++++++++
+ .../render/BedrockAcceptedResourcesTest.java  | 118 +++++++
  .../BedrockActorMaterialDefinitionsTest.java  | 165 ++++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 +++
  .../render/BedrockActorUvTransformTest.java   |  27 ++
  .../bedrock/render/BedrockCubeFacesTest.java  | 182 +++++++++++
  .../render/BedrockEmissiveMaskTest.java       |  36 +++
- .../render/BedrockEntityRendererTest.java     |  50 ++++
+ .../render/BedrockEntityRendererTest.java     |  50 +++
  .../bedrock/render/BedrockModelCubeTest.java  |  47 +++
  .../render/BedrockNameTagAnchorsTest.java     | 120 ++++++++
  .../bedrock/render/BedrockNameTagsTest.java   | 127 ++++++++
@@ -485,7 +491,7 @@ Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.gith
  .../render/BedrockShaderPipelinesTest.java    |  49 +++
  .../bedrock/render/BedrockSkinImagesTest.java |  82 +++++
  .../render/CustomEntityRenderStoreTest.java   |  62 ++++
- 62 files changed, 4186 insertions(+)
+ 62 files changed, 4190 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockDynamicTexture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisPipelines.java
@@ -2566,10 +2572,10 @@ index 0000000..471807a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 new file mode 100644
-index 0000000..45f54b4
+index 0000000..790c8b7
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -0,0 +1,283 @@
+@@ -0,0 +1,287 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2814,11 +2820,15 @@ index 0000000..45f54b4
 +
 +    private static BedrockGeometryModel geometry(final SkinData skin) {
 +        final String name = geometryName(skin);
-+        if (skin.geometryData() == null || skin.geometryData().isBlank() || "null".equalsIgnoreCase(skin.geometryData())) {
++        if (skin.geometryData() == null || skin.geometryData().isBlank()) {
 +            return null;
 +        }
 +        try {
-+            final JsonObject data = JsonParser.parseString(skin.geometryData()).getAsJsonObject();
++            final var parsed = JsonParser.parseString(skin.geometryData());
++            if (parsed.isJsonNull()) {
++                return null;
++            }
++            final JsonObject data = parsed.getAsJsonObject();
 +            final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
 +            return models.stream().filter(model -> model.getIdentifier().equals(name)).findFirst()
 +                .orElseGet(() -> models.isEmpty() ? null : models.getFirst());

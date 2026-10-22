@@ -10,6 +10,22 @@ Tests cover each bundled scene's visible-control validation, actual menu identit
 Native visual and direct/ViaProxy transaction comparisons remain unverified.
 Failed presentation restores the original ordinary screen; this remains an unresolved parity defect for a supported scene.
 
+## Brewing stand
+
+Version 4 adds the authored brewing screen over a real `BrewingStandMenu`.
+Counter updates require the current play listener, menu object, kind, menu ID, and presentation sequence.
+The screen uses full native counters independently of Java's short menu properties.
+Its slots keep ordinary authoritative inventory operations. Storage count-one providers do not apply to this workstation.
+
+A fresh BDS 1.26.51.1 test places nether wart through the screen, brews three water bottles, and transfers three awkward potions.
+A read-only observer confirms the native screen class and matching core and client counter snapshots through completion.
+Screenshots cover progress, completed items, and empty bottle placeholders.
+The chest action, ordinary chest transfer, and reconnect checks also pass.
+All 1,306 installed core classes match the rebuilt artifact.
+
+The full build passes 2,162 tests, with 152 optional skips. Core and client stacks replay all 102 and 38 patches.
+Native pixel, direct-client, and Iris comparisons remain open.
+
 Shared UI classes now own bounded scene parsing, layout, images, text, font factors, scroll geometry and visual states.
 Modal forms retain their own response model and custom input state.
 Native containers use typed slot and cursor annotations, rather than fake form actions.
@@ -95,3 +111,35 @@ Native controller focus/navigation and complete native pixel parity remain unver
 ## Upstream prerequisites
 
 - [viafabricplus-bedrock patch](../../viafabricplus-bedrock/upstreamable/0029-share-native-ui-scene-rendering.pr.md): Land shared scene and GUI actor rendering before container presentation.
+
+## Constructed Item context (October 22, 2026)
+
+Inventory Item presentation now uses the core snapshot schema constant.
+Schema version three preserves Block presence independently of runtime ID zero.
+The complete core and add-on build together; eleven strict-BDS inventory controls and same-world reconnect pass.
+The rebuilt profiles embed the matching 1,363 core classes and both block-item resources.
+These controls retain the existing Java cooking screens and do not establish native workstation presentation.
+
+## Cooking receiver and presentation frames (October 22, 2026)
+
+The production client now receives authoritative cooking snapshots and separate raw progress updates.
+It binds them to the play listener, actual menu object, cooking family, opening sequence, and item-update sequence.
+Retired updates cannot bind to a later menu with the same numeric ID.
+An invalid newer item conversion retires the previous authority.
+
+Ordinary containers and cooking models share presentation frames and the existing renderer.
+Cooking previews retain copied translated stacks, independently of actual inventory-slot identities.
+The layout test retains all 39 inventory slots and distinct recipe identities.
+Progress changes do not change the original inventory authority.
+
+The ordinary cooking screen remains installed.
+Native activation, recipe quantity and cursor behavior, search, navigation, and remaining authored input handlers still need implementation.
+These changes do not establish a completed native cooking screen or visual parity.
+
+All four projects build with 2,344 passing tests and 152 optional skips.
+The 102 core patches and 38 client patches replay successfully. Offline tooling and metadata validation pass.
+A read-only live observer verifies the production receiver across furnace, smoker, and blast-furnace menus.
+It records 187 valid frames, including 171 applied progress observations, with all 39 actual inventory slots.
+Both runtime inventories match 2,390 core and client classes plus four resources.
+The three ordinary cooking gameplay cases and same-world reconnect pass. The private observer is removed after normal cleanup.
+These observations verify receiver ownership and CPU presentation frames, without establishing authored screen drawing or native action execution.

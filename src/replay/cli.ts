@@ -47,8 +47,10 @@ import {
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
 import { cleanupReplaySession } from "./session-cleanup.ts";
+import { hiveTarget, publicTarget } from "./targets.ts";
 import {
   hasGameplayAcknowledgments,
+  clientSessionFailed,
   verifyRendering,
   type SceneFeatures,
   type RenderAudit,
@@ -209,6 +211,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
     join(root, "src/replay/java/com/enderdash/agent/replay/PrivateFiles.java"),
     join(root, "src/replay/java/com/enderdash/agent/replay/PacketJournal.java"),
     join(root, "src/replay/java/com/enderdash/agent/replay/CameraPresetAudit.java"),
+    join(root, "src/replay/java/com/enderdash/agent/replay/RecordingConnections.java"),
     ...files,
   ]);
   await writeFile(
@@ -627,18 +630,25 @@ async function main(): Promise<void> {
   const [mode, input, ...args] = Bun.argv.slice(2);
   if (mode === "--help" || mode === "help" || (mode === "form-fixture" && input === "--help")) {
     console.log(`Usage: bun run server-replay <record server|replay directory|inspect directory> [--seconds 120]
+       bun run server-replay record public --target host:port [--client addon|native] [--allow-transfers]
        bun run server-replay form-fixture /absolute/plan.json [--dry-run] [--verbose]
        bun run server-replay form-fixture /absolute/plan.json --apply --reviewed-preview <sha256> [--verbose]
 
 Form fixtures combine a protocol-2193 bootstrap, captured form JSON, and declared decrypted packs.
 The default is a read-only verbose preview. Apply creates a fresh private directory only.
-Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and zero audio remain enabled.`);
+Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and zero audio remain enabled.
+Live add-on recordings accept --allow-transfers to save each connection separately.`);
     return;
   }
   if (mode === "selftest") {
     const jar = await artifact("viaproxy");
     const { classes } = await buildPlugin(jar);
-    for (const test of ["ReplaySelfTest", "NativeCaptureSelfTest", "PrivateFilesSelfTest"]) {
+    for (const test of [
+      "ReplaySelfTest",
+      "NativeCaptureSelfTest",
+      "PrivateFilesSelfTest",
+      "RecordingConnectionsSelfTest",
+    ]) {
       const { stdout } = await execute("java", [
         "-cp",
         `${classes}${delimiter}${jar}`,
@@ -690,6 +700,9 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
   const transportOnly = args.includes("--transport-only");
   const guiScale = option("--gui-scale") === undefined ? undefined : Number(option("--gui-scale"));
   const softwareRendering = args.includes("--software-rendering");
+  const allowTransfers = args.includes("--allow-transfers");
+  if (allowTransfers && (mode !== "record" || client !== "addon"))
+    throw new Error("--allow-transfers requires a live add-on recording.");
   if (guiScale !== undefined && (!Number.isInteger(guiScale) || guiScale < 1 || guiScale > 4))
     throw new Error("--gui-scale must be between 1 and 4.");
   if (client === "native" && (guiScale !== undefined || softwareRendering))
@@ -708,25 +721,25 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
     mode === "replay" && client === "native" ? await requireNativeOfflineReplay() : undefined;
   if (!Number.isInteger(seconds) || seconds < 20 || seconds > 300)
     throw new Error("--seconds must be between 20 and 300.");
-  if (
-    mode === "record" &&
-    input === "hive" &&
-    client !== "native" &&
-    !args.includes("--allow-hive")
-  )
-    throw new Error(
-      "ViaBedrock blacklists The Hive because translated clients can be banned. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.",
-    );
   let target = servers[input as keyof typeof servers];
-  if (mode === "record" && input !== "local" && option("--target"))
-    throw new Error("--target requires record local. Named servers use their configured address.");
+  if (mode === "record" && input !== "local" && input !== "public" && option("--target"))
+    throw new Error(
+      "--target requires record local or public. Named servers use their configured address.",
+    );
   if (mode === "record" && input === "local") {
     target = option("--target")!;
     if (!/^(?:nethernet:\/\/)?127\.0\.0\.1:\d+$/.test(target ?? ""))
       throw new Error(
         "Local recordings require --target 127.0.0.1:port or nethernet://127.0.0.1:port.",
       );
+  } else if (mode === "record" && input === "public") {
+    target = publicTarget(option("--target"));
   } else if (mode === "record" && !target) throw new Error("Unknown server.");
+  const hive = mode === "record" && hiveTarget(target!);
+  if (hive && client !== "native" && !args.includes("--allow-hive"))
+    throw new Error(
+      "ViaBedrock blacklists The Hive because translated clients can be banned. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.",
+    );
   const jar = await artifact("viaproxy");
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
   await chmod(privateRoot, 0o700);
@@ -737,11 +750,13 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
     `${new Date().toISOString().replaceAll(":", "-")}-${mode}-${mode === "record" ? input : "scene"}`,
   );
   await mkdir(directory, { mode: 0o700 });
+  if (allowTransfers)
+    await writeFile(join(directory, "allow-transfers"), "1\n", { mode: 0o600, flag: "wx" });
   const proxyHome = join(directory, "proxy");
   await mkdir(proxyHome, { mode: 0o700 });
   await writeFile(
     join(proxyHome, "viabedrock.yml"),
-    `blob-cache: disabled\npack-cache: disabled\ntranslate-resource-packs: true\ndisable-server-blacklist: ${input === "hive" && args.includes("--allow-hive")}\n`,
+    `blob-cache: disabled\npack-cache: disabled\ntranslate-resource-packs: true\ndisable-server-blacklist: ${hive && args.includes("--allow-hive")}\n`,
     { mode: 0o600 },
   );
   await mkdir(join(proxyHome, "plugins"), { mode: 0o700 });
@@ -926,12 +941,7 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
         )
       )
         break;
-      if (
-        /Mixin transformation .* failed|Client disconnected with reason:|handlerAdded\(\) has thrown|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment/.test(
-          log,
-        )
-      )
-        break;
+      if (clientSessionFailed(log, allowTransfers)) break;
       await Bun.sleep(500);
     }
     await writeFile(join(directory, "client.log"), await logText(game.log), { mode: 0o600 });
@@ -1023,11 +1033,7 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
     throw new Error(
       "The client exited or the run was cancelled before normal cleanup. Read its private client log.",
     );
-  if (
-    /Client disconnected with reason:|Failed to handle packet|ReadTimeoutException|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment|Mixin transformation .* failed|handlerAdded\(\) has thrown/.test(
-      await logText(join(directory, "client.log")),
-    )
-  ) {
+  if (clientSessionFailed(await logText(join(directory, "client.log")), allowTransfers)) {
     throw new Error(
       "The client disconnected or failed during the captured session. Read its private client log.",
     );
@@ -1044,9 +1050,27 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
       "The client produced no packet journal. Read its private client and server logs.",
     );
   const summary = await inspectJournal(join(directory, "packets.sbr"));
+  const connections = [];
+  if (allowTransfers) {
+    const names = (await readdir(directory))
+      .filter((name) => /^connection-[1-9]\d*$/.test(name) && Number(name.slice(11)) >= 2)
+      .toSorted((left, right) => Number(left.slice(11)) - Number(right.slice(11)));
+    for (const name of names) {
+      const connection = await inspectJournal(join(directory, name, "packets.sbr"));
+      if (
+        !connection.reachedStartGame ||
+        !connection.reachedSpawn ||
+        !hasGameplayAcknowledgments(connection.serverboundIds)
+      )
+        throw new Error(
+          `Transfer ${name} did not reach initialized gameplay. Read its private journal.`,
+        );
+      connections.push({ directory: name, summary: connection });
+    }
+  }
   await writeFile(
     join(directory, "manifest.json"),
-    `${JSON.stringify({ schema: 1, mode, client, graphics, server: mode === "record" ? input : undefined, capturedAt: new Date().toISOString(), summary }, null, 2)}\n`,
+    `${JSON.stringify({ schema: 1, mode, client, graphics, server: mode === "record" ? input : undefined, target: mode === "record" ? target : undefined, capturedAt: new Date().toISOString(), summary, ...(allowTransfers ? { connections } : {}) }, null, 2)}\n`,
     { mode: 0o600 },
   );
   console.log(JSON.stringify(summary, null, 2));

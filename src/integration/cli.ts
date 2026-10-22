@@ -14,6 +14,7 @@ import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
 import { installPrism, prismProcess } from "../prism.ts";
 import { installEntityProbe, waitForProbe } from "./entity-probe.ts";
+import { isAuthoredInventoryCase, installInventoryUiProbe } from "./inventory-ui-probe.ts";
 import {
   allGameplayCaseIds,
   gameplayCasesForBackend,
@@ -251,6 +252,7 @@ async function bedrockServer(
   name: string,
   entityProbe = false,
   resourceProbe?: { variant: "a" | "b"; run: string },
+  inventoryUiProbe = false,
 ): Promise<{ child: ChildProcess; log: string; port: number; version: string; transport: string }> {
   if (!existsSync(join(source, "bedrock_server")))
     throw new Error(
@@ -282,6 +284,10 @@ async function bedrockServer(
     changed = set(changed, "content-log-console-output-enabled", "true");
     changed = set(changed, "content-log-level", "info");
     await installEntityProbe(home, "integration-world");
+  }
+  if (inventoryUiProbe) {
+    changed = set(changed, "texturepack-required", "true");
+    await installInventoryUiProbe(home, "integration-world");
   }
   if (resourceProbe) {
     changed = set(changed, "texturepack-required", "true");
@@ -866,6 +872,9 @@ async function main(): Promise<void> {
   ) {
     throw new Error("Geyser cases and negative controls require --route java-geyser.");
   }
+  if (geyserRoute && gameplayCases.some(isAuthoredInventoryCase)) {
+    throw new Error("Authored Bedrock inventory actions require the java-bedrock route.");
+  }
   if (
     geyserRoute &&
     (entityProbe || resourceProbe || gameplayCases.includes("lab-table-then-chest"))
@@ -909,6 +918,7 @@ async function main(): Promise<void> {
           "bedrock-proxy-server",
           entityProbe || gameplayCases.length > 0,
           resourceProbe ? { variant: "a", run: resourceRun } : undefined,
+          gameplayCases.some(isAuthoredInventoryCase),
         )
       : undefined;
     const proxy = proxyBedrock

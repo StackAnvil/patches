@@ -119,6 +119,7 @@ public final class SceneFeatures {
         String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(ImageType.getImageData(skin.skinData())));
         textures.add(skin.skinData().getWidth() + "x" + skin.skinData().getHeight() + ":" + hash);
         records.merge(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(NativeSkinFragment.encode(skin))), 1, Integer::sum);
-        return skin.geometryData() != null && !skin.geometryData().isBlank() && !skin.geometryData().equals("null") ? 1 : 0;
+        if (skin.geometryData() == null || skin.geometryData().isBlank()) return 0;
+        return skin.geometryData().matches("[ \\t\\r\\n]*null[ \\t\\r\\n]*") ? 0 : 1;
     }
 }

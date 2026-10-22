@@ -66,6 +66,28 @@ The default gameplay run includes the creative case. The map case checks that an
 
 The offhand placement and rocket cases require native Bedrock 1.26.51.1 behavior. Dirt remains in the offhand without placement. All three offhand rockets remain during a valid glide. The mainhand cases still require placement or a rocket boost. Native client captures through the official Geyser fixture established these expectations on October 1, 2026.
 
+## Authored inventory actions
+
+Run the two authored-action cases against BDS 1.26.51.1 with matching StackAnvil builds:
+
+```bash
+bun run test:integration -- --route java-bedrock --plain-only --reuse-build --gameplay-cases chest-authored-one-empty,chest-authored-one-merge
+```
+
+The runner installs the [inventory UI fixture](../inventory-ui-probe/resource_pack/ui/chest_screen.json) for these cases.
+Only the named probe chest selects its manual grid. Other chest titles keep the bundled layout.
+The client places the named chest, opens it, clicks an omitted slot, then clicks its exposed emerald slot.
+
+Both cases require three emeralds and two untouched diamonds in the chest after the click.
+Exactly one emerald must enter the player inventory.
+The empty case requires hotbar slot zero as the destination.
+The merge case requires slot 15 to increase from 62 to 63 while hotbar slot zero stays empty.
+Ordinary pickup, whole-stack transfer, and clicks on omitted slots cannot satisfy these observations.
+
+The emerald stacks share a custom name because the current authored consumer requires a supported custom description.
+These cases do not establish default item-name presentation, native physical input routing, wire-byte equality, or Social-menu navigation.
+The runner retains before, open-menu, and after screenshots with the server observations in its private run directory.
+
 ## Complex gameplay
 
 The opt-in complex suite adds ranged use and hits, potion effects, fireball interactions, powder snow, fluids, and creative flight:

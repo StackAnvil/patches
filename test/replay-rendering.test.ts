@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { hasGameplayAcknowledgments, verifyRendering, type RenderAudit, type SceneFeatures } from "../src/replay/verification.ts";
+import { clientSessionFailed, hasGameplayAcknowledgments, verifyRendering, type RenderAudit, type SceneFeatures } from "../src/replay/verification.ts";
 
 test("gameplay requires local initialization and either movement protocol", () => {
   const incomplete: Record<number, number>[] = [{}, { 113: 1 }, { 144: 20 }, { 19: 20 }, { 113: 0, 144: 20 }];
@@ -93,4 +93,21 @@ test("accepts an idle proxy observer when the recording has no custom controller
   expect(verifyRendering(vanilla, actual, "", true, { required: true, audit })).toEqual([]);
   expect(verifyRendering(vanilla, actual, "", true, { required: true })).not.toHaveLength(0);
   expect(verifyRendering(expected, actual, "", true, { required: true, audit })).not.toHaveLength(0);
+});
+
+
+test("live transfers keep later disconnects and packet failures visible", () => {
+  const transfer = "[Render thread/WARN]: Client disconnected with reason: Transferred to another server\n";
+  expect(clientSessionFailed(transfer)).toBeTrue();
+  expect(clientSessionFailed(transfer, true)).toBeFalse();
+  for (const failure of [
+    "Client disconnected with reason: Connection closed",
+    "Failed to handle packet",
+    "ReadTimeoutException",
+    "handlerAdded() has thrown",
+  ]) {
+    expect(clientSessionFailed(transfer + failure, true)).toBeTrue();
+    expect(clientSessionFailed(failure + "\n" + transfer, true)).toBeTrue();
+  }
+  expect(clientSessionFailed(transfer.trimEnd() + ": unexpected", true)).toBeTrue();
 });

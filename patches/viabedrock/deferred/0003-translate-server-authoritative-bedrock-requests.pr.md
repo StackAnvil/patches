@@ -3,6 +3,19 @@
 This patch follows the inventory work owned by [ViaBedrock #276](https://github.com/ViaVersionAddons/ViaBedrock/pull/276).
 It remains deferred until that prerequisite lands.
 
+## Brewing stand addressing
+
+The target BDS 1.26.51.1 inventory exposes ingredient slot 0, bottle slots 1 through 3, and fuel slot 4.
+Map them to Java ingredient slot 3, bottle slots 0 through 2, and fuel slot 4.
+The previous mapping swapped ingredient and fuel. The native request collections now follow the corrected addresses.
+The slot regression fails before the correction and passes afterward.
+
+The authored screen requires both workstation and counter capabilities. It retains ordinary inventory operations and item authority.
+Container properties remain signed int32 snapshots under the current presentation sequence.
+Live observations confirm property 0 as remaining brewing ticks, property 1 as fuel, and property 2 as total fuel.
+Completion reaches counters `[0, 19, 20]`, consumes the ingredient, and transfers three awkward potions to player inventory.
+Counter updates do not advance item revisions.
+
 ## Crafted item metadata
 
 A successful stack response supplies counts, names, and stack network IDs.
@@ -305,3 +318,264 @@ The combined private core gate passes 1,015 cases with 30 optional skips.
 Stateful tests cover source count one, stale or reused menus, forbidden destinations, unchanged cursor, send failure and response recovery.
 Legacy backend rejection leaves ordinary Java clicks available.
 Controller navigation and full native keyboard interaction parity remain outside this change.
+
+## Reported-slot reconciliation for authored actions
+
+The recorded protocol-2193 Social interaction returns a successful response containing only an empty cursor.
+That response does not confirm the predicted source or destination transfer.
+Core previously retained both predictions, which can remove a menu icon without an accepted transfer.
+
+Authored count-one requests now use a reported-slot response policy.
+Core restores omitted predicted changes before applying the slots that the response actually reports.
+Restoration requires the same container owner, opening generation, server item revision, and still-predicted item contents.
+Newer authoritative contents remain intact. Inventory response aliases resolve to their real backing slots.
+Successful responses and rejection rollback from an earlier opening cannot overwrite a reopened menu, including the same object with a new generation.
+Restored predictions also retire queued clicks that depended on their contents.
+Ordinary Java requests retain their existing prediction policy.
+
+The matching [protocol 2193 response schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/item-stack-response-packet/)
+and [nearby preview container schema](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/types/item-stack-response-container-info/)
+describe the response and named slot records. No packet ID, enum value, or wire format changes in this fix.
+The missing-transfer case comes from the recorded target-server interaction above, rather than a new native-client comparison.
+
+Six regression cases execute the genuine authored-action session, prediction storage, and response reconciler.
+They cover cursor-only, complete and partial responses, inventory aliases, newer server contents, queued clicks, and reused menu generations.
+The suite passes alongside the existing request-tracker and native-action tests: 16 cases, no skips or failures.
+Main and test Checkstyle checks pass.
+Working Social navigation, native serializer behavior, and fresh direct and ViaProxy menu comparisons remain open.
+
+The full 101-patch stack replays after folding this change into its owning inventory patch.
+The converter and complete core build pass, including all Checkstyle tasks.
+Core runs 1,205 test cases: 1,175 pass, 30 optional cases skip, and none fail.
+
+The complete downstream build also passes: 18 converter tests, 816 add-on tests, and four ViaProxy tests pass.
+The add-on skips 120 optional cases. The final rejection-generation control passes before rebuilding these matching artifacts.
+
+A private local run uses the official BDS 1.26.51.1 archive with SHA-256
+`ad91d3b824e51ea50b5bb601c295cbd8f543a29b14315c2ad89ff27311e2d860`.
+The client reaches spawn, remains connected for 20 seconds, and reconnects successfully through ViaProxy.
+The chest-transfer fixture reports that the chest screen did not open.
+Later screenshot inspection confirms that the native chest screen was already open.
+The probe assumed Java GUI scale two and sampled outside the native panel.
+The same run reports repeated cached-chunk NBT decode errors before the inventory interaction.
+This run does not establish native menu behavior or transfer acceptance. Its processes and private display stop cleanly.
+An earlier attempt with the default BDS 1.26.45.1 installation fails protocol detection and supplies no target-version evidence.
+The home filesystem also refuses the initial private copy at its five-GiB reserve.
+The target-version run uses a private temporary checkout on a filesystem with sufficient free space and keeps that reserve check enabled.
+
+
+The corrected probe detects native desktop scale and uses exact capture-pixel coordinates for sampling and slot clicks.
+With the independent full-dimension biome fix, a fresh target-server ViaProxy run passes chest transfer.
+The server confirms zero items in the chest and all four items in the player inventory.
+Join, 20-second stability, reconnect, and reconnect stability also pass.
+Cached-chunk decoding errors fall from 1,058 in the earlier run to zero in the rebuilt run.
+This verifies ordinary chest interaction with these artifacts; authored Social navigation remains open.
+
+
+## Authored action live verification
+
+Two isolated BDS 1.26.51.1 cases now exercise the negotiated authored count-one path through ViaProxy.
+The client places a named chest and opens a title-selected manual grid with one exposed source slot.
+It clicks an omitted slot before activating the exposed slot.
+
+The empty-destination case leaves three source emeralds and both hidden diamonds in the chest.
+One emerald reaches hotbar slot zero.
+The merge case leaves the same chest contents and increases the existing player stack in slot 15 from 62 to 63.
+Hotbar slot zero remains empty, which verifies merge preference over an earlier empty cell.
+The ordinary four-item chest-transfer control also passes with the same installed resource pack.
+Join, stability, reconnect, and reconnect stability pass. Chunk decoding errors remain zero.
+
+An ordinary-controls fixture attempt changes the hidden slot and fails both assertions.
+A missed authored hit target leaves all contents unchanged and also fails.
+The corrected fixture uses explicit manual-grid anchors and retains its open-menu screenshots.
+These controls prevent fallback or an ignored click from passing as a native action.
+The current custom-description scope requires matching custom names on the source and merge target.
+The cases do not establish default-name presentation or full native physical input routing.
+
+A separate private comparison verifies two retained target-native Social requests against the current request codec.
+Each complete 27-byte request matches byte for byte. Both 18-byte successful cursor-only responses also round-trip exactly.
+The original protocol-2193 journal confirms that each response precedes a form, and the form precedes the client's container close.
+This verifies those serialized examples from the original recording; it does not establish a fresh Social interaction with the current client.
+A success response containing only an empty cursor therefore does not, by itself, prove that menu navigation failed.
+A subsequent offline replay uses the unchanged first 210 seconds of the original native journal and its accepted resource pack.
+The current add-on reaches the authored Friends form after the container and cursor-only success response.
+A saved screenshot confirms the visible form, and the screen audit records the container-to-scene transition.
+The replay passes transport, spawn, payload completeness, and Java resource-pack loading.
+Overall rendering verification fails because the scene contains unresolved mappings, including `cubecraft:empty.entity`.
+This result verifies form takeover during recorded delivery. It does not establish fresh interactive Social request acceptance or complete scene rendering.
+
+The tooling check, probe-pack build, all 261 offline tests, and patch metadata validation pass.
+Raw recordings, packet extracts, screenshots, JVM probes, and run logs remain private.
+
+## Late responses after menu replacement
+
+Ordinary inventory requests previously bypassed the menu-lifetime check used by authored count-one actions.
+A delayed success response could overwrite a replacement chest through its shared container name.
+A rejected request could also restore old crafting cells from its full cursor snapshot.
+
+Both response policies now retain the captured menu lifetime.
+Reusing a container ID or reopening the same object does not authorize an old reply.
+The permanent player inventory and cursor still accept their own response data after a screen transition.
+Other HUD cells retain the captured menu lifetime.
+This includes workstation slots that fall back to the player UI after closure.
+Rejected requests preserve those later cells. Crafted-result refresh also ignores obsolete destinations.
+Dynamic bundle replies retain the captured registry object, so reusing a removed bundle's ID cannot overwrite its replacement.
+Generation history also survives an intervening open/close cycle when the request starts without an open menu.
+
+The expanded ordinary-click regression fails before this change by overwriting a reopened chest.
+The bundle regression also fails before its identity guard by overwriting a replacement with the same dynamic ID.
+The closed-menu control fails before the generation-history correction.
+Behavioral tests cover both policies, success and rejection, object reuse, HUD fallback, and persistent inventory and cursor controls.
+The crafted-result test checks an active destination before it closes or reopens.
+Test fixtures capture predictions at the production sender's boundary.
+These checks establish translator lifecycle behavior. They do not establish a new native response-manager or graphical parity comparison.
+
+All 102 core patches replay cleanly. All four projects build with 2,154 passing tests and 152 optional skips.
+Offline validation passes 263 tooling tests and metadata checks. All four replay self-test groups pass.
+
+A fresh isolated BDS 1.26.51.1 run passes both authored count-one cases and the ordinary chest-transfer control through ViaProxy.
+The empty case transfers one emerald to hotbar slot zero; the merge case increases slot 15 from 62 to 63.
+Both preserve the hidden diamonds and leave three source emeralds.
+The ordinary control transfers all four items. Join, reconnect, and their 20-second stability checks pass.
+The test services and private display stop normally.
+These live cases verify normal requests with the rebuilt artifacts. Delayed response and replacement coverage comes from the behavioral tests above.
+
+Native item registration keeps ordered component updates separate from runtime-ID ownership.
+The first explicit version selects the constructed factory; later invalid-ID entries can update it without taking a runtime ID.
+Constructor defaults and typed updates now own stack capacity, replacing the static table and pack-definition override.
+Inventory keeps native zero and unsigned-byte values. Only the Java component narrows them to its valid range.
+Cooking food and block traits use that same construction history. Their catalog integration remains incomplete.
+
+All 57 focused tests pass, including retained native component and legacy fixtures.
+The zero-capacity bundle regression fails with division by zero before the guard and passes afterward.
+The fixtures cover 26 component cases, 93 legacy cases and their update sequences.
+They do not establish a Player flow or graphical parity. Private executable provenance is recorded in the asset-source guide.
+
+The complete 102-patch core stack replays cleanly, and all four projects build.
+The build passes 2,262 tests with 152 optional skips. Offline validation passes the 264 tooling tests and metadata checks.
+A fresh BDS 1.26.51.1 ViaProxy run passes furnace, smoker and blast-furnace recipe-book cooking, brewing, authored count-one chest placement and ordinary chest transfer.
+Join and reconnect stability checks pass. Both installed client profiles match all 1,346 core classes in the built artifact.
+The private display and owned services stop normally. These controls use Java cooking screens and do not establish native cooking presentation.
+
+## Concrete recipe identity (October 22, 2026)
+
+The item registry now exposes concrete recipe keys for constructed items and network-stack inputs.
+The conversion follows numeric Item ownership before it selects block auxiliary metadata.
+It preserves wildcard descriptors, unsigned item IDs, missing registrations, and the native descriptor hash.
+Runtime block ownership and associated block ownership remain separate inputs.
+
+A fresh target-executable comparison checks 3,600 supplied registry, stack, and block combinations.
+The comparison covers the original descriptor conversion and numeric lookup functions.
+It supplies constructed storage and does not parse a complete network item packet.
+Focused tests also cover runtime ownership and associated-block boundaries.
+These APIs do not yet replace production network Item construction or populate the cooking catalog.
+
+A fresh comparison also checks network recipe keys and hashes against 2,250 complete parsed native constructor and descriptor-conversion executions.
+It supplies runtime candidates, associated defaults and warm auxiliary caches, registry/palette storage, and an empty user-data load boundary.
+Actual built-in/archetype initialization, cold auxiliary registration, and production constructor integration remain unfinished.
+
+All four projects build with 2,296 passing tests, 152 optional skips, and no failures or errors.
+The new native-reference comparisons run without skips. Tooling checks, 264 regressions, and patch metadata checks pass.
+A fresh ViaProxy run passes furnace, smoker, blast furnace, brewing, authored chest placement, ordinary chest transfer, and same-world reconnect.
+Both launched profiles match all 1,360 rebuilt core classes and both block-item resources.
+The live run exits successfully and stops its private display normally. These controls use Java cooking screens.
+
+## Production recipe matching (October 22, 2026)
+
+Named ingredients now use the connection Item registry and the native network-stack descriptor conversion.
+The matcher compares associated blocks by exact palette ownership.
+Different auxiliary values can select the same block; a different axis still fails the match.
+Both descriptor positions accept wildcard 32767.
+Named metadata narrows to signed-short storage and clamps negative values to zero.
+Value -1 therefore does not act as a wildcard.
+
+A fresh executable fixture verifies 440 cases against Bedrock 1.26.51.1, build 51061372.
+It executes parsed Cereal conversion, named construction, deferred resolution, canonical registry lookup, descriptor construction and query-first comparison.
+Warm auxiliary caches, empty alias maps, allocation, CRT, TLS and locks are supplied boundaries.
+The Java comparison covers all 440 cases, including negative and wide int32 metadata before signed-short narrowing.
+A separate regression executes the production matcher after both item codecs and checks the stripped-wood default and alternate axis.
+
+Both network codecs now resolve raw headers through the connection registry before user-data loading.
+Incoming runtime candidates require matching numeric Item ownership; outgoing headers use native descriptor identity.
+Actual alias initialization, unmodeled custom archetypes, saved-item construction and the native cooking-source collector also remain open.
+These changes establish recipe matching progress, not complete native inventory or cooking-screen parity.
+
+All four projects build with 2,301 passing tests, 152 optional skips, and no failures or errors.
+The expanded native-reference and consumer tests pass all 43 selected cases without skips.
+Tooling checks and all 264 regressions pass. The complete 102-patch core stack replays.
+
+A fresh ViaProxy run passes the three cooking stations, brewing, authored chest placement, chest transfer, manual crafting and bulk crafting.
+Its recipe-book check selects the unavailable bamboo recipe instead of the plank recipe and fails its item-count assertion.
+The test now filters craftable entries before selection.
+A focused rerun places both planks and produces four sticks; reconnect passes in both runs.
+All nine gameplay actions therefore pass across the two recordings; the initial recording retains its failed test result.
+All four launched profiles match the 1,360 rebuilt core classes and both block-item resources.
+Both runs stop their private displays normally. These controls use Java screens and do not establish native UI parity.
+
+## Connection-aware network Item construction (October 22, 2026)
+
+Both network item codecs now pass raw auxiliary bits and runtime IDs to the connection constructor before loading user data.
+The constructor validates runtime Block ownership against the original Item, then resolves the associated Legacy only when necessary.
+It keeps exact runtime slots even when an archetype's canonical auxiliary descriptor remains unknown.
+Recipe results use the same constructor, and recipe matching consumes the constructed Item without reconstructing it.
+
+Count invalidation clears Item and Block ownership and skips user-data loading.
+The native block-item constructor can reapply wildcard metadata after that invalidation; the implementation retains this detail.
+Outgoing headers use the concrete descriptor's numeric ID and canonical auxiliary value.
+Empty descriptors retain independent stack network IDs and omit user data.
+
+Both Java decoder paths match 2,250 native parsed-header constructor results in each wire format.
+The comparison covers resolved Item ID, auxiliary metadata, count, Block presence, exact runtime slot, descriptor identity and hash.
+Both outgoing headers match 384 complete native descriptor-producer executions.
+Six further native empty-stack producer cases retain outer network IDs and produce no user-data bytes.
+The recipe-result count sweep runs through the registry constructor for all 65,536 signed-short inputs.
+
+These fixtures execute Bedrock 1.26.51.1, build 51061372, with supplied registry/palette storage, warm auxiliary caches and runtime seams.
+They do not establish binary reader equivalence, actual item installation, specialized user-data loading, saved-NBT construction or all custom archetypes.
+The native cooking-source collector and authored workstation controls remain unfinished.
+The movement, mount, camera and rendering requirements of the five-area goal also remain active.
+
+All four projects build with 2,309 passing tests, 152 optional skips, and no failures or errors.
+The core suite contains 1,489 cases. New native-reference comparisons run without skips.
+Tooling checks, all 264 regressions and offline patch metadata checks pass.
+All 102 core patches and 38 client patches replay cleanly.
+
+A fresh strict-BDS ViaProxy run passes all eleven controls.
+Cooking passes on the furnace, smoker and blast furnace.
+Brewing, authored chest placement, ordinary chest transfer, manual crafting, recipe-book crafting, bulk crafting and both creative replacement cases also pass.
+Join and same-world reconnect pass. Both installed profiles match all 1,363 rebuilt core classes and both block-item resources.
+The runtime probe mutates three temporary Items before the fix and preserves all three afterward. No observer errors occur.
+The run exits successfully and stops the private display normally.
+These controls use Java cooking screens; native workstation presentation and the other goal areas remain open.
+
+## Item userdata without NBT (October 22, 2026)
+
+A zero userdata marker omits NBT but still precedes both restriction arrays and shield timing.
+The shared loader now reads those fields instead of returning at the marker.
+Both item wire formats retain the fields, and a truncated tail retains earlier completed fields.
+The target 1.26.51.1 generic reader and shield reader establish this control flow.
+Positive legacy NBT markers and invalid-version behavior remain outside this correction.
+
+
+## Native transfer quantities and request identities
+
+Pickup requests and authored count-one transfers now share the native quantity decoder.
+It preserves explicit counts, the two distinct descriptor domains, unsigned-byte narrowing, and rejection of unknown values.
+Source validity, maximum-stack resolution, permissions and destination capacity remain separate steps.
+
+The native count-one backend rejects sources without a positive server stack network ID.
+It skips occupied merge destinations with unresolved IDs and retains zero for empty destinations.
+These guards prevent a missing-ID exception and requests with unresolved identities before prediction starts.
+
+A private fixture executes the unchanged decoder in Bedrock 1.26.51.1, build 51061372, protocol 2193.
+The comparison covers 1,638 cases, including signed extremes, byte narrowing, invalid descriptors and the separate one branch.
+All 28 selected Java tests pass with the native fixture enabled. Both Checkstyle tasks pass.
+The fixture establishes the internal quantity calculation. It excludes source validation, permission callbacks, destination limits, mutation, requests and UI behavior.
+Native cooking dispatch, item return behavior and authored workstation controls remain unfinished.
+
+The complete four-project build passes 2,348 Java tests, with 152 optional skips and no failures or errors.
+All 102 core patches and 38 client patches replay cleanly. Tooling checks, 264 regressions and patch metadata checks pass.
+
+A fresh strict-BDS ViaProxy run passes both authored chest transfers, ordinary chest transfer, pickup-all, and all three cooking controls.
+Initial join and same-world reconnect also pass. The runner stops its private display normally.
+These controls verify the existing request paths with the rebuilt artifacts. They do not establish authored cooking control or native visual parity.

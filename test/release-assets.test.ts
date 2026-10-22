@@ -3,7 +3,8 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { prepareReleaseAssets } from "../src/release-assets.ts";
+import { prepareReleaseAssets, prepareValidatedRelease } from "../src/release-assets.ts";
+import { buildArtifactEvidence, validationSteps, type ValidationReport } from "../src/validation.ts";
 import { root } from "../src/model.ts";
 import type { ViaFabricPlusPin } from "../src/viafabricplus.ts";
 import { writeClientJar } from "./helpers/client-artifacts.ts";
@@ -56,6 +57,21 @@ test("release bundles verified client JARs and ignores stale launcher archives a
     expect(JSON.parse(await readFile(join(output, "viafabricplus-bedrock-manifest.json"), "utf8"))).toEqual(
       JSON.parse(await readFile(join(artifacts, "viafabricplus-bedrock", "manifest.json"), "utf8")),
     );
+
+    const evidence: ValidationReport = {
+      schema: 1, runId: "fixture", revision: "revision", dirty: false, profile: "release",
+      startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), status: "passed",
+      environment: { platform: "fixture", arch: "fixture", bun: Bun.version },
+      steps: validationSteps("release").map((step) => ({ ...step, status: "passed", exitCode: 0 })),
+      artifacts: await buildArtifactEvidence(artifacts, { projects, pin }), limitations: [],
+    };
+    await mkdir(join(artifacts, "validation"));
+    await writeFile(join(artifacts, "validation", "release.json"), JSON.stringify(evidence));
+    const validated = await prepareValidatedRelease(artifacts, output, evidence.revision, projects, pin);
+    expect(new Set(validated)).toEqual(new Set([...released, "validation.json", "validation.md"]));
+    expect(JSON.parse(await readFile(join(output, "validation.json"), "utf8"))).toEqual(evidence);
+    await expect(prepareValidatedRelease(artifacts, output, "stale-revision", projects, pin)).rejects.toThrow();
+    expect(new Set(await readdir(output))).toEqual(new Set(validated));
 
     const pinnedManifestFile = join(artifacts, "viafabricplus", "manifest.json");
     const pinnedManifest = JSON.parse(await readFile(pinnedManifestFile, "utf8")) as { jenkinsBuild: number };

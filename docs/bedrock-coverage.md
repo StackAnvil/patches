@@ -114,12 +114,48 @@ Cloning produces two maps and consumes one item from each input.
 Naming uses the request's filter strings and `CartographyText` origin.
 These captures do not establish the Java implementation.
 
-The decoder tests retain known and unknown recipe UUIDs and unsigned network IDs.
-They also establish following-array alignment and truncated input rejection.
+The decoder retains the target's 14 known dynamic-recipe UUIDs and skips unknown factories before registration.
+It preserves unsigned network IDs. Tests establish following-array alignment and truncated input rejection.
 Core now retains map dimension, origin, lock state, scale, and the server's creation map IDs.
 An omitted scale or creation list preserves previous state.
 A native extension selects the next ID in the advertised map family.
 Cloning preserves that ID; locking creates a separate map identity.
+
+Core recipe registration keeps the first station/name pair and rejects zero or reused network IDs.
+Rejected entries do not reserve either key. Java grid limits apply after native catalog registration.
+Presented books retain their catalog and unlock revision. Replacement registrations receive fresh click IDs.
+Recipe models copy their ingredients and nested result data so callers cannot change a registered recipe.
+Recipe result decoding follows the native signed-short conversion and retains nonempty stack counts from 128 through 255.
+Every result must resolve to a registered non-air item before its recipe can claim registration keys.
+Executable fixtures cover the registration guards, dimensions, result validation, count conversion and dynamic-factory selection.
+These probes do not establish complete native factory construction, item ownership or visual parity.
+Item registration now keeps ordered updates separate from runtime-ID ownership and factory construction.
+Native constructor defaults and typed component updates supply maximum stack sizes and cooking categories.
+Inventory calculations retain the native unsigned-byte value, including zero; the Java item component uses its valid range of 1 to 99.
+Resource-pack item definitions no longer override stack capacity.
+The shared block-name resolver checks primary names before aliases and retains exact namespace lookup rules.
+Private native comparisons cover 14 block lookups, 26 component stacking cases and 93 legacy stacking cases, plus update sequences.
+Semantic tests cover duplicate registrations, invalid IDs, factory order, defensive tag ownership and cooking-category precedence.
+A bundle regression reproduces division by zero before the capacity guard and passes afterward.
+These checks do not establish complete block registration, ingredient grouping or graphical parity.
+The complete build passes 2,262 tests with 152 optional skips.
+Fresh BDS checks pass all three Java cooking screens, brewing, authored chest placement and ordinary chest transfer.
+Join and reconnect checks pass; the owned test services close normally.
+
+Named ingredients now consume native network descriptor keys and compare associated blocks by exact registered ownership.
+Auxiliary values 8 and 0 can match the same default block; a different runtime axis still fails.
+Named metadata uses signed-short narrowing and clamps negative values to zero. Both descriptor positions recognize wildcard 32767.
+A fresh native reference verifies 440 deferred-name resolution and concrete-comparison cases.
+The production regression exercises both item codecs and the real matcher with supplied registry and block lookup context.
+Both codecs now construct headers through the connection registry before loading user data. Runtime ownership and raw auxiliary lookup remain separate.
+Outgoing headers use native descriptor IDs and metadata. Snapshot version three retains Block presence independently of runtime ID zero.
+
+The authored cooking catalog, controls and client screen remain incomplete.
+
+Local BDS tests select recipes from the furnace, smoker and blast-furnace books.
+Each test consumes its input, waits for server cooking and transfers one output to player inventory.
+Brewing converts three water bottles into awkward potions and consumes the ingredient.
+Chest controls and reconnect checks pass. These checks use Java cooking screens; native presentation still needs integration and comparison.
 
 Core now refreshes crafted destinations after a successful acknowledgment.
 It requests full inventory data and holds queued interactions until item IDs, counts, and all player snapshots agree.
@@ -162,7 +198,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core retains received presets and resolves optional-field inheritance. It also resolves fades, FOV transitions, and default camera shake, which the add-on renders. Free-camera activation, pose transport, per-preset overrides, and native blend arithmetic now have production paths. Target tracking, splines, attachments, aim assistance, native follow cameras, built-in perspective pose parity, player-effects application, custom shake parameters, and broader lifecycle comparisons remain incomplete. |
+| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core and add-on execute camera effects, free-camera movement, target tracking, follow-orbit frames and spline playback with scoped native comparisons. Aim commands, definitions, actor priorities, control bytes and lifetime-scoped actor bindings now reach the add-on. Camera-preset aim activation and stored-command restoration now use verified native requests and replies. Native target execution, world queries, reticles and interaction rotation remain unfinished. Full follow-camera, built-in perspective and lifecycle parity also remain open. See the camera patch evidence for the verified scope. |
 | U2 | Fog and HUD visibility | Incomplete | Core retains all target HUD restrictions and transports them through direct connections and ViaProxy. The add-on applies individual Java HUD restrictions and preserves local settings on reset. Fog, missing native widgets, and remaining visual comparisons are incomplete. |
 | U3 | Texture animations, toasts, credits, store requests, and inventory preferences | Incomplete | Core retains each furnace family's tab, filter and layout settings from packet 351. A negotiated channel carries native settings in both directions and replays retained settings after registration or joining. The add-on isolates settings by play session. Tests cover negotiation, malformed payloads, Java changes, opaque values and stale session cleanup. Native cooking screens, preference controls, other inventory settings and native/route comparisons remain incomplete. Other packet-driven presentations remain incomplete. |
 | U4 | Dynamic JSON UI and widgets | Incomplete | Core resolves authored server-form templates, bounded expressions, collections, bindings, images, and original response indices. The add-on renders supported grids, scrolling, textures and alpha animations. The add-on binds forms, containers and NPC screens to each play session. Tests reject stale callbacks on a reused connection. Complete controller bindings, font metrics, other animation properties, and native comparisons on both routes. |
@@ -228,6 +264,16 @@ The server equips a diamond chestplate, but Java reports zero armor points.
 Target BDS registry captures carry empty components for vanilla armor.
 Script API comparisons establish protection and toughness for all thirty vanilla armor and elytra entries.
 Core still needs to derive equipment attributes from target item definitions, including custom wearables, and synchronize updates and removals.
+
+### Pending native moving blocks
+
+The [piston producer](../patches/viabedrock/upstreamable/0052-translate-moving-and-extended-pistons.pr.md) now encodes carried states for Java 26.3's actual block-state codec.
+The [client lifecycle](../patches/viafabricplus-bedrock/upstreamable/0034-animate-native-moving-piston-blocks.pr.md) keeps safe empty geometry until the separate data arrives.
+Pending entities retain their block instead of advancing to air. Loaded entities resume ordinary animation.
+The real producer-to-client decoder test covers all six directions, both motion modes and property-bearing stairs.
+A transformed-client probe verifies 600 pending ticks, six loaded updates and an ordinary Java ticker control.
+The captured Enchanted replay reaches the former crash location without the null-direction failure.
+Transport passes; complete scene rendering still fails on unresolved mappings. Native visual parity remains open.
 
 ## Resources, animation, particles, and audio
 
@@ -9228,3 +9274,418 @@ A private proposal scopes separate native material programs to the owning entity
 It retains ordinary Java eyes and requires actual transformed shader, color, depth, culling and reload checks.
 The active desktop profile has no Iris installation, and no new shader or runtime change has been applied.
 The reported tooltip screenshot also needs its actual active route observed; the frozen Wardrobe strings contain real line feeds.
+
+## Aim state delivery and control policy (October 21, 2026)
+
+The camera owner patches now transport accepted aim catalogs, settings, priorities, control bytes, and selected camera context to the add-on.
+Independent actor bindings carry metadata IDs 136–138 and native lifetimes.
+Bounded fragments install complete views atomically.
+Sequence, connection, generation, and lifetime checks reject stale work.
+Packet 327 retains every raw byte without claiming full control-scheme movement support.
+The shared interaction policy matches 2,048 target-native identifier and byte combinations.
+
+Both affected stacks replay, and all four projects build.
+Core has 1,256 passing tests and 32 optional skips; the add-on has 816 passing tests and 120 optional skips.
+The 18 converter tests, four proxy tests, Checkstyle, tooling checks, 261 offline regressions, and metadata validation pass.
+
+An actual add-on connection to BDS 1.26.51.1 records 39 client-thread observations and 32 accepted views.
+The views retain four categories, two presets, and thirteen actor priorities.
+They verify six setting transitions, all five control bytes, free-camera context and clear, and target removal followed by replacement.
+Native packet-13 identities correlate both target bindings.
+The run reaches gameplay and closes normally; all owned Java, display, and server identities are gone.
+Artifact and manifest checksums match, and the fixture and private observer source are restored.
+
+Native aim activation, candidate enumeration, world obstruction, selected hits, reticles, and interaction rotation remain incomplete.
+These results do not establish official-client visual parity or completion of the five implementation areas.
+
+## Camera aim activation and preset decoding (October 21, 2026)
+
+An aim-enabled BDS preset table exposed a nested target-mode width error that disconnected joins.
+The mode uses one unsigned byte. Core now consumes the 743-byte table and reproduces every captured byte.
+A separate regression checks all 256 byte values and the following fields.
+Aim transport negotiates version two because its camera context embeds the corrected codec.
+
+The add-on now reports its current snapshot and perspective to core, which validates the camera context before sending native packet 321.
+BDS resolves the camera's aim object and returns packet 316.
+Missing aim references preserve accepted state; stale controls and duplicate activation requests do not reach the server.
+Private comparisons cover eighteen native payload-factory results and ten valid-camera perspective cases.
+
+A corrected-codec baseline joins with all eleven presets but sends no activation requests, isolating the missing request path.
+Two further actual add-on recordings verify authored settings, empty-object defaults, partial-object inheritance, perspective clears, and stored `/aimassist` command restoration.
+Their exact request and reply sequences contain eight/nine activation requests and thirteen/fourteen setting replies.
+The runs retain 39 and 38 client-thread observations and close normally.
+All owned Java, display, and server identities are gone after cleanup.
+Artifact checksums match, and private observer and fixture changes are restored.
+
+Both owner stacks replay and all four projects build.
+Core has 1,264 passing tests and 32 optional skips; the add-on has 816 passing tests and 120 optional skips.
+Checkstyle, tooling checks, 261 offline regressions, and metadata validation pass.
+Native target gathering, world obstruction, reticles, interaction rotation, local F5 transitions, and full camera scheduling remain unfinished or unverified.
+The full five-area implementation goal remains active.
+
+
+## Native custom-state registration (October 22, 2026)
+
+Custom blocks now retain separate runtime slots when their serialized properties match.
+The previous bidirectional map removed earlier slots when repeated enum values or multiblock aliases produced equal states.
+Trait domains now use native value types and ordering before custom domains.
+Sparse auxiliary positions remain intact, with a maximum of 65,536 palette slots.
+Raw trait names retain their first definition; ASCII case variants follow native bucket insertion and rehash ordering.
+Unknown reflected trait names no longer disconnect the client.
+
+Fresh executable references use Bedrock 1.26.51.1 build 51061372.
+They cover 600 typed legacy-ID reads and 12 sparse layouts containing 131,222 constructed metadata slots.
+They also cover 788 trait flag cases, 13 serialized domains, 256 multiblock ordinals, and 37 name maps.
+The largest name map contains 256 case variants and exercises table growth.
+Java tests compare these references and preserve equal-state object identity and occupied hash successors.
+
+The probes supply storage, constructor context, and allocator/CRT boundaries.
+Trait component wiring, complete network property decoding, and native runtime-hash collision assignment remain outside their scope.
+These changes provide state registration needed by rendering and cooking descriptors.
+They do not complete native cooking catalog integration or establish visual parity on the surveyed servers.
+
+
+All 102 core patches replay cleanly, and all four projects build.
+The combined build passes 2,281 tests with 152 optional skips and no failures or errors.
+The new native-reference comparisons run without skips.
+Tooling checks, 264 offline regressions, and patch metadata checks pass.
+
+A fresh Bedrock 1.26.51.1 connection passes furnace, smoker, blast furnace, brewing, authored chest, and chest-transfer checks.
+The Java client also reconnects to the same world.
+Both launched profiles embed the rebuilt core, with all 1,354 core classes matching the distributable JAR.
+The run exits successfully and stops its private display normally.
+These checks use Java cooking screens and do not establish native screen or visual parity.
+
+
+## Canonical block-item descriptors (October 22, 2026)
+
+Core now retains block-item descriptors alongside connection runtime block IDs.
+Built-in descriptors use the legacy IDs and canonical state order already stored in the pinned block palette.
+Each property's first transition determines its bit position; non-power-of-two domains retain sparse slots.
+A separate per-block ID or offset table is unnecessary.
+Generic custom blocks retain their supplied legacy ID, original sparse metadata, and exact state object identity.
+An equal copy cannot claim another custom slot's descriptor.
+Custom archetype descriptors remain unresolved until their constructors are verified.
+
+A fresh target executable reference initializes the native property definitions and calls their original serializers.
+It acquires 708 ordinal values across 118 property names.
+Chalkboards register sixteen `direction` values despite that property's declared default count of four.
+Production validates each observed domain against these native serialized prefixes.
+
+Saved-item auxiliary lookup, built-in default overrides, network Item construction, cooking grouping, and the live catalog producer remain unfinished.
+This descriptor API does not establish native cooking screen or visual parity.
+
+
+A second executable reference runs the complete base Legacy constructor, property registration, palette builder, Block constructor, and state serialization.
+All 1,477 supplied palettes and 22,091 constructed states match production descriptor lookup.
+Names, legacy IDs, property sets, registration order, and domain counts come from the pinned palette.
+The probe uses actual native property definitions with supplied allocator/CRT context and no optional component owner.
+It does not independently establish built-in archetype selection or default overrides.
+
+All 102 core patches replay cleanly, and all four projects build.
+Final tests pass 2,286 cases with 152 optional skips and no failures or errors.
+The new native descriptor comparison runs without skips.
+Tooling checks, 264 offline regressions, and patch metadata checks pass.
+A fresh live run passes all six workstation/chest cases and same-world reconnect.
+Both client profiles embed all 1,357 rebuilt core classes and the matching property-value resource.
+The run exits successfully and stops its private display normally.
+These live checks use Java cooking screens.
+
+## Block-item lookup and recipe identity (October 22, 2026)
+
+Core now resolves block-item auxiliary values through the shared name registry and retains the exact registered state object.
+This preserves distinct runtime slots for custom states with equal properties.
+The resolver also applies 26 built-in default overrides and canonicalizes upgraded legacy states.
+Unverified custom archetypes remain unresolved.
+
+Fresh BDS 1.26.51.1 probes check all 1,477 built-in defaults and 4,950 successful item-variant comparisons across 75 block types.
+The default comparison excludes virtual legacy accessors from network state properties.
+The item comparison uses command-created stacks and `ItemStack.matches` against canonical states.
+It corrects 63 glow-lichen mappings, including auxiliary value 4 selecting face bits 16.
+Another 26 types reject the command syntax; three door types remain outside the sweep.
+These probes do not establish Windows client cold-cache behavior or every curated auxiliary mapping.
+
+The item registry also exposes concrete recipe keys with native numeric ownership, wildcard handling, and descriptor hashes.
+A fresh target-executable comparison covers 3,600 supplied registry, stack, and block combinations.
+It verifies descriptor conversion, with constructed storage supplied by the probe.
+Complete network Item construction, cooking catalog integration, and native cooking controls remain unfinished.
+
+All four projects build with 2,296 passing tests, 152 optional skips, and no failures or errors.
+The new native-reference comparisons run without skips. Tooling checks, 264 regressions, and patch metadata checks pass.
+A fresh ViaProxy run passes furnace, smoker, blast furnace, brewing, authored chest placement, ordinary chest transfer, and same-world reconnect.
+Both launched profiles match all 1,360 rebuilt core classes and both block-item resources.
+The live run exits successfully and stops its private display normally. These controls use Java cooking screens.
+
+## Shared network item counts (October 22, 2026)
+
+Both item decoders now clamp signed-short counts before unsigned-byte narrowing.
+Packet count 32769 previously became one item; it now becomes zero.
+Positive values retain native byte wrapping. Recipe results share this conversion and retain their clientbound write guard.
+Counts 128 through 255 remain nonempty. The shared codec patch now owns the existing presence correction too.
+
+The byte-buffer regression fails before the correction.
+Both codecs pass 264 fresh native constructor comparisons across four Item IDs, eleven count boundaries, two runtime paths, and three block-association modes.
+The probe executes the original parsed ItemStack constructor and related lookup, descriptor, and destruction functions.
+It supplies parsed headers, registry and palette storage, warm auxiliary caches, allocator/CRT/TLS/locks, and an empty user-data load boundary.
+Raw binary parsing, full built-in/archetype construction, cold auxiliary registration, transfers, and UI remain unverified by this probe.
+Separate fresh references retain 2,250 constructor cases and 3,600 subsequent recipe-matcher cases.
+
+Runtime block-item numeric ownership now retains custom legacy IDs independently of unverified archetype auxiliary descriptors.
+Native network Item construction, cooking catalog integration, and authored workstation controls remain unfinished.
+The movement, camera, and rendering requirements of the five-area goal also remain active.
+
+All four projects build. The final suites pass 2,299 tests with 152 optional skips and no failures or errors.
+The new native comparisons run without skips. Tooling checks, 264 regressions, and patch metadata checks pass.
+The complete core stack replays all 102 patches.
+A fresh ViaProxy run passes all six workstation/chest controls and same-world reconnect.
+Both launched profiles match all 1,360 rebuilt core classes and both block-item resources.
+The run exits successfully and stops its private display normally.
+These live controls use ordinary valid counts and Java cooking screens; malformed-count coverage comes from the codec and native-constructor tests.
+
+## Native named-recipe comparison (October 22, 2026)
+
+Production named ingredients now use the connection Item registry and the existing network-stack descriptor conversion.
+Concrete comparison checks item ownership, wildcards on either side, and exact registered block identity.
+This replaces raw auxiliary equality for block ingredients.
+The stripped-oak-wood regression preserves packet metadata while accepting both auxiliary 8 and canonical auxiliary 0 for the default block.
+Changing the runtime block to another pillar axis rejects the ingredient.
+
+The pinned Bedrock 1.26.51.1 executable supplies 440 fresh named-resolution and concrete-comparison cases.
+The probe executes parsed Cereal conversion, native named construction, deferred resolution, captured canonical registry lookup and query-first comparison.
+Warm auxiliary caches, empty alias maps, allocator/CRT/TLS and locks are supplied boundaries.
+It does not establish binary ingredient parsing, alias initialization, actual builtin construction or visible parity.
+
+A separate native factory probe constructs stripped oak wood through its original builtin factory and pillar-axis registration.
+The complete palette, Block/NBT construction and virtual default selection produce metadata 0, 1 and 2 for axes y, x and z.
+The probe supplies a null-material vector and empty optional component ownership.
+This proves that builtin's canonical metadata independently of inferred palette ordering.
+It does not establish other builtin class defaults or runtime-ID assignment.
+
+Native Item construction still needs complete raw-header retention before registry resolution.
+The native cooking-source collector, authored workstation controls, movement, camera and rendering requirements remain active.
+
+All four projects build with 2,301 passing tests, 152 optional skips, and no failures or errors.
+The expanded native-reference and consumer tests pass all 43 selected cases without skips.
+Tooling checks and all 264 regressions pass. The complete 102-patch core stack replays.
+
+A fresh ViaProxy run passes the three cooking stations, brewing, authored chest placement, chest transfer, manual crafting and bulk crafting.
+Its recipe-book check selects the unavailable bamboo recipe instead of the plank recipe and fails its item-count assertion.
+The test now filters craftable entries before selection.
+A focused rerun places both planks and produces four sticks; reconnect passes in both runs.
+All nine gameplay actions therefore pass across the two recordings; the initial recording retains its failed test result.
+All four launched profiles match the 1,360 rebuilt core classes and both block-item resources.
+Both runs stop their private displays normally. These controls use Java screens and do not establish native UI parity.
+
+## Connection-aware network Item construction (October 22, 2026)
+
+Both network item codecs now pass raw auxiliary bits and runtime IDs to the connection constructor before loading user data.
+The constructor validates runtime Block ownership against the original Item, then resolves the associated Legacy only when necessary.
+It keeps exact runtime slots even when an archetype's canonical auxiliary descriptor remains unknown.
+Recipe results use the same constructor, and recipe matching consumes the constructed Item without reconstructing it.
+
+Count invalidation clears Item and Block ownership and skips user-data loading.
+The native block-item constructor can reapply wildcard metadata after that invalidation; the implementation retains this detail.
+Outgoing headers use the concrete descriptor's numeric ID and canonical auxiliary value.
+Empty descriptors retain independent stack network IDs and omit user data.
+
+Both Java decoder paths match 2,250 native parsed-header constructor results in each wire format.
+The comparison covers resolved Item ID, auxiliary metadata, count, Block presence, exact runtime slot, descriptor identity and hash.
+Both outgoing headers match 384 complete native descriptor-producer executions.
+Six further native empty-stack producer cases retain outer network IDs and produce no user-data bytes.
+The recipe-result count sweep runs through the registry constructor for all 65,536 signed-short inputs.
+
+These fixtures execute Bedrock 1.26.51.1, build 51061372, with supplied registry/palette storage, warm auxiliary caches and runtime seams.
+They do not establish binary reader equivalence, actual item installation, specialized user-data loading, saved-NBT construction or all custom archetypes.
+The native cooking-source collector and authored workstation controls remain unfinished.
+The movement, mount, camera and rendering requirements of the five-area goal also remain active.
+
+Native stack snapshots now use schema version three and preserve Block presence separately from the uint32 runtime ID.
+This keeps no Block distinct from an associated Block assigned runtime zero, including copies and Java NBT transport.
+Item prediction, recipe matching and merchant ingredient filters use that explicit presence.
+Java display fallback also leaves the supplied Item unchanged.
+A private before-control reproduces ownership mutation in all three temporary controls: stripped oak wood, oak logs and stone.
+The probe calls the real converter in an owned proxy and does not change tracked inventory.
+
+All four projects build with 2,309 passing tests, 152 optional skips, and no failures or errors.
+The core suite contains 1,489 cases. New native-reference comparisons run without skips.
+Tooling checks, all 264 regressions and offline patch metadata checks pass.
+All 102 core patches and 38 client patches replay cleanly.
+
+A fresh strict-BDS ViaProxy run passes all eleven controls.
+Cooking passes on the furnace, smoker and blast furnace.
+Brewing, authored chest placement, ordinary chest transfer, manual crafting, recipe-book crafting, bulk crafting and both creative replacement cases also pass.
+Join and same-world reconnect pass. Both installed profiles match all 1,363 rebuilt core classes and both block-item resources.
+The runtime probe mutates three temporary Items before the fix and preserves all three afterward. No observer errors occur.
+The run exits successfully and stops the private display normally.
+These controls use Java cooking screens; native workstation presentation and the other goal areas remain open.
+
+## Native cooking source collection (October 22, 2026)
+
+Furnace, smoker and blast-furnace recipe placement now use a shared native source collector.
+It groups constructed Items by concrete descriptor hash before checking eligibility.
+The first nonempty stack determines whether each group counts, including rejection for an enchantment list or a nonzero byte lock.
+Groups retain their source container and slot identities and sort by descending count with native tie ordering.
+Placement still checks full stack compatibility before merging or transferring items.
+
+The unchanged target executable supplies 3,789 collection cases.
+They cover wildcard metadata, unsigned counts, decisions cached across containers and the native sort boundaries.
+Within that total, 1,176 cases execute the actual typed-byte lookup over supplied compound trees.
+Byte locks differ from short and integer tags; zero and negative-byte controls are included.
+Ordinary Item ownership, container vectors, generic NBT presence, allocation, CRT, destruction and result-name construction remain supplied seams.
+Native compound construction, block-derived collection cases, full controller execution and visible parity remain unverified.
+
+All fourteen targeted collection, placement and request-rollback tests pass, along with Checkstyle.
+All four projects build with 2,314 passing tests, 152 optional skips and no failures or errors.
+The native collection comparison runs without skips.
+All 102 core patches replay, and tooling checks, 264 regressions and patch metadata validation pass.
+The authored cooking catalog, evaluator, screen activation and controls remain unfinished.
+The movement, mount, camera and rendering requirements of the five-area goal also remain active.
+
+A fresh strict-BDS ViaProxy run passes recipe selection, cooking and result transfer on all three cooking stations.
+Join and same-world reconnect pass, and the private display stops normally.
+Both launched profiles and the rebuilt proxy match all 1,367 current core classes and both block-item resources.
+These controls use Java cooking screens and do not establish native presentation parity.
+
+## Native cooking availability (October 22, 2026)
+
+Furnace, smoker and blast-furnace selection now evaluate source presence before starting an inventory request.
+The adapter checks output ownership and the native air identifier first.
+It retains native provider order: station input, furnace fuel, hotbar, inventory and an optional cursor.
+The Java placement path keeps its existing empty-cursor requirement.
+
+The native evaluator stops when any alternative input has a nonempty source list and a nonzero count.
+It does not require every alternative or apply placement capacity and recipe-count limits.
+Filtering produces state 0 for an available input and state 3 otherwise.
+Without filtering, those states are 1 and 2.
+The existing placement planner retains full stack compatibility, capacity, server identities and rollback checks.
+
+A fresh fixture executes the complete target evaluator, empty/air guard and source collector in 6,072 cases.
+Java matches all 4,272 cases with legal boolean filter flags.
+The other 1,800 raw-byte controls remain outside the controller contract.
+Alternative extraction, provider and optional-container lookup, ordinary Item ownership, generic NBT presence and runtime services are supplied boundaries.
+The actual native name initializer independently confirms `minecraft:air` as the guard's identifier.
+
+All eighteen targeted tests and Checkstyle pass.
+All four projects build with 2,318 passing tests, 152 optional skips and no failures or errors.
+All 102 core patches replay. Tooling checks, 264 regressions and patch metadata validation pass.
+The native comparison runs without skips.
+
+The production adapter evaluates a selected registered recipe.
+The full displayed-output catalog still needs native alternative extraction and full output-stack matching.
+Authored catalog population, screen activation, cursor-aware native actions and visible parity remain unfinished.
+The remaining movement, mount, workstation, camera and rendering requirements also remain active.
+
+A fresh strict-BDS ViaProxy run passes all three cooking stations and same-world reconnect.
+Both launched profiles and the rebuilt proxy match all 1,368 core classes and both block-item resources.
+The run exits successfully and stops the private display normally.
+These controls use Java cooking screens and do not establish native presentation parity.
+
+## Native cooking input construction (October 22, 2026)
+
+Cooking availability and placement now share constructed count-one input queries with auxiliary zero.
+The target resolves a named descriptor's declared auxiliary value first, then visits its owning Item definition to construct the query.
+A valid block variant therefore produces the Item's default association; a null associated state rejects the descriptor.
+The previous cooking path matched the raw declaration and could select a different inventory variant.
+
+The complete native extractor, output matcher, descriptor visitor and ItemInstance constructor execute 252 controlled cases.
+These include 108 ordinary/concrete/named expansions, 48 associated-default constructions and 96 output-selection controls.
+Java matches all 96 named or unknown-name expansions.
+Targeted regressions also verify explicit block runtime zero, default versus alternate block identity, source wildcards and the selected transfer.
+
+Recipe registry trees, world and result accessors, an empty unlock context, captured Item registry storage, warm associated caches and runtime services are supplied boundaries.
+Full factory installation, tag/Molang visitation order and matching nonempty output data remain unverified.
+Tag and Molang membership retain their existing predicates.
+The full displayed-output catalog, authored controls and native action quantity/cursor semantics remain unfinished.
+The remaining inventory, movement, mount, camera and rendering requirements also remain active.
+
+All 37 targeted tests and Checkstyle pass.
+All four projects build with 2,323 passing tests, 152 optional skips and no failures or errors.
+All 102 core patches replay. Tooling checks, all 264 regressions and patch metadata validation pass.
+The native comparison runs without skips.
+
+A fresh strict-BDS ViaProxy run passes all three cooking stations and same-world reconnect.
+Both launched profiles and the rebuilt proxy match all 1,369 core classes and both block-item resources.
+The run exits successfully and stops the private display normally.
+These controls use ordinary recipes and Java cooking screens.
+The declared-metadata correction is verified by the native fixture and targeted transfer regression; visible native parity remains unverified.
+
+## Cooking output alternatives (October 22, 2026)
+
+The cooking catalog now collects all matching unlocked input alternatives for each output at its station.
+It retains native recipe order and invalidates snapshots after registration or unlock changes.
+Replacing the connection's recipe tracker also retires its old catalog and action inputs.
+Invalid, unknown and air outputs do not enter the catalog.
+Availability uses these alternatives. Java placement still uses its selected registered recipe.
+
+Output queries retain wildcard auxiliary values, query-sided Block identity, resolved restriction identities and shield timing.
+They ignore root quantity and network IDs.
+Native NBT equality distinguishes typed empty lists, treats signed floating zeroes as equal, and rejects NaNs, including within the same compound.
+Null userdata and an empty compound compare equal.
+Full network userdata determines charged-item construction within the same registry.
+Independently mutated native child stacks remain outside this comparison.
+
+The target's original userdata installer, charged-item loader and output matcher execute 361 comparisons.
+Of these, 217 include at least one charged child.
+Java matches all 361 results and the 96 earlier whole-extractor output controls.
+It also matches 3,278 native Tag comparisons with valid UTF-8.
+The other 208 cases contain malformed UTF-8, which Java strings cannot retain.
+
+Restriction resolution uses the target's 58 builtin groups, exact primary names and aliases.
+It preserves case, stops at the first missing group member, and deduplicates registered block identities.
+Java matches all 116 native builtin resolution cases.
+The shared wire loader now reads restriction arrays and shield timing after a zero NBT marker.
+Both item wire formats retain these fields, including the completed fields of truncated tails.
+
+The fixtures supply registry storage, generic Item definitions, NBT trees and runtime services.
+Full native factory installation, pointer-hash collisions and malformed UTF-8 remain unverified.
+Authored screen activation, catalog presentation and native quantity/cursor actions remain unfinished.
+The full movement, mount, inventory, workstation, camera and rendering requirements remain active.
+
+Optional comparisons read `STACKANVIL_NATIVE_COOKING_OUTPUT_DATA`, `STACKANVIL_NATIVE_ITEM_TAG_EQUALITY`,
+`STACKANVIL_NATIVE_RESTRICTION_GROUPS` and `STACKANVIL_NATIVE_COOKING_INPUTS`.
+
+The targeted run passes 53 tests and Checkstyle, with one optional block-name fixture skipped.
+All four projects build with 2,332 passing tests, 152 optional skips and no failures or errors.
+All 102 core and 38 client patches replay.
+Offline tooling checks, all 264 regressions and patch metadata validation pass.
+
+A fresh strict-BDS ViaProxy run passes all three cooking stations and same-world reconnect.
+Both launched profiles and the proxy match all 1,371 rebuilt core classes and four block metadata resources.
+The run exits successfully and stops its private display normally.
+These controls use Java cooking screens and do not establish authored presentation or native action parity.
+
+## Cooking model publication (October 22, 2026)
+
+Core now publishes authoritative cooking snapshots to clients that negotiate the cooking model and progress channels.
+Each snapshot contains the station catalog, translated recipe previews, category counts, preferences, item counts and raw progress.
+The producer reuses one cooking catalog per snapshot.
+The current add-on does not yet register these channels or replace its Java cooking screens.
+
+Publication waits for the opened container's first authoritative contents.
+The producer flushes the real Java content update before its derived cooking snapshot.
+It binds the snapshot to the inventory owner, container lifetime, item revisions, recipe revision, resource program and preferences.
+Deep item copies also detect predictions that change stacks without a server revision.
+A state change during item conversion rejects the candidate snapshot.
+Close, recovery and channel withdrawal retire publication ownership.
+
+A separate progress message retains all four signed native properties and their data revision.
+Progress updates keep the item update identity, so burn ticks do not repeatedly retire activation authority.
+The tests cover all three families, wire round trips, category deduplication, slot order, progress, prediction, reload, preferences and tracker replacement.
+They also cover reused menu IDs, failed conversion, recursive publication and packet order.
+
+All four projects build with 2,338 passing tests, 152 optional skips and no failures or errors.
+All 102 core and 38 client patches replay.
+Client screen activation, authored controls, search, selection and native quantity/cursor actions remain unfinished.
+These producer checks do not establish visible native parity.
+All other inventory, movement, mount, camera and rendering requirements remain active.
+
+A private Fabric observer receives the production payloads while Java cooking screens handle the live controls.
+It validates 46 snapshots and 1,278 progress updates across all three cooking families, with no observation failures.
+All snapshots resolve authored scenes with 39 inventory slot identities.
+The CPU resolver reports recipe-action scopes in 39 snapshots.
+Both running clients match all 1,376 rebuilt core classes and four block metadata resources through their class loaders.
+The client profiles and proxy also match those artifacts.
+All three cooking controls and same-world reconnect pass.
+The run exits normally, stops its private display and removes the private observer mod.
+These observations verify publication and CPU resolution, not authored screen rendering or native action parity.
+Offline tooling checks, all 264 regressions and patch metadata validation pass.
