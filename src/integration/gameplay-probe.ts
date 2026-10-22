@@ -46,6 +46,9 @@ export const gameplayCaseIds = [
   "furnace-quick-move-log",
   "furnace-quick-move-coal",
   "brewing-stand",
+  "furnace-book-cook",
+  "smoker-book-cook",
+  "blast-furnace-book-cook",
   "enchant-basic",
   "offhand-ineligible-block",
   "offhand-shield-use",
@@ -74,7 +77,12 @@ export function gameplayCasesForBackend(geyser: boolean): GameplayCaseId[] {
     ? gameplayCaseIds
         .filter(
           (id) =>
-            id !== "lab-table-then-chest" && id !== "brewing-stand" && !isAuthoredInventoryCase(id),
+            id !== "lab-table-then-chest" &&
+            id !== "brewing-stand" &&
+            id !== "furnace-book-cook" &&
+            id !== "smoker-book-cook" &&
+            id !== "blast-furnace-book-cook" &&
+            !isAuthoredInventoryCase(id),
         )
         .map((id) => (id === "offhand-ineligible-block" ? "offhand-block-place" : id))
     : [...gameplayCaseIds];
@@ -566,6 +574,130 @@ async function furnaceQuickMove(ui: Ui): Promise<void> {
   await uiKey(ui, "Escape");
 }
 
+async function cookFromBook(ui: Ui, id: GameplayCaseId): Promise<void> {
+  const window = { ...(await javaWindow(ui)), containerScale: 2 };
+  let offset = 0;
+  const panel = async (candidate: number) => {
+    const pixels = await Promise.all(
+      (
+        [
+          [5, 15],
+          [170, 15],
+          [5, 161],
+          [170, 161],
+        ] as const
+      ).map(async ([x, y]) => {
+        const point = containerPoint(window, 176, 166, x, y);
+        return (
+          await ui([
+            "ui",
+            "pixel",
+            String(point[0] + candidate / (window.width - 1)),
+            String(point[1]),
+            "--client",
+            "java",
+          ])
+        )
+          .trim()
+          .split(/\s+/)
+          .map(Number);
+      }),
+    );
+    return pixels.every(
+      (pixel) => pixel.length === 3 && pixel.every((channel) => Math.abs(channel - 198) <= 2),
+    );
+  };
+  const click = async (x: number, y: number) => {
+    const point = containerPoint(window, 176, 166, x, y);
+    await ui([
+      "ui",
+      "click",
+      String(point[0] + offset / (window.width - 1)),
+      String(point[1]),
+      "left",
+      "--client",
+      "java",
+    ]);
+  };
+  const screenshot = (phase: string) =>
+    ui([
+      "ui",
+      "screenshot",
+      `${id}-${phase}`,
+      "--client",
+      "java",
+      "--output-dir",
+      join(root, ".stackanvil", "integration"),
+    ]);
+  await uiKey(ui, "2");
+  let opened = false;
+  for (let attempt = 0; attempt < 8 && !opened; attempt++) {
+    await uiMouse(ui, "right");
+    await Bun.sleep(500);
+    for (const candidate of [0, 154]) {
+      if (await panel(candidate)) {
+        offset = candidate;
+        opened = true;
+        break;
+      }
+    }
+  }
+  if (!opened) throw new Error("The cooking panel did not open after right click.");
+  await screenshot("open");
+  if (offset === 0) {
+    await click(20, 34);
+    await Bun.sleep(500);
+    if (!(await panel(154))) throw new Error("The Java cooking recipe book did not open.");
+    offset = 154;
+  }
+  await ui([
+    "ui",
+    "click",
+    String((window.width / 2 - 188) / window.width),
+    String((window.height / 2 - 126) / window.height),
+    "left",
+    "--client",
+    "java",
+  ]);
+  await ui([
+    "ui",
+    "type",
+    id === "blast-furnace-book-cook" ? "netherite scrap" : "steak",
+    "--client",
+    "java",
+  ]);
+  await Bun.sleep(500);
+  await screenshot("filtered");
+  await ui([
+    "ui",
+    "click",
+    String((window.width / 2 - 273) / window.width),
+    String((window.height / 2 - 80) / window.height),
+    "left",
+    "--client",
+    "java",
+  ]);
+  await Bun.sleep(1500);
+  await screenshot("progress");
+  await Bun.sleep(11_000);
+  await screenshot("complete");
+  await click(20, 34);
+  await Bun.sleep(300);
+  if (!(await panel(0)))
+    throw new Error("The cooking recipe book did not close before output transfer.");
+  offset = 0;
+  await Promise.all([
+    ui(["ui", "key-hold", "Shift_L", "900", "--client", "java"]),
+    (async () => {
+      await Bun.sleep(200);
+      await click(116, 35);
+    })(),
+  ]);
+  await Bun.sleep(500);
+  await screenshot("empty");
+  await uiKey(ui, "Escape");
+}
+
 async function brewingStand(ui: Ui): Promise<void> {
   const window = await javaWindow(ui);
   const native = {
@@ -849,6 +981,11 @@ export async function driveGameplay(
     case "furnace-quick-move-log":
     case "furnace-quick-move-coal":
       await furnaceQuickMove(ui);
+      return;
+    case "furnace-book-cook":
+    case "smoker-book-cook":
+    case "blast-furnace-book-cook":
+      await cookFromBook(ui, id);
       return;
     case "brewing-stand":
       await brewingStand(ui);

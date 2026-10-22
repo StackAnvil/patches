@@ -114,12 +114,27 @@ Cloning produces two maps and consumes one item from each input.
 Naming uses the request's filter strings and `CartographyText` origin.
 These captures do not establish the Java implementation.
 
-The decoder tests retain known and unknown recipe UUIDs and unsigned network IDs.
-They also establish following-array alignment and truncated input rejection.
+The decoder retains the target's 14 known dynamic-recipe UUIDs and skips unknown factories before registration.
+It preserves unsigned network IDs. Tests establish following-array alignment and truncated input rejection.
 Core now retains map dimension, origin, lock state, scale, and the server's creation map IDs.
 An omitted scale or creation list preserves previous state.
 A native extension selects the next ID in the advertised map family.
 Cloning preserves that ID; locking creates a separate map identity.
+
+Core recipe registration keeps the first station/name pair and rejects zero or reused network IDs.
+Rejected entries do not reserve either key. Java grid limits apply after native catalog registration.
+Presented books retain their catalog and unlock revision. Replacement registrations receive fresh click IDs.
+Recipe models copy their ingredients and nested result data so callers cannot change a registered recipe.
+Recipe result decoding follows the native signed-short conversion and retains nonempty stack counts from 128 through 255.
+Every result must resolve to a registered non-air item before its recipe can claim registration keys.
+Executable fixtures cover the registration guards, dimensions, result validation, count conversion and dynamic-factory selection.
+These probes do not establish complete native factory construction, item ownership or visual parity.
+The authored cooking catalog, controls and client screen remain incomplete.
+
+Local BDS tests select recipes from the furnace, smoker and blast-furnace books.
+Each test consumes its input, waits for server cooking and transfers one output to player inventory.
+Brewing converts three water bottles into awkward potions and consumes the ingredient.
+Chest controls and reconnect checks pass. These checks use Java cooking screens; native presentation still needs integration and comparison.
 
 Core now refreshes crafted destinations after a successful acknowledgment.
 It requests full inventory data and holds queued interactions until item IDs, counts, and all player snapshots agree.

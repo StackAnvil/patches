@@ -558,6 +558,37 @@ define("brewing-stand", "inventory", async (player) => {
   };
 });
 
+for (const [id, block, ingredient, result] of [
+  ["furnace-book-cook", "minecraft:furnace", "minecraft:beef", "minecraft:cooked_beef"],
+  ["smoker-book-cook", "minecraft:smoker", "minecraft:beef", "minecraft:cooked_beef"],
+  ["blast-furnace-book-cook", "minecraft:blast_furnace", "minecraft:ancient_debris", "minecraft:netherite_scrap"],
+]) {
+  define(id, "crafting", async (player) => {
+    await prepareArena(player);
+    blockAt(player.dimension, 0, 1, 2).setType(block);
+    await nextTick();
+    const cooking = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+    if (!cooking) throw new Error("Cooking inventory is unavailable.");
+    cooking.setItem(1, new ItemStack("minecraft:coal"));
+    inventory(player).setItem(0, new ItemStack(ingredient));
+    player.teleport(position(), { dimension: arena.dimension, facingLocation: position(0.5, -0.5, 2.5) });
+    return {};
+  }, (player) => {
+    const cooking = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+    if (!cooking) throw new Error("Cooking inventory is unavailable.");
+    const observed = {
+      playerInput: countItem(inventory(player), ingredient),
+      playerOutput: countItem(inventory(player), result),
+      input: cooking.getItem(0)?.amount ?? 0,
+      output: cooking.getItem(2)?.amount ?? 0,
+    };
+    return {
+      passed: observed.playerInput === 0 && observed.playerOutput === 1 && observed.input === 0 && observed.output === 0,
+      observed, expected: { playerInput: 0, playerOutput: 1, input: 0, output: 0 },
+    };
+  });
+}
+
 for (const [id, itemId, initialInput, expectedInput, expectedFuel, expectedPlayer] of [
   ["furnace-quick-move-log", "minecraft:oak_log", 63, 64, 0, 7],
   ["furnace-quick-move-coal", "minecraft:coal", 0, 0, 8, 0],
