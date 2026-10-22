@@ -19,6 +19,8 @@ The 22 October follow-up below verifies a continuous Mineville-to-Zeqa transfer 
 | Mob Maze | Fresh catalog admission, StartGame | Hit the same trailing-string decoding failure. No playable scene. |
 | Enchanted | Pack negotiation, authored hub UI, Box PvP destination | The archive fix opens the hub UI. Its title and button labels are garbled, but a button sends a transfer. A separate destination capture loads the world and shop NPCs, then hits a moving-piston rendering crash. |
 | Geyser test server | Quick Play attempt | Connection failed before a scene loaded. No rendering verdict. |
+| GenWars | Fresh catalog admission, pack negotiation, StartGame | Disconnected before a playable scene while decoding the trailing owner-ID string. No rendering verdict. |
+| Mineville and Zeqa | Hub, Earth SMP, cross-server transfer, Zeqa lobby, SkyWars FFA | Selector actions, the transfer, a free FFA spawn, kit delivery and return to the lobby work. Menu titles and labels remain malformed. The fresh transfer also reports a texture-atlas failure and invalid font data. |
 
 CubeCraft's recorded cosmetic previews use the account's own skin, as supplied by the server.
 That appearance alone does not indicate a skin-cache error.
@@ -31,7 +33,7 @@ This survey does not establish native parity for their body direction.
 - **Hosted experiences:** resolve SoulSteel or Mob Maze through the current catalog and connect with the same refreshed account context. The saved StartGame packet reaches a `StringType` read in `JoinPackets` after its bytes are consumed. Packet layout and target-version compatibility need further inspection.
 - **Lifeboat forms:** the navigator and game selectors use generic dialogs with titles such as `form52_Navigator`. Their authored presentation still needs support. Working response buttons do not establish visual parity.
 - **Enchanted hub UI:** the authored screen shows `custom.hub_menu_init`, internal button labels, and repeated glyphs. A response button still initiates a transfer. Separate the presentation failure from the working action.
-- **Enchanted Box PvP:** one capture crashes while approaching the trader. Chunk compilation fails in `PistonMovingBlockEntity.getMovementDirection` because its direction is null. The captured stack reaches this through collision-shape queries during ambient-occlusion lighting.
+- **Enchanted Box PvP:** one capture crashes while approaching the trader. Chunk compilation fails in `PistonMovingBlockEntity.getMovementDirection` because its direction is null. The captured stack reaches this through collision-shape queries during ambient-occlusion lighting. The add-on creates the moving block entity with Java's empty constructor before translated Bedrock data initializes its direction. That pending state needs a lifecycle correction; no fix or native-parity claim is made here.
 
 NPC clicks in the initial CubeCraft pass did not produce a confirmed response.
 The precise ray target was not recorded there. The live follow-up below confirms a shop NPC response.
@@ -224,3 +226,38 @@ Native images, material output and CubeCraft cosmetic-preview body direction sti
 The first replay window ended before the complete scene arrived.
 The host's out-of-memory killer stopped a longer attempt.
 The completed replay uses a private 3 GB heap, render distance 4 and disabled mipmaps.
+
+## Fresh GenWars admission
+
+On 22 October, GenWars passed catalog admission and began its join with the rebuilt client.
+The decoder consumed the 912,421-byte StartGame packet, then failed at the trailing owner-ID string read in `JoinPackets`.
+This matches the failure location seen on other hosted experiences; the packet-layout cause still needs verification.
+No playable observer state appeared, so this run cannot assess entity, block, GUI or item rendering.
+The client and private display closed normally. Its installed add-on checksum matches the fresh build.
+
+## Fresh Mineville-to-Zeqa route
+
+A fresh 300-second run uses the rebuilt client with a 3 GB heap, render distance 4 and no mipmaps.
+The accepted add-on checksum matches the build.
+The Mineville game selector opens with its internal title and clipped labels.
+Its PvP action transfers the same client to Zeqa, with a separate connection journal.
+The earlier numeric resource-alias parser error does not occur.
+
+During that transfer, Java cannot stitch the converted shop texture `viabedrock:item/entities/entity/sign_shops/shops`, which measures 4000 by 1280 pixels.
+Resource reload also rejects font data with ascent 5 and height 1.
+The client remains playable, but its HUD, entity labels and FFA buttons show missing glyphs and repeated microphone icons.
+These errors prevent a clean rendering verdict. Their connection to individual visible glyph failures still needs isolation.
+
+The first FFA action opens the SkyWars spawn selector.
+Selecting Tower opens a rank requirement dialog; the free Random option loads a playable map and supplies the ordinary kit.
+The terrain and kit items render in the retained screenshots.
+The `/lobby` command confirms the return, and the lobby terrain loads again.
+Plain pig models appear at fixed lobby positions, including positions suspended above the scene.
+Their intended native appearance remains unverified.
+
+The survey approaches fixed lobby actors, but does not confirm another NPC response before the run ends.
+An advertising dialog interrupts the later movement attempt.
+The earlier CubeCraft shop interaction remains the confirmed live NPC control.
+The completed recording fails verification; the successful actions above do not establish a clean client run.
+All six owned process identities close normally, and the private display stops.
+Raw journals, screenshots, the short selector video and logs remain private.
