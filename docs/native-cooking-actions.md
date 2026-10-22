@@ -21,6 +21,8 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Initial-state recipe dispatch | 1,620 cases | Command, held-item, source-permission, and controlled input-mode conditions |
 | Cooking item-return planner | 1,500 cases | Original-slot deficits and the remaining count passed to auto-placement |
 | Physical-slot snapshot producer | 45 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
+| Registered cooking providers | 3 ingredient descriptors | Eleven registrations, native model import, skip callbacks, and 76-slot capture order |
+| Installed-provider history replacement | 7 cases plus 7 repeated-return controls | Inventory deficits precede hotbar deficits; each return replaces stored history |
 
 These checks cover different boundaries. Their case counts do not measure native gameplay or visual parity.
 
@@ -97,8 +99,9 @@ It restores the deficit between the stored count and the current destination cou
 It then passes the remaining ingredient to generic auto-placement with an all-items descriptor.
 
 The return fixture supplies transfer effects at explicit capacities and records the generic auto-placement call.
-It does not execute generic auto-placement or establish actual provider registration order.
-The implementation must verify those parts before reusing this planner for native transactions.
+It does not execute generic auto-placement.
+The installed-provider fixture below separately establishes capture order and history replacement with supplied transfer effects.
+Transfer execution still needs verification before this planner can drive native transactions.
 
 ## Capture physical slots
 
@@ -131,10 +134,57 @@ The 45-case probe does not execute that callback or comparator.
 It does not establish history filtering or the complete history lifecycle.
 Keep snapshot capture, history replacement, and selection effects as distinct verification boundaries.
 
+## Registered providers and history replacement
+
+The registration slice at `0x146985800` through `0x1469867e1` creates eleven providers.
+It registers cursor, hotbar, inventory, combined inventory, ingredient, fuel, and output providers first.
+Food, block, furnace-item, and search recipe providers follow.
+The generic manager constructor at `0x1433e3ac0` imports these providers through native model construction and map insertion.
+
+Three controls use ingredient descriptors `25`, `45`, and `46` for furnace, blast furnace, and smoker providers.
+Their original skip callbacks exclude all four recipe providers from physical capture.
+Original size and item accessors produce the same ordered 76-slot snapshot in each control:
+
+| Collection | Captured slots |
+| --- | ---: |
+| `inventory_items` | 27 |
+| `cursor_items` | 1 |
+| `hotbar_items` | 9 |
+| `furnace_output_items` | 1 |
+| `combined_hotbar_and_inventory_items` | 36 |
+| `furnace_ingredient_items` | 1 |
+| `furnace_fuel_items` | 1 |
+
+The combined view appears alongside the separate inventory and hotbar views.
+These 76 entries do not represent 76 distinct physical storage slots.
+Capture follows the manager's map traversal, which differs from provider registration order.
+Preserve the captured order when examining stored return destinations.
+
+Seven base-furnace controls then execute the original capture and return helper with owned item caches.
+The stored inventory slot starts with five items; the hotbar slot starts with seven.
+Before return, their current counts are one and two.
+At ingredient counts `0`, `1`, `4`, `5`, `9`, `10`, and `64`, return restores the inventory deficit before the hotbar deficit.
+Generic auto-placement receives the remaining ingredient count and the all-items descriptor.
+
+The helper destroys the previous history entries and captures the current slots after each return.
+Seven repeated-return controls observe this replacement history and request no further deficit restoration.
+They retain the current ingredient remainder, including zero, for the recorded generic auto-placement call.
+Copied-item ownership counts return to their baseline after snapshot and cache cleanup.
+
+These controls supply collection names from a separately verified native registry fixture.
+They also supply a game inventory size of 36, an abstract Level, and a live empty recipe service.
+Provider content synchronization supplies owned item caches.
+The original provider constructors, registration, generic manager import, accessors, capture, full item queries, and history replacement execute.
+
+Transfer effects remain an explicit count-mutation boundary with capacity 64.
+Generic auto-placement records its inputs without moving items.
+The complete cooking subclass, enclosing selection callbacks, physical input mapping, transfer permissions, transaction assembly, and live acceptance remain unverified.
+The variant controls cover empty capture order; they do not execute blast-furnace or smoker returns.
+
 ## Implementation boundaries
 
 The [shared UI patch](../patches/viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.patch) owns the cooking messages, scene contracts, and presentation authority.
 The [inventory request patch](../patches/viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.patch) owns request prediction, response reconciliation, and transfer quantities.
 
-Remaining work includes the complete input pipeline, provider registration order, history lifecycle, return and transfer execution, revision-bound action handling, and authored client controls.
+Remaining work includes complete controller initialization, the input pipeline, selection-history boundaries, transfer execution, revision-bound action handling, and authored client controls.
 Native visual comparisons remain separate from these instruction-level checks.
