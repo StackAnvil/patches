@@ -1872,7 +1872,7 @@ This move preserves the payload format and does not change native dimension calc
 
 ## Native world inputs
 
-The block mirror now consumes the core's negotiated `block_identifiers_v2` channel.
+The block mirror now consumes the core's negotiated `block_identifiers_v3` channel.
 It retains both native layers, runtime IDs and state properties for client world queries.
 Particle expiration continues to read only the primary layer.
 Its integration test verifies that changing the extra layer cannot change a primary-layer filter result.
@@ -2056,3 +2056,28 @@ The CubeConverter patch now retains the marker declaration when optional fields 
 A missing waterlogged block-state warning also remains in the client log.
 This change does not establish native pixel parity or complete particle material behavior under arbitrary shader packs.
 Raw packs, native exports, observer code, and recordings remain private.
+
+
+## Authoritative fluid queries
+
+Client-world and direct chunk queries now select fluid from the native block mirror.
+Vanilla render regions and the optional Sodium 0.9.2 `LevelSlice` getter use the same source.
+The adapter preserves all mapped water and lava levels, including falling states.
+It retains vanilla queries for ordinary Java worlds, unknown native definitions and unavailable native world data.
+It also rejects nonliquid Java states in fluid dictionary entries.
+
+The target-native layer selector passed 180 pinned-binary cases, as recorded in the core transport sidecar.
+The client decoder tests every Java water and lava block state.
+All four projects build with 2,360 passing tests, 152 optional skips and no failures.
+
+This change covers fluid queries.
+Vanilla and Sodium mesh builders also read fluids directly from block states.
+Those mesh paths, fluid face occlusion, complete current simulation and native visual parity still need verification and integration.
+
+
+Two fresh 40-second Galaxite replays validate the getters against recorded native fluid layers.
+Each run retains 7,174 secondary-fluid cells and samples 256 of them.
+The plain client reports zero mismatches through the client world and vanilla render-region getters.
+The Iris client also checks Sodium 0.9.2's `LevelSlice`, with zero mismatches across all three query surfaces.
+The region and Sodium getter probes construct query objects for the current client level; they do not test generated fluid meshes.
+Transport verification passes; the broader rendering check still fails on unresolved mappings, including the camera texture.
