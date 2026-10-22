@@ -1,4 +1,4 @@
-From b3b17a97e3c30fae117181281011619ef91392f4 Mon Sep 17 00:00:00 2001
+From a3e699b09d3d0919f603b5a4e19d799e7079ac56 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:33 +0200
 Subject: [PATCH] fix(entities): resolve and order Bedrock passenger links
@@ -12,17 +12,33 @@ On unlink or vehicle removal, seed the player position from the vehicle and sche
 Retain the resolved mount for remote passengers as well as the local player, and clear it when a mount changes, unlinks or disappears. Expose the optional finite native rider vector at metadata 56 without replacing absent anchors with a zero vector. Sparse metadata already retains this value independently of passenger-link order.
 
 The licensed Bedrock 1.26.51.1 protocol 2193 Hive recording sends player rider anchors [0,1.72,-0.1]. Two separately rotated chairs place the player source eye at vehicle position plus this vector rotated by negative vehicle yaw, with less than 1e-7 position error. The vector is in native actor-origin units; Java adapters must subtract the passenger eye offset once. Core link and metadata retention supports the native client adapter; ordinary Java clients behind ViaProxy still use Java passenger attachments unless an adapter receives these native inputs.
+
+Ignore unknown ActorLinkType values before changing retained links. Repeated
+links for an existing passenger must not replay mounting or promote its seat.
+The pinned 1.26.51.1 client queues packet 41 through factory 1416b5540,
+dispatcher 141733530 and receiver 1413456e0. Link consumer 145947f80 accepts
+roles 1/2 only for absent membership and skips duplicate unique IDs before
+start-riding, angular-velocity and locator updates. Native executable SHA-256:
+537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7.
+
+Private instruction comparisons cover 160 complete consumer cases. Typed
+ActorUniqueID and VehicleComponent getters execute unchanged; world actor
+resolution and start-riding/removal side effects remain fixture boundaries.
+This establishes membership decisions, not native queue scheduling, initial
+seat ordering, component mutation or mounted-camera rendering. The separate
+has_rider query also retains unresolved entries, so Java resolved passengers
+are not a proven replacement for the native component.
 ---
- .../api/model/entity/ClientPlayerEntity.java  |  17 +++
+ .../api/model/entity/ClientPlayerEntity.java  |  17 ++
  .../viabedrock/api/model/entity/Entity.java   |  15 ++
  .../protocol/PlayerActionPacketFactory.java   |   9 +-
  .../protocol/packet/EntityPackets.java        |  12 +-
- .../protocol/packet/InteractionPackets.java   |  65 +++------
+ .../protocol/packet/InteractionPackets.java   |  65 ++----
  .../protocol/packet/OtherPlayerPackets.java   |   7 +-
- .../protocol/storage/EntityTracker.java       | 120 +++++++++++++++-
- .../api/model/entity/EntityRiderSeatTest.java |  36 +++++
- .../protocol/storage/EntityTrackerTest.java   | 131 ++++++++++++++++++
- 9 files changed, 363 insertions(+), 49 deletions(-)
+ .../protocol/storage/EntityTracker.java       | 126 ++++++++++-
+ .../api/model/entity/EntityRiderSeatTest.java |  36 ++++
+ .../protocol/storage/EntityTrackerTest.java   | 204 ++++++++++++++++++
+ 9 files changed, 442 insertions(+), 49 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityRiderSeatTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
 
@@ -276,7 +292,7 @@ index a906dcd80..931d0cbbd 100644
          protocol.registerClientbound(ClientboundBedrockPackets.MOVE_PLAYER, ClientboundPackets26_3.ENTITY_POSITION_SYNC, wrapper -> {
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-index aebd19b61..e00b8b176 100644
+index aebd19b61..ef903b570 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 @@ -43,11 +43,18 @@ import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
@@ -333,7 +349,7 @@ index aebd19b61..e00b8b176 100644
          return entity;
      }
  
-@@ -119,9 +131,112 @@ public class EntityTracker extends StoredObject {
+@@ -119,9 +131,118 @@ public class EntityTracker extends StoredObject {
          this.entities.remove(entity.uniqueId());
          this.runtimeIdToUniqueId.remove(entity.runtimeId());
          this.javaIdToUniqueId.remove(entity.javaId());
@@ -356,6 +372,9 @@ index aebd19b61..e00b8b176 100644
      }
  
 +    public void applyEntityLink(final EntityLink link) {
++        if (link.type() == null) {
++            return;
++        }
 +        final LinkKey key = new LinkKey(link.fromEntityUniqueId(), link.toEntityUniqueId());
 +        this.pendingEntityLinks.remove(key);
 +        if (link.type() == ActorLinkType.None) {
@@ -413,6 +432,9 @@ index aebd19b61..e00b8b176 100644
 +
 +    private void applyResolvedEntityLink(final Entity vehicle, final Entity passenger,
 +                                         final ActorLinkType type) {
++        if (vehicle.passengers().contains(passenger.uniqueId())) {
++            return;
++        }
 +        final Entity previousVehicle = this.getEntityByRid(passenger.mountEntityRuntimeId());
 +        if (previousVehicle != null && previousVehicle != vehicle) {
 +            previousVehicle.removePassenger(passenger.uniqueId());
@@ -446,7 +468,7 @@ index aebd19b61..e00b8b176 100644
      public void spawnItemFrame(final BlockPosition position, final BlockState blockState) {
          this.removeItemFrame(position);
  
-@@ -240,6 +355,9 @@ public class EntityTracker extends StoredObject {
+@@ -240,6 +361,9 @@ public class EntityTracker extends StoredObject {
          return this.idCounter.getAndIncrement();
      }
  
@@ -500,10 +522,10 @@ index 000000000..25f752186
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
 new file mode 100644
-index 000000000..004043a37
+index 000000000..1aa3a4dfd
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,204 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -525,12 +547,16 @@ index 000000000..004043a37
 +import net.raphimc.viabedrock.protocol.model.Position3f;
 +import org.junit.jupiter.api.Test;
 +
++import java.io.IOException;
 +import java.lang.reflect.Proxy;
++import java.nio.file.Files;
++import java.nio.file.Path;
 +import java.util.List;
 +import java.util.UUID;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +import static org.junit.jupiter.api.Assertions.assertSame;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
 +
 +class EntityTrackerTest {
 +
@@ -623,6 +649,75 @@ index 000000000..004043a37
 +        assertEquals(second.runtimeId(), passenger.mountEntityRuntimeId());
 +        tracker.removeEntity(second);
 +        assertEquals(-1, passenger.mountEntityRuntimeId());
++    }
++
++    @Test
++    void repeatedRiderLinkPreservesExistingSeatOwnership() {
++        final EntityTracker tracker = new EntityTracker(user());
++        final Entity vehicle = tracker.addEntity(10, 100, EntityTypes26_3.OAK_BOAT.identifier(), EntityTypes26_3.OAK_BOAT);
++        final Entity first = tracker.addEntity(11, 101, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        final Entity second = tracker.addEntity(12, 102, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        tracker.applyEntityLink(link(10, 11, ActorLinkType.Passenger));
++        tracker.applyEntityLink(link(10, 12, ActorLinkType.Riding));
++        tracker.drainPassengerUpdates();
++
++        tracker.applyEntityLink(link(10, 11, ActorLinkType.Riding));
++
++        assertEquals(List.of(second.uniqueId(), first.uniqueId()), vehicle.passengers());
++        assertEquals(vehicle.runtimeId(), first.mountEntityRuntimeId());
++        assertEquals(vehicle.runtimeId(), second.mountEntityRuntimeId());
++        assertEquals(List.of(), tracker.drainPassengerUpdates());
++    }
++
++    @Test
++    void unknownRoleCannotCreateOrReplacePendingMembership() {
++        final EntityTracker tracker = new EntityTracker(user());
++        final Entity vehicle = tracker.addEntity(10, 100, EntityTypes26_3.OAK_BOAT.identifier(), EntityTypes26_3.OAK_BOAT);
++        tracker.applyEntityLink(link(10, 11, ActorLinkType.Riding));
++        tracker.applyEntityLink(link(10, 11, null));
++        tracker.applyEntityLink(link(10, 12, null));
++
++        final Entity rider = tracker.addEntity(11, 101, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        final Entity unrelated = tracker.addEntity(12, 102, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        tracker.drainPassengerUpdates();
++        tracker.applyEntityLink(link(10, 12, null));
++
++        assertEquals(List.of(rider.uniqueId()), vehicle.passengers());
++        assertEquals(vehicle.runtimeId(), rider.mountEntityRuntimeId());
++        assertEquals(-1, unrelated.mountEntityRuntimeId());
++        assertEquals(List.of(), tracker.drainPassengerUpdates());
++    }
++
++    @Test
++    void matchesNativeResolvedMembershipDecisions() throws IOException {
++        final String fixture = System.getenv("STACKANVIL_NATIVE_ENTITY_LINKS");
++        assumeTrue(fixture != null);
++        final List<String> cases = Files.readAllLines(Path.of(fixture));
++        int compared = 0;
++        for (final String line : cases.subList(1, cases.size())) {
++            final String[] sample = line.split("\t");
++            final EntityTracker tracker = new EntityTracker(user());
++            final Entity vehicle = tracker.addEntity(101, 1001, EntityTypes26_3.OAK_BOAT.identifier(), EntityTypes26_3.OAK_BOAT);
++            final Entity passenger = tracker.addEntity(202, 2002, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++            final boolean member = Integer.parseInt(sample[0]) != 0;
++            if (member) {
++                vehicle.addPassenger(passenger.uniqueId());
++                passenger.setMountEntityRuntimeId(vehicle.runtimeId());
++            }
++            final boolean added = Integer.parseInt(sample[4]) != 0;
++            final boolean removed = Integer.parseInt(sample[5]) != 0;
++
++            tracker.applyEntityLink(new EntityLink(vehicle.uniqueId(), passenger.uniqueId(),
++                    ActorLinkType.getByValue(Integer.parseInt(sample[1])), Integer.parseInt(sample[2]) != 0,
++                    Integer.parseInt(sample[3]) != 0, 1.25F));
++
++            final boolean retained = added || member && !removed;
++            assertEquals(retained ? List.of(passenger.uniqueId()) : List.of(), vehicle.passengers());
++            assertEquals(retained ? vehicle.runtimeId() : -1, passenger.mountEntityRuntimeId());
++            assertEquals(added || removed ? List.of(vehicle) : List.of(), tracker.drainPassengerUpdates());
++            compared++;
++        }
++        assertEquals(40, compared);
 +    }
 +
 +    private static EntityLink link(final long vehicle, final long passenger, final ActorLinkType type) {
