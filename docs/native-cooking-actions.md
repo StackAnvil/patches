@@ -2,8 +2,9 @@
 
 This reference records verified behavior for contributors who implement authored furnace, smoker, and blast-furnace controls.
 The core executes snapshot-bound primary recipe actions through native transfer batches.
-The current Fabric client receives cooking snapshots and progress while ordinary Java screens handle gameplay.
-Authored client bindings, remaining input branches, and complete native parity remain unfinished.
+The Fabric client receives cooking snapshots and progress, and it can route recipe pointer input in admitted authored scenes.
+The default cooking program still uses ordinary Java controls because its remaining required controls are unfinished.
+Complete authored control bindings, remaining input branches, and native parity remain unfinished.
 
 ## Version and evidence
 
@@ -65,8 +66,9 @@ Request sequences reject duplicate input, and menu generations protect replaceme
 Intermediate Java-content publication waits until the action finishes. Selection highlights follow the current visible recipe order.
 
 The Fabric client has typed action and result transport with revision-bound gesture handling.
-The presentation remains passive, and each input batch waits for its responses before another batch can start.
-Physical device bindings, nonempty-cursor branches, cross-input prediction, authoritative model watchers, and live route acceptance remain unfinished.
+The default cooking program retains ordinary controls. Each input batch waits for its responses before another batch can start.
+Native device equivalence, remaining device bindings, nonempty-cursor branches, cross-input prediction, and authoritative model watchers remain unfinished.
+Acceptance on unchanged server-authored cooking screens and broader recipes also remains unverified.
 The original full controller, model owner, and independent frame scopes also remain outside the native fixtures.
 
 ## Recipe command dispatch
@@ -101,6 +103,35 @@ The sender records pending input before transport, so immediate bridge replies c
 Replies must match the complete pending action. Rejected or consumed authority requires a newer resolved frame before another gesture starts.
 Menu replacement, capability withdrawal, ambiguous transport errors, and a ten-second response timeout retire the session.
 These client rules do not establish native physical input bindings or cross-input prediction.
+
+The renderer admits authored recipe cells only through the scope from the same resolved frame.
+Slot controls, close commands, and recipe cells share clipped painter order.
+Unsupported mapping attributes, select/deselect constraints, and string booleans reject before the scene becomes actionable.
+The Java pointer adapter maps primary and secondary presses to phase `0`, and their releases to phase `2`.
+This adapter does not establish the target native physical event mapping.
+The sender requires the exact installed native screen as well as its owned menu.
+
+A recipe press captures its button, recipe, and command until release, even after a newer scene removes that cell.
+Captured drags, additional buttons, and duplicate releases cannot dispatch vanilla inventory input.
+A terminal release retains the original authority after timeout or an ambiguous send. It sends at most once and cannot repeat transfers.
+Fallback restores the exact original screen on the same connected menu after presentation retirement.
+It cannot replace a later screen or a reused menu.
+
+Unsupported required controls keep the ordinary screen.
+This includes the default search, navigation, help, focus, and carried-item branches.
+The pointer and fallback regressions use constructed authored scenes and genuine Java menus.
+They do not establish native physical input, GPU output, or complete native UI parity.
+
+A separate private client fixture projects supported controls from real cooking scenes.
+It removes unfinished widgets, unsupported mappings, and unsupported renderer leaves.
+Projection retains all 39 inventory addresses, recipe metadata, and original recipe bindings.
+A private color marker distinguishes the projected scene from the ordinary Java panel.
+The test driver waits four seconds before its first panel check, so it cannot interfere with the controlled native gesture.
+Actual installed native screen handlers send primary presses and releases in furnace, smoker, and blast-furnace menus.
+All six production replies match and accept the actions. BDS starts cooking with one real ingredient and an empty cursor after each placement.
+The fixture restores ordinary controls, and the three normal cooking cases and same-world reconnect pass.
+This establishes a bounded live primary path through a controlled client scene.
+It does not establish an unchanged server-authored screen, OS mouse translation, broader quantities and recipes, carried-item branches, or native reference pixels.
 
 Negative-index cases are internal controls. They do not authorize invalid recipe identities.
 
@@ -590,5 +621,6 @@ Full cooking-manager and controller construction, recipe selection, input delive
 The [shared UI patch](../patches/viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.patch) owns the cooking messages, scene contracts, and presentation authority.
 The [inventory request patch](../patches/viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.patch) owns request prediction, response reconciliation, and transfer quantities.
 
-Remaining work includes complete controller initialization, the input pipeline, selection-history boundaries, the complete recipe-selection transfer pipeline, loaded world targets, revision-bound action handling, and authored client controls.
+Remaining production work includes complete controller initialization, remaining input branches, selection-history invalidation, loaded world targets, and authored default controls.
+The native instruction fixtures cover individual boundaries. Full controller construction requires separate evidence.
 Native visual comparisons remain separate from these instruction-level checks.

@@ -119,3 +119,9 @@ The same report includes pearl/wind-charge rollback, repeated eating and a missi
 Those symptoms remain under investigation.
 The capture lab cannot copy a private profile with the currently available disk space.
 No new live client or server was launched for this report.
+
+## Recipe control states
+
+Recipe action annotations now select authored hover and locked branches without requiring an unrelated close annotation.
+The shared CPU presentation regression covers enabled, disabled, pointed, and unpointed states.
+This change does not establish native button pixels or physical device mapping.
