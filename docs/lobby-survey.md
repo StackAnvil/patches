@@ -287,3 +287,37 @@ All 102 core and 38 client patches replay cleanly, and offline tooling and metad
 The complete 120-second replay passes transport verification.
 Overall rendering verification still fails on unresolved block, entity and texture mappings.
 No null-direction piston failure occurs. All seven owned process identities close, and the private display stops.
+
+## Treasure Hunt and MegaSMP follow-up
+
+On 22 October, fresh catalog admissions tested both servers with the rebuilt add-on.
+Treasure Hunt fails before a playable scene.
+Its StartGame decoder consumes all 495,146 bytes, then attempts to read the trailing owner-ID string.
+This matches the field that fails on several earlier creator-server admissions.
+The failed join provides no rendering verdict.
+
+MegaSMP reaches a playable spawn with terrain, held items, villagers, and custom models.
+A verified ray hit on the Sell Shop villager precedes a successful right-click interaction.
+The resulting generic dialog exposes `@mineville/long_form` in its title and clips the sell button's text.
+The survey closes the dialog without selling items.
+
+The ninth hotbar item opens the team menu.
+Its title exposes `@mineville/other_main_menu`, its text contains replacement glyphs, and several buttons appear blank.
+The survey does not create a team or accept an invitation.
+The ordinary HUD contains large overlapping tutorial, action, and sidebar text.
+A screenshot with the HUD hidden confirms that the spawn terrain and some custom models render beneath it.
+Native comparisons remain necessary to classify each layout difference.
+
+The client also fails to load `mvmodels:holy_knight` and `mvmodels:mecha_oondasta` actor graphs.
+Both failures report `Expected SEMICOLON, found COLON` during MoLang parsing.
+Their retained animation timelines contain namespaced event strings such as `mm:Pet_Step_SFX;`, which the current graph loader treats as MoLang.
+These are confirmed graph-loading failures; the survey does not establish their exact native appearance.
+The `/lobby` command returns to the same spawn. The server rejects `/hub` as an unknown command.
+No additional game-mode destination is verified in this MegaSMP run.
+
+The complete 240-second MegaSMP recording passes gameplay verification and exits normally.
+Its audit records 43,744 remote-player frames and 105,848 custom-actor frames, with 117 resolved custom models.
+Those totals do not erase the graph-loading and GUI defects above.
+Both fresh survey clients embed all 1,360 rebuilt core classes and the matching block-item resources.
+All seven Treasure Hunt process identities and all six MegaSMP identities close normally.
+Raw packets, accepted packs, screenshots, logs, and observer data remain private.
