@@ -258,6 +258,31 @@ Five complete payloads cover cooking placement and partial or complete moves int
 
 The manager takes its normal null-Level constructor branch before the controlled world attaches.
 Client subclass fields, the one-entity registry, screen bindings, packet view, and stream fields remain controlled fixture data.
-Full Player and screen construction, predicted request finalization, the sender, transport, and live acceptance remain unverified.
+The open-request controls do not establish full Player or screen construction, finalization, transport, or live acceptance.
 The [request reference](../../../docs/native-cooking-actions.md#request-payload-identities) records these boundaries.
-The optional byte comparison reads `STACKANVIL_NATIVE_PREDICTED_REQUEST_WIRE`.
+The optional byte comparison now reads `STACKANVIL_NATIVE_FINALIZED_REQUEST_WIRE` from the stronger fixture below.
+
+## Finalize and flush owned native cooking requests
+
+A fresh fixture uses the registry owned by the original native request manager and creates its entity through the original helper.
+Native weak-reference construction retains ownership, and native detach releases that ownership after the cooking input.
+The original request finish queues both Place actions without changing their IDs.
+The original enabled flush converts them, constructs the packet, clears and destroys the queue, and invokes the transport interface.
+The transport sink calls the original serializer on that actual packet.
+Native payload cleanup completes, and a second empty flush emits nothing.
+The Java planner and codec match the finalized native payload byte for byte.
+
+Typed storage and client subclass fields still follow controlled inline layouts.
+Screen container bindings, the transport sink, and BinaryStream fields remain supplied boundaries.
+Full Player/screen construction, component signals, negotiated mode provenance, outer input/frame ownership, and live acceptance remain unverified.
+This evidence does not activate or complete authored cooking actions.
+
+A separate fresh control installs the native screen lease and delivers input through the inherited wrapper without an explicit request scope.
+Its two transfers create two queued requests, and the second destination references the first request ID.
+Native flush serializes both requests and preserves registry reference counts.
+The input-child vector remains empty, and full screen registration does not execute.
+Outer frame ownership and deferred recipe execution can change batching, so this control does not establish full application grouping.
+
+Validation: all 104 core patches replay. The four-project build passes 2,384 tests with 212 optional skips and no failures or errors.
+The 19 focused planner/request tests include the finalized native byte comparison.
+Checkstyle and offline validation pass. Authored cooking controls remain unfinished.

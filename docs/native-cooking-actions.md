@@ -27,6 +27,7 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Installed first recipe placement | 1 controlled click | Two native Place actions, retained destination identity, and final ingredient count |
 | Repeated recipe placement | 30 input steps and snapshots | Capacity, selection clearing, return to player inventory, and placement after return |
 | Predicted request payload identities | 5 complete payloads | Native identity callbacks assign request references after slot mutation |
+| Owned request finalization and flush | 1 cooking payload plus an empty flush | Native ownership release, queue removal, packet construction, serialization, and cleanup |
 | Cooking item-return planner | 1,500 cases | Original-slot deficits and the remaining count passed to auto-placement |
 | Physical-slot snapshot producer | 45 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
 | Registered cooking providers | 3 ingredient descriptors | Eleven registrations, native model import, skip callbacks, and 76-slot capture order |
@@ -261,7 +262,7 @@ Returns use combined player provider `12`.
 These player providers share the same physical slot identities.
 The Java planner tracks changed physical slots and substitutes request references during request assembly.
 Its codec matches the complete native cooking payload byte for byte.
-The optional comparison reads `STACKANVIL_NATIVE_PREDICTED_REQUEST_WIRE`.
+The optional comparison now reads `STACKANVIL_NATIVE_FINALIZED_REQUEST_WIRE` from the owned finalization fixture below.
 Regressions also cover multiple ingredient returns, refill of an emptied ingredient slot, and rejection recovery.
 Java recipe-book quantities remain separate from native authored primary selection.
 
@@ -275,10 +276,49 @@ The original wrapper `0x14273aab0` constructs the serialization context and call
 Original BinaryStream methods write every byte and grow the buffer.
 The fixture supplies the stream fields from native inline construction and a packet view with sender mode `5`.
 Requests remain explicitly open during this comparison.
-Native finalization of the predicted component, the enclosing sender, and containing stream construction remain unverified.
+The open-request fixture does not execute finalization, the enclosing sender, or containing stream construction.
 The payload excludes packet headers and transport framing.
 Recipe data, world interfaces, and model-owner limits remain unchanged from the first-placement fixture.
 These checks do not establish network exchange, server acceptance, full frame ownership, or complete authored cooking controls.
+
+## Owned request finalization and flush
+
+A fresh fixture uses the EntityRegistry that the original request-manager constructor creates and owns.
+Original function `0x1425c0460` creates its live screen entity.
+Original function `0x1425c06e0` constructs its weak reference and retains the registry ownership.
+The original typed map inserts the ClientScreenData storage, and the original component constructor initializes its members and pages.
+Typed storage fields and client subclass fields still follow controlled native inline layouts.
+Full Player registration, component signals, and mode negotiation remain unverified.
+
+The fixture delivers the same two-source cooking input through the native prediction callbacks.
+Original finish `0x1425b0cf0` calls detach `0x1425b0e50` and queues the owned request.
+Detach clears the active request and weak reference, then releases exactly one weak count.
+The registry retains one strong owner and its remaining weak references.
+The request actions retain their IDs through finalization.
+
+Original flush `0x1425b1f70` converts the queued request and constructs the actual native packet with mode `5`.
+It clears the queue and destroys its owned requests before the transport call.
+The external transport sink receives that packet and calls the original serialization wrapper `0x14273aab0`.
+The native writer and BinaryStream methods emit the same complete cooking payload as the open-request fixture.
+Native flush then destroys the converted payload values.
+A second flush with an empty queue makes no transport call.
+The Java planner and codec match these finalized native bytes.
+
+The transport sink and BinaryStream fields remain supplied interfaces and data.
+Screen container bindings use the original vector helper but remain controlled records.
+The fixture starts its request explicitly before input.
+Complete controller/model construction, physical input mapping, and the enclosing input/frame scope remain unverified.
+The fixture does not execute transport framing, encryption, a network exchange, or server acceptance.
+Authored cooking controls remain unfinished.
+
+A second fresh control installs an owned screen lease through native EntityContext move `0x1425c0540` and deque append `0x147c88220`.
+The inherited input wrapper `0x144819a20` delivers the cooking event without an explicitly opened request.
+Each transfer starts and finishes its own native request through the retained screen context.
+The resulting queue contains two requests, and the second destination references the first request ID.
+Native flush serializes both requests in one packet and preserves the reference counts.
+The input-child vector remains empty, and the complete screen registration method does not execute.
+An enclosing frame scope or deferred recipe component can change this batching.
+This omission control therefore does not establish full application request grouping.
 
 ## Transfer quantities
 
