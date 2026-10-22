@@ -1,5 +1,47 @@
 # Send local player prediction to core
 
+## Owned historical physics
+
+Movement-effect corrections now restore typed actor snapshots and execute recorded client physics.
+Replay runs root and passenger ticks with their raw input, equipment observations, item-use observations, and historical time.
+The ordinary current frame executes once.
+
+Snapshots own attributes, effect vectors, fluid trackers, posture, collision state, motion, boat state, horse state, and seat relationships.
+Actor identity includes the actual entity instance, world, UUID, and native lifetime.
+Each frame retains its own participant layout during later snapshot refreshes.
+The participant index expires entries with history eviction.
+Validation checks both captures of every affected frame before changing any actor or seat.
+Unowned actors recover their current state after replay, while the shared seat graph retains the replayed relationships.
+
+Historical execution skips inventory ticking, item consumption, equipment ticking, pickups, and portal presentation.
+Item-use observations temporarily supply movement state without advancing the live consumption cycle.
+The packet guard applies only to the owned connection on the replay thread.
+Replay also suppresses duplicate sounds and particles.
+
+The pinned Java 26.3 runtime loads the clock hook on `LevelAccessor`.
+The equipment hook uses `EntityEquipment.tick(Entity)`, and the super-AI hook uses the actual local-player receiver.
+All 31 movement invocation selectors match the pinned client bytecode.
+
+Two graph regressions fail with the previous refresh and validation behavior and pass with the revised implementation.
+They cover changing mount layouts and actors introduced between a frame's captures.
+Current project builds pass 2,482 tests, with 212 optional skips and no errors.
+All 104 core patches and 38 add-on patches replay, and all 1,404 embedded core classes match.
+
+The live-tested artifact completes five native BDS mounts and five dismounts without disconnecting.
+Observed snapshots contain at most two participants in that fixture.
+One historical replay executes two recorded physical steps and preserves the live tick, food, and held-item count.
+A six-second food-use control consumes three apples and ends before client shutdown.
+These controls use BDS 1.26.51.1, protocol 2193, and Java 26.3 on the private display.
+The live-tested artifact's food-use controls do not overlap a historical rewind.
+All 108 movement classes and the mixin resources remain unchanged after the later cooking layout update.
+An earlier adapter artifact preserves an active use counter at 31 during a rewind, before the later graph and spawn changes.
+
+Player and vehicle position corrections still snap and invalidate this physical history.
+Their native command transport and input-phase alignment remain required.
+Historical world queries, managed interpolation, complete mount ownership, and native trajectories also need further verification.
+The affected-server rollback and endless-eating reports remain unresolved by these bounded controls.
+Earlier sections retain the evidence and limits of their respective artifacts.
+
 ## Purpose
 
 Send completed local physics through the negotiated ViaBedrock prediction channel.

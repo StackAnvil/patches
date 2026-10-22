@@ -1,5 +1,28 @@
 # Completed player prediction frames
 
+## Owned state for physical replay
+
+The movement timeline exposes independent effect values for the client adapter's physical snapshots.
+Historical effect queries and local admissions use the replayed frame's clock.
+Queued commands run before the recorded physical input.
+Fluid-current and sneaking state expose owned values for restoration.
+A replacement play listener clears actor history while preserving its connection's completed frame watermark.
+
+Vehicle prediction requires initialized positions for both the player and mount.
+Pending passenger links can resolve before the spawn handler sets the vehicle position.
+Prediction remains unavailable during that interval. The normal metadata update then publishes the initialized mount context.
+A regression reproduces the earlier null-position disconnect and verifies subsequent context publication.
+
+Current builds include the incoming cooking controls and pass 2,482 tests, with 212 optional skips and no errors.
+All 104 core patches and 38 add-on patches replay.
+The add-on contains all 1,404 rebuilt core classes unchanged.
+Offline validation passes 271 tooling tests, static checks, and patch metadata checks.
+
+The add-on now executes historical physics for movement-effect commands.
+Player and vehicle position corrections still use their existing snap path.
+Their command transport, exact native phase alignment, and full native trajectory parity remain incomplete.
+Earlier sections retain the evidence and limits of their respective artifacts.
+
 ## Advancing frame identities
 
 Completed client frame IDs increase throughout each connection, including stationary and mounted samples.
