@@ -2068,11 +2068,10 @@ It also rejects nonliquid Java states in fluid dictionary entries.
 
 The target-native layer selector passed 180 pinned-binary cases, as recorded in the core transport sidecar.
 The client decoder tests every Java water and lava block state.
-All four projects build with 2,360 passing tests, 152 optional skips and no failures.
+The earlier query-only validation passed 2,360 tests, with 152 optional skips and no failures.
 
-This change covers fluid queries.
-Vanilla and Sodium mesh builders also read fluids directly from block states.
-Those mesh paths, fluid face occlusion, complete current simulation and native visual parity still need verification and integration.
+The mesh integration below now replaces direct block-state fluid reads in both supported mesh builders.
+Native fluid face occlusion, vertex-height parity, complete current simulation and native visual parity remain open.
 
 
 Two fresh 40-second Galaxite replays validate the getters against recorded native fluid layers.
@@ -2081,3 +2080,46 @@ The plain client reports zero mismatches through the client world and vanilla re
 The Iris client also checks Sodium 0.9.2's `LevelSlice`, with zero mismatches across all three query surfaces.
 The region and Sodium getter probes construct query objects for the current client level; they do not test generated fluid meshes.
 Transport verification passes; the broader rendering check still fails on unresolved mappings, including the camera texture.
+
+
+## Secondary fluids in chunk meshes
+
+The core represents fluid over native air as a Java fluid block so section-level empty checks retain it.
+Both vanilla and Sodium 0.9.2 chunk compilers retain the native fluid beside each primary block.
+A cell is skipped only when its primary block is air and its selected fluid is empty.
+The fluid renderer receives the selected fluid while the primary block still supplies geometry and occlusion shapes.
+This includes secondary fluids whose Java carrier has no waterlogged state, and fluids with an air primary block.
+
+Neighbor fluid reads now use the corresponding native positions for face selection and height sampling.
+Sodium's hidden-fluid exposure walk also reads the native current and upper cells.
+The lookup uses primitive coordinates in the mesh loop and neighbor paths to avoid extra position allocations.
+Unknown native definitions and ordinary Java worlds retain the original Java fluid result.
+A known dry native cell can override a fluid-bearing Java carrier.
+
+Current project test results total 2,364 passing tests, 152 optional skips and no failures.
+Targeted tests distinguish known dry states from unavailable native data and keep adjacent fluid selections independent.
+The native selector evidence remains the 180-case pinned-binary probe in the core transport sidecar.
+This change does not replace the existing face-occlusion or vertex-height algorithms with a proven native equivalent.
+
+
+Native fluid updates now invalidate their affected render sections even when the Java carrier state stays unchanged.
+The invalidation range covers two horizontal blocks and one vertical block, including Sodium 0.9.2's five-by-five hidden-fluid exposure walk.
+Equivalent fluid selections do not schedule another rebuild.
+Section replacements and chunk removal also invalidate their dependent regions.
+The update tracker follows dimension resets and connection/level clears; dirty coordinates stay within the integer block-coordinate section range.
+Targeted tests cover wet/dry changes, equivalent runtime aliases, near-boundary samples, resets, ignored dimensions, chunk removal and integer limits.
+
+
+Two final 40-second Galaxite replays pass transport verification without mixin or observer failures.
+The plain renderer emits 80 vertices for fluids whose native primary layer is air; Sodium emits 72.
+These counters include repeated chunk builds and do not measure distinct blocks or pixel equivalence.
+Java now represents those cells as fluid blocks, so whole sections also survive empty-section checks.
+The plain renderer also emits 4604 vertices for fluids absent from the primary Java block state.
+Sodium culls the sampled solid-bedrock fluids with its existing occlusion rules; that difference does not establish native parity.
+
+Each replay includes a synthetic client-side control on the recorded wet bedrock state.
+It removes and restores the native secondary liquid without changing Java block state 88.
+The world fluid query transitions wet, dry and wet, and each run records two rebuild invalidations attributed to those exact control messages.
+The original layer is restored before the test ends.
+This verifies the update bridge, not native server inventory actions or native fluid simulation.
+The broader rendering audit still fails on existing unresolved mappings, including the camera texture and unregistered `galaxite:loading_fx` actor.

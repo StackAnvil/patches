@@ -1,4 +1,4 @@
-From 77b148aa2544121270e73f50d478b3121843d4ee Mon Sep 17 00:00:00 2001
+From 98c4343550693a9e3ebbcfa7b5e04fd9cf846eac Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(effects): transport native resources and sound commands
@@ -161,8 +161,20 @@ native definitions distinct from known nonfluid states. Publish replacement
 section arrays through a concurrent world snapshot so client render workers
 can query the same authoritative layers without reading mutable arrays or
 locking every fluid lookup. Resets replace the complete world atomically.
+
+Translate liquid over native air into its forward Java fluid block in both
+full chunks and individual block lookups. There is no primary geometry to
+preserve in this case. Leaving it as Java air causes render-section empty
+checks to discard the section before client mesh integration can run.
+Keep exact native layer identities in the mirror for effects and queries.
+Share liquid classification between this translation and its dictionary.
+
+The regression test exercises all four liquid identifiers across 16
+mapped depths, full secondary-only sections, dense fluid/non-air counts
+and individual removals. Introduce the existing Mockito test dependency
+at this first use; later feature patches reuse it.
 ---
- build.gradle                                  |   6 +
+ build.gradle                                  |   7 +
  .../api/model/NativeBlockIdentifiers.java     | 236 +++++++++++++++++
  .../api/model/NativeBlockSection.java         | 143 ++++++++++
  .../viabedrock/api/model/NativeBlockView.java | 146 ++++++++++
@@ -175,9 +187,10 @@ locking every fluid lookup. Resets replace the complete world atomically.
  .../http/ConvertedResourcePackCache.java      |   2 +-
  .../protocol/packet/MultiStatePackets.java    |   6 +
  .../protocol/packet/WorldEffectPackets.java   |  29 +-
+ .../protocol/rewriter/BlockStateRewriter.java |  12 +
  .../rewriter/ResourcePackRewriter.java        |   6 +
  .../NativeEffectsResourceRewriter.java        |  41 +++
- .../protocol/storage/ChunkTracker.java        |  97 +++++++
+ .../protocol/storage/ChunkTracker.java        | 105 +++++++-
  .../protocol/storage/ResourcePackStorage.java |  43 ++-
  .../api/model/NativeBlockViewTest.java        | 250 ++++++++++++++++++
  .../api/model/SoundCaptionsTest.java          |  80 ++++++
@@ -187,7 +200,8 @@ locking every fluid lookup. Resets replace the complete world atomically.
  .../api/resourcepack/WaveSoundTest.java       | 182 +++++++++++++
  .../protocol/packet/SoundUpdateTest.java      |   5 +
  .../storage/NativeBlockSectionTest.java       |  60 +++++
- 25 files changed, 2382 insertions(+), 8 deletions(-)
+ .../storage/NativeFluidLayersTest.java        | 113 ++++++++
+ 27 files changed, 2514 insertions(+), 10 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockSection.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
@@ -205,12 +219,21 @@ locking every fluid lookup. Resets replace the complete world atomically.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/WaveSoundTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeBlockSectionTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeFluidLayersTest.java
 
 diff --git a/build.gradle b/build.gradle
-index 0ae10d4af..d493a516d 100644
+index 0ae10d4af..a597bcbbc 100644
 --- a/build.gradle
 +++ b/build.gradle
-@@ -172,3 +172,9 @@ registerToolTask("sortJson", "net.raphimc.viabedrock.tool.JsonSorter",
+@@ -123,6 +123,7 @@ dependencies {
+     testImplementation "com.google.guava:guava:33.7.1-jre"
+     testImplementation "io.netty:netty-handler:4.2.18.Final"
+     testImplementation "org.junit.jupiter:junit-jupiter:6.1.3"
++    testImplementation "org.mockito:mockito-core:5.24.0"
+     testRuntimeOnly "org.junit.platform:junit-platform-launcher:6.1.3"
+ }
+ 
+@@ -172,3 +173,9 @@ registerToolTask("sortJson", "net.raphimc.viabedrock.tool.JsonSorter",
      "Sorts data asset json files in place. Options: --file (required), --deep")
  registerToolTask("convertResourcePack", "net.raphimc.viabedrock.test.ResourcePackConverterTest",
      "Converts a bedrock .mcpack to a java resource pack. Options: --input (required), --output")
@@ -1672,6 +1695,29 @@ index 3fb2051c8..9924e3a01 100644
      static void writePlaySound(final PacketWrapper wrapper, final PlaySound sound, final int soundId, final int category, final long seed) {
          wrapper.write(Types.SOUND_EVENT, Holder.of(soundId));
          wrapper.write(Types.VAR_INT, category);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
+index 2cb4a79b6..10854c61a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
+@@ -221,6 +221,18 @@ public class BlockStateRewriter implements StorableObject {
+         return this.blockStateIdMappings.get(bedrockBlockStateId);
+     }
+ 
++    /** Forward liquid state, preserving its mapped depth/falling properties; -1 for nonliquid or unknown IDs. */
++    public int fluidJavaId(final int bedrockBlockStateId) {
++        final BlockState state = this.blockState(bedrockBlockStateId);
++        if (state == null) {
++            return -1;
++        }
++        return switch (state.namespacedIdentifier()) {
++            case "minecraft:water", "minecraft:flowing_water", "minecraft:lava", "minecraft:flowing_lava" -> this.javaId(bedrockBlockStateId);
++            default -> -1;
++        };
++    }
++
+     public int waterlog(final int javaBlockStateId) {
+         if (BedrockProtocol.MAPPINGS.getJavaPreWaterloggedBlockStates().contains(javaBlockStateId)) {
+             return javaBlockStateId;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
 index 07a19fa95..21454ca33 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
@@ -1751,7 +1797,7 @@ index 000000000..d045933a0
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-index a5da475d8..d94972b97 100644
+index a5da475d8..e6e0f41b7 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 @@ -26,6 +26,7 @@ import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
@@ -1789,7 +1835,25 @@ index a5da475d8..d94972b97 100644
          final PacketWrapper unloadChunk = PacketWrapper.create(ClientboundPackets26_3.FORGET_LEVEL_CHUNK, this.user());
          unloadChunk.write(Types.CHUNK_POSITION, chunkPos); // chunk position
          unloadChunk.send(BedrockProtocol.class);
-@@ -449,6 +456,9 @@ public class ChunkTracker extends StoredObject {
+@@ -278,10 +285,15 @@ public class ChunkTracker extends StoredObject {
+             remappedBlockState = ProtocolConstants.JAVA_AIR_ID;
+         }
+ 
+-        if (blockState0 != this.bedrockAirId() && blockPalettes.size() > 1) {
++        if (blockPalettes.size() > 1) {
+             final int blockState1 = blockPalettes.get(1).idAt(sectionX, sectionY, sectionZ);
+             if (blockState1 != this.bedrockAirId()) {
+-                if (CustomBlockTags.WATER.equals(blockStateRewriter.tag(blockState1))) { // Waterlogging
++                if (blockState0 == this.bedrockAirId()) {
++                    final int fluid = blockStateRewriter.fluidJavaId(blockState1);
++                    if (fluid != -1) {
++                        remappedBlockState = fluid;
++                    }
++                } else if (CustomBlockTags.WATER.equals(blockStateRewriter.tag(blockState1))) { // Waterlogging
+                     final int waterloggedBlockState = blockStateRewriter.waterlog(remappedBlockState);
+                     if (waterloggedBlockState != -1) {
+                         remappedBlockState = waterloggedBlockState;
+@@ -449,6 +461,9 @@ public class ChunkTracker extends StoredObject {
          }
  
          if (prevBlockState != blockState) {
@@ -1799,7 +1863,7 @@ index a5da475d8..d94972b97 100644
              this.invalidateJavaBlockStates(blockPosition.x() >> 4, blockPosition.y() >> 4, blockPosition.z() >> 4);
              final int chunkX = blockPosition.x() >> 4;
              final int chunkZ = blockPosition.z() >> 4;
-@@ -489,6 +499,92 @@ public class ChunkTracker extends StoredObject {
+@@ -489,6 +504,87 @@ public class ChunkTracker extends StoredObject {
          return section;
      }
  
@@ -1841,13 +1905,8 @@ index a5da475d8..d94972b97 100644
 +                continue;
 +            }
 +            final var block = this.user().get(BlockStateRewriter.class).blockState(state);
-+            final boolean fluid = block != null && switch (block.namespacedIdentifier()) {
-+                case "minecraft:water", "minecraft:flowing_water", "minecraft:lava", "minecraft:flowing_lava" -> true;
-+                default -> false;
-+            };
 +            final var name = new NativeBlockIdentifiers.Name(state, block == null ? "" : block.namespacedIdentifier(),
-+                    block == null ? Map.of() : block.properties(),
-+                    fluid ? this.user().get(BlockStateRewriter.class).javaId(state) : -1);
++                    block == null ? Map.of() : block.properties(), this.user().get(BlockStateRewriter.class).fluidJavaId(state));
 +            final int size = name.encodedSize();
 +            if (!names.isEmpty() && (names.size() == 256 || bytes + size > NativeBlockIdentifiers.MAX_DICTIONARY_BYTES)) {
 +                this.sendNativeBlocks(new NativeBlockIdentifiers.Dictionary(this.dimension.ordinal(), names));
@@ -1900,6 +1959,17 @@ index a5da475d8..d94972b97 100644
          final long chunkKey = ChunkPosition.chunkKey(chunkX, chunkZ);
          this.chunkLight.put(chunkKey, light);
          this.lightVersions.merge(chunkKey, 1L, Long::sum);
+@@ -1026,6 +1123,10 @@ public class ChunkTracker extends StoredObject {
+                                     }
+                                     final int blockState0 = layer0.idAt(x, y, z);
+                                     if (blockState0 == airId) {
++                                        final int fluid = blockStateRewriter.fluidJavaId(blockState1);
++                                        if (fluid != -1) {
++                                            remappedBlockPalette.setIdAt(x, y, z, fluid);
++                                        }
+                                         continue;
+                                     }
+ 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
 index d3dc43159..ea436f259 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
@@ -2916,6 +2986,125 @@ index 000000000..7c458f492
 +                assertEquals(0, blocks.data().length);
 +            }
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeFluidLayersTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeFluidLayersTest.java
+new file mode 100644
+index 000000000..3d2b30e0c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeFluidLayersTest.java
+@@ -0,0 +1,113 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.google.common.collect.HashBiMap;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.chunks.Chunk;
++import com.viaversion.viaversion.api.minecraft.chunks.PaletteType;
++import com.viaversion.viaversion.libs.fastutil.ints.IntOpenHashSet;
++import net.raphimc.viabedrock.api.chunk.BedrockChunk;
++import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
++import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSection;
++import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
++import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
++import org.junit.jupiter.api.Test;
++
++import java.util.HashMap;
++import java.util.Map;
++import java.util.stream.IntStream;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.mockito.ArgumentMatchers.anyInt;
++import static org.mockito.Mockito.*;
++
++final class NativeFluidLayersTest {
++
++    @Test
++    void keepsSecondaryOnlyFluidSectionsVisibleAndUpdatesTheirCounts() throws Exception {
++        final var javaStates = HashBiMap.<BlockState, Integer>create();
++        javaStates.put(BlockState.fromString("minecraft:air"), ProtocolConstants.JAVA_AIR_ID);
++        for (int depth = 0; depth < 16; depth++) {
++            javaStates.put(BlockState.fromString("minecraft:water[level=" + depth + "]"), depth + 1);
++            javaStates.put(BlockState.fromString("minecraft:lava[level=" + depth + "]"), depth + 17);
++        }
++        final var previous = replaceMappings(Map.of(
++                "javaBlockStates", javaStates,
++                "javaFluidBlockStates", new IntOpenHashSet(IntStream.rangeClosed(1, 32).toArray()),
++                "javaHeightMapBlockStates", Map.of("motion_blocking", new IntOpenHashSet()),
++                "javaBiomes", HashBiMap.create(Map.of("the_void", 0))));
++        try {
++            final int air = -128;
++            final var nativeStates = new HashMap<Integer, BlockState>();
++            final var javaIds = new HashMap<Integer, Integer>();
++            javaIds.put(air, ProtocolConstants.JAVA_AIR_ID);
++            final var blocks = mock(BlockStateRewriter.class, withSettings().stubOnly());
++            when(blocks.blockState(anyInt())).thenAnswer(call -> nativeStates.get(call.<Integer>getArgument(0)));
++            when(blocks.javaId(anyInt())).thenAnswer(call -> javaIds.getOrDefault(call.<Integer>getArgument(0), -1));
++            when(blocks.fluidJavaId(anyInt())).thenCallRealMethod();
++            final var user = mock(UserConnection.class);
++            when(user.get(BlockStateRewriter.class)).thenReturn(blocks);
++            final var chunks = mock(ChunkTracker.class, withSettings().defaultAnswer(CALLS_REAL_METHODS).stubOnly());
++            doReturn(user).when(chunks).user();
++            doReturn(air).when(chunks).bedrockAirId();
++            final var height = ChunkTracker.class.getDeclaredField("worldHeight");
++            height.setAccessible(true);
++            height.set(chunks, 16);
++            final var remap = ChunkTracker.class.getDeclaredMethod("remapChunk", BedrockChunk.class);
++            remap.setAccessible(true);
++            int nativeId = 100;
++            for (final String identifier : new String[]{"water", "flowing_water", "lava", "flowing_lava"}) {
++                for (int depth = 0; depth < 16; depth++, nativeId++) {
++                    final int javaId = (identifier.endsWith("water") ? 1 : 17) + depth;
++                    nativeStates.put(nativeId, BlockState.fromString("minecraft:" + identifier + "[liquid_depth=" + depth + "]"));
++                    javaIds.put(nativeId, javaId);
++                    final var section = new BedrockChunkSectionImpl();
++                    final var primary = new BedrockDataPalette();
++                    primary.addId(air);
++                    final var secondary = new BedrockDataPalette();
++                    secondary.addId(nativeId);
++                    section.addPalette(PaletteType.BLOCKS, primary);
++                    section.addPalette(PaletteType.BLOCKS, secondary);
++                    final var source = new BedrockChunk(-2, -3, new BedrockChunkSection[]{section});
++                    final var full = ((Chunk) remap.invoke(chunks, source)).getSections()[0];
++                    assertEquals(4096, full.getNonAirBlocksCount());
++                    assertEquals(4096, full.getFluidCount());
++                    assertEquals(javaId, full.palette(PaletteType.BLOCKS).idAt(4095));
++                    assertEquals(javaId, chunks.getJavaBlockState(section, 3, 7, 11));
++                    secondary.setIdAt(3, 7, 11, air);
++                    final var changed = ((Chunk) remap.invoke(chunks, source)).getSections()[0];
++                    assertEquals(4095, changed.getNonAirBlocksCount());
++                    assertEquals(4095, changed.getFluidCount());
++                    assertEquals(ProtocolConstants.JAVA_AIR_ID, changed.palette(PaletteType.BLOCKS).idAt(3, 7, 11));
++                    assertEquals(ProtocolConstants.JAVA_AIR_ID, chunks.getJavaBlockState(section, 3, 7, 11));
++                    assertEquals(javaId, chunks.getJavaBlockState(section, 4, 7, 11));
++                }
++            }
++            nativeStates.put(99, BlockState.fromString("minecraft:bedrock"));
++            javaIds.put(99, 33);
++            assertEquals(-1, blocks.fluidJavaId(99));
++            assertEquals(-1, blocks.fluidJavaId(Integer.MIN_VALUE));
++        } finally {
++            replaceMappings(previous);
++        }
++    }
++
++    private static Map<String, Object> replaceMappings(final Map<String, ?> values) throws Exception {
++        final Map<String, Object> previous = new HashMap<>();
++        for (final var entry : values.entrySet()) {
++            final var field = BedrockProtocol.MAPPINGS.getClass().getDeclaredField(entry.getKey());
++            field.setAccessible(true);
++            previous.put(entry.getKey(), field.get(BedrockProtocol.MAPPINGS));
++            field.set(BedrockProtocol.MAPPINGS, entry.getValue());
++        }
++        return previous;
 +    }
 +
 +}
