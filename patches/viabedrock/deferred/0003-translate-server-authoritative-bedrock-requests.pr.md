@@ -3,6 +3,19 @@
 This patch follows the inventory work owned by [ViaBedrock #276](https://github.com/ViaVersionAddons/ViaBedrock/pull/276).
 It remains deferred until that prerequisite lands.
 
+## Brewing stand addressing
+
+The target BDS 1.26.51.1 inventory exposes ingredient slot 0, bottle slots 1 through 3, and fuel slot 4.
+Map them to Java ingredient slot 3, bottle slots 0 through 2, and fuel slot 4.
+The previous mapping swapped ingredient and fuel. The native request collections now follow the corrected addresses.
+The slot regression fails before the correction and passes afterward.
+
+The authored screen requires both workstation and counter capabilities. It retains ordinary inventory operations and item authority.
+Container properties remain signed int32 snapshots under the current presentation sequence.
+Live observations confirm property 0 as remaining brewing ticks, property 1 as fuel, and property 2 as total fuel.
+Completion reaches counters `[0, 19, 20]`, consumes the ingredient, and transfers three awkward potions to player inventory.
+Counter updates do not advance item revisions.
+
 ## Crafted item metadata
 
 A successful stack response supplies counts, names, and stack network IDs.

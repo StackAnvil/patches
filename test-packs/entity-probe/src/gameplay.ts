@@ -520,6 +520,44 @@ define("chest-transfer", "inventory", async (player) => {
   return { passed: observed.chest === 0 && observed.player === 4, observed, expected: { chest: 0, player: 4 } };
 });
 
+define("brewing-stand", "inventory", async (player) => {
+  await prepareArena(player);
+  blockAt(player.dimension, 0, 1, 2).setType("minecraft:brewing_stand");
+  await nextTick();
+  const brewing = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+  if (!brewing) throw new Error("Brewing inventory is unavailable.");
+  const water = new ItemStack("minecraft:potion");
+  const initialEffect = water.getComponent("minecraft:potion")?.potionEffectType.id;
+  if (!initialEffect) throw new Error("Water potion has no effect identity.");
+  for (const slot of [1, 2, 3]) brewing.setItem(slot, water);
+  brewing.setItem(4, new ItemStack("minecraft:blaze_powder"));
+  inventory(player).setItem(0, new ItemStack("minecraft:nether_wart"));
+  player.teleport(position(), { dimension: arena.dimension, facingLocation: position(0.5, -0.5, 2.5) });
+  return { initialEffect };
+}, (player, fixture) => {
+  const brewing = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+  if (!brewing) throw new Error("Brewing inventory is unavailable.");
+  const potions = [];
+  const bag = inventory(player);
+  for (let slot = 0; slot < bag.size; slot++) {
+    const item = bag.getItem(slot);
+    if (item?.typeId === "minecraft:potion") potions.push(item.getComponent("minecraft:potion")?.potionEffectType.id);
+  }
+  const observed = {
+    potions,
+    originalEffect: fixture.initialEffect,
+    remainingBottles: [1, 2, 3].filter((slot) => brewing.getItem(slot)).length,
+    ingredient: brewing.getItem(0)?.amount ?? 0,
+    playerIngredient: countItem(bag, "minecraft:nether_wart"),
+  };
+  return {
+    passed: potions.length === 3 && potions.every((effect) => effect && effect !== fixture.initialEffect)
+      && new Set(potions).size === 1 && observed.remainingBottles === 0 && observed.ingredient === 0 && observed.playerIngredient === 0,
+    observed,
+    expected: "Consume one nether wart, brew all three water bottles, then move the completed potions to player inventory.",
+  };
+});
+
 for (const [id, itemId, initialInput, expectedInput, expectedFuel, expectedPlayer] of [
   ["furnace-quick-move-log", "minecraft:oak_log", 63, 64, 0, 7],
   ["furnace-quick-move-coal", "minecraft:coal", 0, 0, 8, 0],

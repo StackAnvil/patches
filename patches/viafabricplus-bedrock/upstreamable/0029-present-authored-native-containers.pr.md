@@ -10,6 +10,22 @@ Tests cover each bundled scene's visible-control validation, actual menu identit
 Native visual and direct/ViaProxy transaction comparisons remain unverified.
 Failed presentation restores the original ordinary screen; this remains an unresolved parity defect for a supported scene.
 
+## Brewing stand
+
+Version 4 adds the authored brewing screen over a real `BrewingStandMenu`.
+Counter updates require the current play listener, menu object, kind, menu ID, and presentation sequence.
+The screen uses full native counters independently of Java's short menu properties.
+Its slots keep ordinary authoritative inventory operations. Storage count-one providers do not apply to this workstation.
+
+A fresh BDS 1.26.51.1 test places nether wart through the screen, brews three water bottles, and transfers three awkward potions.
+A read-only observer confirms the native screen class and matching core and client counter snapshots through completion.
+Screenshots cover progress, completed items, and empty bottle placeholders.
+The chest action, ordinary chest transfer, and reconnect checks also pass.
+All 1,306 installed core classes match the rebuilt artifact.
+
+The full build passes 2,162 tests, with 152 optional skips. Core and client stacks replay all 102 and 38 patches.
+Native pixel, direct-client, and Iris comparisons remain open.
+
 Shared UI classes now own bounded scene parsing, layout, images, text, font factors, scroll geometry and visual states.
 Modal forms retain their own response model and custom input state.
 Native containers use typed slot and cursor annotations, rather than fake form actions.

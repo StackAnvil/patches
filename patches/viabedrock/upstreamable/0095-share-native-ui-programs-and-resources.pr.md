@@ -2,6 +2,19 @@ Share immutable UI programs, domain bindings, scene contracts and accepted resou
 
 Run evaluator, binding, texture and message codec tests before the transport integration.
 
+## Brewing program and counters
+
+The pinned Bedrock 1.26.51.1 assets supply the brewing screen, three indexed bottle cells, and fixed ingredient and fuel collections.
+The shared controller binds all 41 real Java menu slots and the native empty-cell images.
+Bound `clip_ratio` values reach the image renderer for bubbles, brewing progress, and fuel.
+
+An executable probe covers 994 counter cases through the original target callbacks and helpers.
+All Java float bits match, including large counters and partial fuel updates with a zero total.
+The fixture supplies model and world lookup seams. It does not establish native GPU or complete controller parity.
+
+Format 4 carries workstation programs and initial counters. A separate counter payload retains signed int32 values and the presentation sequence.
+Older formats reject the new family before writing bytes. Storage formats remain unchanged.
+
 ## Prepare optional built-in UI assets
 
 Use an officially acquired package for the pinned version. The build tool reads its extracted resource packs and preserves native file contents.

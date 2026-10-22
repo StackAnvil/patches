@@ -45,6 +45,7 @@ export const gameplayCaseIds = [
   "chest-minecart-transfer",
   "furnace-quick-move-log",
   "furnace-quick-move-coal",
+  "brewing-stand",
   "enchant-basic",
   "offhand-ineligible-block",
   "offhand-shield-use",
@@ -71,7 +72,10 @@ export type GameplayPhase = "prepare" | "start" | "verify" | "invalidate";
 export function gameplayCasesForBackend(geyser: boolean): GameplayCaseId[] {
   return geyser
     ? gameplayCaseIds
-        .filter((id) => id !== "lab-table-then-chest" && !isAuthoredInventoryCase(id))
+        .filter(
+          (id) =>
+            id !== "lab-table-then-chest" && id !== "brewing-stand" && !isAuthoredInventoryCase(id),
+        )
         .map((id) => (id === "offhand-ineligible-block" ? "offhand-block-place" : id))
     : [...gameplayCaseIds];
 }
@@ -562,6 +566,77 @@ async function furnaceQuickMove(ui: Ui): Promise<void> {
   await uiKey(ui, "Escape");
 }
 
+async function brewingStand(ui: Ui): Promise<void> {
+  const window = await javaWindow(ui);
+  const native = {
+    ...window,
+    containerScale: Math.max(
+      1,
+      Math.min(8, Math.floor(window.width / 376), Math.floor(window.height / 250)),
+    ),
+  };
+  const screenshot = (name: string) =>
+    ui([
+      "ui",
+      "screenshot",
+      name,
+      "--client",
+      "java",
+      "--output-dir",
+      join(root, ".stackanvil", "integration"),
+    ]);
+  await uiKey(ui, "2");
+  let opened = false;
+  for (let attempt = 0; attempt < 8 && !opened; attempt++) {
+    await uiMouse(ui, "right");
+    await Bun.sleep(500);
+    const pixels = await Promise.all(
+      (
+        [
+          [5, 15],
+          [170, 15],
+          [5, 161],
+          [170, 161],
+        ] as const
+      ).map(async ([x, y]) => {
+        const point = containerPoint(native, 176, 166, x, y);
+        return (await ui(["ui", "pixel", String(point[0]), String(point[1]), "--client", "java"]))
+          .trim()
+          .split(/\s+/)
+          .map(Number);
+      }),
+    );
+    opened = pixels.every(
+      (pixel) => pixel.length === 3 && pixel.every((channel) => Math.abs(channel - 198) <= 2),
+    );
+  }
+  if (!opened) throw new Error("The authored brewing panel did not open after right click.");
+  await screenshot("brewing-before");
+  await clickGui(ui, native, 176, 166, 16, 152);
+  await Bun.sleep(200);
+  await clickGui(ui, native, 176, 166, 88, 25);
+  await Bun.sleep(1500);
+  await screenshot("brewing-progress");
+  await Bun.sleep(20_000);
+  await screenshot("brewing-complete");
+  await Promise.all([
+    ui(["ui", "key-hold", "Shift_L", "2000", "--client", "java"]),
+    (async () => {
+      await Bun.sleep(200);
+      for (const [x, y] of [
+        [83, 59],
+        [106, 66],
+        [129, 59],
+      ] as const) {
+        await clickGui(ui, native, 176, 166, x, y);
+        await Bun.sleep(200);
+      }
+    })(),
+  ]);
+  await screenshot("brewing-empty");
+  await uiKey(ui, "Escape");
+}
+
 async function creativeSelect(
   ui: Ui,
   mainInventory = false,
@@ -774,6 +849,9 @@ export async function driveGameplay(
     case "furnace-quick-move-log":
     case "furnace-quick-move-coal":
       await furnaceQuickMove(ui);
+      return;
+    case "brewing-stand":
+      await brewingStand(ui);
       return;
     case "enchant-basic": {
       await uiMouse(ui, "right");
