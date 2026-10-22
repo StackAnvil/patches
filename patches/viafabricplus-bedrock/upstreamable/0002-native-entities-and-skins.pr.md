@@ -333,3 +333,33 @@ tooling tests pass. The fresh 130-second client replay installs all 273 skins an
 geometry records, with no geometry-parse warnings. Transport verification passes, and all
 seven owned Java/display processes stop normally. Rendering verification still fails on
 unresolved mappings. These checks do not establish native visual parity.
+
+
+## Native alpha references with Iris
+
+Ordinary native actors and supplied player bodies now retain their 0.5 alpha reference when Iris replaces the shader.
+The target Bedrock 1.26.51.1/protocol 2193 Actor AlphaTest shader keeps texture alpha strictly above 0.5.
+The native shader evidence is recorded above.
+Iris 1.11.7 for Minecraft 26.3 uses 0.1 for its entity cutout family.
+
+Keep the reference on the compiled GPU pipeline, since Iris shares programs between native and Java draws.
+A binding scope supplies the reference during Iris shader setup and restores its previous value even after failure.
+The generated fallback shader also restores its original uniform on each Java bind.
+Native emissive passes retain their existing material behavior.
+
+Validation:
+
+- All 38 add-on patches replay successfully.
+- Converter, core, and add-on builds pass 2,352 tests, with 152 optional tests skipped and no failures or errors.
+- Scope tests cover nested native and Java binds, exceptions, and separate threads.
+- A complete 40-second replay without Iris passes transport checks and has no mixin failures.
+- A Galaxite replay with Iris 1.11.7 and Complementary Reimagined r5.9.3 reaches gameplay without mixin failures.
+- GL uniform readbacks verify native 0.5 and Java 0.1 within two shared ExtendedShader programs.
+- A private shader pack that omits entity programs exercises Iris fallback shaders.
+- GL readbacks verify native 0.5 and Java 0.1 within one shared FallbackShader program.
+
+The broader Galaxite rendering check still fails because `galaxite:gem_bag_particle` supplies a rejected texture path.
+The fallback diagnostic also intentionally differs from the locked shader pack and fails that profile check.
+This change carries the alpha reference through Iris.
+It does not establish parity for shader-pack comparison overrides, post-shader alpha, source-texture sampling, or native image output.
+Raw recordings, the diagnostic shader pack, observer code, and uniform logs remain private.
