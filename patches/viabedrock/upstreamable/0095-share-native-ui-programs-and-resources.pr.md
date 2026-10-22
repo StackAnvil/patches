@@ -214,3 +214,20 @@ This contract does not establish native quantity or cursor behavior.
 The complete four-project build passes 2,344 tests, with 152 optional skips.
 Core Checkstyle and the mode-preserving request/result codec tests pass.
 All 102 core patches replay successfully. Offline tooling and patch metadata validation pass.
+
+## Cooking command phases
+
+Cooking action and result envelopes use version 4 and retain the numeric native event phase independently of the command.
+Phases `0`, `1`, and `2` remain distinct through serialization and acknowledgement.
+The original state-dispatch fixtures use phase `0` for initial primary selection and phase `2` for selected-state release.
+The payload does not assign physical device meanings or transfer quantities to these phases.
+Phase-free version 3 actions and unsupported phase values reject instead of acquiring a default phase.
+
+Six targeted codec tests pass, including all command/phase combinations, identity bounds, incomplete envelopes, strict reply flags, and unsupported phases.
+The old codec fails the added phase-free-envelope regression because it accepts that action.
+All 104 core patches replay to the identical tested tree.
+The four-project build passes 2,362 tests with 212 optional skips and no failures or errors.
+Core passes 1,496 tests; the add-on passes 843.
+Main/test Checkstyle and offline validation pass.
+All 1,386 embedded core class entries match the newly built core.
+These transport prerequisites do not advertise cooking actions or complete their input and transaction backend.

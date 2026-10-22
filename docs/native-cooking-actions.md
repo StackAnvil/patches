@@ -49,6 +49,12 @@ For valid recipe indices and input-mode field values `0`, `1`, or `3`, the initi
 The release transition executes the real base-state reset and returns handled bit `4`.
 The fixtures do not establish physical input-mode mappings or how Java mouse events produce native event phases.
 The mode-`2` path and complete input callback pipeline still need verification.
+
+Cooking action and result payloads use version `4` and preserve the numeric event phase alongside the command and snapshot identity.
+Only phases `0`, `1`, and `2` are accepted.
+Phase-free version `3` actions reject instead of receiving a default phase.
+Replies echo the complete action, including its phase.
+These payloads do not establish physical input mapping or activate authored cooking controls.
 Negative-index cases are internal controls. They do not authorize invalid recipe identities.
 
 Inherited container rules precede the cooking rule at equal priority.

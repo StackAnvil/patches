@@ -1,4 +1,4 @@
-From 1f88632ca60c51ee3d1502f56cd1d30cbd770bf6 Mon Sep 17 00:00:00 2001
+From 0f0efe93dac4d8e9a7f80ee236ace9f00af9ad7f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): share bounded native UI programs and resource
@@ -100,13 +100,20 @@ the action envelope. Version three rejects older envelopes because their
 missing input mode cannot safely default to Java placement semantics.
 Echo the mode in the exact request identity and reject unknown mode bytes;
 this contract does not establish native quantity or cursor behavior.
+
+Preserve native cooking event phases 0, 1, and 2 separately from input
+commands and transfer quantities. The original state dispatcher uses phase 0
+for initial primary selection and phase 2 for selected-state release.
+Action and result envelopes use version 4 so phase-free version 3 inputs
+cannot silently gain a default phase. Physical input mapping and the
+complete authored cooking action backend remain separate unfinished work.
 ---
  build.gradle                                  |   11 +
  .../api/model/NativeContainerAction.java      |   93 +
  .../api/model/NativeContainerData.java        |   70 +
  .../api/model/NativeContainerMessage.java     |  112 ++
  .../api/model/NativeContainerStatus.java      |   60 +
- .../api/model/NativeCookingAction.java        |   86 +
+ .../api/model/NativeCookingAction.java        |   94 ++
  .../api/model/NativeCookingActionResult.java  |   43 +
  .../api/model/NativeCookingControl.java       |   73 +
  .../api/model/NativeCookingMessage.java       |  304 ++++
@@ -143,8 +150,8 @@ this contract does not establish native quantity or cursor behavior.
  .../api/model/NativeContainerActionTest.java  |   88 +
  .../api/model/NativeContainerDataTest.java    |   45 +
  .../api/model/NativeContainerMessageTest.java |   98 ++
- .../model/NativeCookingActionResultTest.java  |   61 +
- .../api/model/NativeCookingActionTest.java    |  102 ++
+ .../model/NativeCookingActionResultTest.java  |   63 +
+ .../api/model/NativeCookingActionTest.java    |  143 ++
  .../api/model/NativeCookingControlTest.java   |   99 ++
  .../api/model/NativeCookingMessageTest.java   |  422 +++++
  .../api/model/NativeCookingProgressTest.java  |   38 +
@@ -170,7 +177,7 @@ this contract does not establish native quantity or cursor behavior.
  .../api/resourcepack/ui/UiExpressionTest.java |   68 +
  .../api/resourcepack/ui/UiFontsTest.java      |  192 +++
  .../api/resourcepack/ui/UiTexturesTest.java   |  175 ++
- 69 files changed, 11137 insertions(+), 2 deletions(-)
+ 69 files changed, 11188 insertions(+), 2 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
@@ -617,10 +624,10 @@ index 000000000..0c57acdc4
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeCookingAction.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeCookingAction.java
 new file mode 100644
-index 000000000..6351e042a
+index 000000000..30f2964cb
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeCookingAction.java
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,94 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -633,22 +640,28 @@ index 000000000..6351e042a
 +import io.netty.buffer.ByteBuf;
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +
-+/** A recipe selection refers to one exact server-owned presentation and inventory snapshot. */
++/**
++ * A native command and event phase refer to one exact server-owned presentation and inventory snapshot.
++ * The phase does not encode a physical input device or transfer quantity.
++ */
 +public record NativeCookingAction(int menuId, long sequence, long updateSequence, long menuRevision,
-+                                  long inventoryRevision, long cursorRevision, int recipeId, Mode mode, long requestSequence) {
++                                  long inventoryRevision, long cursorRevision, int recipeId, Mode mode,
++                                  int eventPhase, long requestSequence) {
 +
-+    public static final String CHANNEL = "viabedrock:native_cooking_action_v3";
++    public static final String CHANNEL = "viabedrock:native_cooking_action_v4";
++    static final int MAX_ENCODED_BYTES = 82;
 +    public static final Type<NativeCookingAction> TYPE = new Type<>(NativeCookingAction.class) {
 +        @Override
 +        public NativeCookingAction read(final ByteBuf buffer) {
-+            if (buffer.readableBytes() > 81 || Types.VAR_INT.readPrimitive(buffer) != 3
++            if (buffer.readableBytes() > MAX_ENCODED_BYTES || Types.VAR_INT.readPrimitive(buffer) != 4
 +                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
 +                throw new IllegalArgumentException("Unsupported native cooking action");
 +            }
 +            final var action = new NativeCookingAction(Types.VAR_INT.readPrimitive(buffer),
 +                    Types.VAR_LONG.readPrimitive(buffer), Types.VAR_LONG.readPrimitive(buffer),
 +                    Types.VAR_LONG.readPrimitive(buffer), Types.VAR_LONG.readPrimitive(buffer),
-+                    Types.VAR_LONG.readPrimitive(buffer), Types.VAR_INT.readPrimitive(buffer), Mode.read(buffer.readUnsignedByte()), Types.VAR_LONG.readPrimitive(buffer));
++                    Types.VAR_LONG.readPrimitive(buffer), Types.VAR_INT.readPrimitive(buffer), Mode.read(buffer.readUnsignedByte()),
++                    buffer.readUnsignedByte(), Types.VAR_LONG.readPrimitive(buffer));
 +            if (buffer.isReadable()) {
 +                throw new IllegalArgumentException("Trailing native cooking action fields");
 +            }
@@ -657,7 +670,7 @@ index 000000000..6351e042a
 +
 +        @Override
 +        public void write(final ByteBuf buffer, final NativeCookingAction action) {
-+            Types.VAR_INT.writePrimitive(buffer, 3);
++            Types.VAR_INT.writePrimitive(buffer, 4);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            Types.VAR_INT.writePrimitive(buffer, action.menuId);
 +            Types.VAR_LONG.writePrimitive(buffer, action.sequence);
@@ -667,13 +680,15 @@ index 000000000..6351e042a
 +            Types.VAR_LONG.writePrimitive(buffer, action.cursorRevision);
 +            Types.VAR_INT.writePrimitive(buffer, action.recipeId);
 +            buffer.writeByte(action.mode.wire);
++            buffer.writeByte(action.eventPhase);
 +            Types.VAR_LONG.writePrimitive(buffer, action.requestSequence);
 +        }
 +    };
 +
 +    public NativeCookingAction {
 +        if (menuId < 0 || menuId > 255 || sequence <= 0 || updateSequence <= 0
-+                || menuRevision < 0 || inventoryRevision < 0 || cursorRevision < 0 || recipeId < 0 || mode == null || requestSequence <= 0) {
++                || menuRevision < 0 || inventoryRevision < 0 || cursorRevision < 0 || recipeId < 0 || mode == null
++                || eventPhase < 0 || eventPhase > 2 || requestSequence <= 0) {
 +            throw new IllegalArgumentException("Invalid native cooking action identity");
 +        }
 +    }
@@ -709,7 +724,7 @@ index 000000000..6351e042a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeCookingActionResult.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeCookingActionResult.java
 new file mode 100644
-index 000000000..105946d46
+index 000000000..3feb1eabc
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeCookingActionResult.java
 @@ -0,0 +1,43 @@
@@ -727,11 +742,11 @@ index 000000000..105946d46
 +/** A completed selection can resume only while its exact inventory snapshot remains current. */
 +public record NativeCookingActionResult(NativeCookingAction action, boolean accepted, boolean current) {
 +
-+    public static final String CHANNEL = "viabedrock:native_cooking_action_result_v3";
++    public static final String CHANNEL = "viabedrock:native_cooking_action_result_v4";
 +    public static final Type<NativeCookingActionResult> TYPE = new Type<>(NativeCookingActionResult.class) {
 +        @Override
 +        public NativeCookingActionResult read(final ByteBuf buffer) {
-+            if (buffer.readableBytes() < 3 || buffer.readableBytes() > 83) {
++            if (buffer.readableBytes() < 3 || buffer.readableBytes() > NativeCookingAction.MAX_ENCODED_BYTES + 2) {
 +                throw new IllegalArgumentException("Invalid native cooking action result length");
 +            }
 +            final var action = NativeCookingAction.TYPE.read(buffer.readSlice(buffer.readableBytes() - 2));
@@ -7343,10 +7358,10 @@ index 000000000..eedb0f274
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeCookingActionResultTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeCookingActionResultTest.java
 new file mode 100644
-index 000000000..0383d7251
+index 000000000..85d09d438
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeCookingActionResultTest.java
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,63 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7363,44 +7378,46 @@ index 000000000..0383d7251
 +    @Test
 +    void responsesPreserveRequestIdentityAndRequireCompleteStrictFlags() {
 +        for (final var mode : NativeCookingAction.Mode.values()) {
-+            final var action = new NativeCookingAction(255, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE,
-+                    Long.MAX_VALUE, Long.MAX_VALUE, Integer.MAX_VALUE, mode, Long.MAX_VALUE);
-+            for (final boolean accepted : new boolean[]{false, true}) {
-+                for (final boolean current : new boolean[]{false, true}) {
-+                    final var result = new NativeCookingActionResult(action, accepted, current);
-+                    final var wire = Unpooled.buffer();
-+                    try {
-+                        NativeCookingActionResult.TYPE.write(wire, result);
-+                        final var valid = wire.copy();
++            for (final int phase : new int[]{0, 1, 2}) {
++                final var action = new NativeCookingAction(255, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE,
++                        Long.MAX_VALUE, Long.MAX_VALUE, Integer.MAX_VALUE, mode, phase, Long.MAX_VALUE);
++                for (final boolean accepted : new boolean[]{false, true}) {
++                    for (final boolean current : new boolean[]{false, true}) {
++                        final var result = new NativeCookingActionResult(action, accepted, current);
++                        final var wire = Unpooled.buffer();
 +                        try {
-+                            assertEquals(result, NativeCookingActionResult.TYPE.read(valid));
-+                            assertFalse(valid.isReadable());
++                            NativeCookingActionResult.TYPE.write(wire, result);
++                            final var valid = wire.copy();
++                            try {
++                                assertEquals(result, NativeCookingActionResult.TYPE.read(valid));
++                                assertFalse(valid.isReadable());
++                            } finally {
++                                valid.release();
++                            }
++                            for (int length = 0; length < wire.readableBytes(); length++) {
++                                final var partial = wire.copy(0, length);
++                                try {
++                                    assertThrows(RuntimeException.class, () -> NativeCookingActionResult.TYPE.read(partial));
++                                } finally {
++                                    partial.release();
++                                }
++                            }
++                            for (int flag = wire.writerIndex() - 2; flag < wire.writerIndex(); flag++) {
++                                final var malformed = wire.copy();
++                                try {
++                                    malformed.setByte(flag, 2);
++                                    assertThrows(IllegalArgumentException.class, () -> NativeCookingActionResult.TYPE.read(malformed));
++                                } finally {
++                                    malformed.release();
++                                }
++                            }
++                            wire.writeByte(0);
++                            assertThrows(RuntimeException.class, () -> NativeCookingActionResult.TYPE.read(wire));
++                            wire.clear().writeZero(NativeCookingAction.MAX_ENCODED_BYTES + 3);
++                            assertThrows(IllegalArgumentException.class, () -> NativeCookingActionResult.TYPE.read(wire));
 +                        } finally {
-+                            valid.release();
++                            wire.release();
 +                        }
-+                        for (int length = 0; length < wire.readableBytes(); length++) {
-+                            final var partial = wire.copy(0, length);
-+                            try {
-+                                assertThrows(RuntimeException.class, () -> NativeCookingActionResult.TYPE.read(partial));
-+                            } finally {
-+                                partial.release();
-+                            }
-+                        }
-+                        for (int flag = wire.writerIndex() - 2; flag < wire.writerIndex(); flag++) {
-+                            final var malformed = wire.copy();
-+                            try {
-+                                malformed.setByte(flag, 2);
-+                                assertThrows(IllegalArgumentException.class, () -> NativeCookingActionResult.TYPE.read(malformed));
-+                            } finally {
-+                                malformed.release();
-+                            }
-+                        }
-+                        wire.writeByte(0);
-+                        assertThrows(RuntimeException.class, () -> NativeCookingActionResult.TYPE.read(wire));
-+                        wire.clear().writeZero(84);
-+                        assertThrows(IllegalArgumentException.class, () -> NativeCookingActionResult.TYPE.read(wire));
-+                    } finally {
-+                        wire.release();
 +                    }
 +                }
 +            }
@@ -7410,10 +7427,10 @@ index 000000000..0383d7251
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeCookingActionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeCookingActionTest.java
 new file mode 100644
-index 000000000..80dd3cef5
+index 000000000..58c9a9f03
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeCookingActionTest.java
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,143 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7432,44 +7449,65 @@ index 000000000..80dd3cef5
 +    @Test
 +    void snapshotIdentitiesRoundTripWithoutNarrowingAndRejectIncompleteEnvelopes() {
 +        for (final var mode : NativeCookingAction.Mode.values()) {
-+            for (final var action : List.of(new NativeCookingAction(0, 1, 1, 0, 0, 0, 0, mode, 1),
-+                    new NativeCookingAction(255, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE,
-+                            Long.MAX_VALUE, Long.MAX_VALUE, Integer.MAX_VALUE, mode, Long.MAX_VALUE))) {
-+                final var wire = Unpooled.buffer();
-+                try {
-+                    NativeCookingAction.TYPE.write(wire, action);
-+                    for (int length = 0; length < wire.readableBytes(); length++) {
-+                        final var partial = wire.copy(0, length);
-+                        try {
-+                            assertThrows(RuntimeException.class, () -> NativeCookingAction.TYPE.read(partial));
-+                        } finally {
-+                            partial.release();
-+                        }
-+                    }
-+                    final var valid = wire.copy();
++            for (final int phase : new int[]{0, 1, 2}) {
++                for (final var action : List.of(new NativeCookingAction(0, 1, 1, 0, 0, 0, 0, mode, phase, 1),
++                        new NativeCookingAction(255, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE,
++                                Long.MAX_VALUE, Long.MAX_VALUE, Integer.MAX_VALUE, mode, phase, Long.MAX_VALUE))) {
++                    final var wire = Unpooled.buffer();
 +                    try {
-+                        assertEquals(action, NativeCookingAction.TYPE.read(valid));
-+                        assertFalse(valid.isReadable());
++                        NativeCookingAction.TYPE.write(wire, action);
++                        for (int length = 0; length < wire.readableBytes(); length++) {
++                            final var partial = wire.copy(0, length);
++                            try {
++                                assertThrows(RuntimeException.class, () -> NativeCookingAction.TYPE.read(partial));
++                            } finally {
++                                partial.release();
++                            }
++                        }
++                        final var valid = wire.copy();
++                        try {
++                            assertEquals(action, NativeCookingAction.TYPE.read(valid));
++                            assertFalse(valid.isReadable());
++                        } finally {
++                            valid.release();
++                        }
++                        wire.writeByte(0);
++                        assertThrows(IllegalArgumentException.class, () -> NativeCookingAction.TYPE.read(wire));
++                        wire.readerIndex(0);
++                        wire.writerIndex(wire.writerIndex() - 1);
++                        wire.setByte(0, 3);
++                        assertThrows(IllegalArgumentException.class, () -> NativeCookingAction.TYPE.read(wire));
++                        wire.clear();
++                        Types.VAR_INT.writePrimitive(wire, 4);
++                        Types.VAR_INT.writePrimitive(wire, 0);
++                        assertThrows(IllegalArgumentException.class, () -> NativeCookingAction.TYPE.read(wire));
++                        wire.clear();
++                        wire.writeZero(NativeCookingAction.MAX_ENCODED_BYTES + 1);
++                        assertThrows(IllegalArgumentException.class, () -> NativeCookingAction.TYPE.read(wire));
 +                    } finally {
-+                        valid.release();
++                        wire.release();
 +                    }
-+                    wire.writeByte(0);
-+                    assertThrows(IllegalArgumentException.class, () -> NativeCookingAction.TYPE.read(wire));
-+                    wire.readerIndex(0);
-+                    wire.writerIndex(wire.writerIndex() - 1);
-+                    wire.setByte(0, 2);
-+                    assertThrows(IllegalArgumentException.class, () -> NativeCookingAction.TYPE.read(wire));
-+                    wire.clear();
-+                    Types.VAR_INT.writePrimitive(wire, 3);
-+                    Types.VAR_INT.writePrimitive(wire, 0);
-+                    assertThrows(IllegalArgumentException.class, () -> NativeCookingAction.TYPE.read(wire));
-+                    wire.clear();
-+                    wire.writeZero(82);
-+                    assertThrows(IllegalArgumentException.class, () -> NativeCookingAction.TYPE.read(wire));
-+                } finally {
-+                    wire.release();
 +                }
 +            }
++        }
++    }
++
++    @Test
++    void rejectsActionsWithoutNativeEventPhase() {
++        final var wire = Unpooled.buffer();
++        try {
++            Types.VAR_INT.writePrimitive(wire, 3);
++            Types.VAR_INT.writePrimitive(wire, net.raphimc.viabedrock.protocol.data.ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.VAR_INT.writePrimitive(wire, 0);
++            for (final long field : new long[]{1, 1, 0, 0, 0}) {
++                Types.VAR_LONG.writePrimitive(wire, field);
++            }
++            Types.VAR_INT.writePrimitive(wire, 0);
++            wire.writeByte(0);
++            Types.VAR_LONG.writePrimitive(wire, 1);
++            assertThrows(IllegalArgumentException.class, () -> NativeCookingAction.TYPE.read(wire));
++        } finally {
++            wire.release();
 +        }
 +    }
 +
@@ -7483,13 +7521,14 @@ index 000000000..80dd3cef5
 +                new long[]{0, 1, 1, 0, 0, 0, 0, 0}, new long[]{0, 1, 1, 0, 0, 0, 0, -1})) {
 +            final var wire = Unpooled.buffer();
 +            try {
-+                Types.VAR_INT.writePrimitive(wire, 3);
++                Types.VAR_INT.writePrimitive(wire, 4);
 +                Types.VAR_INT.writePrimitive(wire, net.raphimc.viabedrock.protocol.data.ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +                Types.VAR_INT.writePrimitive(wire, (int) identity[0]);
 +                for (int field = 1; field < 6; field++) {
 +                    Types.VAR_LONG.writePrimitive(wire, identity[field]);
 +                }
 +                Types.VAR_INT.writePrimitive(wire, (int) identity[6]);
++                wire.writeByte(0);
 +                wire.writeByte(0);
 +                Types.VAR_LONG.writePrimitive(wire, identity[7]);
 +                assertThrows(IllegalArgumentException.class, () -> NativeCookingAction.TYPE.read(wire));
@@ -7500,19 +7539,38 @@ index 000000000..80dd3cef5
 +    }
 +
 +    @Test
-+    void unknownOrMissingInputModesCannotBecomePrimaryActions() {
-+        final var action = new NativeCookingAction(0, 1, 1, 0, 0, 0, 0, NativeCookingAction.Mode.PRIMARY, 1);
-+        for (final int mode : new int[]{3, 255}) {
++    void unknownEventPhasesCannotBecomeSelections() {
++        final var action = new NativeCookingAction(0, 1, 1, 0, 0, 0, 0, NativeCookingAction.Mode.PRIMARY, 0, 1);
++        for (final int phase : new int[]{3, 255}) {
 +            final var wire = Unpooled.buffer();
 +            try {
 +                NativeCookingAction.TYPE.write(wire, action);
-+                wire.setByte(wire.writerIndex() - 2, mode);
++                wire.setByte(wire.writerIndex() - 2, phase);
 +                assertThrows(IllegalArgumentException.class, () -> NativeCookingAction.TYPE.read(wire));
 +            } finally {
 +                wire.release();
 +            }
 +        }
-+        assertThrows(IllegalArgumentException.class, () -> new NativeCookingAction(0, 1, 1, 0, 0, 0, 0, null, 1));
++        for (final int phase : new int[]{-1, 3, 256}) {
++            assertThrows(IllegalArgumentException.class,
++                    () -> new NativeCookingAction(0, 1, 1, 0, 0, 0, 0, NativeCookingAction.Mode.PRIMARY, phase, 1));
++        }
++    }
++
++    @Test
++    void unknownOrMissingInputModesCannotBecomePrimaryActions() {
++        final var action = new NativeCookingAction(0, 1, 1, 0, 0, 0, 0, NativeCookingAction.Mode.PRIMARY, 0, 1);
++        for (final int mode : new int[]{3, 255}) {
++            final var wire = Unpooled.buffer();
++            try {
++                NativeCookingAction.TYPE.write(wire, action);
++                wire.setByte(wire.writerIndex() - 3, mode);
++                assertThrows(IllegalArgumentException.class, () -> NativeCookingAction.TYPE.read(wire));
++            } finally {
++                wire.release();
++            }
++        }
++        assertThrows(IllegalArgumentException.class, () -> new NativeCookingAction(0, 1, 1, 0, 0, 0, 0, null, 0, 1));
 +    }
 +
 +}
