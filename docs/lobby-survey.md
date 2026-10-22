@@ -3,8 +3,8 @@
 These checks used the patched Java client with Bedrock 1.26.51, protocol 2193, on 21 October 2026.
 The client ran on the private display with software rendering and silent audio.
 Raw packets, account data, downloaded packs, and screenshots remain private.
-Each recording contains one connection. Enchanted's destination was tested through a fresh direct connection to its supplied transfer address.
-Continuous transfer verification remains open.
+The initial recordings contain one connection each. Enchanted's first destination check used a fresh direct connection to its supplied transfer address.
+Later passes retain continuous transfers, as described below.
 
 The 22 October follow-up below verifies a continuous Mineville-to-Zeqa transfer with separate connection journals.
 
@@ -321,3 +321,53 @@ Those totals do not erase the graph-loading and GUI defects above.
 Both fresh survey clients embed all 1,360 rebuilt core classes and the matching block-item resources.
 All seven Treasure Hunt process identities and all six MegaSMP identities close normally.
 Raw packets, accepted packs, screenshots, logs, and observer data remain private.
+
+## Expanded lobby and interaction pass
+
+A fresh 22 October pass used the same validated add-on build across CubeCraft, SurvivalOnline Beta, Lifeboat, and Enchanted.
+All clients used the private display, silent audio, software rendering, and GUI scale 2.
+The installed add-on checksums match the build. The unfinished cooking-screen source changes were outside these installed artifacts.
+
+CubeCraft's selector reached BlockWars EU4, BedWars EU1, Skyblock's Oak Forest Hub, and EggWars EU1.
+The BlockWars cosmetics shop opened after a right-click. Inventory screens showed the custom hotbar images alongside ordinary items.
+Skyblock's panorama ran, and its hub-menu item opened an authored screen.
+That screen drew a horizontal label strip across the viewport, with much of the menu panel absent.
+The panorama prompt also exposed the internal prefix `cc_hotbar_text:100`.
+The `/lobby` command returned to the main hub before the EggWars switch.
+
+The BlockWars Bat Wings preview faced opposite the neighboring costume and pumpkin previews.
+Its player entity had yaw 90, while both neighboring players and its invisible interaction golem had yaw -90.
+The screenshot showed the back of the account's Steve skin, without visible wings.
+The pumpkin preview also lacked a visible hat from the observed position.
+These observations match the reported direction difference, but do not establish the intended native appearance.
+The opposite direction can be intentional for a back accessory. The missing accessory needs a separate native comparison.
+The retained ray hit the Bat Wings golem before both click attempts. Neither attempt produced a confirmed response.
+The separate cosmetics-shop interaction succeeded.
+
+SurvivalOnline Beta passed fresh catalog admission and downloaded its selected packs.
+The private client then exhausted its 3 GB Java heap in `ResourcePackZipWriter.writeParallel` while writing the converted pack.
+No playable scene appeared. This result establishes a blocker under that memory limit, without a rendering verdict.
+
+Lifeboat again showed a black lobby world with working HUD elements and inventory icons.
+Its fallback navigator opened World Game Selector, Lifeboat City, and the Play action.
+That action began a second connection, which disconnected before playable spawn.
+This route did not reproduce the earlier SkyWars biome-palette exception.
+
+Enchanted's hub still used a fallback dialog with its internal title and repeated `HIT` glyphs.
+Its Box PvP action transferred the same client into the destination world.
+A retained ray hit the trader before right-click opened the authored six-card kits menu.
+A second retained ray hit the shop villager before right-click opened the authored Blocks menu.
+The shop's item images appeared, but its labels remained illegible at the captured scale.
+The ordinary inventory showed tools, blocks, food, and armor. No purchases or kit claims occurred.
+The destination HUD still contained overlapping labels and repeated `HIT` glyphs.
+
+The `/hub` command returned to Enchanted's selector. Its OP SMP action then reached the destination and an authored popup.
+The timer ended before that popup closed, so the pass provides no unobstructed OP SMP terrain verdict.
+Separate journals retain all four connections in this continuous route.
+
+The complete CubeCraft and Enchanted recordings finished successfully.
+The SurvivalOnline and Lifeboat recordings failed at the points described above.
+All 26 recorded process identities closed normally across these four runs.
+Screenshots, packet journals, ray observations, and accepted packs remain private.
+The attempted video capture did not produce a valid recording.
+These survey results add reproductions, without a claim that the rendering defects are fixed.
