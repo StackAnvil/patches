@@ -26,7 +26,7 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Installed cooking selection and release | 6 sequence steps | Real selection-only effects and release through the original input graph |
 | Installed first recipe placement | 1 controlled click | Two native Place actions, retained destination identity, and final ingredient count |
 | Repeated recipe placement | 30 input steps and snapshots | Capacity, selection clearing, return to player inventory, and placement after return |
-| Request payload identities | 5 complete payloads | Native conversion and serialization preserve positive transfer IDs and empty destination IDs |
+| Predicted request payload identities | 5 complete payloads | Native identity callbacks assign request references after slot mutation |
 | Cooking item-return planner | 1,500 cases | Original-slot deficits and the remaining count passed to auto-placement |
 | Physical-slot snapshot producer | 45 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
 | Registered cooking providers | 3 ingredient descriptors | Eleven registrations, native model import, skip callbacks, and 76-slot capture order |
@@ -190,7 +190,8 @@ The native code appends these Place actions:
 
 The native snapshot then contains twelve items in the ingredient slot and empty player slots.
 The selected output remains in the cooking manager.
-The second action uses the retained positive stack ID from the first source.
+The unpredicted fixture retains the positive stack ID from the first source.
+The enabled prediction path instead uses the negative request ID for that second destination.
 This observation concerns native action objects before complete request serialization.
 The [payload checks](#request-payload-identities) separately verify those IDs through native serialization.
 
@@ -236,41 +237,48 @@ The Java recipe-book planner's one-increment mode does not implement this author
 
 ## Request payload identities
 
-A fresh pinned native process now completes five request payloads through the original conversion and serialization code.
-The cooking control starts with a raw primary recipe click and places seven hotbar items, then five inventory items.
-Four ordinary-transfer controls move one item followed by two items, or all seven items, into empty and occupied destinations.
-Each occupied destination starts with three items.
+The enabled prediction fixture executes the native client manager and its container identity callbacks.
+The manager uses constructor flags `1,1` and client vtable `0x14e827ec0`.
+The original constructor runs before a Level attaches and takes its normal null-Level branch.
+The client subclass fields follow the inline initializer at `0x141336ca9`.
+The complete Player constructor and negotiated flag provenance remain unverified.
 
-The native transfer code preserves the source's positive stack ID after a partial move.
-An empty destination inherits that ID, including after a partial move.
-An occupied destination retains its own positive ID after a merge.
-The second transfer uses those retained IDs.
+The original `ClientScreenData` component constructor runs through typed storage at `0x1425bdf10`.
+A controlled registry contains one live entity and that original component storage.
+The predicted-container constructor `0x1425ac0b0` installs identity callback `0x147c9ac00` and observer `0x147c9aa20`.
+The component retains those containers through the original vector append function.
+Full screen registration and the corresponding world lookup remain unverified.
+
+Five complete payloads cover one cooking click and four ordinary transfer controls.
+The ordinary controls move partial or complete stacks into empty or occupied destinations.
+Every changed source and destination receives the negative request ID.
+This rule includes sources that become empty after a complete move.
+Later actions in the same request use that request ID for each previously changed slot.
+The first action still uses the original positive stack IDs or zero for an initially empty slot.
+
 Cooking placement uses hotbar provider `28` and inventory provider `29`, with physical slot indices.
-Returns continue to use combined player provider `12`.
-A complete move clears the source ID to zero.
-
-Original request detach `0x1425b0e50` preserves these identities.
-The sender's conversion at `0x14273fc70` turns owned requests and action pointers into packet payload values.
-The packet cannot directly reuse the owned request's field layout.
-The original wrapper `0x14273aab0` constructs the serialization context and invokes packet writer `0x14273a2d0`.
-The original BinaryStream methods write all payload bytes and grow the buffer.
-The resulting cooking payload retains positive destination ID `1000` for the second Place action.
-The Java cooking planner and codecs match that complete native payload byte for byte.
-
-The cooking planner now preserves the identities that its transfers produce.
-It no longer replaces every previously changed slot with the negative request ID.
-After the planner empties the ingredient slot, its next placement targets ID zero.
-Three behavioral regressions cover bulk identity retention, clearing before placement, and rejection recovery.
-The native payload comparison also detects the former combined-provider alias on cooking sources.
+Returns use combined player provider `12`.
+These player providers share the same physical slot identities.
+The Java planner tracks changed physical slots and substitutes request references during request assembly.
+Its codec matches the complete native cooking payload byte for byte.
+The optional comparison reads `STACKANVIL_NATIVE_PREDICTED_REQUEST_WIRE`.
+Regressions also cover multiple ingredient returns, refill of an emptied ingredient slot, and rejection recovery.
 Java recipe-book quantities remain separate from native authored primary selection.
 
-The fixture supplies the BinaryStream fields from the original inline construction and uses its original vtable.
-It supplies a packet view over the original conversion output, with sender mode `5`.
-The native manager uses constructor flags `1,0`. Their broader meaning and negotiation remain unverified.
-The complete enclosing sender and containing stream exporter constructors do not execute.
+The earlier base-manager fixture used constructor flags `1,0` and wrappers without the native identity callback.
+Those wrappers preserve positive IDs and clear empty slots to zero.
+That fixture verifies serialization of unpredicted transfers, but it does not establish the enabled prediction behavior.
+It cannot justify positive IDs for previously changed slots in production requests.
+
+Original conversion `0x14273fc70` turns owned requests into packet payload values.
+The original wrapper `0x14273aab0` constructs the serialization context and calls packet writer `0x14273a2d0`.
+Original BinaryStream methods write every byte and grow the buffer.
+The fixture supplies the stream fields from native inline construction and a packet view with sender mode `5`.
+Requests remain explicitly open during this comparison.
+Native finalization of the predicted component, the enclosing sender, and containing stream construction remain unverified.
+The payload excludes packet headers and transport framing.
 Recipe data, world interfaces, and model-owner limits remain unchanged from the first-placement fixture.
-The payloads exclude packet headers and transport framing.
-These checks do not establish network exchange, server acceptance, other action types, or complete authored cooking controls.
+These checks do not establish network exchange, server acceptance, full frame ownership, or complete authored cooking controls.
 
 ## Transfer quantities
 

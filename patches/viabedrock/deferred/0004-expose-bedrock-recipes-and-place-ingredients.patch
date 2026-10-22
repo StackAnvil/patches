@@ -1,4 +1,4 @@
-From d1730897352fa662993c54ee71ea5dec91a8efbf Mon Sep 17 00:00:00 2001
+From b05a764b610ebd71ff6cb23c1767ee9e32f0ac53 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -40,8 +40,9 @@ correct ingredient provider. Cooking and fuel/output updates remain server
 owned. Combine compatible inventory stacks, preserve input variants, clear
 mismatched input into existing stacks where possible, and plan atomically
 before recording both inventories for acknowledgment or rejection recovery.
-Preserve each planned source and destination stack identity across the
-request. An emptied slot uses identity zero when filled again.
+Use the negative request ID for a slot changed earlier in the same request,
+including a source that becomes empty. Canonicalize hotbar, inventory and
+combined-player references to the same physical slot for this tracking.
 Reject recipes belonging to a different station.
 
 Evidence: the pinned 1.26.51.1 protocol 2193 recipe catalog advertises cooking
@@ -236,30 +237,29 @@ regressions fail before this change: native auxiliary merging with a full
 inventory, including request references and rejection recovery, and atomic
 refusal when only a damaged occupied destination has capacity.
 
-Preserve native transfer identities instead of replacing every revisited
-slot with the negative request ID. The pinned 1.26.51.1 executable
-(SHA-256 537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7)
-retains positive IDs after both partial and full moves. Merging retains
-the occupied destination ID. Returning the complete furnace input clears
-its identity, so the following placement targets ID zero.
+Assign request references after every predicted slot mutation. The pinned
+1.26.51.1 executable uses identity callback147c9ac00 and observer147c9aa20
+from the client manager's predicted containers. Those callbacks assign
+the negative request ID to both endpoints, even an emptied source. Later
+transfers in the same request use that reference instead of an earlier
+positive stack ID or zero. Track physical player slots across provider
+aliases; cooking sources use hotbar28/inventory29 and returns use combined12.
 
-A fresh process executes original request detach1425b0e50, payload
-conversion14273fc70, packet context construction14273ad30 and writer
-14273aab0/14273a2d0 with the native BinaryStream methods. Five complete
-request payloads cover the two-source cooking placement and partial/full
-ordinary transfers into empty/existing destinations. The Java cooking
-planner and codecs match the native cooking payload byte for byte.
+The earlier base-manager serialization fixture omitted those callbacks.
+Its preserved positive IDs describe unpredicted backing and cannot justify
+production prediction semantics. Replace that comparison with five fresh
+payload controls using native predicted-container construction1425ac0b0,
+ClientScreenData construction1425bdf10, original callbacks and mutation,
+payload conversion14273fc70, context construction14273ad30 and packet
+writer14273aab0/14273a2d0. Java matches the complete cooking payload.
 
-The stream fields follow the original inline construction; the packet
-view uses the original native converted payload and vtable. Controlled
-recipe/world interfaces remain boundaries. This verifies payload bytes,
-not transport framing, the enclosing sender, live acceptance, complete
-controller ownership, or native authored cooking action completion.
-Three behavioral regressions fail against the previous substitution.
-The complete payload comparison also exposes the source provider alias:
-cooking placement reads hotbar28 and inventory29, while returns use
-combined player inventory12. Use those original source providers with
-physical slot indexes. The final cooking payload matches byte for byte.
+The manager uses flags1,1 and the native client vtable. Base construction
+runs before Level attachment and takes its ordinary null-Level branch.
+Subclass fields, one-entity registry, screen bindings, packet view and
+BinaryStream fields are controlled data from native layouts. Full Player
+and screen construction, negotiated flag provenance, predicted request
+finalization, the enclosing sender, transport and live acceptance remain
+unverified. This does not complete native authored cooking actions.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 ++
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -268,7 +268,7 @@ physical slot indexes. The final cooking payload matches byte for byte.
  .../model/container/CookingRecipeSources.java |  87 +++
  .../model/container/CraftingOutputPlan.java   | 109 ++++
  .../model/container/CraftingPlacement.java    | 229 +++++++
- .../container/FurnaceRecipePlacement.java     | 188 ++++++
+ .../container/FurnaceRecipePlacement.java     | 219 +++++++
  .../block/CraftingTableContainer.java         | 100 +--
  .../container/block/FurnaceContainer.java     | 112 ++++
  .../model/container/player/HudContainer.java  |   3 +
@@ -303,7 +303,7 @@ physical slot indexes. The final cooking payload matches byte for byte.
  .../container/CookingRecipeSourcesTest.java   | 146 +++++
  .../container/CraftingOutputPlanTest.java     |  84 +++
  .../container/CraftingPlacementTest.java      | 161 +++++
- .../container/FurnaceRecipePlacementTest.java | 388 ++++++++++++
+ .../container/FurnaceRecipePlacementTest.java | 418 +++++++++++++
  .../player/InventoryContainerTest.java        | 131 ++++
  .../model/recipe/MolangTagQueryTest.java      |  53 ++
  .../model/recipe/RecipeOwnershipTest.java     |  52 ++
@@ -318,7 +318,7 @@ physical slot indexes. The final cooking payload matches byte for byte.
  .../item/BedrockRecipeResultTypeTest.java     | 106 ++++
  .../types/model/FurnaceOptionsTypeTest.java   |  75 +++
  .../types/recipe/CraftingDataReaderTest.java  |  81 ++-
- 57 files changed, 6113 insertions(+), 161 deletions(-)
+ 57 files changed, 6174 insertions(+), 161 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeAvailability.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeCatalog.java
@@ -1031,10 +1031,10 @@ index 000000000..a6c19807a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java b/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
 new file mode 100644
-index 000000000..58f4ad596
+index 000000000..065440f2d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,219 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1057,8 +1057,10 @@ index 000000000..58f4ad596
 +import java.util.ArrayList;
 +import java.util.Arrays;
 +import java.util.HashMap;
++import java.util.HashSet;
 +import java.util.List;
 +import java.util.Map;
++import java.util.Set;
 +import java.util.function.BiPredicate;
 +import java.util.function.Function;
 +import java.util.function.Predicate;
@@ -1197,7 +1199,7 @@ index 000000000..58f4ad596
 +
 +    public static final class Plan {
 +
-+        private final List<ItemStackRequestAction> actions;
++        private final List<ItemStackRequestAction.PlaceAction> actions;
 +        private final BedrockItem input;
 +        private final Map<Integer, BedrockItem> inventoryUpdates;
 +
@@ -1212,13 +1214,42 @@ index 000000000..58f4ad596
 +            return !this.actions.isEmpty();
 +        }
 +
-+        public List<ItemStackRequestAction> actions() {
-+            return this.actions;
++        public List<ItemStackRequestAction> actions(final int requestId) {
++            final Set<SlotKey> changed = new HashSet<>();
++            final List<ItemStackRequestAction> result = new ArrayList<>(this.actions.size());
++            for (final ItemStackRequestAction.PlaceAction transfer : this.actions) {
++                result.add(new ItemStackRequestAction.PlaceAction(transfer.count(),
++                        requestSlot(transfer.source(), changed, requestId),
++                        requestSlot(transfer.destination(), changed, requestId)));
++                changed.add(SlotKey.of(transfer.source()));
++                changed.add(SlotKey.of(transfer.destination()));
++            }
++            return List.copyOf(result);
++        }
++
++        private static ItemStackRequestSlotInfo requestSlot(final ItemStackRequestSlotInfo slot,
++                final Set<SlotKey> changed, final int requestId) {
++            // Native predicted-container callbacks assign the request ID even to emptied slots.
++            return changed.contains(SlotKey.of(slot))
++                    ? new ItemStackRequestSlotInfo(slot.container(), slot.slot(), requestId) : slot;
 +        }
 +
 +        public void apply(final FurnaceContainer furnace, final InventoryContainer inventory) {
 +            furnace.setItem(0, this.input.copy());
 +            this.inventoryUpdates.forEach((slot, item) -> inventory.setItem(slot, item.copy()));
++        }
++
++        private record SlotKey(FullContainerName container, byte slot) {
++
++            private static SlotKey of(final ItemStackRequestSlotInfo slot) {
++                final FullContainerName container = switch (slot.container().name()) {
++                    case HotbarContainer, InventoryContainer, CombinedHotbarAndInventoryContainer ->
++                        new FullContainerName(ContainerEnumName.CombinedHotbarAndInventoryContainer,
++                                    slot.container().dynamicId());
++                    default -> slot.container();
++                };
++                return new SlotKey(container, slot.slot());
++            }
 +        }
 +    }
 +
@@ -1400,7 +1431,7 @@ index fec81fe6c..178d1ef15 100644
 -
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
-index 09fb14352..8a5d5ffdb 100644
+index 09fb14352..60533d224 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
 @@ -22,10 +22,31 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -1478,7 +1509,7 @@ index 09fb14352..8a5d5ffdb 100644
 +        }
 +        final int requestId = requests.nextRequestId();
 +        final ItemStackRequestInfo request = new ItemStackRequestInfo(requestId,
-+                plan.actions(), List.of(), TextProcessingEventOrigin.unknown);
++                plan.actions(requestId), List.of(), TextProcessingEventOrigin.unknown);
 +        requests.addRequest(new InventoryRequestStorage(request, 0,
 +                inventory.getHudContainer().copy(), List.of(this.copy(), player.copy())));
 +        plan.apply(this, player);
@@ -4742,10 +4773,10 @@ index 000000000..bb3b16e1d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java
 new file mode 100644
-index 000000000..ded0d1d94
+index 000000000..ab4e65f85
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java
-@@ -0,0 +1,388 @@
+@@ -0,0 +1,418 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4800,10 +4831,10 @@ index 000000000..ded0d1d94
 +class FurnaceRecipePlacementTest {
 +
 +    @Test
-+    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_REQUEST_WIRE", matches = ".+")
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_PREDICTED_REQUEST_WIRE", matches = ".+")
 +    void bulkPlacementEncodesTheNativeCookingPayload() throws Exception {
 +        final var reference = JsonParser.parseString(Files.readString(Path.of(
-+                System.getenv("STACKANVIL_NATIVE_REQUEST_WIRE")))).getAsJsonObject().getAsJsonObject("cooking");
++                System.getenv("STACKANVIL_NATIVE_PREDICTED_REQUEST_WIRE")))).getAsJsonObject().getAsJsonObject("cooking");
 +        final var user = user();
 +        final var furnace = new FurnaceContainer(user, (byte) 5, null, null);
 +        final var inventory = inventory(user);
@@ -4812,7 +4843,7 @@ index 000000000..ded0d1d94
 +        final var plan = plan(recipe("furnace", 2, 1), furnace, inventory, true, 64);
 +        assertNotNull(plan);
 +        final int requestId = reference.get("requestId").getAsInt();
-+        final var request = new ItemStackRequestInfo(requestId, plan.actions(), List.of(), TextProcessingEventOrigin.unknown);
++        final var request = new ItemStackRequestInfo(requestId, plan.actions(requestId), List.of(), TextProcessingEventOrigin.unknown);
 +        final var codec = new ArrayType<>(new ItemStackRequestType(
 +                new BedrockItemType(0, false, NetworkItemStackFixtures.CONTEXT)), BedrockTypes.UNSIGNED_VAR_INT);
 +        final var buffer = Unpooled.buffer();
@@ -4847,7 +4878,7 @@ index 000000000..ded0d1d94
 +            assertNotNull(plan);
 +            assertTrue(furnace.getItem(0).isEmpty());
 +            assertEquals(4, inventory.getItem(0).amount());
-+            final var action = assertInstanceOf(ItemStackRequestAction.PlaceAction.class, plan.actions().get(0));
++            final var action = assertInstanceOf(ItemStackRequestAction.PlaceAction.class, plan.actions(-3).get(0));
 +            assertEquals(1, action.count());
 +            assertEquals(21, action.source().stackNetworkId());
 +            assertEquals(0, action.destination().stackNetworkId());
@@ -4862,7 +4893,7 @@ index 000000000..ded0d1d94
 +    }
 +
 +    @Test
-+    void bulkPlacementCombinesStacksAndPreservesTheFirstSourceIdentity() {
++    void bulkPlacementCombinesStacksAndUsesRequestReferencesAfterMutation() {
 +        final UserConnection user = user();
 +        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
 +        final InventoryContainer inventory = inventory(user);
@@ -4871,13 +4902,13 @@ index 000000000..ded0d1d94
 +        inventory.setItem(10, item(2, 60, 13));
 +        final var plan = plan(recipe("furnace", 2, 1), furnace, inventory, true, 64);
 +        assertNotNull(plan);
-+        final var actions = plan.actions();
++        final var actions = plan.actions(-3);
 +        assertEquals(3, actions.size());
 +        assertEquals(List.of(3, 20, 41), actions.stream()
 +                .map(action -> ((ItemStackRequestAction.PlaceAction) action).count()).toList());
 +        assertEquals(0, ((ItemStackRequestAction.PlaceAction) actions.get(0)).destination().stackNetworkId());
-+        assertEquals(11, ((ItemStackRequestAction.PlaceAction) actions.get(1)).destination().stackNetworkId());
-+        assertEquals(11, ((ItemStackRequestAction.PlaceAction) actions.get(2)).destination().stackNetworkId());
++        assertEquals(-3, ((ItemStackRequestAction.PlaceAction) actions.get(1)).destination().stackNetworkId());
++        assertEquals(-3, ((ItemStackRequestAction.PlaceAction) actions.get(2)).destination().stackNetworkId());
 +        plan.apply(furnace, inventory);
 +        assertEquals(64, furnace.getItem(0).amount());
 +        assertTrue(inventory.getItem(0).isEmpty());
@@ -4921,16 +4952,46 @@ index 000000000..ded0d1d94
 +        final var plan = plan(recipe("furnace", 2, 1), furnace, inventory, false, 64);
 +        assertNotNull(plan);
 +        assertEquals(4, furnace.getItem(0).amount());
-+        final var actions = plan.actions();
++        final var actions = plan.actions(-3);
 +        final var clear = (ItemStackRequestAction.PlaceAction) actions.get(0);
 +        assertEquals(109, clear.destination().stackNetworkId());
 +        assertEquals(4, clear.count());
 +        final var fill = (ItemStackRequestAction.PlaceAction) actions.get(1);
-+        assertEquals(0, fill.destination().stackNetworkId());
++        assertEquals(-3, fill.destination().stackNetworkId());
 +        plan.apply(furnace, inventory);
 +        assertEquals(64, inventory.getItem(9).amount());
 +        assertEquals(2, inventory.getItem(0).amount());
 +        assertEquals(item(2, 1, 100), furnace.getItem(0));
++    }
++
++    @Test
++    void clearingAcrossMultipleSlotsReferencesTheChangedSourceAndEmptyInput() {
++        final var user = user();
++        final var furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        final var inventory = inventory(user);
++        furnace.setItem(0, item(9, 64, 17));
++        inventory.setItem(0, item(9, 60, 20));
++        inventory.setItem(9, item(2, 3, 29));
++        final var plan = plan(recipe("furnace", 2, 1), furnace, inventory, false, 64);
++        assertNotNull(plan);
++        final var actions = plan.actions(-7);
++        assertEquals(3, actions.size());
++        final var firstReturn = (ItemStackRequestAction.PlaceAction) actions.get(0);
++        final var secondReturn = (ItemStackRequestAction.PlaceAction) actions.get(1);
++        final var refill = (ItemStackRequestAction.PlaceAction) actions.get(2);
++        assertEquals(4, firstReturn.count());
++        assertEquals(17, firstReturn.source().stackNetworkId());
++        assertEquals(20, firstReturn.destination().stackNetworkId());
++        assertEquals(60, secondReturn.count());
++        assertEquals(-7, secondReturn.source().stackNetworkId());
++        assertEquals(0, secondReturn.destination().stackNetworkId());
++        assertEquals(29, refill.source().stackNetworkId());
++        assertEquals(-7, refill.destination().stackNetworkId());
++        plan.apply(furnace, inventory);
++        assertEquals(1, furnace.getItem(0).amount());
++        assertEquals(64, inventory.getItem(0).amount());
++        assertEquals(60, inventory.getItem(1).amount());
++        assertEquals(2, inventory.getItem(9).amount());
 +    }
 +
 +    @Test
@@ -5030,7 +5091,7 @@ index 000000000..ded0d1d94
 +        inventory.setItem(9, item(2, 3, 13));
 +        final var plan = plan(recipe("furnace", 0, 1), furnace, inventory, false, 64);
 +        assertNotNull(plan);
-+        final var action = (ItemStackRequestAction.PlaceAction) plan.actions().getFirst();
++        final var action = (ItemStackRequestAction.PlaceAction) plan.actions(-3).getFirst();
 +        assertEquals(12, action.source().stackNetworkId());
 +        plan.apply(furnace, inventory);
 +        assertEquals(2, furnace.getItem(0).identifier());
@@ -6502,7 +6563,7 @@ index 000000000..6da0ed14c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
 new file mode 100644
-index 000000000..572ad1e4d
+index 000000000..1d81df0ef
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
 @@ -0,0 +1,363 @@
@@ -6748,7 +6809,7 @@ index 000000000..572ad1e4d
 +            assertEquals(29, returned.destination().stackNetworkId());
 +            assertEquals(2, returned.count());
 +            final var placed = (ItemStackRequestAction.PlaceAction) sent[0].actions().get(1);
-+            assertEquals(0, placed.destination().stackNetworkId());
++            assertEquals(sent[0].requestId(), placed.destination().stackNetworkId());
 +            assertEquals(64, player.getItem(9).amount());
 +            assertEquals(0, player.getItem(9).data());
 +            assertEquals(1, furnace.getItem(0).amount());

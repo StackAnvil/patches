@@ -243,28 +243,21 @@ The run exits normally, stops its private display and removes the private observ
 These observations verify publication and CPU resolution, not authored screen rendering or native action parity.
 Offline tooling checks, all 264 regressions and patch metadata validation pass.
 
-## Preserve native transfer identities in cooking requests
+## Track native prediction identities in cooking requests
 
-Cooking placement no longer substitutes a negative request ID for every slot changed earlier in the request.
-Native partial and complete moves preserve the source ID in an empty destination.
-Merging retains the occupied destination ID. An emptied ingredient slot uses ID zero when filled again.
-The planner now exposes its immutable actions directly, without an unused request-ID parameter or a changed-slot repair pass.
-Cooking sources use native hotbar 28 and inventory 29, with physical slot indices. Returns retain combined player provider 12.
+Cooking requests use the negative request ID for any slot that an earlier action changed.
+The native identity callback applies this rule to both transfer endpoints, including a source that becomes empty.
+The planner tracks physical slots across hotbar, inventory, and combined player providers.
+Cooking sources use providers 28 and 29. Returns use provider 12.
 
-Three regressions fail against the previous substitution.
-They cover multi-source bulk placement, a cleared ingredient slot, and rejection recovery with native merge rules.
-A separate optional comparison uses `STACKANVIL_NATIVE_REQUEST_WIRE` to verify the complete cooking payload against the pinned executable.
+The earlier serialization fixture used the base manager and omitted the native identity callback.
+Its positive IDs describe unpredicted wrappers and do not establish production prediction behavior.
+The replacement fixture constructs the native predicted containers and the original ClientScreenData component.
+It executes the original client identity callback, transfer mutation, payload conversion, and serialization.
+Five complete payloads cover cooking placement and partial or complete moves into empty or occupied slots.
 
-A fresh native process produces five payloads through original request detach, owned-request conversion, serialization context construction, and byte writes.
-These cover cooking placement plus partial and complete ordinary transfers into empty and occupied destinations.
-The BinaryStream fields and packet view remain controlled construction data.
-The enclosing sender, complete controller/model ownership, transport framing, live acceptance, and authored cooking controls remain unverified.
-The [request reference](../../../docs/native-cooking-actions.md#request-payload-identities) records the original functions and evidence limits.
-
-All eighteen focused planner/request tests pass, including the complete native cooking payload comparison.
-
-All 104 core patches replay after integration with the concurrent movement correction changes.
-The integrated four-project build passes 2,383 tests, with 212 optional skips and no failures or errors.
-Main, tool, and test Checkstyle report no errors. Offline validation also passes.
-All 1,385 core classes match the core JAR embedded in the Fabric add-on.
-The removed changed-slot helper has no remaining class in either build.
+The manager takes its normal null-Level constructor branch before the controlled world attaches.
+Client subclass fields, the one-entity registry, screen bindings, packet view, and stream fields remain controlled fixture data.
+Full Player and screen construction, predicted request finalization, the sender, transport, and live acceptance remain unverified.
+The [request reference](../../../docs/native-cooking-actions.md#request-payload-identities) records these boundaries.
+The optional byte comparison reads `STACKANVIL_NATIVE_PREDICTED_REQUEST_WIRE`.
