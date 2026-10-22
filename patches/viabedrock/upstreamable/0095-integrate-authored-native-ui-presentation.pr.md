@@ -239,8 +239,8 @@ The native graphical capture stops at a Microsoft licensing-response error befor
 Targeted tests cover count conservation, unsigned stack counts, merge order, scoped activation, stale presentations, transport failure and correction before the next action.
 The production codec test writes and reads normal transactions with legacy network-item descriptors.
 It does not compare captured native bytes.
-This first adapter handles authored 27-slot and 54-slot chest presentations.
-Other native providers remain incomplete.
+The adapter handles authored 27-slot and 54-slot chests, five-slot hoppers, and nine-slot dispensers and droppers.
+Workstation actions and other native providers remain incomplete.
 
 
 The full four-project build passes 2,371 tests, with 152 optional tests skipped and no failures.
@@ -271,3 +271,34 @@ The full 104-patch core stack replays, and the complete four-project build passe
 This run passes 2,342 tests, skips 212 optional cases, and reports no failures or errors.
 It enables the three private native matcher fixtures named above; other optional fixture controls remain skipped.
 Offline tooling, regression tests, and patch metadata validation also pass.
+
+## Client-authoritative redstone storage actions
+
+Authored hopper, dispenser, and dropper buttons now use normal transactions in client-authoritative sessions.
+Both authority modes share exact provider, type, size, and presentation-family checks.
+The ordinary storage definitions and their opening foundation now precede their first action consumer.
+Modern request-slot names remain in the deferred inventory adapter.
+
+Actor-backed hoppers can retain the generic `CONTAINER` wire type after entity-based screen resolution.
+Accept the resolved five-slot `HopperContainer` without rewriting that wire identity.
+The former authoritative provider check rejected that valid combination.
+Reject unrelated classes, wrong sizes, mismatched redstone families, and brewing workstations.
+Require family-channel negotiation before sending these programs, and use the matching message codec.
+
+The pinned Bedrock 1.26.51.1 `ui/redstone_screen.json` supplies the layout evidence.
+Its hopper uses a five-by-one `container_items` grid.
+The dispenser and dropper use three-by-three grids through the common container-item controls.
+The adapters reuse the existing direct external slots and balanced ordinary transaction semantics.
+This establishes implementation coverage and layout provenance, without native graphical or live acceptance claims.
+
+All 55 targeted cases pass, with no skips or failures, and both Checkstyle tasks pass.
+The new cases execute authored bindings and activation for each redstone family.
+They inspect normal transaction identity, debit and credit snapshots, merge counts, tracked state, close rejection, and family codec negotiation.
+Authoritative provider cases include generic-wire and explicit hopper-minecart identities.
+All 104 core patches replay successfully.
+Live client-authoritative acceptance remains unverified for these new families.
+
+The complete four-project build passes 2,345 tests, with 212 optional skips and no failures or errors.
+This run enables the NBT equality, populated-userdata, and cooking-admission fixtures.
+Other optional fixture controls remain skipped.
+All Checkstyle and publication tasks pass, and offline validation passes.
