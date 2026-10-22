@@ -50,9 +50,9 @@ A one-shot terminal release retains the original identity after retirement and c
 Fallback restores the exact original screen on the same connected menu, even after controller retirement.
 It cannot overwrite a later screen or a reused menu.
 
-## Tab and filtering pointers
+## Preference pointers
 
-Supported navigation and filtering toggles bind their actual authored group, index, and checked state.
+Supported tab, filtering, and layout toggles bind their actual authored group, index, and checked state.
 They share clipped painter order with slots, recipe cells, and close commands.
 The existing per-family transport carries changes after the installed screen checks its displayed snapshot and empty cursor.
 Preference changes cannot interrupt a recipe gesture.
@@ -62,7 +62,11 @@ Capability loss, ambiguous transport, or a ten-second wait restores the original
 The pinned callbacks `0x146c99520` and `0x146c99b40` pass 74 controls with initialized controller/model state and valid weak ownership.
 Tab events use the group index and skip refresh for the current tab. Filtering events publish the new checked byte.
 Downstream setters, collection rebuild, and settings refresh remain observed external boundaries.
-Focused mappings, additional device mappings, and layout retained-state behavior remain unsupported.
+Layout pointers preserve the current tab/filter, use native indices `1` and `2`, and skip a current-layout selection.
+They wait for newer matching model state in either direction. Forced-profile layout controls retain ordinary screens.
+The unchanged direct layout callback at `0x146c99560` passes 480 controls over supplied state, profile/input values, and held-source validity.
+Its saved-tab and held-selection branches are observed but remain unimplemented in this preference adapter.
+Focused mappings and additional device mappings also remain unsupported.
 This route does not establish complete default-screen, native input, or visual parity.
 
 ## Rendering and retained behavior
@@ -84,20 +88,20 @@ Native CPU controls cover progress, flights, typed lock reads, UI callbacks, and
 These include 20 progress cases, seven flight timings, 25 NBT controls, 125 UI callbacks, and 1,536 animation samples across 32 easing selectors.
 Their original fixture boundaries remain separate from GPU and complete controller behavior.
 
-The paired four-project build passes 2,450 tests, with 213 optional skips and no failures or errors.
+The paired four-project build passes 2,453 tests, with 213 optional skips and no failures or errors.
 All 104 core patches and 38 client patches replay.
 Checkstyle, access-widener validation, and Maven POM generation pass. All 1,401 embedded core classes match the rebuilt core.
-The cooking action, presentation, controller, screen, and geometry suites pass all 39 tests.
+The cooking action, presentation, controller, screen, and geometry suites pass all 42 tests.
 All eight shared presentation tests also pass.
 Disabling recipe pointer routing fails the interaction regression.
 The mapping regression also fails before the unsupported-attribute guard.
-Disabling preference routing or intrinsic toggle hover selection fails the new interaction and presentation regressions.
+Disabling preference or layout admission, or intrinsic toggle hover selection, fails the corresponding interaction and presentation regressions.
 
 A private live fixture projects supported controls from real cooking scenes without changing the core or server.
 It removes unfinished widgets, unsupported mappings, and unsupported renderer leaves.
-A private color marker identifies the projection. The ordinary test driver waits eight seconds before its first panel check.
+A private color marker identifies the projection. The ordinary test driver waits twelve seconds before its first panel check.
 Projection retains all 39 real inventory addresses, retained recipe metadata, and original mapping entries.
-Actual installed screen handlers send eight tab/filter changes and receive newer cooking models with the requested state.
+Actual installed screen handlers send fourteen tab/filter/layout changes and receive newer cooking models with the requested state.
 These confirm the core round trip, independently of Bedrock settings acknowledgment.
 The handlers then send primary presses and releases in all three cooking families.
 BDS starts cooking after each placement, with one real ingredient and an empty cursor.
@@ -111,7 +115,7 @@ It does not establish OS mouse translation, broader recipes and quantities, none
 
 ## Remaining work
 
-Complete the default search, layout, help, focus, carried-item, tertiary, and controller handlers before replacing the default cooking program.
+Complete default search, help, focus, carried-item, tertiary, controller handlers, and layout selection history before replacing the default cooking program.
 Navigation and filtering still need their remaining focus and device mappings.
 Cross-input prediction, authoritative model watchers, additional workstation families, and complete inventory semantics remain unfinished.
 Exit transitions, carried-item opacity, inactive filters, native fonts and pixels, resource reloads, and broader client routes also remain verification gaps.

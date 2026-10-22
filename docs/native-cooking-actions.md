@@ -71,14 +71,16 @@ Native device equivalence, remaining device bindings, nonempty-cursor branches, 
 Acceptance on unchanged server-authored cooking screens and broader recipes also remains unverified.
 The original full controller, model owner, and independent frame scopes also remain outside the native fixtures.
 
-## Tab and filtering controls
+## Cooking preference controls
 
 The cooking controller supplies the seven constants from the pinned publisher at `0x146c44040`.
 Food, items, blocks, search, and inventory use indices `1..5`. Survival and recipe-book layouts use `1` and `2`.
 The resolved toggle groups retain these indices through program export and import in all three cooking families.
 
-Supported navigation and filtering toggles use their authored group, index, and checked state.
-The pointer adapter accepts consumed primary mappings. Unsupported focus, device, and layout handlers retain ordinary controls.
+Supported tab, filtering, and layout toggles use their authored group, index, and checked state.
+The pointer adapter accepts consumed primary mappings. Unsupported focus and device handlers retain ordinary controls.
+Layout toggles use indices `1` and `2` and preserve the current tab and filter. Selecting the current layout sends nothing.
+Forced-profile layout controls retain ordinary screens before accepting input.
 Preference input requires its installed menu, the displayed snapshot, an empty cursor, and an idle recipe gesture.
 The client waits for a newer matching model before accepting another input.
 Capability loss, ambiguous transport, or a ten-second wait restores the exact original screen.
@@ -88,6 +90,10 @@ Tab events read the index at event offset `4`; a current-tab event returns witho
 Filtering events read the checked byte at offset `8`, mark all five tab collections dirty, and request a refresh.
 These fixtures supply initialized controller/model state and valid weak ownership.
 Downstream tab/filter setters, collection rebuild, and settings refresh remain observed external boundaries.
+A separate fixture runs 480 controls through the unchanged direct layout callback at `0x146c99560`.
+It supplies layout, tab, the inventory-memory flag, input mode, event fields, and held-source validity.
+The callback refreshes only after a layout change. It also updates a saved tab and conditionally clears held selection.
+The preference adapter does not yet implement those internal states or their producers.
 These controls do not establish native physical input, complete controller construction, or visual parity.
 
 ## Recipe command dispatch
@@ -137,7 +143,8 @@ Fallback restores the exact original screen on the same connected menu after pre
 It cannot replace a later screen or a reused menu.
 
 Unsupported required controls keep the ordinary screen.
-This includes the default search, layout, help, focus, and carried-item branches.
+This includes the default search, help, focus, and carried-item branches.
+Layout selection history and its profile/device branches also remain unfinished.
 Tab and filtering controls also retain ordinary screens when their required focus or device mappings remain unsupported.
 The pointer and fallback regressions use constructed authored scenes and genuine Java menus.
 They do not establish native physical input, GPU output, or complete native UI parity.
@@ -146,10 +153,10 @@ A separate private client fixture projects supported controls from real cooking 
 It removes unfinished widgets, unsupported mappings, and unsupported renderer leaves.
 Projection retains all 39 inventory addresses, toggle identities, recipe metadata, and retained original mapping entries.
 A private color marker distinguishes the projection from the ordinary Java panel.
-The ordinary test driver waits eight seconds before its first panel check to avoid interference with the controlled gestures.
+The ordinary test driver waits twelve seconds before its first panel check to avoid interference with the controlled gestures.
 
-Actual installed screen handlers send eight preference changes and receive newer cooking models with the requested state.
-Furnace controls change tabs and toggle filtering. Smoker and blast-furnace controls toggle filtering.
+Actual installed screen handlers send fourteen preference changes and receive newer cooking models with the requested state.
+Furnace controls change tabs and toggle filtering. Smoker and blast-furnace controls toggle filtering. All three families switch to the inventory layout and back.
 These model updates confirm the core round trip; they do not establish Bedrock settings acknowledgment.
 The handlers then send primary recipe presses and releases in all three families.
 All six production replies match and accept the actions. BDS starts cooking with one real ingredient and an empty cursor after each placement.
