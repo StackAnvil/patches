@@ -53,3 +53,29 @@ A separate parser checks the extracted packets against the original protocol-219
 Both native flows receive a cursor-only success, then a form, before the client closes its container.
 The packet captures and comparison harness remain private.
 These two complete examples establish selected native serialization behavior; other action variants retain their own verification requirements.
+
+## Shared native stack counts (October 22, 2026)
+
+Both network item codecs now clamp their signed-short count before unsigned-byte narrowing.
+For example, packet count 32769 previously became one item. It now becomes zero.
+Positive counts retain native byte wrapping, including 256 becoming zero and 257 becoming one.
+Counts 128 through 255 remain nonempty. Their existing presence correction now belongs to this shared codec foundation.
+Recipe results inherit this behavior from the shared decoder.
+
+The byte-buffer regression fails before the correction and passes afterward.
+Both codecs match 264 fresh target-native constructor executions.
+The cases cover four Item IDs, eleven counts, two runtime-block paths, and three association modes.
+The fixture executes the parsed ItemStack constructor, numeric lookup, palette lookup, association handling, descriptor conversion, and destruction.
+It supplies parsed headers, captured registry tables, palette storage, warm auxiliary caches, allocator/CRT/TLS/locks, and an empty user-data load boundary.
+Raw binary reading, actual built-in and archetype construction, cold auxiliary registration, transfer behavior, and UI remain outside this comparison.
+
+Separate fresh probes retain 2,250 constructor cases and 3,600 subsequent recipe-matcher cases.
+These references guide the remaining production Item construction work.
+They do not establish complete native inventory or cooking integration.
+
+All 102 core patches replay, and all four projects build.
+The final suites pass 2,299 tests with 152 optional skips. New native-reference comparisons run without skips.
+Tooling checks, 264 regressions, and metadata checks pass.
+A fresh ViaProxy run passes all six workstation/chest controls and same-world reconnect.
+Both client profiles match all 1,360 rebuilt core classes. The private display stops normally.
+These live controls use valid counts. Malformed-count coverage comes from the byte-buffer and native-constructor tests.

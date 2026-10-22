@@ -1,4 +1,4 @@
-From 46c1a9ce5858640b7e16656411c98158883295cf Mon Sep 17 00:00:00 2001
+From 1d2f81d1b2f7fc27b8f2ab0a3cb95e0cd61b6900 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): define Bedrock request and recipe codecs
@@ -8,9 +8,27 @@ Introduce the request, response, and recipe models with their versioned codecs b
 Retain the native TextProcessingEventOrigin mapping with unknown=-1. A capture from Bedrock 1.26.51.1 build 51061372, protocol 2193, confirms this sentinel in accepted merchant requests. The schema enum list does not describe its numeric starting value.
 
 Retain all dynamic multi-recipe UUIDs and their server-assigned network IDs. Bedrock 1.26.51.1 build 51061372, protocol 2193, native cartography captures use these IDs for map cloning, extension, and locking through CraftRecipeOptional. Dropping this array prevents containers from resolving the recipes. Keep unknown UUIDs and unsigned IDs intact so decoding does not depend on a closed list of vanilla recipes.
+
+Decode both network stack count headers with native signed-short clamping
+before unsigned-byte narrowing. Values such as 32769 otherwise become one
+item instead of an empty stack. This applies to inventory items as well as
+recipe results.
+
+The byte-buffer regression fails before this correction. Both codecs match
+264 fresh executions of the unchanged target-native parsed ItemStack
+constructor, including runtime and associated-block paths. The fixture
+supplies parsed headers, registry and palette storage, warm auxiliary
+caches, allocator/CRT/TLS/locks and an empty user-data boundary. It does not
+prove raw binary reading, actual built-in/archetype construction or UI
+parity.
+
+Keep unsigned-byte presence in the same codec foundation: counts 128 to
+255 are nonempty. Fold the existing later recipe-patch correction here
+so request and recipe consumers share these invariants from the start.
 ---
  .../generated/InventorySourceType.java        |   2 +-
  .../generated/ItemStackRequestActionType.java |  22 +-
+ .../protocol/model/BedrockItem.java           |   2 +-
  .../inventory/ItemStackRequestAction.java     | 124 ++++++++++
  .../model/inventory/ItemStackRequestInfo.java |  28 +++
  .../inventory/ItemStackRequestSlotInfo.java   |  23 ++
@@ -35,14 +53,17 @@ Retain all dynamic multi-recipe UUIDs and their server-assigned network IDs. Bed
  .../inventory/ItemStackResponseType.java      |  75 ++++++
  .../inventory/ItemStackSlotRequestType.java   |  50 ++++
  .../inventory/ItemStackSlotResponseType.java  |  65 +++++
+ .../protocol/types/item/BedrockItemType.java  |   2 +-
+ .../item/NetworkItemStackDescriptorType.java  |   2 +-
  .../types/recipe/CraftingDataReader.java      | 175 ++++++++++++++
  .../recipe/NetworkItemDescriptorType.java     |  87 +++++++
  .../types/inventory/ItemStackCodecTest.java   | 227 ++++++++++++++++++
  .../ItemStackRequestResultTypeTest.java       |  55 +++++
+ .../types/item/NetworkItemCountTest.java      |  87 +++++++
  .../types/recipe/CraftingDataReaderTest.java  |  85 +++++++
  .../recipe/NetworkItemDescriptorTypeTest.java |  98 ++++++++
  .../generator/BedrockDataEnumGenerator.java   |   6 +
- 33 files changed, 2157 insertions(+), 15 deletions(-)
+ 37 files changed, 2247 insertions(+), 18 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestInfo.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestSlotInfo.java
@@ -70,6 +91,7 @@ Retain all dynamic multi-recipe UUIDs and their server-assigned network IDs. Bed
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorType.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackCodecTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackRequestResultTypeTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemCountTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReaderTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorTypeTest.java
 
@@ -119,6 +141,19 @@ index e4c39a974..2730feb35 100644
      ;
  
      private static final Int2ObjectMap<ItemStackRequestActionType> BY_VALUE = new Int2ObjectOpenHashMap<>();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java b/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
+index 54101ffdb..c6a882c5c 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
+@@ -186,7 +186,7 @@ public class BedrockItem implements Item {
+ 
+     @Override
+     public boolean isEmpty() {
+-        return this.id == 0 || this.id == -1 || this.amount <= 0;
++        return this.id == 0 || this.id == -1 || this.amount == 0;
+     }
+ 
+     public boolean isDifferent(final BedrockItem o) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java b/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java
 new file mode 100644
 index 000000000..7b9310f5a
@@ -1692,6 +1727,32 @@ index 000000000..66596f9d3
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
+index 5bad42706..740b05b8f 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
+@@ -47,7 +47,7 @@ public class BedrockItemType extends Type<BedrockItem> {
+         }
+ 
+         final BedrockItem item = new BedrockItem(id);
+-        item.setAmount(buffer.readUnsignedShortLE());
++        item.setAmount(Math.max(0, buffer.readShortLE()));
+         item.setData(BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+         /*if (buffer.readBoolean()) {
+          *     item.setNetId(BedrockTypes.VAR_INT.read(buffer));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java
+index 416621e91..3fbbbff46 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemStackDescriptorType.java
+@@ -43,7 +43,7 @@ public class NetworkItemStackDescriptorType extends Type<BedrockItem> {
+     public BedrockItem read(final ByteBuf buffer) {
+         final short id = buffer.readShortLE();
+         final BedrockItem item = new BedrockItem(id);
+-        item.setAmount(buffer.readUnsignedShortLE());
++        item.setAmount(Math.max(0, buffer.readShortLE()));
+         item.setData(BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+         if (buffer.readBoolean()) {
+             item.setNetId(BedrockTypes.VAR_INT.read(buffer));
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReader.java b/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReader.java
 new file mode 100644
 index 000000000..535f52d1c
@@ -2254,6 +2315,99 @@ index 000000000..4fcb37775
 +            assertEquals(0, BedrockTypes.UTF8_STRING_ARRAY.read(userData).length);
 +            assertEquals(0, userData.readableBytes());
 +            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemCountTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemCountTest.java
+new file mode 100644
+index 000000000..5757aeb9b
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemCountTest.java
+@@ -0,0 +1,87 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.types.item;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NetworkItemCountTest {
++
++    @Test
++    void clampsSignedShortCountsBeforeNarrowingToUnsignedBytes() {
++        final int[] wire = {0, 1, 127, 128, 255, 256, 257, 32767, 32768, 32769, 65535};
++        final int[] counts = {0, 1, 127, 128, 255, 0, 1, 255, 0, 0, 0};
++        for (final Type<BedrockItem> codec : codecs()) {
++            for (int index = 0; index < wire.length; index++) {
++                final BedrockItem item = decode(codec, 1, wire[index], 0, 0);
++                assertEquals(counts[index], item.amount());
++                assertEquals(counts[index] == 0, item.isEmpty());
++            }
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_NETWORK_ITEM_COUNTS", matches = ".+")
++    void matchesExecutedNetworkStackCountConstruction() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(
++                System.getenv("STACKANVIL_NATIVE_NETWORK_ITEM_COUNTS")))).getAsJsonObject();
++        final var rows = reference.getAsJsonArray("rows");
++        assertFalse(rows.isEmpty());
++        for (final Type<BedrockItem> codec : codecs()) {
++            for (final var entry : rows) {
++                final var row = entry.getAsJsonObject();
++                final BedrockItem item = decode(codec, row.get("inputId").getAsInt(), row.get("count").getAsInt(),
++                        row.get("inputAux").getAsInt(), row.get("runtimeId").getAsInt());
++                assertEquals(row.get("stackCount").getAsInt(), item.amount(), row::toString);
++            }
++        }
++    }
++
++    private static List<Type<BedrockItem>> codecs() {
++        return List.of(new BedrockItemType(0, new Int2ObjectOpenHashMap<>(), false),
++                new NetworkItemStackDescriptorType(0, new Int2ObjectOpenHashMap<>(), true));
++    }
++
++    private static BedrockItem decode(final Type<BedrockItem> codec, final int id, final int count,
++                                      final int auxiliary, final int runtimeId) {
++        final var buffer = Unpooled.buffer();
++        try {
++            if (codec instanceof BedrockItemType) {
++                BedrockTypes.VAR_INT.write(buffer, id);
++            } else {
++                buffer.writeShortLE(id);
++            }
++            buffer.writeShortLE(count);
++            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, auxiliary);
++            if (codec instanceof BedrockItemType) {
++                BedrockTypes.VAR_INT.write(buffer, runtimeId);
++            } else {
++                buffer.writeBoolean(false);
++                BedrockTypes.UNSIGNED_VAR_INT.write(buffer, runtimeId);
++            }
++            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 2);
++            buffer.writeShortLE(0);
++            final BedrockItem item = codec.read(buffer);
++            assertFalse(buffer.isReadable());
++            return item;
 +        } finally {
 +            buffer.release();
 +        }

@@ -447,3 +447,7 @@ The new native-reference comparisons run without skips. Tooling checks, 264 regr
 A fresh ViaProxy run passes furnace, smoker, blast furnace, brewing, authored chest placement, ordinary chest transfer, and same-world reconnect.
 Both launched profiles match all 1,360 rebuilt core classes and both block-item resources.
 The live run exits successfully and stops its private display normally. These controls use Java cooking screens.
+
+Runtime block-item numeric ownership is now separate from auxiliary descriptor encoding.
+Custom archetypes retain their supplied legacy ID even while their canonical descriptor remains unverified.
+This API prepares native Item construction without assigning a fake auxiliary value to those archetypes.

@@ -470,6 +470,10 @@ It supplies constructed storage and does not parse a complete network item packe
 Focused tests also cover runtime ownership and associated-block boundaries.
 These APIs do not yet replace production network Item construction or populate the cooking catalog.
 
+A fresh comparison also checks network recipe keys and hashes against 2,250 complete parsed native constructor and descriptor-conversion executions.
+It supplies runtime candidates, associated defaults and warm auxiliary caches, registry/palette storage, and an empty user-data load boundary.
+Actual built-in/archetype initialization, cold auxiliary registration, and production constructor integration remain unfinished.
+
 All four projects build with 2,296 passing tests, 152 optional skips, and no failures or errors.
 The new native-reference comparisons run without skips. Tooling checks, 264 regressions, and patch metadata checks pass.
 A fresh ViaProxy run passes furnace, smoker, blast furnace, brewing, authored chest placement, ordinary chest transfer, and same-world reconnect.

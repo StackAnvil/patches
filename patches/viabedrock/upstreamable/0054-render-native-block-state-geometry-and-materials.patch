@@ -1,4 +1,4 @@
-From be2ad704e3c529d152afdffeb5b4ede693f2c4ee Mon Sep 17 00:00:00 2001
+From c1c20fdc5bf0678378dc63163bf4943df3835ab0 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -300,9 +300,14 @@ reference retains104 auxiliary definitions and64 serialization names.
 checks do not prove the Windows client's cold cache, remaining curated
 variants or custom archetype construction. Packet Item construction and
 cooking presentation integration remain separate work.
+
+Keep runtime BlockLegacy numeric ownership separate from canonical auxiliary
+encoding. Custom archetypes retain their supplied legacy ID even when their
+descriptor metadata is unverified, so valid runtime blocks are not rejected
+merely because recipe conversion is incomplete.
 ---
  Data Asset Sources.md                         |   27 +
- .../chunk/blockstate/BlockItemDescriptor.java |   21 +
+ .../chunk/blockstate/BlockItemDescriptor.java |   29 +
  .../blockstate/BlockItemDescriptors.java      |  141 +++
  .../api/chunk/blockstate/BlockItemStates.java |  134 ++
  .../chunk/blockstate/BlockRegistryNames.java  |   92 ++
@@ -326,7 +331,7 @@ cooking presentation integration remain separate work.
  .../protocol/packet/JoinPackets.java          |   31 +-
  .../protocol/packet/ResourcePackPackets.java  |   47 +-
  .../protocol/packet/VoxelShapePackets.java    |   35 +
- .../protocol/rewriter/BlockStateRewriter.java |  212 ++--
+ .../protocol/rewriter/BlockStateRewriter.java |  224 ++--
  .../rewriter/ResourcePackRewriter.java        |    2 +
  .../CustomBlockCullingCompiler.java           |  162 +++
  .../resourcepack/CustomBlockModel.java        |  565 +++++++++
@@ -340,7 +345,7 @@ cooking presentation integration remain separate work.
  .../data/bedrock/block_item_states.json       | 1120 +++++++++++++++++
  .../data/bedrock/block_property_values.json   |  950 ++++++++++++++
  .../data/bedrock/block_registry_aliases.json  |   66 +
- .../blockstate/BlockItemDescriptorsTest.java  |  116 ++
+ .../blockstate/BlockItemDescriptorsTest.java  |  119 ++
  .../chunk/blockstate/BlockItemStatesTest.java |  135 ++
  .../blockstate/BlockRegistryNamesTest.java    |   74 ++
  .../blockstate/RuntimeBlockPaletteTest.java   |   61 +
@@ -363,7 +368,7 @@ cooking presentation integration remain separate work.
  .../storage/CustomBlockPackStorageTest.java   |   31 +
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  230 ++++
- 62 files changed, 8582 insertions(+), 109 deletions(-)
+ 62 files changed, 8605 insertions(+), 109 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -456,10 +461,10 @@ index b458c554b..399698635 100644
 +Namespace fallback and complete runtime registration still need native comparison.
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
 new file mode 100644
-index 000000000..0730f81a2
+index 000000000..bd235231f
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,29 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -477,7 +482,15 @@ index 000000000..0730f81a2
 +    }
 +
 +    public int numericItemId() {
-+        return this.legacyId <= 255 ? this.legacyId : (255 - this.legacyId) & 0xFFFF;
++        return numericItemId(this.legacyId);
++    }
++
++    /** Numeric ownership does not depend on an archetype's auxiliary encoding. */
++    public static int numericItemId(final int legacyId) {
++        if (legacyId < 0 || legacyId > 0xFFFF) {
++            throw new IllegalArgumentException("Block legacy ID must fit an unsigned short");
++        }
++        return legacyId <= 255 ? legacyId : (255 - legacyId) & 0xFFFF;
 +    }
 +
 +}
@@ -2576,7 +2589,7 @@ index 000000000..9c9d66373
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-index 2cb4a79b6..9586a7db9 100644
+index 2cb4a79b6..dd8dce68d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 @@ -17,23 +17,31 @@
@@ -2615,7 +2628,7 @@ index 2cb4a79b6..9586a7db9 100644
  
  import java.util.*;
  import java.util.logging.Level;
-@@ -43,12 +51,15 @@ public class BlockStateRewriter implements StorableObject {
+@@ -43,12 +51,16 @@ public class BlockStateRewriter implements StorableObject {
  
      private final Int2IntMap blockStateIdMappings = new Int2IntOpenHashMap(); // Bedrock -> Java
      private final Int2IntMap legacyBlockStateIdMappings = new Int2IntOpenHashMap(); // Bedrock -> Bedrock
@@ -2623,6 +2636,7 @@ index 2cb4a79b6..9586a7db9 100644
 +    private final RuntimeBlockPalette palette;
 +    private final BlockItemDescriptors blockItemDescriptors;
 +    private final BlockItemStates blockItemStates;
++    private final Map<BedrockBlockState, Integer> customBlockItemOwners = new IdentityHashMap<>();
      private final Object2ObjectMap<String, IntSortedSet> validBlockStates = new Object2ObjectOpenHashMap<>(); // Bedrock -> Bedrock
      private final Int2ObjectMap<String> blockStateTags = new Int2ObjectOpenHashMap<>(); // Bedrock
      private final BlockStateSanitizer blockStateSanitizer;
@@ -2633,7 +2647,7 @@ index 2cb4a79b6..9586a7db9 100644
          this.blockStateIdMappings.defaultReturnValue(-1);
          this.legacyBlockStateIdMappings.defaultReturnValue(-1);
  
-@@ -58,8 +69,10 @@ public class BlockStateRewriter implements StorableObject {
+@@ -58,8 +70,10 @@ public class BlockStateRewriter implements StorableObject {
          final Map<String, String> blockTags = BedrockProtocol.MAPPINGS.getBedrockCustomBlockTags();
          final Set<String> bedrockBlockIdentifiers = bedrockBlockStates.stream().map(BedrockBlockState::namespacedIdentifier).collect(Collectors.toSet());
          final List<BedrockBlockState> customBlockStates = new ArrayList<>();
@@ -2645,7 +2659,7 @@ index 2cb4a79b6..9586a7db9 100644
          for (BlockProperties blockProperty : blockProperties) {
              final String identifier = blockProperty.name().toLowerCase(Locale.ROOT);
              if (bedrockBlockIdentifiers.contains(identifier)) {
-@@ -67,102 +80,89 @@ public class BlockStateRewriter implements StorableObject {
+@@ -67,102 +81,90 @@ public class BlockStateRewriter implements StorableObject {
              }
  
              if (!effectiveBlockProperties.containsKey(identifier)) {
@@ -2688,6 +2702,7 @@ index 2cb4a79b6..9586a7db9 100644
 +
 +                final BedrockBlockState blockState = BedrockBlockState.fromNbt(blockStateTag);
 +                customBlockStates.add(blockState);
++                this.customBlockItemOwners.put(blockState, BlockItemDescriptor.numericItemId(blockProperty.getValue().legacyId()));
 +                if (generic) {
 +                    customDescriptors.put(blockState, new BlockItemDescriptor(blockProperty.getValue().legacyId(), state.metadata()));
                  }
@@ -2812,7 +2827,7 @@ index 2cb4a79b6..9586a7db9 100644
              this.validBlockStates.computeIfAbsent(bedrockBlockState.namespacedIdentifier(), k -> new IntLinkedOpenHashSet()).add(bedrockId);
  
              if (blockTags.containsKey(bedrockBlockState.namespacedIdentifier())) {
-@@ -172,6 +172,8 @@ public class BlockStateRewriter implements StorableObject {
+@@ -172,6 +174,8 @@ public class BlockStateRewriter implements StorableObject {
              if (bedrockToJavaBlockStates.containsKey(bedrockBlockState)) {
                  final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(bedrockBlockState));
                  this.blockStateIdMappings.put(bedrockId, javaId);
@@ -2821,7 +2836,7 @@ index 2cb4a79b6..9586a7db9 100644
              } else {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
                  final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
-@@ -186,10 +188,17 @@ public class BlockStateRewriter implements StorableObject {
+@@ -186,10 +190,17 @@ public class BlockStateRewriter implements StorableObject {
                  continue; // Dirty hack Mojang did in 1.12. Can be ignored safely as those values can't be used in chunk packets.
              }
  
@@ -2840,7 +2855,7 @@ index 2cb4a79b6..9586a7db9 100644
      }
  
      public int bedrockId(final CompoundTag bedrockBlockStateTag) {
-@@ -206,11 +215,27 @@ public class BlockStateRewriter implements StorableObject {
+@@ -206,11 +217,37 @@ public class BlockStateRewriter implements StorableObject {
      }
  
      public int bedrockId(final BlockState bedrockBlockState) {
@@ -2857,6 +2872,16 @@ index 2cb4a79b6..9586a7db9 100644
 +        return this.blockItemDescriptors.resolve(this.palette.state(runtimeId));
 +    }
 +
++    /** Runtime ownership remains known even when an archetype's descriptor is unverified. */
++    public Integer blockItemNumericId(final int runtimeId) {
++        final BedrockBlockState state = this.palette.state(runtimeId);
++        if (state == null) {
++            return null;
++        }
++        return state.blockStateTag().get("block_id") instanceof IntTag id
++                ? BlockItemDescriptor.numericItemId(id.asInt()) : this.customBlockItemOwners.get(state);
++    }
++
 +    public BedrockBlockState blockItemState(final String identifier, final short metadata) {
 +        return this.blockItemStates.resolve(identifier, metadata);
 +    }
@@ -2870,7 +2895,7 @@ index 2cb4a79b6..9586a7db9 100644
      }
  
      public int bedrockId(final int legacyBlockStateId) {
-@@ -221,6 +246,15 @@ public class BlockStateRewriter implements StorableObject {
+@@ -221,6 +258,15 @@ public class BlockStateRewriter implements StorableObject {
          return this.blockStateIdMappings.get(bedrockBlockStateId);
      }
  
@@ -2886,7 +2911,7 @@ index 2cb4a79b6..9586a7db9 100644
      public int waterlog(final int javaBlockStateId) {
          if (BedrockProtocol.MAPPINGS.getJavaPreWaterloggedBlockStates().contains(javaBlockStateId)) {
              return javaBlockStateId;
-@@ -238,4 +272,8 @@ public class BlockStateRewriter implements StorableObject {
+@@ -238,4 +284,8 @@ public class BlockStateRewriter implements StorableObject {
          return this.blockStateTags.get(bedrockBlockStateId);
      }
  
@@ -6660,10 +6685,10 @@ index 000000000..f2dcda532
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptorsTest.java b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptorsTest.java
 new file mode 100644
-index 000000000..c9830a9ba
+index 000000000..56bc85da9
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptorsTest.java
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,119 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -6699,9 +6724,12 @@ index 000000000..c9830a9ba
 +        final int[] item = {0, 1, 255, 65535, 33023, 256};
 +        for (int index = 0; index < legacy.length; index++) {
 +            assertEquals(item[index], new BlockItemDescriptor(legacy[index], (short) 0).numericItemId());
++            assertEquals(item[index], BlockItemDescriptor.numericItemId(legacy[index]));
 +        }
 +        assertThrows(IllegalArgumentException.class, () -> new BlockItemDescriptor(-1, (short) 0));
 +        assertThrows(IllegalArgumentException.class, () -> new BlockItemDescriptor(65536, (short) 0));
++        assertThrows(IllegalArgumentException.class, () -> BlockItemDescriptor.numericItemId(-1));
++        assertThrows(IllegalArgumentException.class, () -> BlockItemDescriptor.numericItemId(65536));
 +    }
 +
 +    @Test

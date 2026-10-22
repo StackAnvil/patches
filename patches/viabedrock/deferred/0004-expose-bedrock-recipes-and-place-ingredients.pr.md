@@ -50,3 +50,7 @@ The lab closes normally.
 These tests use Java cooking screens.
 The authored cooking catalog, input controls and client screen still need integration.
 Native images and complete route parity remain unverified.
+
+The shared network codec now owns signed-short count clamping for inventory items and recipe results alike.
+The recipe-only type retains its clientbound write guard and no longer duplicates count conversion.
+The codec patch records the fresh native constructor comparison and regression.

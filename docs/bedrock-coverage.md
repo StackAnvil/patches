@@ -9407,3 +9407,29 @@ The new native-reference comparisons run without skips. Tooling checks, 264 regr
 A fresh ViaProxy run passes furnace, smoker, blast furnace, brewing, authored chest placement, ordinary chest transfer, and same-world reconnect.
 Both launched profiles match all 1,360 rebuilt core classes and both block-item resources.
 The live run exits successfully and stops its private display normally. These controls use Java cooking screens.
+
+## Shared network item counts (October 22, 2026)
+
+Both item decoders now clamp signed-short counts before unsigned-byte narrowing.
+Packet count 32769 previously became one item; it now becomes zero.
+Positive values retain native byte wrapping. Recipe results share this conversion and retain their clientbound write guard.
+Counts 128 through 255 remain nonempty. The shared codec patch now owns the existing presence correction too.
+
+The byte-buffer regression fails before the correction.
+Both codecs pass 264 fresh native constructor comparisons across four Item IDs, eleven count boundaries, two runtime paths, and three block-association modes.
+The probe executes the original parsed ItemStack constructor and related lookup, descriptor, and destruction functions.
+It supplies parsed headers, registry and palette storage, warm auxiliary caches, allocator/CRT/TLS/locks, and an empty user-data load boundary.
+Raw binary parsing, full built-in/archetype construction, cold auxiliary registration, transfers, and UI remain unverified by this probe.
+Separate fresh references retain 2,250 constructor cases and 3,600 subsequent recipe-matcher cases.
+
+Runtime block-item numeric ownership now retains custom legacy IDs independently of unverified archetype auxiliary descriptors.
+Native network Item construction, cooking catalog integration, and authored workstation controls remain unfinished.
+The movement, camera, and rendering requirements of the five-area goal also remain active.
+
+All four projects build. The final suites pass 2,299 tests with 152 optional skips and no failures or errors.
+The new native comparisons run without skips. Tooling checks, 264 regressions, and patch metadata checks pass.
+The complete core stack replays all 102 patches.
+A fresh ViaProxy run passes all six workstation/chest controls and same-world reconnect.
+Both launched profiles match all 1,360 rebuilt core classes and both block-item resources.
+The run exits successfully and stops its private display normally.
+These live controls use ordinary valid counts and Java cooking screens; malformed-count coverage comes from the codec and native-constructor tests.
