@@ -252,6 +252,15 @@ All 1,393 embedded core classes match the rebuilt core.
 Checkstyle and offline patch validation pass.
 The separate cooking regression suite also passes all 13 cases with the private native wire reference enabled.
 
+The later client build records 602 live physics frames with populated historical effect snapshots and no observer errors.
+All 17 observed local admissions remain present at completion. The observer records 20 effect confirmations and one masked replay entry.
+Normal JVM shutdown hangs again, so this recording remains incomplete.
+Resolved native diagnostics place the VM thread in a mutex wait inside the mapped datachannel library while Java threads wait at a safepoint.
+The precise cause and packaged native binary identity remain unproven.
+After diagnostics, the birth-verified recording JVM terminates, owned descendants exit, and the private server and display stop.
+The original server fixture returns, and recording runtime copies release.
+This establishes snapshot and admission wiring. It does not establish a successful lifecycle or native trajectories.
+
 ## Vehicle correction motion, October 22, 2026
 
 Core now sends authoritative vehicle motion before the Java vehicle position update.

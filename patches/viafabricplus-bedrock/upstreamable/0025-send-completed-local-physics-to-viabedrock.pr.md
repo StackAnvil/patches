@@ -1430,3 +1430,8 @@ All 104 core patches and 38 add-on patches replay without conflicts.
 All 1,393 embedded core classes match the rebuilt core.
 Checkstyle and offline patch validation pass.
 The separate cooking regression suite also passes all 13 cases with the private native wire reference enabled.
+
+The snapshot build records 602 live physics frames with populated historical effect values and no observer errors.
+All 17 observed admissions remain present at completion, alongside 20 effect confirmations and one masked replay entry.
+Normal JVM shutdown hangs again. The isolated run requires manual recovery after private native diagnostics.
+The run establishes snapshot wiring, but successful lifecycle and native trajectory parity remain unproven.
