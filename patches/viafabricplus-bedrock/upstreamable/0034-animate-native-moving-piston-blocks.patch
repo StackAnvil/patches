@@ -1,20 +1,80 @@
-From 968f562df260dfa8b0126acc1d414ca58c8ac1de Mon Sep 17 00:00:00 2001
+From 568fa7ff77fe2e9ff176b5ca1a4f9863746b9aab Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] fix(render): animate native moving piston blocks
 
 Create a Java moving piston block entity when translated native piston data arrives for the matching moving-piston state. Java 26.3 MovingPistonBlock.newBlockEntity returns null and ClientPacketListener.handleBlockEntityData only loads an existing entity, so remote translated piston updates previously disappeared without animation. Native server actor pushes remain authoritative; suppress Java local moving-piston entity pushes in Bedrock sessions to avoid duplication. Retain normal Java behavior outside Bedrock sessions.
+
+Retain a distinct pending native moving-block entity until its separate
+carried-block data arrives. Initialize direction from the translated block
+state and keep empty geometry safe for chunk compilation and shape queries.
+Do not advance Java's animation ticker while data is pending, since it
+would eventually replace the native block with air. After loading, use
+ordinary Java piston rendering and animation while suppressing duplicate
+actor pushes as before. Ordinary Java piston instances keep their ticker.
+
+The Enchanted protocol-2193 capture crashes in collision shape queries
+through getMovementDirection before direction is initialized. A regression
+reproduces the null-direction exception with the empty constructor. Another
+integration test consumes the real core producer's NBT using Java 26.3's
+codec, checking all directions and property-bearing carried blocks. The
+previous Name/Properties representation silently decoded as air. These
+checks establish Java lifecycle and codec behavior, not native parity.
 ---
- .../block/MixinBedrockMovingPistonBlock.java  | 30 +++++++++++++++++++
- .../MixinBedrockPistonMovingBlockEntity.java  | 28 +++++++++++++++++
- .../viafabricplus-bedrock.mixins.json         |  2 ++
- 3 files changed, 60 insertions(+)
+ .../block/BedrockMovingPistonBlockEntity.java | 32 +++++++
+ .../block/MixinBedrockMovingPistonBlock.java  | 30 +++++++
+ .../MixinBedrockPistonMovingBlockEntity.java  | 40 +++++++++
+ .../viafabricplus-bedrock.mixins.json         |  2 +
+ .../BedrockMovingPistonBlockEntityTest.java   | 45 ++++++++++
+ .../NativePistonBlockEntityCodecTest.java     | 87 +++++++++++++++++++
+ 6 files changed, 236 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockMovingPistonBlockEntity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockMovingPistonBlock.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockPistonMovingBlockEntity.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockMovingPistonBlockEntityTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/NativePistonBlockEntityCodecTest.java
 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockMovingPistonBlockEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockMovingPistonBlockEntity.java
+new file mode 100644
+index 0000000..c7271c2
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockMovingPistonBlockEntity.java
+@@ -0,0 +1,32 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.block;
++
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.block.Blocks;
++import net.minecraft.world.level.block.piston.MovingPistonBlock;
++import net.minecraft.world.level.block.piston.PistonMovingBlockEntity;
++import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.level.storage.ValueInput;
++
++/** Keeps a translated moving block safe until its separate carried-block update arrives. */
++public final class BedrockMovingPistonBlockEntity extends PistonMovingBlockEntity {
++    private boolean awaitingData = true;
++
++    public BedrockMovingPistonBlockEntity(final BlockPos position, final BlockState state) {
++        super(position, state, Blocks.AIR.defaultBlockState(), state.getValue(MovingPistonBlock.FACING), false, false);
++    }
++
++    public boolean awaitingData() {
++        return this.awaitingData;
++    }
++
++    @Override
++    protected void loadAdditional(final ValueInput input) {
++        super.loadAdditional(input);
++        this.awaitingData = false;
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockMovingPistonBlock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockMovingPistonBlock.java
 new file mode 100644
-index 0000000..2cfa54d
+index 0000000..e7aca03
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockMovingPistonBlock.java
 @@ -0,0 +1,30 @@
@@ -25,11 +85,11 @@ index 0000000..2cfa54d
 + */
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
 +
++import com.viaversion.viafabricplus.bedrock.block.BedrockMovingPistonBlockEntity;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.world.level.block.entity.BlockEntity;
 +import net.minecraft.world.level.block.piston.MovingPistonBlock;
-+import net.minecraft.world.level.block.piston.PistonMovingBlockEntity;
 +import net.minecraft.world.level.block.state.BlockState;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.injection.At;
@@ -44,16 +104,16 @@ index 0000000..2cfa54d
 +        // Java normally creates this entity from a local piston block event.
 +        // Bedrock instead supplies the carried state through block entity data.
 +        if (cir.getReturnValue() == null && BedrockInputPermissions.isBedrockConnection()) {
-+            cir.setReturnValue(new PistonMovingBlockEntity(position, state));
++            cir.setReturnValue(new BedrockMovingPistonBlockEntity(position, state));
 +        }
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockPistonMovingBlockEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockPistonMovingBlockEntity.java
 new file mode 100644
-index 0000000..a064b0b
+index 0000000..f23da98
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBedrockPistonMovingBlockEntity.java
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,40 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -61,10 +121,12 @@ index 0000000..a064b0b
 + */
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
 +
++import com.viaversion.viafabricplus.bedrock.block.BedrockMovingPistonBlockEntity;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.world.level.Level;
 +import net.minecraft.world.level.block.piston.PistonMovingBlockEntity;
++import net.minecraft.world.level.block.state.BlockState;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.injection.At;
 +import org.spongepowered.asm.mixin.injection.Inject;
@@ -72,6 +134,16 @@ index 0000000..a064b0b
 +
 +@Mixin(PistonMovingBlockEntity.class)
 +public abstract class MixinBedrockPistonMovingBlockEntity {
++    @Inject(method = "tick", at = @At("HEAD"), cancellable = true)
++    private static void awaitNativeMovingBlockData(final Level level, final BlockPos position, final BlockState state,
++                                                   final PistonMovingBlockEntity piston, final CallbackInfo ci) {
++        // The block state and carried block arrive separately. Advancing the empty
++        // Java entity would finish its animation and replace the native block with air.
++        if (piston instanceof BedrockMovingPistonBlockEntity nativePiston && nativePiston.awaitingData()) {
++            ci.cancel();
++        }
++    }
++
 +    @Inject(method = {"moveCollidedEntities", "moveStuckEntities"}, at = @At("HEAD"), cancellable = true)
 +    private static void keepNativeActorMotion(final Level level, final BlockPos position, final float progress,
 +                                             final PistonMovingBlockEntity piston, final CallbackInfo ci) {
@@ -95,5 +167,149 @@ index cf6a07f..f4022ad 100644
      "features.sound.MixinBedrockChannelAccess",
      "features.sound.MixinBedrockChannel",
      "features.sound.MixinBedrockPcmChannel",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockMovingPistonBlockEntityTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockMovingPistonBlockEntityTest.java
+new file mode 100644
+index 0000000..c0066a5
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockMovingPistonBlockEntityTest.java
+@@ -0,0 +1,45 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.block;
++
++import net.minecraft.SharedConstants;
++import net.minecraft.core.BlockPos;
++import net.minecraft.core.Direction;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.level.BlockGetter;
++import net.minecraft.world.level.block.Blocks;
++import net.minecraft.world.level.block.piston.MovingPistonBlock;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.mock;
++
++class BedrockMovingPistonBlockEntityTest {
++    @BeforeAll
++    static void bootstrap() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void pendingEntitiesHaveSafeEmptyCollisionAndOffsetsInEveryDirection() {
++        final BlockGetter level = mock(BlockGetter.class);
++        for (final Direction facing : Direction.values()) {
++            final var state = Blocks.MOVING_PISTON.defaultBlockState().setValue(MovingPistonBlock.FACING, facing);
++            final var piston = new BedrockMovingPistonBlockEntity(BlockPos.ZERO, state);
++            assertTrue(piston.getCollisionShape(level, BlockPos.ZERO).isEmpty());
++            assertDoesNotThrow(() -> piston.getXOff(0.5F));
++            assertDoesNotThrow(() -> piston.getYOff(0.5F));
++            assertDoesNotThrow(() -> piston.getZOff(0.5F));
++            assertSame(facing, piston.getDirection());
++            assertTrue(piston.getMovedState().isAir());
++            assertTrue(piston.awaitingData());
++            assertEquals(0F, piston.getProgress(1F));
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/NativePistonBlockEntityCodecTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/NativePistonBlockEntityCodecTest.java
+new file mode 100644
+index 0000000..dcdb4b4
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/NativePistonBlockEntityCodecTest.java
+@@ -0,0 +1,87 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.blockentity;
++
++import com.viaversion.viafabricplus.bedrock.block.BedrockMovingPistonBlockEntity;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.Unpooled;
++import net.minecraft.SharedConstants;
++import net.minecraft.core.BlockPos;
++import net.minecraft.core.Direction;
++import net.minecraft.core.RegistryAccess;
++import net.minecraft.core.registries.BuiltInRegistries;
++import net.minecraft.network.FriendlyByteBuf;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.util.ProblemReporter;
++import net.minecraft.world.level.BlockGetter;
++import net.minecraft.world.level.block.Blocks;
++import net.minecraft.world.level.block.piston.MovingPistonBlock;
++import net.minecraft.world.level.block.state.properties.BlockStateProperties;
++import net.minecraft.world.level.block.state.properties.Half;
++import net.minecraft.world.level.block.state.properties.StairsShape;
++import net.minecraft.world.level.storage.TagValueInput;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import java.util.Locale;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.mock;
++
++/** Runs the core producer against Minecraft's real decoder without widening its production API. */
++class NativePistonBlockEntityCodecTest {
++    @BeforeAll
++    static void bootstrap() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void translatedCarriedStatesDecodeWithTheirPropertiesAndMotion() throws Exception {
++        final var registries = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
++        final BlockGetter level = mock(BlockGetter.class);
++        final var carried = new net.raphimc.viabedrock.api.model.BlockState[]{
++                net.raphimc.viabedrock.api.model.BlockState.fromString("minecraft:stone"),
++                net.raphimc.viabedrock.api.model.BlockState.fromString("minecraft:oak_stairs[facing=west,half=top,shape=inner_right,waterlogged=true]")};
++        final var expected = new net.minecraft.world.level.block.state.BlockState[]{
++                Blocks.STONE.defaultBlockState(),
++                Blocks.OAK_STAIRS.defaultBlockState().setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.WEST)
++                        .setValue(BlockStateProperties.HALF, Half.TOP).setValue(BlockStateProperties.STAIRS_SHAPE, StairsShape.INNER_RIGHT)
++                        .setValue(BlockStateProperties.WATERLOGGED, true)};
++        for (final Direction facing : Direction.values()) {
++            final var base = net.raphimc.viabedrock.api.model.BlockState.fromString(
++                    "minecraft:sticky_piston[extended=false,facing=" + facing.name().toLowerCase(Locale.ROOT) + "]");
++            for (final boolean extending : new boolean[]{false, true}) {
++                final var moving = new com.viaversion.nbt.tag.CompoundTag();
++                moving.putByte("expanding", (byte) (extending ? 1 : 0));
++                final var arm = new com.viaversion.nbt.tag.CompoundTag();
++                arm.putByte("State", (byte) (extending ? 1 : 3));
++                arm.putFloat("Progress", extending ? 0.25F : 0.75F);
++                for (int index = 0; index < carried.length; index++) {
++                    final var buffer = new FriendlyByteBuf(Unpooled.buffer());
++                    try {
++                        Types.COMPOUND_TAG.write(buffer, MovingBlockBlockEntityRewriter.javaData(moving, carried[index], base, arm));
++                        final var tag = buffer.readNbt();
++                        assertFalse(buffer.isReadable());
++                        final var state = Blocks.MOVING_PISTON.defaultBlockState().setValue(MovingPistonBlock.FACING, Direction.EAST);
++                        final var piston = new BedrockMovingPistonBlockEntity(BlockPos.ZERO, state);
++                        final var problems = new ProblemReporter.Collector();
++                        piston.loadCustomOnly(TagValueInput.create(problems, registries, tag));
++                        assertTrue(problems.isEmpty(), problems.getReport());
++                        assertSame(expected[index], piston.getMovedState());
++                        assertSame(facing, piston.getDirection());
++                        assertEquals(extending, piston.isExtending());
++                        assertEquals(0.25F, piston.getProgress(1F));
++                        assertFalse(piston.awaitingData());
++                        assertFalse(piston.getCollisionShape(level, BlockPos.ZERO).isEmpty());
++                    } finally {
++                        buffer.release();
++                    }
++                }
++            }
++        }
++    }
++}
 -- 
 2.56.0

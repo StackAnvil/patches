@@ -1,4 +1,4 @@
-From 45545f566d9e2bf5cedfcd36465bb452c072d17b Mon Sep 17 00:00:00 2001
+From 70daf05bbe25241a161d60b155b5330784e37e9e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] fix(block-entities): translate moving and extended pistons
@@ -6,14 +6,24 @@ Subject: [PATCH] fix(block-entities): translate moving and extended pistons
 Bedrock stores piston extension in the PistonArm block entity and the carried block in a separate MovingBlock entity. Translate both into Java block states and moving-piston data so the client can render the animation and its carried block. The mapping follows fields captured from a native 1.26.51 server and uses the existing block-state sanitizer for carried blocks.
 
 Geyser sends MovingBlock tags before the new PistonArm progress and does not supply a moving head entity. Ignore stale opposite-direction progress, synthesize the arm animation, and refresh carried tags across chunk boundaries. Java 26.3 creates moving piston entities only from local piston events, so the addon must create them for translated block updates. Tests cover native progress reversal, stale tags and head/base animation positions. Evidence: GeyserMC/Geyser core translator/level/block/entity/PistonBlockEntity.java and Java 26.3 MovingPistonBlock/ClientPacketListener bytecode.
+
+Encode carried block states for the actual Java 26.3 BlockState codec.
+StateHolder now dispatches by id with lowercase properties; the former
+Name/Properties compound fails decoding and silently becomes air.
+
+A client-side integration test writes the real core producer's NBT through
+the network codec and loads it with Java's piston entity. It covers all six
+directions, extension and retraction, and property-bearing stairs. The
+old producer fails with a missing id diagnostic. This is Java wire-format
+validation, not a new native piston physics or graphical parity claim.
 ---
  .../protocol/packet/WorldPackets.java         |   2 +
  .../rewriter/BlockEntityRewriter.java         |   7 +-
  .../MovingBlockBlockEntityRewriter.java       | 124 ++++++++++++++++++
  .../PistonBlockEntityRewriter.java            | 124 ++++++++++++++++++
- .../MovingBlockBlockEntityRewriterTest.java   |  69 ++++++++++
+ .../MovingBlockBlockEntityRewriterTest.java   |  67 ++++++++++
  .../PistonBlockEntityRewriterTest.java        |  65 +++++++++
- 6 files changed, 388 insertions(+), 3 deletions(-)
+ 6 files changed, 386 insertions(+), 3 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriter.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriterTest.java
@@ -66,7 +76,7 @@ index 85dc3b674..e903b7de4 100644
                  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriter.java
 new file mode 100644
-index 000000000..2f335cdc8
+index 000000000..abe472c4a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriter.java
 @@ -0,0 +1,124 @@
@@ -162,13 +172,13 @@ index 000000000..2f335cdc8
 +    static CompoundTag javaData(final CompoundTag movingTag, final BlockState movedState, final BlockState pistonState,
 +                                final CompoundTag pistonTag) {
 +        final CompoundTag javaState = new CompoundTag();
-+        javaState.putString("Name", movedState.namespacedIdentifier());
++        javaState.putString("id", movedState.namespacedIdentifier());
 +        if (!movedState.properties().isEmpty()) {
 +            final CompoundTag properties = new CompoundTag();
 +            for (Map.Entry<String, String> property : movedState.properties().entrySet()) {
 +                properties.putString(property.getKey(), property.getValue());
 +            }
-+            javaState.put("Properties", properties);
++            javaState.put("properties", properties);
 +        }
 +
 +        final CompoundTag javaTag = new CompoundTag();
@@ -326,10 +336,10 @@ index 000000000..8d2ab6fa3
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriterTest.java
 new file mode 100644
-index 000000000..12950a17e
+index 000000000..2420000c6
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriterTest.java
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,67 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -350,7 +360,7 @@ index 000000000..12950a17e
 +class MovingBlockBlockEntityRewriterTest {
 +
 +    @Test
-+    void carriesTheNativeMovingBlockAndPistonProgressIntoJava() {
++    void retainsNativePistonDirectionAndProgress() {
 +        final CompoundTag moving = new CompoundTag();
 +        moving.putByte("expanding", (byte) 1);
 +        final CompoundTag piston = new CompoundTag();
@@ -360,8 +370,6 @@ index 000000000..12950a17e
 +        final BlockState carried = BlockState.fromString("minecraft:oak_stairs[facing=west,half=bottom,shape=straight,waterlogged=false]");
 +
 +        final CompoundTag javaData = MovingBlockBlockEntityRewriter.javaData(moving, carried, base, piston);
-+        assertEquals("minecraft:oak_stairs", javaData.getCompoundTag("blockState").getString("Name"));
-+        assertEquals("west", javaData.getCompoundTag("blockState").getCompoundTag("Properties").getString("facing"));
 +        assertEquals(5, javaData.getInt("facing"));
 +        assertEquals(0.5f, javaData.getFloat("progress"));
 +        assertEquals((byte) 1, javaData.getByte("extending"));

@@ -257,6 +257,16 @@ Target BDS registry captures carry empty components for vanilla armor.
 Script API comparisons establish protection and toughness for all thirty vanilla armor and elytra entries.
 Core still needs to derive equipment attributes from target item definitions, including custom wearables, and synchronize updates and removals.
 
+### Pending native moving blocks
+
+The [piston producer](../patches/viabedrock/upstreamable/0052-translate-moving-and-extended-pistons.pr.md) now encodes carried states for Java 26.3's actual block-state codec.
+The [client lifecycle](../patches/viafabricplus-bedrock/upstreamable/0034-animate-native-moving-piston-blocks.pr.md) keeps safe empty geometry until the separate data arrives.
+Pending entities retain their block instead of advancing to air. Loaded entities resume ordinary animation.
+The real producer-to-client decoder test covers all six directions, both motion modes and property-bearing stairs.
+A transformed-client probe verifies 600 pending ticks, six loaded updates and an ordinary Java ticker control.
+The captured Enchanted replay reaches the former crash location without the null-direction failure.
+Transport passes; complete scene rendering still fails on unresolved mappings. Native visual parity remains open.
+
 ## Resources, animation, particles, and audio
 
 | ID | Requirement | Status | Remaining evidence or work |

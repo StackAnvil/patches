@@ -33,7 +33,7 @@ This survey does not establish native parity for their body direction.
 - **Hosted experiences:** resolve SoulSteel or Mob Maze through the current catalog and connect with the same refreshed account context. The saved StartGame packet reaches a `StringType` read in `JoinPackets` after its bytes are consumed. Packet layout and target-version compatibility need further inspection.
 - **Lifeboat forms:** the navigator and game selectors use generic dialogs with titles such as `form52_Navigator`. Their authored presentation still needs support. Working response buttons do not establish visual parity.
 - **Enchanted hub UI:** the authored screen shows `custom.hub_menu_init`, internal button labels, and repeated glyphs. A response button still initiates a transfer. Separate the presentation failure from the working action.
-- **Enchanted Box PvP:** one capture crashes while approaching the trader. Chunk compilation fails in `PistonMovingBlockEntity.getMovementDirection` because its direction is null. The captured stack reaches this through collision-shape queries during ambient-occlusion lighting. The add-on creates the moving block entity with Java's empty constructor before translated Bedrock data initializes its direction. That pending state needs a lifecycle correction; no fix or native-parity claim is made here.
+- **Enchanted Box PvP:** one capture crashes while approaching the trader. Chunk compilation fails in `PistonMovingBlockEntity.getMovementDirection` because its direction is null. The captured stack reaches this through collision-shape queries during ambient-occlusion lighting. The add-on creates the moving block entity with Java's empty constructor before translated Bedrock data initializes its direction. The pending lifecycle and carried-state codec corrections are verified below.
 
 NPC clicks in the initial CubeCraft pass did not produce a confirmed response.
 The precise ray target was not recorded there. The live follow-up below confirms a shop NPC response.
@@ -261,3 +261,29 @@ The earlier CubeCraft shop interaction remains the confirmed live NPC control.
 The completed recording fails verification; the successful actions above do not establish a clean client run.
 All six owned process identities close normally, and the private display stops.
 Raw journals, screenshots, the short selector video and logs remain private.
+
+## Enchanted pending-piston correction
+
+The new native moving-block entity initializes direction from the translated block state and starts with empty carried geometry.
+Its ticker waits for the separate block-entity data.
+This prevents null-direction collision queries and premature replacement with air.
+After loading, it resumes Java's ordinary animation. Ordinary Java piston entities keep their ticker.
+
+A decoder regression also exposes an older carried-state format.
+Java 26.3 expects `id` and lowercase `properties`; the translator previously sends `Name` and `Properties`.
+The real decoder rejects that compound and substitutes air.
+The producer now uses the current codec.
+An integration test writes its actual NBT through the network codec and loads it with Minecraft's piston entity.
+All 24 direction, motion and carried-state combinations pass, including stairs with non-default properties.
+
+Both regressions fail before their corrections.
+The transformed-client probe verifies six production factory directions, 600 pending ticks, six loaded updates and an ordinary Java ticker control.
+The replay reaches the previous trader-approach location without the null-direction failure.
+The scene still has other rendering defects. These checks do not establish native visual parity.
+
+All four projects build with 2,264 passing tests and 152 optional skips.
+All 102 core and 38 client patches replay cleanly, and offline tooling and metadata validation pass.
+
+The complete 120-second replay passes transport verification.
+Overall rendering verification still fails on unresolved block, entity and texture mappings.
+No null-direction piston failure occurs. All seven owned process identities close, and the private display stops.
