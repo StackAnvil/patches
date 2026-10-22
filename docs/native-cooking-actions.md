@@ -1,8 +1,9 @@
 # Native cooking action reference
 
 This reference records verified behavior for contributors who implement authored furnace, smoker, and blast-furnace controls.
-The cooking action backend and authored controls remain unfinished.
-The current client receives cooking snapshots and progress while ordinary Java screens handle gameplay.
+The core executes snapshot-bound primary recipe actions through native transfer batches.
+The current Fabric client receives cooking snapshots and progress while ordinary Java screens handle gameplay.
+Authored client bindings, remaining input branches, and complete native parity remain unfinished.
 
 ## Version and evidence
 
@@ -29,6 +30,7 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Predicted request payload identities | 5 complete payloads | Native identity callbacks assign request references after slot mutation |
 | Owned request finalization and flush | 1 cooking payload plus an empty flush | Native ownership release, queue removal, packet construction, serialization, and cleanup |
 | Isolated primary phases | 3 controls | Phase-zero transfers, phase-one-only rejection, and distinct retained controller states |
+| Owned repeated selection | 6 event steps | Enabled prediction, selection toggle, post-placement history, return, refill, and a native flush after each input |
 | Cooking item-return planner | 1,500 cases | Original-slot deficits and the remaining count passed to auto-placement |
 | Physical-slot snapshot producer | 45 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
 | Registered cooking providers | 3 ingredient descriptors | Eleven registrations, native model import, skip callbacks, and 76-slot capture order |
@@ -39,6 +41,32 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Owned cooking return execution | 24 cases plus 24 repeated-return controls | Native transfers, fallback placement, coherent provider views, and Place actions with an unresolved world target |
 
 These checks cover different boundaries. Their case counts do not measure native gameplay or visual parity.
+
+## Core recipe action backend
+
+The core consumes version-`4` cooking actions only after the client registers the action and result channels.
+The connection must also support cooking snapshots and progress and use server-authoritative inventory.
+Each action requires the exact presentation, current items, current recipe catalog, and an authored command on the displayed recipe cell.
+
+Primary selection follows the native selected-output entry before the ingredient predicate.
+Clicking the retained output returns ingredient and output items and clears that selection.
+A matching ingredient otherwise selects the output without adding more items.
+The placement branch chooses native input alternatives and collects from fuel, hotbar, and inventory providers.
+Output return captures the post-placement player history. Selection-only admission leaves history unchanged. The constructor starts with an empty history.
+The existing Java recipe-book increment and maximum-quantity modes remain separate.
+
+The backend submits one request per transfer and retains intermediate predictions.
+Its two-source action matches the original auto-scoped native packet byte for byte.
+Regressions cover all three station providers, fuel sources, output return, physical aliases, inventory deficits, rejected authority, and submission failure.
+
+Follow-up event phases identify their original gesture and do not repeat physical transfers.
+A release can retire that gesture after prediction changes the presentation snapshot.
+Request sequences reject duplicate input, and menu generations protect replacement menus.
+Intermediate Java-content publication waits until the action finishes. Selection highlights follow the current visible recipe order.
+
+The Fabric presentation remains passive, and each input batch waits for its responses before another batch can start.
+Physical device bindings, nonempty-cursor branches, cross-input prediction, authoritative model watchers, and live route acceptance remain unfinished.
+The original full controller, model owner, and independent frame scopes also remain outside the native fixtures.
 
 ## Recipe command dispatch
 
@@ -220,7 +248,7 @@ The fixture supplies one concrete recipe and an Item with a maximum stack size o
 The first press prefers hotbar sources and fills the ingredient slot to the available count or its capacity.
 The second press returns those ingredients through combined player provider `12`, slot `0`.
 That slot belongs to the hotbar, even when the first source was inventory slot `9`.
-The native ingredient watcher then clears the selected output and its name.
+The selected-output entry clears the retained output and its name.
 The third press places the returned items again and restores the selected output.
 
 Every press returns `1` and leaves state `25`.
@@ -353,7 +381,8 @@ If packet submission throws, the tracker restores the snapshots and releases pen
 
 Targeted tests cover reversed and duplicate responses, partial rejection, complete rejection, newer server contents, and replacement menus.
 Craft-result requests retain their separate synchronization path.
-The authored cooking backend still needs to construct and submit these transfers.
+The primary cooking backend constructs and submits these transfers.
+The Fabric input bindings and complete workstation controls remain unfinished.
 
 ## Transfer quantities
 

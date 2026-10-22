@@ -286,3 +286,29 @@ Outer frame ownership and deferred recipe execution can change batching, so this
 Validation: all 104 core patches replay. The four-project build passes 2,384 tests with 212 optional skips and no failures or errors.
 The 19 focused planner/request tests include the finalized native byte comparison.
 Checkstyle and offline validation pass. Authored cooking controls remain unfinished.
+
+## Native primary action backend
+
+The core now consumes negotiated version-`4` cooking actions against the exact current presentation and authored recipe cell.
+Primary selection follows the native selected-output entry before the ingredient predicate.
+It toggles an existing selection, collects ingredient sources from fuel and player providers, and returns ingredient and output items through native history.
+Selection-only admission leaves history unchanged. The constructor starts with an empty history. Output return captures the post-placement player history.
+Java recipe-book increment and maximum-quantity behavior remain separate.
+
+Each transfer uses its own request and intermediate prediction, with negative references for earlier slot changes and physical player aliases.
+The production primary action matches the native auto-scoped two-source packet byte for byte.
+Follow-up phases retain their original gesture identity and do not repeat transfers.
+Sequences, item snapshots, channel negotiation, menu ownership, and current authored commands protect action admission.
+Intermediate publication waits until action completion. Highlights follow the visible recipe order after preference changes.
+
+A fresh native prediction fixture executes six press/release steps with automatic scopes, owned finalization, and a flush after each input.
+It confirms selection clearing, combined-provider return, refill references, and post-placement history through the original entry and transfer code.
+Native constructor and entry evidence identifies the initially empty history and the output comparison that precedes ingredient matching.
+
+The Fabric presentation remains passive. Physical input bindings, nonempty-cursor branches, cross-input prediction, authoritative model watchers, and live route acceptance remain unfinished.
+Full native controller/model construction and independent frame scopes also remain unverified.
+
+The combined four-project build passes 2,413 tests, with 213 optional skips and no failures or errors.
+All 104 core patches replay with the incoming movement changes preserved.
+The 43 focused cooking, UI-state, planner, and batch tests pass with both native wire comparisons enabled.
+Checkstyle and offline validation pass. All 1,401 core classes match the add-on's embedded core byte for byte.
