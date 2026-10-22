@@ -137,7 +137,8 @@ Clock gaps, duplicates, and backward changes start a new history.
 Contiguous unsigned wrap preserves the history.
 The connection frame watermark survives history changes.
 
-The correction handler rejects zero and unsigned clocks older than the oldest retained input before any player or vehicle mutation.
+The correction handler requires a retained input.
+It rejects zero and unsigned clocks older than the oldest retained input before any player or vehicle mutation.
 Rejected packets emit neither motion nor a negotiated correction payload.
 Future clocks remain eligible because the native receiver has no corresponding upper-bound rejection.
 These clocks describe emitted inputs. They do not provide historical component snapshots or replay physics.
@@ -1327,3 +1328,45 @@ All 1,032 outgoing auth-input packets retain native Y `71.62001037597656`.
 The first sample precedes the teleport and retains the recording's separate StartGame position.
 Every owned process completes normal cleanup.
 The general rendering audit reports unresolved mappings, so this run establishes movement conversion only.
+
+## Empty history and physical snapshot ownership
+
+The correction handler now rejects packets before the first emitted input and after history configuration clears retained inputs.
+It consumes the complete packet before rejection and leaves player, vehicle, motion, and correction payload state unchanged.
+The first emitted input enables correction admission, including inputs without a completed physics sample.
+
+An additional 128 controls execute the original correction receiver and command insertion for player and vehicle targets.
+All 36 empty-history controls retain unchanged live state and queue no correction.
+The remaining controls cover one-frame and six-frame histories, unsigned boundaries, pending commands, and retained command placement.
+Future commands remain eligible for retention without an immediate dirty mark.
+The fixture supplies typed stores, snapshots, input objects, actor lookup, allocation, and scalar state.
+These controls do not execute world physics.
+
+Three regressions fail before the change.
+They pass after the change, with all 30 focused prediction and correction packet tests.
+The packet controls reject both rewind targets before reading actor state.
+They also cover history configuration after a previous input.
+
+Separate packed snapshot controls establish copied bytes for 56 scalar component types across 168 patterns.
+The live source changes after capture, and the restore target starts with different bytes.
+The controls retain the captured values and preserve untouched padding.
+The copied fields include jump state, rotation, seat offsets, passenger identity, boat movement, movement attributes, and move input.
+Move input restores 95 bytes, while boat movement restores 20 bytes and movement attributes restore 72 bytes.
+These are copied-byte counts, not complete C++ object sizes or verified producer layouts.
+Breathable, jump control, and depenetration need constructed fixtures.
+Managed containers and component creation or removal also need separate ownership checks.
+
+Sixteen controls also execute the native correction command after packed snapshot restoration and before captured input.
+The position command preserves the restored previous position and replaces current position and velocity.
+It rebuilds the bounding box from the restored shape and position offset.
+It changes the current rotation values and preserves the previous rotation values.
+When angular velocity is present, it replaces the third float in `BoatMovementComponent`.
+Otherwise, that field retains its captured value.
+The other boat movement fields remain unchanged in these controls.
+Input callbacks, arithmetic physics, constructed stores, and actor lookup remain fixture boundaries.
+
+The Java simulation phases still need separation before physical replay can use these snapshots.
+`LocalPlayer.aiStep` polls current input and sends actions.
+`Player.aiStep` advances inventory and pickups.
+`LivingEntity.aiStep` advances equipment, applies block effects, and pushes other entities.
+Full historical player and vehicle restoration, safe physical replay, and seat ownership remain unfinished.

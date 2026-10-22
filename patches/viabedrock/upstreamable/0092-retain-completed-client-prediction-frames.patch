@@ -1,4 +1,4 @@
-From a1c48e11bcc58580d3ab911b30a5429a6ab4a20e Mon Sep 17 00:00:00 2001
+From 38f511a504f37702c8d241af5b5f547f14664c9b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -509,6 +509,14 @@ StateVector36, AABBShape32, rotation16, angular20 and Offsets68. Ten original
 VehicleComponent vector controls retain independent historical membership
 and order. Controlled ECS/cache providers, extra restore-copy registration,
 input phases and world physics remain separate boundaries and gaps.
+
+Reject correction packets when no input clock is retained, matching the
+original receiver before actor state can mutate. This includes initial
+startup and START_GAME history reconfiguration. Future clocks remain
+eligible for native command retention. Original receiver controls cover
+128 player/vehicle cases, including 36 empty histories, and packet
+regressions fail before the fix and pass afterward. Full physical actor
+restoration and resimulation remain separate unfinished work.
 ---
  build.gradle                                  |   29 +
  .../api/model/CollisionContact.java           |   80 ++
@@ -547,7 +555,7 @@ input phases and world physics remain separate boundaries and gaps.
  .../protocol/rewriter/ItemRewriter.java       |   19 +
  .../protocol/storage/EntityTracker.java       |   25 +
  .../protocol/storage/PlayerInputStorage.java  |   11 +-
- .../storage/PlayerPredictionStorage.java      |  130 ++
+ .../storage/PlayerPredictionStorage.java      |  133 +++
  .../storage/VehiclePredictionStorage.java     |  145 +++
  .../api/model/CollisionContactTest.java       |   60 +
  .../api/model/FlightMovementTest.java         |  112 ++
@@ -561,7 +569,7 @@ input phases and world physics remain separate boundaries and gaps.
  .../api/model/MovementEffectTimelineTest.java |  253 ++++
  .../api/model/PlayerCorrectionTest.java       |   66 ++
  .../api/model/PlayerPostureTest.java          |  152 +++
- .../api/model/PlayerPredictionTest.java       |  254 ++++
+ .../api/model/PlayerPredictionTest.java       |  256 ++++
  .../api/model/SneakingInputStateTest.java     |   32 +
  .../api/model/SwiftSneakStateTest.java        |   32 +
  .../UnderwaterMovementAttributeTest.java      |   35 +
@@ -575,12 +583,12 @@ input phases and world physics remain separate boundaries and gaps.
  .../model/BedrockItemEnchantmentTest.java     |   73 ++
  .../protocol/model/ItemUseModifiersTest.java  |   55 +
  .../packet/ClientPlayerPacketsTest.java       |   32 +-
- .../packet/CompletedFramePositionTest.java    | 1053 +++++++++++++++++
+ .../packet/CompletedFramePositionTest.java    | 1054 +++++++++++++++++
  .../packet/MovementEffectPacketsTest.java     |  116 ++
- .../packet/PlayerCorrectionPacketTest.java    |  201 ++++
+ .../packet/PlayerCorrectionPacketTest.java    |  240 ++++
  .../packet/PlayerPredictionPacketTest.java    |   87 ++
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 70 files changed, 6248 insertions(+), 54 deletions(-)
+ 70 files changed, 6293 insertions(+), 54 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java
@@ -3399,10 +3407,10 @@ index 95391851d..f8bf20f85 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
 new file mode 100644
-index 000000000..46eb668a1
+index 000000000..7b83e4cbd
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,133 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3488,10 +3496,13 @@ index 000000000..46eb668a1
 +        this.historyCount = Math.min(this.historyCount + 1, this.inputTicks.length);
 +    }
 +
-+    /** Native lookup rejects reserved tick zero and clocks older than the oldest retained frame. */
++    /** Native lookup requires a retained input and rejects zero and older unsigned clocks. */
 +    public boolean acceptsCorrectionTick(final long tick) {
++        if (tick == 0 || this.historyCount == 0) {
++            return false;
++        }
 +        final int oldest = (this.historyIndex - this.historyCount + this.inputTicks.length) % this.inputTicks.length;
-+        return tick != 0 && (this.historyCount == 0 || Long.compareUnsigned(tick, this.inputTicks[oldest]) >= 0);
++        return Long.compareUnsigned(tick, this.inputTicks[oldest]) >= 0;
 +    }
 +
 +    public long inputTick() {
@@ -5113,10 +5124,10 @@ index 000000000..8d870a5fb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
 new file mode 100644
-index 000000000..a02c8d771
+index 000000000..e6d7ddc79
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
-@@ -0,0 +1,254 @@
+@@ -0,0 +1,256 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5323,6 +5334,8 @@ index 000000000..a02c8d771
 +        assertTrue(storage.acceptsCorrectionTick(104));
 +        storage.configureHistory(2);
 +        assertEquals(-1, storage.inputFrame());
++        assertFalse(storage.acceptsCorrectionTick(1));
++        storage.remember(1, null);
 +        assertTrue(storage.acceptsCorrectionTick(1));
 +        storage.record(prediction);
 +        assertNull(storage.take(Position3f.ZERO));
@@ -6497,10 +6510,10 @@ index ad55fc55c..93bdd824d 100644
          final ClientPlayerEntity player = player();
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
 new file mode 100644
-index 000000000..fda0a3dec
+index 000000000..c1759b896
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
-@@ -0,0 +1,1053 @@
+@@ -0,0 +1,1054 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6919,6 +6932,7 @@ index 000000000..fda0a3dec
 +        for (final EntityTypes26_3 type : new EntityTypes26_3[]{EntityTypes26_3.OAK_BOAT, EntityTypes26_3.HORSE}) {
 +            try (Fixture fixture = new Fixture(true, true, true)) {
 +                final Entity vehicle = fixture.mount(type);
++                fixture.tick();
 +                for (final Position3f velocity : new Position3f[]{new Position3f(-0.25F, 0.5F, 1.5F), Position3f.ZERO}) {
 +                    fixture.corrections.clear();
 +                    final Position3f position = vehicle.position().add(1F, 0F, 0F);
@@ -7678,10 +7692,10 @@ index 000000000..1f5c82798
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
 new file mode 100644
-index 000000000..9ddf73128
+index 000000000..748761666
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,240 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7763,6 +7777,45 @@ index 000000000..9ddf73128
 +    @AfterEach
 +    void restoreManager() throws Exception {
 +        this.managerField.set(null, this.previousManager);
++    }
++
++    @ParameterizedTest
++    @ValueSource(ints = {0, 1})
++    void ignoresCorrectionsWithoutRetainedInputsBeforeReadingActorState(final int rewindType) throws Exception {
++        for (boolean reconfigured : new boolean[]{false, true}) {
++            final PlayerPredictionStorage predictions = new PlayerPredictionStorage();
++            if (reconfigured) {
++                predictions.remember(1, null);
++                predictions.configureHistory(3);
++            }
++            final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                    new Class<?>[]{UserConnection.class}, (proxy, method, args) -> {
++                        if (method.getName().equals("get") && args[0] == PlayerPredictionStorage.class) {
++                            return predictions;
++                        }
++                        throw new AssertionError(method.getName());
++                    });
++            for (long tick : new long[]{0, 1, -1}) {
++                final var input = Unpooled.buffer();
++                try {
++                    input.writeByte(rewindType);
++                    BedrockTypes.POSITION_3F.write(input, new Position3f(1F, 70F, 2F));
++                    BedrockTypes.POSITION_3F.write(input, new Position3f(-0.25F, 0.5F, 1.25F));
++                    BedrockTypes.POSITION_2F.write(input, new Position2f(20F, 30F));
++                    input.writeBoolean(true);
++                    BedrockTypes.FLOAT_LE.writePrimitive(input, 0.75F);
++                    input.writeBoolean(true);
++                    BedrockTypes.UNSIGNED_VAR_LONG.writePrimitive(input, tick);
++                    final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.CORRECT_PLAYER_MOVE_PREDICTION, input, user);
++                    new TestProtocol().translate(packet);
++                    assertTrue(packet.isCancelled());
++                    assertFalse(input.isReadable());
++                    assertTrue(this.sent.isEmpty());
++                } finally {
++                    input.release();
++                }
++            }
++        }
 +    }
 +
 +    @ParameterizedTest
