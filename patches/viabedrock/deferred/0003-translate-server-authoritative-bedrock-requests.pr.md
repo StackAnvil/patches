@@ -456,3 +456,22 @@ The build passes 2,262 tests with 152 optional skips. Offline validation passes 
 A fresh BDS 1.26.51.1 ViaProxy run passes furnace, smoker and blast-furnace recipe-book cooking, brewing, authored count-one chest placement and ordinary chest transfer.
 Join and reconnect stability checks pass. Both installed client profiles match all 1,346 core classes in the built artifact.
 The private display and owned services stop normally. These controls use Java cooking screens and do not establish native cooking presentation.
+
+## Concrete recipe identity (October 22, 2026)
+
+The item registry now exposes concrete recipe keys for constructed items and network-stack inputs.
+The conversion follows numeric Item ownership before it selects block auxiliary metadata.
+It preserves wildcard descriptors, unsigned item IDs, missing registrations, and the native descriptor hash.
+Runtime block ownership and associated block ownership remain separate inputs.
+
+A fresh target-executable comparison checks 3,600 supplied registry, stack, and block combinations.
+The comparison covers the original descriptor conversion and numeric lookup functions.
+It supplies constructed storage and does not parse a complete network item packet.
+Focused tests also cover runtime ownership and associated-block boundaries.
+These APIs do not yet replace production network Item construction or populate the cooking catalog.
+
+All four projects build with 2,296 passing tests, 152 optional skips, and no failures or errors.
+The new native-reference comparisons run without skips. Tooling checks, 264 regressions, and patch metadata checks pass.
+A fresh ViaProxy run passes furnace, smoker, blast furnace, brewing, authored chest placement, ordinary chest transfer, and same-world reconnect.
+Both launched profiles match all 1,360 rebuilt core classes and both block-item resources.
+The live run exits successfully and stops its private display normally. These controls use Java cooking screens.

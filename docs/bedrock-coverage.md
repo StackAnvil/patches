@@ -9382,3 +9382,28 @@ A fresh live run passes all six workstation/chest cases and same-world reconnect
 Both client profiles embed all 1,357 rebuilt core classes and the matching property-value resource.
 The run exits successfully and stops its private display normally.
 These live checks use Java cooking screens.
+
+## Block-item lookup and recipe identity (October 22, 2026)
+
+Core now resolves block-item auxiliary values through the shared name registry and retains the exact registered state object.
+This preserves distinct runtime slots for custom states with equal properties.
+The resolver also applies 26 built-in default overrides and canonicalizes upgraded legacy states.
+Unverified custom archetypes remain unresolved.
+
+Fresh BDS 1.26.51.1 probes check all 1,477 built-in defaults and 4,950 successful item-variant comparisons across 75 block types.
+The default comparison excludes virtual legacy accessors from network state properties.
+The item comparison uses command-created stacks and `ItemStack.matches` against canonical states.
+It corrects 63 glow-lichen mappings, including auxiliary value 4 selecting face bits 16.
+Another 26 types reject the command syntax; three door types remain outside the sweep.
+These probes do not establish Windows client cold-cache behavior or every curated auxiliary mapping.
+
+The item registry also exposes concrete recipe keys with native numeric ownership, wildcard handling, and descriptor hashes.
+A fresh target-executable comparison covers 3,600 supplied registry, stack, and block combinations.
+It verifies descriptor conversion, with constructed storage supplied by the probe.
+Complete network Item construction, cooking catalog integration, and native cooking controls remain unfinished.
+
+All four projects build with 2,296 passing tests, 152 optional skips, and no failures or errors.
+The new native-reference comparisons run without skips. Tooling checks, 264 regressions, and patch metadata checks pass.
+A fresh ViaProxy run passes furnace, smoker, blast furnace, brewing, authored chest placement, ordinary chest transfer, and same-world reconnect.
+Both launched profiles match all 1,360 rebuilt core classes and both block-item resources.
+The live run exits successfully and stops its private display normally. These controls use Java cooking screens.

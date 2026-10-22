@@ -420,3 +420,30 @@ A fresh live run passes all six workstation/chest cases and same-world reconnect
 Both client profiles embed all 1,357 rebuilt core classes and the matching property-value resource.
 The run exits successfully and stops its private display normally.
 These live checks use Java cooking screens.
+
+## Block-item auxiliary lookup (October 22, 2026)
+
+Core now resolves block-item auxiliary values through the shared block-name registry.
+The resolver keeps registered state objects, including distinct custom slots with equal properties.
+An exact-object runtime lookup preserves their original registration IDs.
+Generic custom blocks use their registered default. Unverified custom archetypes remain unresolved.
+
+A fresh BDS 1.26.51.1 Script API query checks all 1,477 built-in defaults.
+The comparison excludes virtual legacy accessors from network state properties.
+Exactly 26 defaults differ from the first canonical palette state.
+A second probe compares command-created items against canonical states with `ItemStack.matches`.
+All 4,950 successful comparisons across 75 block types match the resolver.
+The probe corrects 63 glow-lichen mappings; auxiliary value 4 selects face bits 16.
+Another 26 block types reject the command syntax, so these probes do not verify their auxiliary mappings.
+Three additional door types remain outside that sweep.
+
+Tests cover alias lookup, invalid auxiliary values, canonical legacy-state objects, and equal custom-state identities.
+The references establish server API behavior for the target build.
+They do not establish Windows client cold-cache behavior or all remaining curated auxiliary mappings.
+Network Item construction and cooking consumers remain unfinished.
+
+All four projects build with 2,296 passing tests, 152 optional skips, and no failures or errors.
+The new native-reference comparisons run without skips. Tooling checks, 264 regressions, and patch metadata checks pass.
+A fresh ViaProxy run passes furnace, smoker, blast furnace, brewing, authored chest placement, ordinary chest transfer, and same-world reconnect.
+Both launched profiles match all 1,360 rebuilt core classes and both block-item resources.
+The live run exits successfully and stops its private display normally. These controls use Java cooking screens.
