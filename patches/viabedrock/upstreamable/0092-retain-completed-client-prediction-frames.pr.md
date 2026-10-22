@@ -143,7 +143,7 @@ The packet regression failed before motion delivery existed.
 It covers a nonzero correction followed by a zero reset for both a boat and a horse.
 Full historical replay, paired client ground state, angular state, and native trajectory comparisons remain open.
 
-Final validation passes 1,498 core tests and 843 add-on tests, with 212 optional skips and no failures or errors.
+Final integrated validation passes 1,500 core tests and 843 add-on tests, with 212 optional skips and no failures or errors.
 All 104 core patches reproduce the tested source tree.
 All 1,386 core classes match the core embedded in the rebuilt add-on.
 The full four-project build passes.
