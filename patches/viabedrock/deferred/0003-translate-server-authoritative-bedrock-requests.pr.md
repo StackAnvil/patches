@@ -439,3 +439,20 @@ Both preserve the hidden diamonds and leave three source emeralds.
 The ordinary control transfers all four items. Join, reconnect, and their 20-second stability checks pass.
 The test services and private display stop normally.
 These live cases verify normal requests with the rebuilt artifacts. Delayed response and replacement coverage comes from the behavioral tests above.
+
+Native item registration keeps ordered component updates separate from runtime-ID ownership.
+The first explicit version selects the constructed factory; later invalid-ID entries can update it without taking a runtime ID.
+Constructor defaults and typed updates now own stack capacity, replacing the static table and pack-definition override.
+Inventory keeps native zero and unsigned-byte values. Only the Java component narrows them to its valid range.
+Cooking food and block traits use that same construction history. Their catalog integration remains incomplete.
+
+All 57 focused tests pass, including retained native component and legacy fixtures.
+The zero-capacity bundle regression fails with division by zero before the guard and passes afterward.
+The fixtures cover 26 component cases, 93 legacy cases and their update sequences.
+They do not establish a Player flow or graphical parity. Private executable provenance is recorded in the asset-source guide.
+
+The complete 102-patch core stack replays cleanly, and all four projects build.
+The build passes 2,262 tests with 152 optional skips. Offline validation passes the 264 tooling tests and metadata checks.
+A fresh BDS 1.26.51.1 ViaProxy run passes furnace, smoker and blast-furnace recipe-book cooking, brewing, authored count-one chest placement and ordinary chest transfer.
+Join and reconnect stability checks pass. Both installed client profiles match all 1,346 core classes in the built artifact.
+The private display and owned services stop normally. These controls use Java cooking screens and do not establish native cooking presentation.

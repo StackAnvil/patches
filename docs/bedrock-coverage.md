@@ -129,6 +129,19 @@ Recipe result decoding follows the native signed-short conversion and retains no
 Every result must resolve to a registered non-air item before its recipe can claim registration keys.
 Executable fixtures cover the registration guards, dimensions, result validation, count conversion and dynamic-factory selection.
 These probes do not establish complete native factory construction, item ownership or visual parity.
+Item registration now keeps ordered updates separate from runtime-ID ownership and factory construction.
+Native constructor defaults and typed component updates supply maximum stack sizes and cooking categories.
+Inventory calculations retain the native unsigned-byte value, including zero; the Java item component uses its valid range of 1 to 99.
+Resource-pack item definitions no longer override stack capacity.
+The shared block-name resolver checks primary names before aliases and retains exact namespace lookup rules.
+Private native comparisons cover 14 block lookups, 26 component stacking cases and 93 legacy stacking cases, plus update sequences.
+Semantic tests cover duplicate registrations, invalid IDs, factory order, defensive tag ownership and cooking-category precedence.
+A bundle regression reproduces division by zero before the capacity guard and passes afterward.
+These checks do not establish complete block registration, ingredient grouping or graphical parity.
+The complete build passes 2,262 tests with 152 optional skips.
+Fresh BDS checks pass all three Java cooking screens, brewing, authored chest placement and ordinary chest transfer.
+Join and reconnect checks pass; the owned test services close normally.
+
 The authored cooking catalog, controls and client screen remain incomplete.
 
 Local BDS tests select recipes from the furnace, smoker and blast-furnace books.
