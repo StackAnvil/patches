@@ -125,7 +125,8 @@ It does not execute command application, retained snapshot restoration, input re
 The original generic replay probes remain useful evidence for those separate paths.
 Current core implements the clock admission rule described below.
 Historical component restoration and physics resimulation remain incomplete.
-The 28 recorded effect activity mismatches remain reproducible against the current build.
+The component journal described below resolves the 28 recorded effect activity mismatches.
+Position and velocity resimulation remain incomplete.
 
 ## Retained correction clocks, October 22, 2026
 
@@ -178,6 +179,53 @@ The client does not stop after the recorder sends SIGTERM. The recorder correctl
 After private thread diagnostics, only the birth-verified recording JVM requires forced termination.
 The remaining owned launcher, server, and display stop, then the runtime copies release.
 This capture remains incomplete because normal teardown fails. It does not establish movement parity or resolve the shutdown cause.
+
+## Captured movement-effect inputs, October 22, 2026
+
+The effect timeline now retains ordered local admissions and server commands in a bounded frame journal.
+The client opens each record before simulation, reconciles effects before local player physics, and completes the existing frame clock after movement.
+Server commands precede captured inputs. Completed replay frames then run the effect countdown.
+The current open frame consumes its duration during physics before its normal countdown.
+
+Native effect snapshots preserve component presence rather than copying the duration vector.
+The journal therefore starts with current effect values and replays commands, admissions, and countdowns.
+Captured geyser admissions can restore a 100-tick effect after a server removal.
+Other effect kinds also receive each replayed countdown.
+Commands with zero movement masks remain queued until a later command requests replay.
+Zero-duration marker presence remains separate from active duration for command masks.
+
+Movement-effect payload revision 3 carries the exact oldest retained unsigned input clock.
+Core derives this clock from emitted inputs, including inputs without completed predictions.
+The client clamps command dispatch against this clock and discards expired input records.
+A fixed window cannot represent short histories or clock discontinuities.
+Revision 2 does not provide this context and rejects without a compatibility alias.
+The add-on patch records its shared-core prerequisite in the series metadata.
+
+The original receiver, complete capture caller, full capture function, cached-input fill, and replay now execute together in 128 native controls.
+The original capture function allocates and inserts the actual new frame.
+Its ECS snapshot store, allocator, clock, input methods, and arithmetic physics remain explicit fixture boundaries.
+Four additional controls verify that clock discontinuities remove old frames but preserve pending commands and movement masks.
+These controls do not execute native world physics or prove client trajectories.
+
+Before this change, production matched all 336 immediate effect-activity controls but failed 28 of 84 historical replay controls.
+The journal now matches all 336 immediate controls and all 84 first historical replays.
+The targeted regressions also cover pending transfer, ordinary countdown, clamped clocks, zero-mask command retention, actor removal, and strict context transport.
+The shared fixture test uses `STACKANVIL_MOVEMENT_INPUT_REPLAY_REFERENCE` and remains optional when the private evidence is absent.
+
+**Incomplete:** This replays effect components without restoring historical player or vehicle positions and velocities.
+Full physics steps, mutable attributes, posture and collision state, zero-duration impulses, and complete trajectory comparisons still need integration.
+A later 30-second BDS probe reaches gameplay and completes normal cleanup.
+Read-only hooks observe all 16 local admissions in open records and retain each admission through completion.
+The probe also observes 18 effect confirmations and one replay entry with a pending movement mask.
+This establishes the producer and frame lifecycle, not complete native physics or trajectories.
+The cause of the earlier shutdown failure remains unproven.
+
+
+The integrated four-project build preserves the incoming cooking fixes and passes 2,391 tests, with 213 optional skips and no failures.
+All 104 core patches and 38 add-on patches replay without conflicts.
+All 1,390 embedded core classes match the rebuilt core.
+Checkstyle and offline patch validation pass.
+The separate cooking regression suite also passes all 13 cases with the private native wire reference enabled.
 
 ## Vehicle correction motion, October 22, 2026
 

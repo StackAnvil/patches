@@ -1,4 +1,4 @@
-From 4ccff759320352070aac9d6435852a91ea87ad7a Mon Sep 17 00:00:00 2001
+From 1ca0cf47390c129c83b258b352317cbd3ef43e69 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -470,6 +470,26 @@ installer/constructor controls establish the native ushort capacity clamp.
 These probes do not establish malformed signed wire-size conversion or
 native world physics. This change implements clock admission and retention;
 actual historical component restoration and client physics replay remain open.
+
+Retain local movement-effect input admissions and ordered server commands
+through historical component replay. Native effect snapshots preserve
+component presence rather than copying duration values. Keep current values,
+apply queued unadjusted commands, then captured inputs, then countdown.
+Preserve zero-duration marker lifetime, pending command transfer and commands
+with a zero movement mask until another command requests replay.
+
+Transport the exact oldest retained unsigned input clock in movement-effect
+revision 3. Clamp historical dispatch against that clock, including short
+histories and clock discontinuities, instead of inventing a fixed window.
+Do not accept revision 2 through a compatibility alias.
+
+The pinned native receiver, complete capture caller, frame capture, input
+fill and replay execute together in 128 controls. Four additional controls
+verify that clock discontinuities discard old frames but retain pending
+commands and movement masks. Original generated effect inputs reproduce
+28 prior activity mismatches; production now matches all 336 immediate
+controls and all 84 first historical replays. These controls do not establish
+position restoration, native world physics or complete trajectory parity.
 ---
  build.gradle                                  |   29 +
  .../api/model/CollisionContact.java           |   80 ++
@@ -478,8 +498,8 @@ actual historical component restoration and client physics replay remain open.
  .../viabedrock/api/model/FluidCurrent.java    |   44 +
  .../viabedrock/api/model/GeyserMovement.java  |   87 ++
  .../viabedrock/api/model/GlideMovement.java   |   64 +
- .../viabedrock/api/model/MovementEffect.java  |   99 ++
- .../api/model/MovementEffectTimeline.java     |  105 ++
+ .../viabedrock/api/model/MovementEffect.java  |  100 ++
+ .../api/model/MovementEffectTimeline.java     |  302 +++++
  .../api/model/PlayerCorrection.java           |   46 +
  .../api/model/PlayerCorrectionTracker.java    |   27 +
  .../viabedrock/api/model/PlayerPosture.java   |   63 +
@@ -508,7 +528,7 @@ actual historical component restoration and client physics replay remain open.
  .../protocol/rewriter/ItemRewriter.java       |   19 +
  .../protocol/storage/EntityTracker.java       |   25 +
  .../protocol/storage/PlayerInputStorage.java  |   11 +-
- .../storage/PlayerPredictionStorage.java      |  126 ++
+ .../storage/PlayerPredictionStorage.java      |  130 ++
  .../storage/VehiclePredictionStorage.java     |  145 +++
  .../api/model/CollisionContactTest.java       |   60 +
  .../api/model/FlightMovementTest.java         |  112 ++
@@ -517,7 +537,8 @@ actual historical component restoration and client physics replay remain open.
  .../api/model/GeyserMovementTest.java         |  131 ++
  .../api/model/GlideMovementTest.java          |  115 ++
  .../model/MovementControllerOrderTest.java    |   52 +
- .../api/model/MovementEffectTest.java         |  105 ++
+ .../api/model/MovementEffectReplayTest.java   |  141 +++
+ .../api/model/MovementEffectTest.java         |  127 ++
  .../api/model/MovementEffectTimelineTest.java |  253 ++++
  .../api/model/PlayerCorrectionTest.java       |   66 ++
  .../api/model/PlayerPostureTest.java          |  152 +++
@@ -540,7 +561,7 @@ actual historical component restoration and client physics replay remain open.
  .../packet/PlayerCorrectionPacketTest.java    |  201 ++++
  .../packet/PlayerPredictionPacketTest.java    |   87 ++
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 69 files changed, 5815 insertions(+), 54 deletions(-)
+ 70 files changed, 6180 insertions(+), 54 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java
@@ -570,6 +591,7 @@ actual historical component restoration and client physics replay remain open.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementControllerOrderTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementEffectReplayTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerCorrectionTest.java
@@ -1081,10 +1103,10 @@ index 000000000..e3df1f47a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java
 new file mode 100644
-index 000000000..6f5ceb6f7
+index 000000000..28720bcdf
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,100 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1099,24 +1121,24 @@ index 000000000..6f5ceb6f7
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.MovementEffectType;
 +
 +/** Confirmed effect, exact history binding and the latest paired input clock. */
-+public record MovementEffect(int entityId, int type, int duration, long serverTick, long clientFrame, long inputTick, long inputFrame) {
++public record MovementEffect(int entityId, int type, int duration, long serverTick, long clientFrame, long inputTick, long inputFrame, long historyStartTick) {
 +
-+    public static final String CHANNEL = "viabedrock:movement_effect_v2";
++    public static final String CHANNEL = "viabedrock:movement_effect_v3";
 +    public static final Type<MovementEffect> TYPE = new Type<>(MovementEffect.class) {
 +        @Override
 +        public MovementEffect read(final ByteBuf buffer) {
-+            if (Types.VAR_INT.readPrimitive(buffer) != 2
++            if (Types.VAR_INT.readPrimitive(buffer) != 3
 +                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
 +                throw new IllegalArgumentException("Unsupported movement effect");
 +            }
 +            return new MovementEffect(Types.VAR_INT.readPrimitive(buffer), Types.VAR_INT.readPrimitive(buffer),
 +                    Types.VAR_INT.readPrimitive(buffer), Types.VAR_LONG.readPrimitive(buffer), Types.VAR_LONG.readPrimitive(buffer),
-+                    Types.VAR_LONG.readPrimitive(buffer), Types.VAR_LONG.readPrimitive(buffer));
++                    Types.VAR_LONG.readPrimitive(buffer), Types.VAR_LONG.readPrimitive(buffer), Types.VAR_LONG.readPrimitive(buffer));
 +        }
 +
 +        @Override
 +        public void write(final ByteBuf buffer, final MovementEffect effect) {
-+            Types.VAR_INT.writePrimitive(buffer, 2);
++            Types.VAR_INT.writePrimitive(buffer, 3);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            Types.VAR_INT.writePrimitive(buffer, effect.entityId());
 +            Types.VAR_INT.writePrimitive(buffer, effect.type());
@@ -1125,12 +1147,13 @@ index 000000000..6f5ceb6f7
 +            Types.VAR_LONG.writePrimitive(buffer, effect.clientFrame());
 +            Types.VAR_LONG.writePrimitive(buffer, effect.inputTick());
 +            Types.VAR_LONG.writePrimitive(buffer, effect.inputFrame());
++            Types.VAR_LONG.writePrimitive(buffer, effect.historyStartTick());
 +        }
 +    };
 +
 +    public MovementEffect {
 +        if (clientFrame < -1 || inputFrame < -1) {
-+            throw new IllegalArgumentException("Invalid movement effect frame identity");
++            throw new IllegalArgumentException("Invalid movement effect context");
 +        }
 +    }
 +
@@ -1186,10 +1209,10 @@ index 000000000..6f5ceb6f7
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
 new file mode 100644
-index 000000000..6ff5cb106
+index 000000000..0f2f949b0
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,302 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1200,8 +1223,14 @@ index 000000000..6ff5cb106
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.MovementEffectType;
 +
 +import java.util.EnumMap;
++import java.util.ArrayList;
 +import java.util.HashMap;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
 +import java.util.Map;
++import java.util.SequencedMap;
++import java.util.Set;
 +import java.util.function.IntPredicate;
 +
 +/** Client frame clock, local effect prediction and server confirmations. */
@@ -1209,8 +1238,29 @@ index 000000000..6ff5cb106
 +
 +    private long completedFrame = -1;
 +    private final Map<Integer, Map<MovementEffectType, EffectState>> effects = new HashMap<>();
++    private final SequencedMap<Long, Frame> history = new LinkedHashMap<>();
++    private final List<Command> pending = new ArrayList<>();
++    private final Set<Integer> movementMasks = new HashSet<>();
++    private Frame capturing;
++
++    /** Open the input record before local world and player simulation. Repeated calls do not replace it. */
++    public void beginFrame() {
++        if (this.capturing != null) {
++            return;
++        }
++        this.capturing = new Frame(this.completedFrame + 1);
++        this.history.put(this.capturing.id, this.capturing);
++        for (Command command : this.pending) {
++            this.enqueue(this.capturing, command, true);
++        }
++        this.pending.clear();
++        if (this.history.size() > 1000) {
++            this.history.pollFirstEntry();
++        }
++    }
 +
 +    public long completeFrame() {
++        this.capturing = null;
 +        return ++this.completedFrame;
 +    }
 +
@@ -1219,9 +1269,18 @@ index 000000000..6ff5cb106
 +        if (type == null) {
 +            return;
 +        }
++        if (effect.inputFrame() >= 0) {
++            final long age = effect.inputTick() - effect.historyStartTick();
++            if (Long.compareUnsigned(age, effect.inputFrame()) <= 0) {
++                final long oldestFrame = effect.inputFrame() - age;
++                while (!this.history.isEmpty() && this.history.firstEntry().getKey() < oldestFrame) {
++                    this.history.pollFirstEntry();
++                }
++            }
++        }
 +        final Map<MovementEffectType, EffectState> actorEffects = this.effects.computeIfAbsent(effect.entityId(), ignored -> new EnumMap<>(MovementEffectType.class));
 +        final EffectState previous = actorEffects.get(type);
-+        final EffectState incoming = new EffectState(effect, -1);
++        final EffectState incoming = this.state(effect, -1);
 +        final boolean knownIncomingState = effect.hasTiming();
 +        final boolean forced = previous != null && knownIncomingState
 +                && previous.activeAt(this.completedFrame) != incoming.activeAt(this.completedFrame);
@@ -1234,6 +1293,10 @@ index 000000000..6ff5cb106
 +                || forced) {
 +            actorEffects.put(type, incoming);
 +        }
++        // Native command masks compare marker presence, including the zero-duration marker,
++        // with incoming activity. The command remains queued even when its immediate write is ignored.
++        this.schedule(new Command(effect, (previous != null && previous.presentAt(this.completedFrame))
++                != incoming.activeAt(this.completedFrame)));
 +    }
 +
 +    public boolean hasGlideBoost(final int entityId) {
@@ -1260,8 +1323,106 @@ index 000000000..6ff5cb106
 +            return;
 +        }
 +        // Keep the wire tick as evidence, separately from the native local ordering timestamp.
-+        actorEffects.put(type, new EffectState(new MovementEffect(entityId, type.getValue(), 100,
-+                previous == null ? 0 : previous.serverTick(), frame, 0, -1), frame));
++        final MovementEffect admission = new MovementEffect(entityId, type.getValue(), 100,
++                previous == null ? 0 : previous.serverTick(), frame, 0, -1, 0);
++        actorEffects.put(type, this.state(admission, frame));
++        if (this.capturing != null) {
++            this.capturing.inputs.add(admission);
++        }
++    }
++
++    private EffectState state(final MovementEffect effect, final long predictedFrame) {
++        final long frame = predictedFrame < 0 ? Math.max(0, this.completedFrame) : this.completedFrame + 1;
++        final int remaining = effect.remainingAt(frame);
++        final long markerThrough = remaining == -1 ? Long.MAX_VALUE
++                : frame + remaining - (predictedFrame < 0 ? 0 : 1);
++        return new EffectState(effect, predictedFrame, markerThrough, -1, 0);
++    }
++
++    private void schedule(final Command command) {
++        final MovementEffect effect = command.effect;
++        if (effect.inputFrame() < 0 || this.history.isEmpty()) {
++            return;
++        }
++        final long oldest = this.history.firstEntry().getKey();
++        final long clock = effect.inputTick() + this.completedFrame - effect.inputFrame();
++        final long tick = Long.compareUnsigned(effect.serverTick(), effect.historyStartTick()) < 0
++                ? effect.historyStartTick() : effect.serverTick();
++        final boolean future = Long.compareUnsigned(tick, clock) > 0;
++        final long target;
++        if (future) {
++            target = this.completedFrame;
++        } else {
++            final long age = clock - tick;
++            final long correctedFrame;
++            if (tick == effect.serverTick() && effect.clientFrame() >= 0) {
++                correctedFrame = Math.max(oldest, effect.clientFrame());
++            } else if (Long.compareUnsigned(age, this.completedFrame - oldest) >= 0) {
++                correctedFrame = oldest;
++            } else {
++                correctedFrame = this.completedFrame - age;
++            }
++            target = correctedFrame + 1;
++        }
++        final Frame frame = this.history.get(target);
++        if (frame != null) {
++            this.enqueue(frame, command, !future);
++        } else if (target == this.completedFrame + 1) {
++            this.pending.add(command);
++        }
++    }
++
++    private void enqueue(final Frame frame, final Command command, final boolean dirty) {
++        frame.commands.add(command);
++        if (dirty) {
++            frame.dirtyActors.add(command.effect.entityId());
++        }
++        if (command.forcesMovement) {
++            this.movementMasks.add(command.effect.entityId());
++        }
++    }
++
++    /** Replay mutable effect values in native command/input/countdown order, before current physics. */
++    public void replayCorrections() {
++        if (this.history.isEmpty()) {
++            return;
++        }
++        for (int entityId : Set.copyOf(this.movementMasks)) {
++            final Long dirty = this.history.values().stream().filter(frame -> frame.dirtyActors.contains(entityId))
++                    .map(frame -> frame.id).findFirst().orElse(null);
++            if (dirty == null) {
++                continue;
++            }
++            final Map<MovementEffectType, EffectState> states = this.effects.computeIfAbsent(entityId, ignored -> new EnumMap<>(MovementEffectType.class));
++            final Map<MovementEffectType, ReplayValue> values = new EnumMap<>(MovementEffectType.class);
++            states.forEach((type, state) -> values.put(type, new ReplayValue(state.effect, state.predictedFrame,
++                    state.remainingAt(this.completedFrame), state.presentAt(this.completedFrame))));
++            for (Frame frame : this.history.values()) {
++                if (frame.id < dirty) {
++                    continue;
++                }
++                for (Command command : frame.commands) {
++                    if (command.effect.entityId() == entityId) {
++                        final MovementEffect effect = command.effect;
++                        values.put(MovementEffectType.getByValue(effect.type()), new ReplayValue(effect, -1,
++                                effect.duration() < -1 ? 0 : effect.duration(), true));
++                    }
++                }
++                for (MovementEffect input : frame.inputs) {
++                    if (input.entityId() == entityId) {
++                        values.put(MovementEffectType.getByValue(input.type()), new ReplayValue(input, frame.id, input.duration(), true));
++                    }
++                }
++                // An open frame still has to run physical movement, which consumes the duration
++                // before countdown. Completed frames replay their original countdown now.
++                if (frame.id <= this.completedFrame) {
++                    values.values().forEach(ReplayValue::countdown);
++                }
++                frame.dirtyActors.remove(entityId);
++            }
++            values.forEach((type, value) -> states.put(type, value.snapshot(this.completedFrame)));
++            this.movementMasks.remove(entityId);
++        }
 +    }
 +
 +    private boolean hasEffect(final int entityId, final MovementEffectType type) {
@@ -1272,16 +1433,30 @@ index 000000000..6ff5cb106
 +
 +    public void retainEntities(final IntPredicate present) {
 +        this.effects.keySet().removeIf(id -> !present.test(id));
++        this.movementMasks.removeIf(id -> !present.test(id));
++        this.pending.removeIf(command -> !present.test(command.effect.entityId()));
++        for (Frame frame : this.history.values()) {
++            frame.commands.removeIf(command -> !present.test(command.effect.entityId()));
++            frame.inputs.removeIf(input -> !present.test(input.entityId()));
++            frame.dirtyActors.removeIf(id -> !present.test(id));
++        }
 +    }
 +
 +    public void clear() {
 +        this.effects.clear();
 +        this.completedFrame = -1;
++        this.history.clear();
++        this.pending.clear();
++        this.movementMasks.clear();
++        this.capturing = null;
 +    }
 +
-+    private record EffectState(MovementEffect effect, long predictedFrame) {
++    private record EffectState(MovementEffect effect, long predictedFrame, long markerThroughFrame, long snapshotFrame, int remaining) {
 +
 +        private int remainingAt(final long completedFrame) {
++            if (this.snapshotFrame >= 0) {
++                return this.remaining == -1 ? -1 : (int) Math.max(0, this.remaining - (completedFrame - this.snapshotFrame));
++            }
 +            // Server snapshots describe the completed frame. Native movement consumes their
 +            // remaining duration before countdown. Local admission occurs in the next physics step.
 +            final long frame = this.predictedFrame < 0 ? Math.max(0, completedFrame) : completedFrame + 1;
@@ -1291,6 +1466,51 @@ index 000000000..6ff5cb106
 +        private boolean activeAt(final long completedFrame) {
 +            final int remaining = this.remainingAt(completedFrame);
 +            return remaining == -1 || remaining > 0;
++        }
++
++        private boolean presentAt(final long completedFrame) {
++            return completedFrame <= this.markerThroughFrame;
++        }
++    }
++
++    private record Command(MovementEffect effect, boolean forcesMovement) {
++    }
++
++    private static final class Frame {
++        private final long id;
++        private final List<Command> commands = new ArrayList<>();
++        private final List<MovementEffect> inputs = new ArrayList<>();
++        private final Set<Integer> dirtyActors = new HashSet<>();
++
++        private Frame(final long id) {
++            this.id = id;
++        }
++    }
++
++    private static final class ReplayValue {
++        private final MovementEffect effect;
++        private final long predictedFrame;
++        private int remaining;
++        private boolean present;
++
++        private ReplayValue(final MovementEffect effect, final long predictedFrame, final int remaining, final boolean present) {
++            this.effect = effect;
++            this.predictedFrame = predictedFrame;
++            this.remaining = remaining;
++            this.present = present;
++        }
++
++        private void countdown() {
++            if (this.remaining > 0) {
++                this.remaining--;
++            } else if (this.remaining == 0) {
++                this.present = false;
++            }
++        }
++
++        private EffectState snapshot(final long frame) {
++            final long markerThrough = !this.present ? frame - 1 : this.remaining == -1 ? Long.MAX_VALUE : frame + this.remaining;
++            return new EffectState(this.effect, this.predictedFrame, markerThrough, frame, this.remaining);
 +        }
 +    }
 +
@@ -2819,7 +3039,7 @@ index 006d49ff8..4dc2e0ef7 100644
          clientPlayer.setAbilities(clientPlayer.abilities());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPackets.java
 new file mode 100644
-index 000000000..42f03cc06
+index 000000000..4f888b69e
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPackets.java
 @@ -0,0 +1,54 @@
@@ -2861,7 +3081,7 @@ index 000000000..42f03cc06
 +            final long frame = predictions.clientFrame(tick);
 +            final boolean localPlayer = entity == wrapper.user().get(EntityTracker.class).getClientPlayer();
 +            final MovementEffect effect = new MovementEffect(entity.javaId(), type, duration, tick, frame,
-+                    localPlayer ? predictions.inputTick() : 0, localPlayer ? predictions.inputFrame() : -1);
++                    localPlayer ? predictions.inputTick() : 0, localPlayer ? predictions.inputFrame() : -1, predictions.oldestInputTick());
 +            entity.setMovementEffect(effect);
 +            if (wrapper.user().get(ChannelStorage.class).hasChannel(MovementEffect.CHANNEL)) {
 +                wrapper.setPacketType(ClientboundPackets26_3.CUSTOM_PAYLOAD);
@@ -3132,10 +3352,10 @@ index 95391851d..f8bf20f85 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
 new file mode 100644
-index 000000000..535ad9fff
+index 000000000..46eb668a1
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,130 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3229,6 +3449,10 @@ index 000000000..535ad9fff
 +
 +    public long inputTick() {
 +        return this.inputTick;
++    }
++
++    public long oldestInputTick() {
++        return this.historyCount == 0 ? 0 : this.inputTicks[(this.historyIndex - this.historyCount + this.inputTicks.length) % this.inputTicks.length];
 +    }
 +
 +    public long inputFrame() {
@@ -4031,12 +4255,159 @@ index 000000000..3416ab840
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectReplayTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectReplayTest.java
+new file mode 100644
+index 000000000..ce42ff3ef
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectReplayTest.java
+@@ -0,0 +1,141 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.google.gson.JsonParser;
++import org.junit.jupiter.api.Test;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++class MovementEffectReplayTest {
++
++    @Test
++    void replaysCapturedAdmissionAfterRemovalWithoutReadingTheCurrentSource() {
++        final var timeline = history(true);
++        timeline.accept(new MovementEffect(1, 2, 0, 102, 2, 105, 5, 100));
++        assertFalse(timeline.hasGeyserBoost(1));
++        timeline.replayCorrections();
++        expiresAfter(timeline, 99);
++    }
++
++    @Test
++    void replaysTheOriginalDurationAtTheOldestClockInsteadOfItsExpiredImmediateValue() {
++        final var timeline = history(false);
++        timeline.accept(new MovementEffect(1, 2, 20, 0, -1, 105, 5, 100));
++        assertFalse(timeline.hasGeyserBoost(1));
++        timeline.replayCorrections();
++        expiresAfter(timeline, 15);
++    }
++
++    @Test
++    void preservesMaskZeroCommandsUntilAnotherKindRequestsMovementReplay() {
++        final var timeline = history(false);
++        timeline.accept(new MovementEffect(1, 2, 20, 102, 2, 105, 5, 100));
++        timeline.replayCorrections();
++        assertTrue(timeline.hasGeyserBoost(1));
++        timeline.accept(new MovementEffect(1, 0, -1, 104, 4, 105, 5, 100));
++        timeline.replayCorrections();
++        expiresAfter(timeline, 17);
++        assertTrue(timeline.hasGlideBoost(1));
++    }
++
++    @Test
++    void transfersCurrentCommandsBeforePhysicsAndCountsDownEachFrameOnce() {
++        final var timeline = history(false);
++        timeline.accept(new MovementEffect(1, 2, 2, 105, 5, 105, 5, 100));
++        timeline.beginFrame();
++        timeline.beginFrame();
++        timeline.replayCorrections();
++        assertTrue(timeline.hasGeyserBoost(1));
++        timeline.completeFrame();
++        assertTrue(timeline.hasGeyserBoost(1));
++        timeline.beginFrame();
++        timeline.replayCorrections();
++        timeline.completeFrame();
++        assertFalse(timeline.hasGeyserBoost(1));
++    }
++
++    @Test
++    void boundsClampedReplayByTheTransportedOldestClock() {
++        final var timeline = history(false);
++        timeline.accept(new MovementEffect(1, 2, 2, 0, -1, 105, 5, 104));
++        timeline.replayCorrections();
++        expiresAfter(timeline, 1);
++    }
++
++    @Test
++    void removedActorsCannotRecoverOldInputsOrQueuedCommands() {
++        final var timeline = history(true);
++        timeline.accept(new MovementEffect(1, 2, 0, 102, 2, 105, 5, 100));
++        timeline.retainEntities(id -> id != 1);
++        timeline.accept(new MovementEffect(1, 2, 0, 102, 2, 105, 5, 100));
++        timeline.replayCorrections();
++        assertFalse(timeline.hasGeyserBoost(1));
++        timeline.clear();
++        assertEquals(0, timeline.completeFrame());
++    }
++
++    @Test
++    void matchesNativeGeneratedInputsCommandsAndFirstReplay() throws Exception {
++        final String reference = System.getenv("STACKANVIL_MOVEMENT_INPUT_REPLAY_REFERENCE");
++        assumeTrue(reference != null);
++        for (final var entry : JsonParser.parseString(Files.readString(Path.of(reference))).getAsJsonArray()) {
++            final var row = entry.getAsJsonObject();
++            final var timeline = new MovementEffectTimeline();
++            final boolean captured = row.get("inputMode").getAsString().equals("captured");
++            for (int frame = 0; frame < 6; frame++) {
++                if (captured) {
++                    timeline.beginFrame();
++                }
++                if (row.get("previousActive").getAsBoolean()) {
++                    timeline.predictGeyserBoost(1);
++                }
++                if (!captured) {
++                    timeline.beginFrame();
++                }
++                timeline.completeFrame();
++            }
++            final long tick = row.get("tick").getAsLong();
++            timeline.accept(new MovementEffect(1, 2, row.get("duration").getAsInt(), tick,
++                    tick >= 100 && tick <= 105 ? tick - 100 : -1, 105, 5, 100));
++            final int live = row.getAsJsonArray("live").get(1).getAsInt();
++            assertEquals(live == -1 || live > 0, timeline.hasGeyserBoost(1));
++            timeline.replayCorrections();
++            final int replayed = row.getAsJsonObject("first").getAsJsonArray("state").get(1).getAsInt();
++            assertEquals(replayed == -1 || replayed > 0, timeline.hasGeyserBoost(1));
++        }
++    }
++
++    private static MovementEffectTimeline history(final boolean captureInputs) {
++        final var timeline = new MovementEffectTimeline();
++        for (int frame = 0; frame < 6; frame++) {
++            if (captureInputs) {
++                timeline.beginFrame();
++            }
++            timeline.predictGeyserBoost(1);
++            if (!captureInputs) {
++                timeline.beginFrame();
++            }
++            timeline.completeFrame();
++        }
++        return timeline;
++    }
++
++    private static void expiresAfter(final MovementEffectTimeline timeline, final int frames) {
++        for (int step = 0; step < frames; step++) {
++            assertTrue(timeline.hasGeyserBoost(1));
++            timeline.beginFrame();
++            timeline.replayCorrections();
++            timeline.completeFrame();
++        }
++        assertFalse(timeline.hasGeyserBoost(1));
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java
 new file mode 100644
-index 000000000..80e6fcda6
+index 000000000..dffd3d959
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,127 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4045,6 +4416,8 @@ index 000000000..80e6fcda6
 +package net.raphimc.viabedrock.api.model;
 +
 +import io.netty.buffer.Unpooled;
++import com.viaversion.viaversion.api.type.Types;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +import com.google.gson.JsonParser;
 +
 +import java.nio.file.Files;
@@ -4057,50 +4430,70 @@ index 000000000..80e6fcda6
 +class MovementEffectTest {
 +
 +    @Test
++    void transportsUnsignedHistoryClocksAndRejectsContextsWithoutThem() {
++        final var buffer = Unpooled.buffer();
++        try {
++            for (long oldest : new long[]{0, 100, Long.MIN_VALUE, -1}) {
++                final var effect = new MovementEffect(1, 2, 100, 105, 5, 105, 5, oldest);
++                MovementEffect.TYPE.write(buffer, effect);
++                assertEquals(effect, MovementEffect.TYPE.read(buffer));
++                assertFalse(buffer.isReadable());
++                buffer.clear();
++            }
++            Types.VAR_INT.writePrimitive(buffer, 2);
++            Types.VAR_INT.writePrimitive(buffer,
++                    ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            assertThrows(IllegalArgumentException.class, () -> MovementEffect.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
 +    void expiresAgainstTheOriginalFrameInsteadOfReceiptTime() {
-+        final MovementEffect effect = new MovementEffect(10, 0, 20, 81, 7, 0, -1);
++        final MovementEffect effect = new MovementEffect(10, 0, 20, 81, 7, 0, -1, 0);
 +        assertFalse(effect.activeAt(6));
 +        assertTrue(effect.activeAt(7));
 +        assertTrue(effect.activeAt(26));
 +        assertFalse(effect.activeAt(27));
 +        assertFalse(effect.activeAt(100));
-+        assertFalse(new MovementEffect(10, 0, 20, 81, -1, 0, -1).activeAt(7));
-+        assertTrue(new MovementEffect(10, 0, -1, 81, 7, 0, -1).activeAt(Long.MAX_VALUE));
-+        assertTrue(new MovementEffect(10, 0, -1, 81, -1, 0, -1).activeAt(Long.MAX_VALUE));
-+        assertFalse(new MovementEffect(10, 0, 0, 81, 7, 0, -1).activeAt(7));
-+        assertFalse(new MovementEffect(10, 0, -2, 81, 7, 0, -1).activeAt(7));
++        assertFalse(new MovementEffect(10, 0, 20, 81, -1, 0, -1, 0).activeAt(7));
++        assertTrue(new MovementEffect(10, 0, -1, 81, 7, 0, -1, 0).activeAt(Long.MAX_VALUE));
++        assertTrue(new MovementEffect(10, 0, -1, 81, -1, 0, -1, 0).activeAt(Long.MAX_VALUE));
++        assertFalse(new MovementEffect(10, 0, 0, 81, 7, 0, -1, 0).activeAt(7));
++        assertFalse(new MovementEffect(10, 0, -2, 81, 7, 0, -1, 0).activeAt(7));
 +    }
 +
 +    @Test
 +    void agesMissingHistoryAgainstThePairedInputClock() {
-+        final MovementEffect startup = new MovementEffect(1, 2, 100, 0, -1, 53, 8);
++        final MovementEffect startup = new MovementEffect(1, 2, 100, 0, -1, 53, 8, 0);
 +        assertEquals(-1, startup.clientFrame());
 +        assertEquals(47, startup.remainingAt(8));
 +        assertEquals(46, startup.remainingAt(9));
 +        assertEquals(1, startup.remainingAt(54));
 +        assertFalse(startup.activeAt(55));
-+        final MovementEffect evicted = new MovementEffect(1, 0, 1000, 1, -1, 513, 100);
++        final MovementEffect evicted = new MovementEffect(1, 0, 1000, 1, -1, 513, 100, 0);
 +        assertEquals(488, evicted.remainingAt(100));
 +        assertFalse(evicted.activeAt(588));
 +        // Actual input ticks can advance more than completed frames during a prediction gap.
-+        final MovementEffect gap = new MovementEffect(1, 1, 100, 100, 5, 180, 8);
++        final MovementEffect gap = new MovementEffect(1, 1, 100, 100, 5, 180, 8, 0);
 +        assertEquals(20, gap.remainingAt(8));
 +        assertFalse(gap.activeAt(28));
-+        final MovementEffect future = new MovementEffect(1, 0, 100, 514, -1, 513, 100);
++        final MovementEffect future = new MovementEffect(1, 0, 100, 514, -1, 513, 100, 0);
 +        assertEquals(100, future.remainingAt(100));
 +        assertTrue(future.activeAt(199));
 +        assertFalse(future.activeAt(200));
-+        assertFalse(new MovementEffect(1, 0, 100, 1, -1, 513, -1).activeAt(100));
++        assertFalse(new MovementEffect(1, 0, 100, 1, -1, 513, -1, 0).activeAt(100));
 +    }
 +
 +    @Test
 +    void usesNativeUnsignedClockComparisonAndSignedDurationWrap() {
-+        assertEquals(97, new MovementEffect(1, 0, 100, 0x7FFF_FFFEL, -1, 0, -1).adjustedDuration(0x8000_0001L));
-+        assertEquals(97, new MovementEffect(1, 0, 100, 0xFFFF_FFFEL, -1, 0, -1).adjustedDuration(0x1_0000_0001L));
-+        assertEquals(100, new MovementEffect(1, 0, 100, Long.MIN_VALUE, -1, 0, -1).adjustedDuration(Long.MAX_VALUE));
-+        assertEquals(0, new MovementEffect(1, 0, Integer.MAX_VALUE, 0, -1, 0, -1).adjustedDuration(0xFFFF_FFFFL));
-+        assertEquals(-1, new MovementEffect(1, 0, -1, 0, -1, 0, -1).adjustedDuration(-1));
-+        assertEquals(0, new MovementEffect(1, 0, Integer.MIN_VALUE, 0, -1, 0, -1).adjustedDuration(0));
++        assertEquals(97, new MovementEffect(1, 0, 100, 0x7FFF_FFFEL, -1, 0, -1, 0).adjustedDuration(0x8000_0001L));
++        assertEquals(97, new MovementEffect(1, 0, 100, 0xFFFF_FFFEL, -1, 0, -1, 0).adjustedDuration(0x1_0000_0001L));
++        assertEquals(100, new MovementEffect(1, 0, 100, Long.MIN_VALUE, -1, 0, -1, 0).adjustedDuration(Long.MAX_VALUE));
++        assertEquals(0, new MovementEffect(1, 0, Integer.MAX_VALUE, 0, -1, 0, -1, 0).adjustedDuration(0xFFFF_FFFFL));
++        assertEquals(-1, new MovementEffect(1, 0, -1, 0, -1, 0, -1, 0).adjustedDuration(-1));
++        assertEquals(0, new MovementEffect(1, 0, Integer.MIN_VALUE, 0, -1, 0, -1, 0).adjustedDuration(0));
 +    }
 +
 +    @Test
@@ -4113,7 +4506,7 @@ index 000000000..80e6fcda6
 +            final long tick = Long.parseUnsignedLong(scenario.get("tick").getAsString());
 +            final long clock = Long.parseUnsignedLong(scenario.get("clock").getAsString());
 +            final MovementEffect effect = new MovementEffect(1, scenario.get("kind").getAsInt(),
-+                    scenario.get("duration").getAsInt(), tick, -1, clock, 10);
++                    scenario.get("duration").getAsInt(), tick, -1, clock, 10, 0);
 +            assertEquals(scenario.get("adjusted").getAsInt(), effect.adjustedDuration(clock));
 +            assertEquals(scenario.get("adjusted").getAsInt(), effect.remainingAt(10));
 +        }
@@ -4127,7 +4520,7 @@ index 000000000..80e6fcda6
 +                for (int duration : new int[]{-1, 0, 1, Integer.MAX_VALUE}) {
 +                    for (long tick : new long[]{0, 127, 128, Long.MIN_VALUE, -1}) {
 +                        for (long frame : new long[]{-1, 0, Long.MAX_VALUE}) {
-+                            final MovementEffect effect = new MovementEffect(99, type, duration, tick, frame, tick ^ Long.MIN_VALUE, frame);
++                            final MovementEffect effect = new MovementEffect(99, type, duration, tick, frame, tick ^ Long.MIN_VALUE, frame, 0);
 +                            MovementEffect.TYPE.write(buffer, effect);
 +                            assertEquals(effect, MovementEffect.TYPE.read(buffer));
 +                            assertFalse(buffer.isReadable());
@@ -4144,7 +4537,7 @@ index 000000000..80e6fcda6
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
 new file mode 100644
-index 000000000..2a1a73934
+index 000000000..04bfaf9b1
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
 @@ -0,0 +1,253 @@
@@ -4183,7 +4576,7 @@ index 000000000..2a1a73934
 +                timeline.completeFrame();
 +            }
 +            final MovementEffect effect = new MovementEffect(1, 2, scenario.get("duration").getAsInt(),
-+                    scenario.get("tick").getAsLong(), -1, scenario.get("clock").getAsLong(), 10);
++                    scenario.get("tick").getAsLong(), -1, scenario.get("clock").getAsLong(), 10, 0);
 +            timeline.accept(effect);
 +            for (final var step : scenario.getAsJsonArray("steps")) {
 +                assertEquals(step.getAsJsonObject().get("velocity").getAsFloat() != 0F, timeline.hasGeyserBoost(1));
@@ -4201,7 +4594,7 @@ index 000000000..2a1a73934
 +                confirmed.completeFrame();
 +                predicted.completeFrame();
 +            }
-+            final MovementEffect effect = new MovementEffect(1, 2, duration, 105, 10, 105, 10);
++            final MovementEffect effect = new MovementEffect(1, 2, duration, 105, 10, 105, 10, 0);
 +            confirmed.accept(effect);
 +            predicted.predictGeyserBoost(1);
 +            for (int step = 0; step <= 100; step++) {
@@ -4222,7 +4615,7 @@ index 000000000..2a1a73934
 +        }
 +        timeline.predictGeyserBoost(1);
 +        timeline.completeFrame();
-+        final MovementEffect future = new MovementEffect(1, 2, 20, 150, -1, 105, 5);
++        final MovementEffect future = new MovementEffect(1, 2, 20, 150, -1, 105, 5, 0);
 +        timeline.accept(future);
 +        for (int frame = 5; frame < 15; frame++) {
 +            assertTrue(timeline.hasGeyserBoost(1));
@@ -4236,9 +4629,9 @@ index 000000000..2a1a73934
 +        assertFalse(timeline.hasGeyserBoost(1));
 +        timeline.accept(future);
 +        assertFalse(timeline.hasGeyserBoost(1));
-+        timeline.accept(new MovementEffect(1, 0, -1, -1, -1, Long.MIN_VALUE, 25));
++        timeline.accept(new MovementEffect(1, 0, -1, -1, -1, Long.MIN_VALUE, 25, 0));
 +        assertTrue(timeline.hasGlideBoost(1));
-+        timeline.accept(new MovementEffect(1, 0, 0, -1, -1, Long.MIN_VALUE, 25));
++        timeline.accept(new MovementEffect(1, 0, 0, -1, -1, Long.MIN_VALUE, 25, 0));
 +        assertFalse(timeline.hasGlideBoost(1));
 +        timeline.clear();
 +        assertFalse(timeline.hasGlideBoost(1));
@@ -4250,7 +4643,7 @@ index 000000000..2a1a73934
 +        for (int frame = 0; frame < 10; frame++) {
 +            timeline.completeFrame();
 +        }
-+        final MovementEffect startup = new MovementEffect(1, 2, 100, 0, -1, 53, 8);
++        final MovementEffect startup = new MovementEffect(1, 2, 100, 0, -1, 53, 8, 0);
 +        timeline.accept(startup);
 +        assertTrue(timeline.hasGeyserBoost(1));
 +        for (int frame = 10; frame <= 55; frame++) {
@@ -4260,9 +4653,9 @@ index 000000000..2a1a73934
 +        timeline.accept(startup);
 +        assertFalse(timeline.hasGeyserBoost(1));
 +        timeline.predictGeyserBoost(1);
-+        timeline.accept(new MovementEffect(1, 2, 100, 0, -1, 200, 55));
++        timeline.accept(new MovementEffect(1, 2, 100, 0, -1, 200, 55, 0));
 +        assertFalse(timeline.hasGeyserBoost(1));
-+        timeline.accept(new MovementEffect(1, 2, 400, 0, -1, 200, 55));
++        timeline.accept(new MovementEffect(1, 2, 400, 0, -1, 200, 55, 0));
 +        timeline.predictGeyserBoost(1);
 +        for (int frame = 55; frame < 200; frame++) {
 +            timeline.completeFrame();
@@ -4278,19 +4671,19 @@ index 000000000..2a1a73934
 +        for (int frame = 0; frame < 10; frame++) {
 +            timeline.completeFrame();
 +        }
-+        timeline.accept(new MovementEffect(1, 2, 20, 10, 10, 0, -1));
++        timeline.accept(new MovementEffect(1, 2, 20, 10, 10, 0, -1, 0));
 +        timeline.completeFrame();
 +        timeline.completeFrame();
 +        assertTrue(timeline.hasGeyserBoost(1));
-+        timeline.accept(new MovementEffect(1, 2, 0, 9, 9, 0, -1));
++        timeline.accept(new MovementEffect(1, 2, 0, 9, 9, 0, -1, 0));
 +        timeline.completeFrame();
 +        assertFalse(timeline.hasGeyserBoost(1));
-+        timeline.accept(new MovementEffect(1, 2, 100, 8, 8, 0, -1));
++        timeline.accept(new MovementEffect(1, 2, 100, 8, 8, 0, -1, 0));
 +        for (int frame = 0; frame < 25; frame++) {
 +            timeline.completeFrame();
 +        }
 +        assertTrue(timeline.hasGeyserBoost(1));
-+        timeline.accept(new MovementEffect(1, 2, -1, 0, 0, 0, -1));
++        timeline.accept(new MovementEffect(1, 2, -1, 0, 0, 0, -1, 0));
 +        for (int frame = 0; frame < 100; frame++) {
 +            timeline.completeFrame();
 +        }
@@ -4300,7 +4693,7 @@ index 000000000..2a1a73934
 +    @Test
 +    void refreshesLocallyAdmittedGeysersAndExpiresAfterTheLastAdmission() {
 +        final MovementEffectTimeline timeline = new MovementEffectTimeline();
-+        timeline.accept(new MovementEffect(1, 2, 100, 0, -1, 0, -1));
++        timeline.accept(new MovementEffect(1, 2, 100, 0, -1, 0, -1, 0));
 +        assertFalse(timeline.hasGeyserBoost(1));
 +        timeline.predictGeyserBoost(1);
 +        for (int frame = 0; frame < 17; frame++) {
@@ -4314,28 +4707,28 @@ index 000000000..2a1a73934
 +            timeline.completeFrame();
 +        }
 +        assertFalse(timeline.hasGeyserBoost(1));
-+        timeline.accept(new MovementEffect(1, 2, 100, 0, -1, 0, -1));
++        timeline.accept(new MovementEffect(1, 2, 100, 0, -1, 0, -1, 0));
 +        assertFalse(timeline.hasGeyserBoost(1));
 +    }
 +
 +    @Test
 +    void localAdmissionPreservesLongerEffectsAndAllowsForcedTransitions() {
 +        final MovementEffectTimeline timeline = new MovementEffectTimeline();
-+        timeline.accept(new MovementEffect(1, 2, 150, 81, 0, 0, -1));
++        timeline.accept(new MovementEffect(1, 2, 150, 81, 0, 0, -1, 0));
 +        timeline.predictGeyserBoost(1);
 +        for (int i = 0; i < 100; i++) {
 +            timeline.completeFrame();
 +        }
 +        assertTrue(timeline.hasGeyserBoost(1));
 +        timeline.predictGeyserBoost(1);
-+        timeline.accept(new MovementEffect(1, 2, 5, 180, 99, 0, -1));
++        timeline.accept(new MovementEffect(1, 2, 5, 180, 99, 0, -1, 0));
 +        for (int i = 0; i < 10; i++) {
 +            timeline.completeFrame();
 +        }
 +        assertTrue(timeline.hasGeyserBoost(1));
-+        timeline.accept(new MovementEffect(1, 2, 0, 180, 99, 0, -1));
++        timeline.accept(new MovementEffect(1, 2, 0, 180, 99, 0, -1, 0));
 +        assertFalse(timeline.hasGeyserBoost(1));
-+        timeline.accept(new MovementEffect(1, 2, -1, 181, 100, 0, -1));
++        timeline.accept(new MovementEffect(1, 2, -1, 181, 100, 0, -1, 0));
 +        timeline.predictGeyserBoost(1);
 +        for (int i = 0; i < 101; i++) {
 +            timeline.completeFrame();
@@ -4351,21 +4744,21 @@ index 000000000..2a1a73934
 +        for (int frame = 0; frame < 10; frame++) {
 +            assertEquals(frame, timeline.completeFrame());
 +        }
-+        timeline.accept(new MovementEffect(1, 0, 20, 100, 0, 0, -1));
++        timeline.accept(new MovementEffect(1, 0, 20, 100, 0, 0, -1, 0));
 +        assertTrue(timeline.hasGlideBoost(1));
 +        assertFalse(timeline.hasGlideBoost(2));
-+        timeline.accept(new MovementEffect(1, 0, 1, 99, 0, 0, -1));
++        timeline.accept(new MovementEffect(1, 0, 1, 99, 0, 0, -1, 0));
 +        assertFalse(timeline.hasGlideBoost(1));
-+        timeline.accept(new MovementEffect(1, 0, 20, 98, 0, 0, -1));
++        timeline.accept(new MovementEffect(1, 0, 20, 98, 0, 0, -1, 0));
 +        assertTrue(timeline.hasGlideBoost(1));
 +        for (int frame = 10; frame <= 20; frame++) {
 +            assertTrue(timeline.hasGlideBoost(1));
 +            timeline.completeFrame();
 +        }
 +        assertFalse(timeline.hasGlideBoost(1));
-+        timeline.accept(new MovementEffect(1, 0, 5, 101, 0, 0, -1));
++        timeline.accept(new MovementEffect(1, 0, 5, 101, 0, 0, -1, 0));
 +        assertFalse(timeline.hasGlideBoost(1));
-+        timeline.accept(new MovementEffect(1, 0, -1, 102, -1, 0, -1));
++        timeline.accept(new MovementEffect(1, 0, -1, 102, -1, 0, -1, 0));
 +        assertTrue(timeline.hasGlideBoost(1));
 +    }
 +
@@ -4373,12 +4766,12 @@ index 000000000..2a1a73934
 +    void keepsActorsAndEffectKindsIndependentAndClearsConnectionState() {
 +        final MovementEffectTimeline timeline = new MovementEffectTimeline();
 +        assertEquals(0, timeline.completeFrame());
-+        timeline.accept(new MovementEffect(1, 0, -1, Long.MIN_VALUE, 0, 0, -1));
-+        timeline.accept(new MovementEffect(1, 0, 0, Long.MAX_VALUE, 0, 0, -1));
++        timeline.accept(new MovementEffect(1, 0, -1, Long.MIN_VALUE, 0, 0, -1, 0));
++        timeline.accept(new MovementEffect(1, 0, 0, Long.MAX_VALUE, 0, 0, -1, 0));
 +        assertFalse(timeline.hasGlideBoost(1));
-+        timeline.accept(new MovementEffect(1, 0, -1, 0, 0, 0, -1));
-+        timeline.accept(new MovementEffect(1, 1, 1, Long.MIN_VALUE, 0, 0, -1));
-+        timeline.accept(new MovementEffect(2, 2, -1, 0, 0, 0, -1));
++        timeline.accept(new MovementEffect(1, 0, -1, 0, 0, 0, -1, 0));
++        timeline.accept(new MovementEffect(1, 1, 1, Long.MIN_VALUE, 0, 0, -1, 0));
++        timeline.accept(new MovementEffect(2, 2, -1, 0, 0, 0, -1, 0));
 +        assertTrue(timeline.hasGlideBoost(1));
 +        assertTrue(timeline.hasDolphinBoost(1));
 +        assertFalse(timeline.hasGlideBoost(2));
@@ -4390,7 +4783,7 @@ index 000000000..2a1a73934
 +        assertFalse(timeline.hasDolphinBoost(1));
 +        timeline.retainEntities(id -> id != 1);
 +        assertFalse(timeline.hasGlideBoost(1));
-+        timeline.accept(new MovementEffect(2, 0, 1, 0, 1, 0, -1));
++        timeline.accept(new MovementEffect(2, 0, 1, 0, 1, 0, -1, 0));
 +        assertTrue(timeline.hasGlideBoost(2));
 +        assertEquals(2, timeline.completeFrame());
 +        assertFalse(timeline.hasGlideBoost(2));
@@ -7076,7 +7469,7 @@ index 000000000..fda0a3dec
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
 new file mode 100644
-index 000000000..d672e393d
+index 000000000..1f5c82798
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
 @@ -0,0 +1,116 @@
@@ -7164,7 +7557,7 @@ index 000000000..d672e393d
 +                        BedrockTypes.UNSIGNED_VAR_LONG.writePrimitive(input, tick);
 +                        final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.MOVEMENT_EFFECT, input, user);
 +                        new TestProtocol().translate(packet);
-+                        final MovementEffect effect = new MovementEffect(player.javaId(), type, -1, tick, tick == 91 ? 42 : -1, 91, 42);
++                        final MovementEffect effect = new MovementEffect(player.javaId(), type, -1, tick, tick == 91 ? 42 : -1, 91, 42, predictions.oldestInputTick());
 +                        assertEquals(effect, player.movementEffect(MovementEffectType.getByValue(type)));
 +                        assertEquals(!supported, packet.isCancelled());
 +                        if (supported) {

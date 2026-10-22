@@ -1,4 +1,4 @@
-From 3bbb7605e68c413289f1ccc6446d1f2dd3cd1a1a Mon Sep 17 00:00:00 2001
+From 9779aa5cda5953cbc0ed47d480a5edb2839d5cfe Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -420,6 +420,21 @@ Visit shape boxes directly to reduce allocations while falling.
 The matching Bedrock 1.26.51.1 contact kernel remains unchanged. Regression
 tests cover all axes, both movement directions, map coordinates and edge
 support; the old adapter fails the new contact controls.
+
+Open the movement-effect input record before local simulation and reconcile
+queued component commands before local player physics. Retain admission
+order and complete the record with the existing completed frame clock.
+The shared core journal preserves native command/input/countdown ordering
+and the exact oldest wire clock through movement-effect revision 3.
+
+This integrates real component replay into the frame lifecycle. It does
+not yet restore historical positions, execute past player/vehicle physics,
+or establish native world trajectories. The native generated-input oracle
+covers duration activity and queue ordering separately from those gaps.
+
+Advance the physical frame and effect clock even when prediction transport
+is unavailable. The channel advertisement controls payload publication,
+not local effect lifetimes or captured input record completion.
 ---
  build.gradle.kts                              |   2 +-
  .../bedrock/ViaFabricPlusBedrock.java         |   8 +
@@ -431,12 +446,12 @@ support; the old adapter fails the new contact controls.
  ...tyFluidInteraction_CurrentAccumulator.java |  49 ++--
  .../movement/MixinFireworkRocketEntity.java   |  28 ++
  .../features/movement/MixinLivingEntity.java  | 140 +++++++++
- .../features/movement/MixinLocalPlayer.java   | 230 ++++++++++++++-
+ .../features/movement/MixinLocalPlayer.java   | 232 ++++++++++++++-
  .../mixin/features/movement/MixinPlayer.java  | 128 +++++++--
  .../MixinPlayerCorrectionPacketListener.java  |  23 ++
  .../MixinPotentSulfurBlockEntity.java         |  44 +++
  .../features/movement/MixinVoxelShape.java    |  28 ++
- .../bedrock/input/BedrockMovementEffects.java |  96 +++++++
+ .../bedrock/input/BedrockMovementEffects.java | 106 +++++++
  .../input/BedrockPlayerCorrections.java       |  44 +++
  .../input/BedrockVehiclePredictions.java      |  43 +++
  .../bedrock/input/FlightMovementPayload.java  |  24 ++
@@ -463,7 +478,7 @@ support; the old adapter fails the new contact controls.
  .../movement/BedrockFluidPhysicsTest.java     | 121 ++++++++
  .../movement/BedrockGeyserPhysicsTest.java    | 101 +++++++
  .../movement/BedrockPlayerPostureTest.java    |  45 +++
- 42 files changed, 2614 insertions(+), 68 deletions(-)
+ 42 files changed, 2626 insertions(+), 68 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
@@ -989,10 +1004,10 @@ index 1c9125e..bf44991 100644
      private boolean changeFluidGravityCondition(final LivingEntity instance) {
          return BedrockInputPermissions.isBedrockConnection() ? instance.isSwimming() : instance.isSprinting();
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index e5a8167..c15ef5e 100644
+index e5a8167..f5c38bd 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,22 +21,248 @@
+@@ -21,22 +21,250 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -1107,6 +1122,9 @@ index e5a8167..c15ef5e 100644
 +
 +    @Inject(method = "aiStep", at = @At("HEAD"))
 +    private void rememberPreviousSwimming(final CallbackInfo ci) {
++        if (BedrockInputPermissions.isBedrockConnection()) {
++            BedrockMovementEffects.replayCorrections();
++        }
 +        this.viaFabricPlusBedrock$wasSwimming = this.isSwimming();
 +        this.viaFabricPlusBedrock$inputInWater = this.isInWater();
 +        this.viaFabricPlusBedrock$groundJump = false;
@@ -1213,12 +1231,11 @@ index e5a8167..c15ef5e 100644
 +    @Inject(method = "sendChanges", at = @At("RETURN"))
 +    private void sendBedrockPrediction(final CallbackInfo ci) {
 +        final LocalPlayer player = (LocalPlayer) (Object) this;
-+        if (!BedrockInputPermissions.isBedrockConnection() || !player.connection.hasClientLoaded()
-+                || !ClientPlayNetworking.canSend(PlayerPredictionPayload.TYPE)) {
++        if (!BedrockInputPermissions.isBedrockConnection() || !player.connection.hasClientLoaded()) {
 +            return;
 +        }
 +        final long frame = BedrockMovementEffects.completeFrame();
-+        if (frame < 0) {
++        if (frame < 0 || !ClientPlayNetworking.canSend(PlayerPredictionPayload.TYPE)) {
 +            return;
 +        }
 +        final Vec3 motion = player.getDeltaMovement();
@@ -1549,10 +1566,10 @@ index 0000000..39a52c2
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
 new file mode 100644
-index 0000000..fb16ec7
+index 0000000..7f45f94
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,106 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1583,6 +1600,12 @@ index 0000000..fb16ec7
 +        PayloadTypeRegistry.clientboundPlay().register(MovementEffectPayload.TYPE, MovementEffectPayload.CODEC);
 +        PayloadTypeRegistry.clientboundPlay().register(UnderwaterMovementPayload.TYPE, UnderwaterMovementPayload.CODEC);
 +        PayloadTypeRegistry.clientboundPlay().register(FlightMovementPayload.TYPE, FlightMovementPayload.CODEC);
++        ClientTickEvents.START_CLIENT_TICK.register(client -> {
++            if (client.player != null && client.player.connection.hasClientLoaded()
++                    && BedrockInputPermissions.isBedrockConnection()) {
++                TIMELINE.beginFrame();
++            }
++        });
 +        ClientPlayConnectionEvents.INIT.register((listener, client) ->
 +            ClientPlayNetworking.registerReceiver(MovementEffectPayload.TYPE,
 +                (payload, context) -> {
@@ -1623,6 +1646,10 @@ index 0000000..fb16ec7
 +
 +    public static long completeFrame() {
 +        return TIMELINE.completeFrame();
++    }
++
++    public static void replayCorrections() {
++        TIMELINE.replayCorrections();
 +    }
 +
 +    public static boolean hasGlideBoost(final int entityId) {

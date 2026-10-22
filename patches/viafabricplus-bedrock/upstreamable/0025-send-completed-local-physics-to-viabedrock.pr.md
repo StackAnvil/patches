@@ -1393,3 +1393,36 @@ Native overlap recovery, stepping, and correction replay remain separate gaps. T
 The updated Java client starts with the new movement hooks on ViaProxy. A live BDS 1.26.51.1 control jumps on an elevated bedrock platform, then holds sneak and forward at the edge. Java reports exact Y 250 and holds Z 2.738. BDS confirms the player remains on the platform.
 
 A read-only runtime sampler captures 750 client frames around the elevated jump, edge, and fall controls. Both actual landings reach exactly `Y = AABB.minY = 250.0`. All 31 shift frames stay at that height. No sampled player box penetrates below the platform.
+
+## Retained effect inputs and component replay
+
+The client opens the shared effect input record before local simulation.
+It retains local admissions, reconciles queued commands before player physics, and completes the record with the existing prediction frame clock.
+Captured inputs therefore remain available after a later server removal or activation.
+The shared core journal preserves command/input/countdown order and zero-duration marker presence for command masks.
+Movement-effect revision 3 supplies the exact oldest retained wire clock.
+The series records the dependency on the owning core movement patch.
+
+The pinned native controls match all 336 immediate effect-activity cases and all 84 first historical replays after the change.
+The previous implementation failed 28 historical activity comparisons.
+These controls cover component state and queue order, with explicit snapshot-store, input-method, and arithmetic-physics boundaries.
+They do not establish historical position restoration, full player or vehicle physics, zero-duration impulses, or native trajectories.
+
+The physical frame clock advances even when the prediction channel is unavailable.
+Channel advertisement controls payload publication. It does not freeze effect durations or leave an input record open.
+
+A private BDS 1.26.51.1 probe observes actual admission and completion phases with read-only JVM hooks.
+All 16 local geyser admissions enter open input records and remain present at completion.
+The observer records 18 effect confirmations and one replay entry with a pending movement mask.
+Java runs the sulfur block ticker after player physics and before the completed-frame send.
+The earlier observer therefore sampled each new input record before the block ticker populated it.
+
+The 30-second recording reaches gameplay and completes normal client, server, and display cleanup.
+This establishes local input capture and retention through completion.
+It does not establish full historical physics, native trajectories, or the cause of the earlier shutdown hang.
+
+The integrated four-project build preserves the incoming cooking fixes and passes 2,391 tests, with 213 optional skips and no failures.
+All 104 core patches and 38 add-on patches replay without conflicts.
+All 1,390 embedded core classes match the rebuilt core.
+Checkstyle and offline patch validation pass.
+The separate cooking regression suite also passes all 13 cases with the private native wire reference enabled.
