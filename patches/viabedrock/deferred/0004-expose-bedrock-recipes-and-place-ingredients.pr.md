@@ -67,3 +67,8 @@ The pinned native stripped-oak-wood factory, property registration, palette cons
 They produce canonical metadata 0, 1 and 2 for axes y, x and z.
 The fixture supplies a null-material vector and empty optional component ownership.
 It does not establish other builtin class constructors, runtime-ID assignment or visible parity.
+
+Recipe results now use the same connection constructor as inventory stacks and retain their clientbound write guard.
+The complete signed-short count sweep uses the registry constructor for all 65,536 inputs.
+Both wire auxiliary values 0 and 8 construct canonical metadata 0 before the production grid matcher checks the default and alternate axis.
+The full build and eleven inventory controls pass; the authored cooking catalog and native controls remain unfinished.

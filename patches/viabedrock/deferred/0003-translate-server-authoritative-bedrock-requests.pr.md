@@ -495,7 +495,8 @@ Warm auxiliary caches, empty alias maps, allocation, CRT, TLS and locks are supp
 The Java comparison covers all 440 cases, including negative and wide int32 metadata before signed-short narrowing.
 A separate regression executes the production matcher after both item codecs and checks the stripped-wood default and alternate axis.
 
-Production raw-header retention remains incomplete: existing codecs still replace invalid runtime IDs before registry resolution.
+Both network codecs now resolve raw headers through the connection registry before user-data loading.
+Incoming runtime candidates require matching numeric Item ownership; outgoing headers use native descriptor identity.
 Actual alias initialization, unmodeled custom archetypes, saved-item construction and the native cooking-source collector also remain open.
 These changes establish recipe matching progress, not complete native inventory or cooking-screen parity.
 
@@ -510,3 +511,39 @@ A focused rerun places both planks and produces four sticks; reconnect passes in
 All nine gameplay actions therefore pass across the two recordings; the initial recording retains its failed test result.
 All four launched profiles match the 1,360 rebuilt core classes and both block-item resources.
 Both runs stop their private displays normally. These controls use Java screens and do not establish native UI parity.
+
+## Connection-aware network Item construction (October 22, 2026)
+
+Both network item codecs now pass raw auxiliary bits and runtime IDs to the connection constructor before loading user data.
+The constructor validates runtime Block ownership against the original Item, then resolves the associated Legacy only when necessary.
+It keeps exact runtime slots even when an archetype's canonical auxiliary descriptor remains unknown.
+Recipe results use the same constructor, and recipe matching consumes the constructed Item without reconstructing it.
+
+Count invalidation clears Item and Block ownership and skips user-data loading.
+The native block-item constructor can reapply wildcard metadata after that invalidation; the implementation retains this detail.
+Outgoing headers use the concrete descriptor's numeric ID and canonical auxiliary value.
+Empty descriptors retain independent stack network IDs and omit user data.
+
+Both Java decoder paths match 2,250 native parsed-header constructor results in each wire format.
+The comparison covers resolved Item ID, auxiliary metadata, count, Block presence, exact runtime slot, descriptor identity and hash.
+Both outgoing headers match 384 complete native descriptor-producer executions.
+Six further native empty-stack producer cases retain outer network IDs and produce no user-data bytes.
+The recipe-result count sweep runs through the registry constructor for all 65,536 signed-short inputs.
+
+These fixtures execute Bedrock 1.26.51.1, build 51061372, with supplied registry/palette storage, warm auxiliary caches and runtime seams.
+They do not establish binary reader equivalence, actual item installation, specialized user-data loading, saved-NBT construction or all custom archetypes.
+The native cooking-source collector and authored workstation controls remain unfinished.
+The movement, mount, camera and rendering requirements of the five-area goal also remain active.
+
+All four projects build with 2,309 passing tests, 152 optional skips, and no failures or errors.
+The core suite contains 1,489 cases. New native-reference comparisons run without skips.
+Tooling checks, all 264 regressions and offline patch metadata checks pass.
+All 102 core patches and 38 client patches replay cleanly.
+
+A fresh strict-BDS ViaProxy run passes all eleven controls.
+Cooking passes on the furnace, smoker and blast furnace.
+Brewing, authored chest placement, ordinary chest transfer, manual crafting, recipe-book crafting, bulk crafting and both creative replacement cases also pass.
+Join and same-world reconnect pass. Both installed profiles match all 1,363 rebuilt core classes and both block-item resources.
+The runtime probe mutates three temporary Items before the fix and preserves all three afterward. No observer errors occur.
+The run exits successfully and stops the private display normally.
+These controls use Java cooking screens; native workstation presentation and the other goal areas remain open.

@@ -111,3 +111,11 @@ Native controller focus/navigation and complete native pixel parity remain unver
 ## Upstream prerequisites
 
 - [viafabricplus-bedrock patch](../../viafabricplus-bedrock/upstreamable/0029-share-native-ui-scene-rendering.pr.md): Land shared scene and GUI actor rendering before container presentation.
+
+## Constructed Item context (October 22, 2026)
+
+Inventory Item presentation now uses the core snapshot schema constant.
+Schema version three preserves Block presence independently of runtime ID zero.
+The complete core and add-on build together; eleven strict-BDS inventory controls and same-world reconnect pass.
+The rebuilt profiles embed the matching 1,363 core classes and both block-item resources.
+These controls retain the existing Java cooking screens and do not establish native workstation presentation.

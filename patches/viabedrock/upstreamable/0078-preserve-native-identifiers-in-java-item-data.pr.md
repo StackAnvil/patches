@@ -44,7 +44,7 @@ A rebuilt Java 26.3 client through ViaProxy receives the real spear's tag, delay
 
 ## Original decoded item snapshots
 
-The same standard custom data now carries `viabedrock:item_stack` with schema version 2.
+The same standard custom data now carries `viabedrock:item_stack` with schema version 3, including explicit Block presence.
 Core captures this immutable context before Java mapping and NBT rewriting.
 It retains native item identity, auxiliary data, block runtime identity, shield blocking ticks, ordered restrictions, and typed original user data.
 Absent user data remains distinct from an empty compound.
@@ -357,3 +357,22 @@ Executable bytes, emulation programs, and reference outputs remain private.
 **Incomplete:** Production still uses Java hand-item classification and decoded wire snapshots.
 Complete network-descriptor construction, live alias and restriction resolution, component lifecycle, and renderer lifetime remain incomplete or unverified.
 These constructor checks do not establish complete visible timing or first-person parity.
+
+## Constructed header ownership (October 22, 2026)
+
+Snapshot schema version three adds a typed Block-presence byte.
+An associated Block can occupy runtime slot zero; no Block has the same numeric wire value.
+Copies, native Item equality and Java NBT transport now retain that distinction.
+The parser rejects missing or invalid presence bytes and inconsistent absent-block runtime IDs.
+The client inventory consumer uses the shared schema version.
+
+Java display fallback selects its visual state without changing the supplied Item.
+The old mutation changed later recipe and creative-catalog identity while the retained snapshot still described the original object.
+A private runtime control reproduces the mutation for three temporary builtin Items through the actual converter.
+The probe changes no tracked inventory and leaves graphics on the muted private display.
+
+The rebuilt runtime leaves all three temporary Item snapshots unchanged, compared with three mutations in the before-control.
+Both runs complete crafting and same-world reconnect, and all owned services and their private displays close normally.
+The full build passes 2,309 tests with 152 optional skips, and the eleven inventory controls pass on the rebuilt client.
+Core and the add-on must be rebuilt together for snapshot schema version three.
+These checks establish ownership and transport; native visible parity remains unverified.
