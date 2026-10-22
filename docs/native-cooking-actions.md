@@ -25,6 +25,8 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Installed-provider history replacement | 7 cases plus 7 repeated-return controls | Inventory deficits precede hotbar deficits; each return replaces stored history |
 | Installed ordinary source policies | 480 cases | Typed item locks and source count limits for hotbar and inventory |
 | Installed ordinary transfer executor | 30 cases | Native permissions, owned slot mutation, request allocation, and Place-action assembly |
+| Cooking return destination maps | 6 controls | Original initializer selects the combined inventory provider for all three ingredient descriptors |
+| Owned cooking return execution | 24 cases plus 24 repeated-return controls | Native transfers, fallback placement, coherent provider views, and Place actions with an unresolved world target |
 
 These checks cover different boundaries. Their case counts do not measure native gameplay or visual parity.
 
@@ -103,7 +105,8 @@ It then passes the remaining ingredient to generic auto-placement with an all-it
 The return fixture supplies transfer effects at explicit capacities and records the generic auto-placement call.
 It does not execute generic auto-placement.
 The installed-provider fixture below separately establishes capture order and history replacement with supplied transfer effects.
-Cooking-source transfer execution still needs verification before this planner can drive native transactions.
+The owned-backing fixture below executes cooking-source transfers and generic auto-placement with an unresolved world target.
+The complete recipe-selection action pipeline remains unverified.
 
 ## Capture physical slots
 
@@ -175,7 +178,7 @@ Copied-item ownership counts return to their baseline after snapshot and cache c
 
 These controls supply collection names from a separately verified native registry fixture.
 They also supply a game inventory size of 36, an abstract Level, and a live empty recipe service.
-Provider content synchronization supplies owned item caches.
+These controls supply owned provider caches and replace the cache-reset function.
 The original provider constructors, registration, generic manager import, accessors, capture, full item queries, and history replacement execute.
 
 Transfer effects remain an explicit count-mutation boundary with capacity 64.
@@ -221,12 +224,54 @@ No transfer, permission, merge, item-copy, request-allocation, request-validatio
 
 These results cover hotbar and inventory sources.
 The server-menu helper starts from `container_items`, which has separate source-policy registration.
-Cooking-source transfers, generic auto-placement, full controller input, wire serialization, server acceptance, and graphical behavior remain unverified by these fixtures.
+Cooking-source transfers, generic auto-placement, full controller input, wire serialization, server acceptance, and graphical behavior remain outside these ordinary-transfer fixtures.
+
+## Owned cooking return execution
+
+A separate fixture gives each backing container its own physical Item objects.
+The original binding code fills the separate inventory, hotbar, combined inventory, ingredient, fuel, and output caches.
+The cache-reset function at `0x143443d00` executes unchanged.
+Transfers update the combined and separate views through original native callbacks.
+
+The complete cooking destination-map initializer at `0x146c44e80` supplies the return destination vector.
+Six controls cover ingredient descriptors `25`, `45`, and `46` with raw controller field `0x12bc` values `0` and `1`.
+Every ingredient return vector contains one `combined_hotbar_and_inventory_items` entry with its flag set to false.
+These controls do not establish physical input-mode mappings or complete controller construction.
+
+Three fresh processes execute eight return cases each, one process per ingredient descriptor.
+The first seven cases use ingredient counts `0`, `1`, `4`, `5`, `9`, `10`, and `64`.
+Stored inventory and hotbar counts are five and seven; current counts are one and two.
+The original history-return helper restores the inventory deficit before the hotbar deficit.
+It then executes generic auto-placement into the combined inventory provider.
+A count of 64 produces Place actions for four inventory items, five hotbar items, and 55 remaining items.
+
+The eighth case checks occupied-stack capacity and empty-slot placement.
+Stored inventory and hotbar counts are 64 and 63; current counts are 63 and 60.
+Returning 64 ingredients produces four Place actions: inventory one, hotbar three, combined hotbar one, and combined empty-slot 59.
+The final inventory stack and first hotbar stack each contain 64 items.
+The next hotbar slot contains 59 items.
+
+The fixtures check collection descriptors, physical slot indices, counts, and stack-network IDs in the native Place actions.
+The ingredient source retains its supplied positive stack-network ID across these actions.
+The new empty destination uses stack-network ID zero.
+All separate and combined inventory views agree after each return.
+Twenty-four repeated-return controls append no further actions and preserve the replacement history.
+
+Original provider registration, backing construction, binding, cache reset, policies, history capture, return, generic auto-placement, and transfer execution run together.
+Request-manager construction, negative request-ID allocation, Place construction, validation, and append also execute original instructions.
+The fixtures do not substitute these functions.
+
+Initial physical slots, incoming authoritative values, a generic Item definition, numeric stack-network IDs, and collection-name lookup remain supplied inputs.
+Original binding refreshes caches after the supplied authoritative changes.
+Abstract Dimension and BlockSource interfaces exercise the unresolved-world-target branch with no loaded chunk.
+These checks do not cover a loaded furnace block entity or its world updates.
+An empty notification subscriber list, shared world ownership, and three diagnostic string formatters are also supplied.
+Full cooking-manager and controller construction, recipe selection, input delivery, wire serialization, server acceptance, and graphical behavior remain unverified.
 
 ## Implementation boundaries
 
 The [shared UI patch](../patches/viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.patch) owns the cooking messages, scene contracts, and presentation authority.
 The [inventory request patch](../patches/viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.patch) owns request prediction, response reconciliation, and transfer quantities.
 
-Remaining work includes complete controller initialization, the input pipeline, selection-history boundaries, cooking-source transfer execution, revision-bound action handling, and authored client controls.
+Remaining work includes complete controller initialization, the input pipeline, selection-history boundaries, the complete recipe-selection transfer pipeline, loaded world targets, revision-bound action handling, and authored client controls.
 Native visual comparisons remain separate from these instruction-level checks.
