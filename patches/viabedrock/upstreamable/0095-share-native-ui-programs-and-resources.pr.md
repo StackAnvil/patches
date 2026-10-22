@@ -2,6 +2,23 @@ Share immutable UI programs, domain bindings, scene contracts and accepted resou
 
 Run evaluator, binding, texture and message codec tests before the transport integration.
 
+## Cooking program prerequisite
+
+Share the pinned furnace, blast-furnace and smoker declarations, fixed slots, recipe ordering, progress arithmetic and navigation transitions.
+Keep recipe preview references separate from real inventory slot addresses.
+Bounded snapshot and action contracts retain the menu, presentation and inventory revisions.
+These APIs do not advertise cooking screens or replace the existing workstation controls.
+The authoritative catalog, client producer and complete input handling still need integration.
+
+Native executable fixtures cover 2,700 tab queries, 140 tab callbacks, 64 layout transitions and 176 progress cases.
+The progress cases include two signed-division traps.
+The fixtures supply allocation, initialized models and downstream setter boundaries.
+They do not establish complete controller execution or visible parity.
+
+The full stack replays and all four projects build.
+Java verification passes 2,204 tests, with 152 optional skips and no failures or errors.
+The focused cooking, transport and container suite passes all 61 tests.
+
 ## Brewing program and counters
 
 The pinned Bedrock 1.26.51.1 assets supply the brewing screen, three indexed bottle cells, and fixed ingredient and fuel collections.
