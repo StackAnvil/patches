@@ -1403,9 +1403,13 @@ The shared core journal preserves command/input/countdown order and zero-duratio
 Movement-effect revision 3 supplies the exact oldest retained wire clock.
 The series records the dependency on the owning core movement patch.
 
-The pinned native controls match all 336 immediate effect-activity cases and all 84 first historical replays after the change.
-The previous implementation failed 28 historical activity comparisons.
-These controls cover component state and queue order, with explicit snapshot-store, input-method, and arithmetic-physics boundaries.
+The generated-input controls match 336 immediate effect-activity cases and 84 first replay cases under a supplied snapshot boundary.
+They establish input and queue order, with explicit snapshot-store, input-method, and arithmetic-physics boundaries.
+The earlier presence-only snapshot oracle populated the wrong component slot.
+Fresh packed-store controls establish that movement effects retain complete timestamp, duration, and kind vectors.
+The shared journal now restores the first dirty snapshot and refreshes later snapshots before commands and inputs.
+This prevents unrelated effects from consuming past countdowns twice and preserves corrected history for later rewinds.
+Both regressions fail with the earlier journal and pass with the snapshot fix.
 They do not establish historical position restoration, full player or vehicle physics, zero-duration impulses, or native trajectories.
 
 The physical frame clock advances even when the prediction channel is unavailable.
@@ -1421,8 +1425,8 @@ The 30-second recording reaches gameplay and completes normal client, server, an
 This establishes local input capture and retention through completion.
 It does not establish full historical physics, native trajectories, or the cause of the earlier shutdown hang.
 
-The integrated four-project build preserves the incoming cooking fixes and passes 2,391 tests, with 213 optional skips and no failures.
+The integrated four-project build preserves the incoming cooking fixes and passes 2,402 tests, with 212 optional skips and no failures.
 All 104 core patches and 38 add-on patches replay without conflicts.
-All 1,390 embedded core classes match the rebuilt core.
+All 1,393 embedded core classes match the rebuilt core.
 Checkstyle and offline patch validation pass.
 The separate cooking regression suite also passes all 13 cases with the private native wire reference enabled.

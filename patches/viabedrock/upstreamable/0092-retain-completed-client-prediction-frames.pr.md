@@ -187,8 +187,10 @@ The client opens each record before simulation, reconciles effects before local 
 Server commands precede captured inputs. Completed replay frames then run the effect countdown.
 The current open frame consumes its duration during physics before its normal countdown.
 
-Native effect snapshots preserve component presence rather than copying the duration vector.
-The journal therefore starts with current effect values and replays commands, admissions, and countdowns.
+Native effect snapshots copy timestamps, durations, and kinds into an owned vector.
+The journal restores the first dirty frame before commands, admissions, and countdowns.
+It refreshes later snapshots before their commands so repeated corrections retain the corrected history.
+This prevents unrelated effects from consuming their past countdowns twice.
 Captured geyser admissions can restore a 100-tick effect after a server removal.
 Other effect kinds also receive each replayed countdown.
 Commands with zero movement masks remain queued until a later command requests replay.
@@ -207,10 +209,33 @@ Its ECS snapshot store, allocator, clock, input methods, and arithmetic physics 
 Four additional controls verify that clock discontinuities remove old frames but preserve pending commands and movement masks.
 These controls do not execute native world physics or prove client trajectories.
 
-Before this change, production matched all 336 immediate effect-activity controls but failed 28 of 84 historical replay controls.
-The journal now matches all 336 immediate controls and all 84 first historical replays.
+The generated-input controls match all 336 immediate cases and all 84 first replay cases under their supplied snapshot boundary.
+Those controls establish input and command order, not packed snapshot semantics.
 The targeted regressions also cover pending transfer, ordinary countdown, clamped clocks, zero-mask command retention, actor removal, and strict context transport.
-The shared fixture test uses `STACKANVIL_MOVEMENT_INPUT_REPLAY_REFERENCE` and remains optional when the private evidence is absent.
+The shared input fixture uses `STACKANVIL_MOVEMENT_INPUT_REPLAY_REFERENCE` and remains optional when the private evidence is absent.
+
+The earlier presence-only snapshot probe used cached table slot 76, whose component hash is `fa93038f`.
+MovementEffectsComponent `5c92321d` uses slot 72, snapshot bit 70, and vector offset `0x5e0`.
+The earlier claim about effect snapshot semantics was incorrect.
+Eighteen fresh native controls capture and restore complete timestamps, durations, and kinds into independent owned vectors.
+The source vector changes after capture, and the destination differs before restore.
+Original packed capture `143276a40` and restore `14327b6f0`/`14327b7c0` recover the captured values.
+Typed-store discovery, allocation, generic CRT memory copy, and the extra restore-copy list remain fixture boundaries.
+
+Two regressions fail with the previous journal and pass with independent snapshots.
+They cover an unrelated effect countdown and a later correction after an earlier rewind.
+
+Sixty-four additional controls execute original packed history comparison, frame capture, packed capture, snapshot restore, packed restore, and replay together.
+Twenty-four cases replay, with no mismatches against the explicit arithmetic witness.
+All six initial history blobs also use original packed capture.
+The copied components include StateVector (36 bytes), AABBShape (32), actor rotation (16), angular state (20), and Offsets (68).
+Typed-store and cache construction, the extra restore-copy list, presence transitions, input methods, and world physics remain boundaries.
+These controls keep grounded tags absent.
+
+Ten native VehicleComponent controls preserve independent membership vectors after the live vector changes.
+They cover empty, single, multiple, and aligned large vectors, with empty and allocated destinations.
+Captured and restored vectors preserve member order and do not alias the live vector.
+Actor lifetime, mount graph changes, seat ownership, and client vehicle physics remain unverified.
 
 **Incomplete:** This replays effect components without restoring historical player or vehicle positions and velocities.
 Full physics steps, mutable attributes, posture and collision state, zero-duration impulses, and complete trajectory comparisons still need integration.
@@ -221,9 +246,9 @@ This establishes the producer and frame lifecycle, not complete native physics o
 The cause of the earlier shutdown failure remains unproven.
 
 
-The integrated four-project build preserves the incoming cooking fixes and passes 2,391 tests, with 213 optional skips and no failures.
+The integrated four-project build preserves the incoming cooking fixes and passes 2,402 tests, with 212 optional skips and no failures.
 All 104 core patches and 38 add-on patches replay without conflicts.
-All 1,390 embedded core classes match the rebuilt core.
+All 1,393 embedded core classes match the rebuilt core.
 Checkstyle and offline patch validation pass.
 The separate cooking regression suite also passes all 13 cases with the private native wire reference enabled.
 

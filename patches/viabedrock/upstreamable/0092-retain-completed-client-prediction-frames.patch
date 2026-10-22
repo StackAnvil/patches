@@ -1,4 +1,4 @@
-From 1ca0cf47390c129c83b258b352317cbd3ef43e69 Mon Sep 17 00:00:00 2001
+From a1c48e11bcc58580d3ab911b30a5429a6ab4a20e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -472,9 +472,10 @@ native world physics. This change implements clock admission and retention;
 actual historical component restoration and client physics replay remain open.
 
 Retain local movement-effect input admissions and ordered server commands
-through historical component replay. Native effect snapshots preserve
-component presence rather than copying duration values. Keep current values,
-apply queued unadjusted commands, then captured inputs, then countdown.
+through historical component replay. Snapshot complete effect values before
+simulation, restore the first dirty frame, then apply queued unadjusted
+commands, captured inputs and countdown. Refresh later snapshots during
+replay so subsequent corrections retain already-corrected history.
 Preserve zero-duration marker lifetime, pending command transfer and commands
 with a zero movement mask until another command requests replay.
 
@@ -490,6 +491,24 @@ commands and movement masks. Original generated effect inputs reproduce
 28 prior activity mismatches; production now matches all 336 immediate
 controls and all 84 first historical replays. These controls do not establish
 position restoration, native world physics or complete trajectory parity.
+
+Verify the packed actor snapshot path before selecting mutable history
+semantics. Original143276a40 and14327b6f0/14327b7c0 clone and restore
+MovementEffectsComponent5c92321d at cached table slot72, including timestamps,
+durations and kind. Eighteen controls execute those owned vector copies.
+The earlier presence-only probe populated slot76, which is another type;
+its claimed effect snapshot semantics were incorrect. The336 generated
+input controls remain bounded by their supplied snapshot implementation.
+
+Retain independent effect snapshots to prevent unrelated timers from aging
+twice during a rewind. Refresh subsequent snapshots before commands and
+input. Both regressions fail with the previous journal and pass with the
+snapshot implementation. Sixty-four original correction/capture/replay
+controls now use packed history comparison, capture and restore, including
+StateVector36, AABBShape32, rotation16, angular20 and Offsets68. Ten original
+VehicleComponent vector controls retain independent historical membership
+and order. Controlled ECS/cache providers, extra restore-copy registration,
+input phases and world physics remain separate boundaries and gaps.
 ---
  build.gradle                                  |   29 +
  .../api/model/CollisionContact.java           |   80 ++
@@ -499,7 +518,7 @@ position restoration, native world physics or complete trajectory parity.
  .../viabedrock/api/model/GeyserMovement.java  |   87 ++
  .../viabedrock/api/model/GlideMovement.java   |   64 +
  .../viabedrock/api/model/MovementEffect.java  |  100 ++
- .../api/model/MovementEffectTimeline.java     |  302 +++++
+ .../api/model/MovementEffectTimeline.java     |  330 ++++++
  .../api/model/PlayerCorrection.java           |   46 +
  .../api/model/PlayerCorrectionTracker.java    |   27 +
  .../viabedrock/api/model/PlayerPosture.java   |   63 +
@@ -537,7 +556,7 @@ position restoration, native world physics or complete trajectory parity.
  .../api/model/GeyserMovementTest.java         |  131 ++
  .../api/model/GlideMovementTest.java          |  115 ++
  .../model/MovementControllerOrderTest.java    |   52 +
- .../api/model/MovementEffectReplayTest.java   |  141 +++
+ .../api/model/MovementEffectReplayTest.java   |  181 +++
  .../api/model/MovementEffectTest.java         |  127 ++
  .../api/model/MovementEffectTimelineTest.java |  253 ++++
  .../api/model/PlayerCorrectionTest.java       |   66 ++
@@ -561,7 +580,7 @@ position restoration, native world physics or complete trajectory parity.
  .../packet/PlayerCorrectionPacketTest.java    |  201 ++++
  .../packet/PlayerPredictionPacketTest.java    |   87 ++
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 70 files changed, 6180 insertions(+), 54 deletions(-)
+ 70 files changed, 6248 insertions(+), 54 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java
@@ -1209,10 +1228,10 @@ index 000000000..28720bcdf
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
 new file mode 100644
-index 000000000..0f2f949b0
+index 000000000..fc0dd8179
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
-@@ -0,0 +1,302 @@
+@@ -0,0 +1,330 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1250,6 +1269,12 @@ index 000000000..0f2f949b0
 +        }
 +        this.capturing = new Frame(this.completedFrame + 1);
 +        this.history.put(this.capturing.id, this.capturing);
++        this.effects.forEach((entityId, states) -> {
++            final Map<MovementEffectType, EffectSnapshot> snapshot = new EnumMap<>(MovementEffectType.class);
++            states.forEach((type, state) -> snapshot.put(type, new EffectSnapshot(state.effect, state.predictedFrame,
++                    state.remainingAt(this.completedFrame), state.presentAt(this.completedFrame))));
++            this.capturing.effects.put(entityId, snapshot);
++        });
 +        for (Command command : this.pending) {
 +            this.enqueue(this.capturing, command, true);
 +        }
@@ -1395,11 +1420,19 @@ index 000000000..0f2f949b0
 +            }
 +            final Map<MovementEffectType, EffectState> states = this.effects.computeIfAbsent(entityId, ignored -> new EnumMap<>(MovementEffectType.class));
 +            final Map<MovementEffectType, ReplayValue> values = new EnumMap<>(MovementEffectType.class);
-+            states.forEach((type, state) -> values.put(type, new ReplayValue(state.effect, state.predictedFrame,
-+                    state.remainingAt(this.completedFrame), state.presentAt(this.completedFrame))));
++            final Map<MovementEffectType, EffectSnapshot> restored = this.history.get(dirty).effects.get(entityId);
++            if (restored != null) {
++                restored.forEach((type, snapshot) -> values.put(type, snapshot.restore()));
++            }
 +            for (Frame frame : this.history.values()) {
 +                if (frame.id < dirty) {
 +                    continue;
++                }
++                // Native replay refreshes subsequent snapshots before their commands and inputs.
++                if (frame.id != dirty) {
++                    final Map<MovementEffectType, EffectSnapshot> snapshot = new EnumMap<>(MovementEffectType.class);
++                    values.forEach((type, value) -> snapshot.put(type, value.capture()));
++                    frame.effects.put(entityId, snapshot);
 +                }
 +                for (Command command : frame.commands) {
 +                    if (command.effect.entityId() == entityId) {
@@ -1420,6 +1453,7 @@ index 000000000..0f2f949b0
 +                }
 +                frame.dirtyActors.remove(entityId);
 +            }
++            states.clear();
 +            values.forEach((type, value) -> states.put(type, value.snapshot(this.completedFrame)));
 +            this.movementMasks.remove(entityId);
 +        }
@@ -1436,6 +1470,7 @@ index 000000000..0f2f949b0
 +        this.movementMasks.removeIf(id -> !present.test(id));
 +        this.pending.removeIf(command -> !present.test(command.effect.entityId()));
 +        for (Frame frame : this.history.values()) {
++            frame.effects.keySet().removeIf(id -> !present.test(id));
 +            frame.commands.removeIf(command -> !present.test(command.effect.entityId()));
 +            frame.inputs.removeIf(input -> !present.test(input.entityId()));
 +            frame.dirtyActors.removeIf(id -> !present.test(id));
@@ -1473,11 +1508,19 @@ index 000000000..0f2f949b0
 +        }
 +    }
 +
++    private record EffectSnapshot(MovementEffect effect, long predictedFrame, int remaining, boolean present) {
++
++        private ReplayValue restore() {
++            return new ReplayValue(this.effect, this.predictedFrame, this.remaining, this.present);
++        }
++    }
++
 +    private record Command(MovementEffect effect, boolean forcesMovement) {
 +    }
 +
 +    private static final class Frame {
 +        private final long id;
++        private final Map<Integer, Map<MovementEffectType, EffectSnapshot>> effects = new HashMap<>();
 +        private final List<Command> commands = new ArrayList<>();
 +        private final List<MovementEffect> inputs = new ArrayList<>();
 +        private final Set<Integer> dirtyActors = new HashSet<>();
@@ -1498,6 +1541,10 @@ index 000000000..0f2f949b0
 +            this.predictedFrame = predictedFrame;
 +            this.remaining = remaining;
 +            this.present = present;
++        }
++
++        private EffectSnapshot capture() {
++            return new EffectSnapshot(this.effect, this.predictedFrame, this.remaining, this.present);
 +        }
 +
 +        private void countdown() {
@@ -4257,10 +4304,10 @@ index 000000000..3416ab840
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectReplayTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectReplayTest.java
 new file mode 100644
-index 000000000..ce42ff3ef
+index 000000000..125f1d671
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectReplayTest.java
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,181 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4278,6 +4325,45 @@ index 000000000..ce42ff3ef
 +import static org.junit.jupiter.api.Assumptions.assumeTrue;
 +
 +class MovementEffectReplayTest {
++
++    @Test
++    void restoresUnrelatedEffectDurationsBeforeReplayingTheirCountdowns() {
++        final var timeline = new MovementEffectTimeline();
++        timeline.accept(new MovementEffect(1, 0, 10, 100, 0, 0, -1, 0));
++        for (int frame = 0; frame < 6; frame++) {
++            timeline.beginFrame();
++            timeline.completeFrame();
++        }
++        timeline.accept(new MovementEffect(1, 2, 100, 102, 2, 105, 5, 100));
++        timeline.replayCorrections();
++        expiresGlideAfter(timeline, 5);
++    }
++
++    @Test
++    void refreshesLaterSnapshotsAfterAnEarlierCorrection() {
++        final var timeline = new MovementEffectTimeline();
++        timeline.accept(new MovementEffect(1, 0, 20, 100, 0, 0, -1, 0));
++        for (int frame = 0; frame < 6; frame++) {
++            timeline.beginFrame();
++            timeline.completeFrame();
++        }
++        timeline.accept(new MovementEffect(1, 0, 100, 101, 1, 105, 5, 100));
++        timeline.accept(new MovementEffect(1, 2, 100, 101, 1, 105, 5, 100));
++        timeline.replayCorrections();
++        timeline.accept(new MovementEffect(1, 1, 100, 103, 3, 105, 5, 100));
++        timeline.replayCorrections();
++        expiresGlideAfter(timeline, 96);
++    }
++
++    private static void expiresGlideAfter(final MovementEffectTimeline timeline, final int frames) {
++        for (int frame = 0; frame < frames; frame++) {
++            assertTrue(timeline.hasGlideBoost(1));
++            timeline.beginFrame();
++            timeline.replayCorrections();
++            timeline.completeFrame();
++        }
++        assertFalse(timeline.hasGlideBoost(1));
++    }
 +
 +    @Test
 +    void replaysCapturedAdmissionAfterRemovalWithoutReadingTheCurrentSource() {
@@ -4346,7 +4432,8 @@ index 000000000..ce42ff3ef
 +    }
 +
 +    @Test
-+    void matchesNativeGeneratedInputsCommandsAndFirstReplay() throws Exception {
++    void matchesNativeInputOrderingWithTheRecordedSnapshotBoundary() throws Exception {
++        // These older input controls supply snapshot storage. They do not establish packed snapshot semantics.
 +        final String reference = System.getenv("STACKANVIL_MOVEMENT_INPUT_REPLAY_REFERENCE");
 +        assumeTrue(reference != null);
 +        for (final var entry : JsonParser.parseString(Files.readString(Path.of(reference))).getAsJsonArray()) {
