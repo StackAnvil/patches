@@ -1,4 +1,4 @@
-From 86960a45738232040fd9b40404fca1d5d7bbd530 Mon Sep 17 00:00:00 2001
+From f18c3bfc39601f7a83279aabc31d03011e805975 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] fix(inventory): confirm survival offhand transfers from
@@ -17,15 +17,25 @@ Block recipe placement during pending legacy offhand transfers, recovery,
 and synthetic cursor ownership. Extend the shared recipe readiness guard
 at this patch, where the legacy state becomes available, so furnace and
 crafting placement cannot race an unconfirmed offhand operation.
+
+Keep client-authoritative authored menu actions behind the same pending
+legacy offhand/cursor and recovery ownership checks. Reject activation
+while a prior transfer owns the inventory, preserve an already active
+presentation while its action waits, and always permit deactivation.
+Verify the actual native control channel, rejected activation status,
+and separation from the authoritative request session in a packet test.
 ---
  .../protocol/packet/InventoryPackets.java     | 143 +++++++++++++++-
+ .../protocol/packet/MultiStatePackets.java    |  18 ++-
  .../storage/InventoryRequestTracker.java      | 152 ++++++++++++++++--
  .../protocol/packet/InventoryPacketsTest.java |  66 ++++++++
+ .../NativeContainerOffhandGuardTest.java      |  95 +++++++++++
  .../storage/InventoryRequestTrackerTest.java  |  75 +++++++++
- 4 files changed, 420 insertions(+), 16 deletions(-)
+ 6 files changed, 531 insertions(+), 18 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NativeContainerOffhandGuardTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index c166c0851..9fc66a838 100644
+index aea61ad67..aa66bf681 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -580,7 +580,6 @@ public final class InventoryPackets {
@@ -129,7 +139,7 @@ index c166c0851..9fc66a838 100644
                          if (!requestTracker.queueButtonClick(container, button)) {
                              PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
                          }
-@@ -1810,6 +1834,111 @@ public final class InventoryPackets {
+@@ -1813,6 +1837,111 @@ public final class InventoryPackets {
                  new InventoryTransactionData.NormalTransactionData());
      }
  
@@ -241,6 +251,42 @@ index c166c0851..9fc66a838 100644
      private static BedrockItem readCreativeItem(final PacketWrapper wrapper, final ItemRewriter itemRewriter)
              throws InformativeException {
          return readCreativeItem(wrapper, itemRewriter.getItems().getOrDefault("minecraft:shield", 0));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index 5ffd06945..3c5986599 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -17,6 +17,10 @@
+  */
+ package net.raphimc.viabedrock.protocol.packet;
+ 
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
++
+ import net.raphimc.viabedrock.protocol.storage.NativeContainerUiState;
+ import net.raphimc.viabedrock.protocol.storage.NativeCookingUiState;
+ import net.raphimc.viabedrock.api.model.NativeCookingMessage;
+@@ -208,8 +212,18 @@ public final class MultiStatePackets {
+                     && wrapper.user().get(ChannelStorage.class).hasChannel(NativeContainerStatus.CHANNEL)) {
+                 try {
+                     final var action = wrapper.read(NativeContainerAction.TYPE);
+-                    final boolean accepted = wrapper.user().get(NativeContainerUiState.class)
+-                            .handleAction(action);
++                    final var state = wrapper.user().get(NativeContainerUiState.class);
++                    final var requests = wrapper.user().get(InventoryRequestTracker.class);
++                    final var session = wrapper.user().get(GameSessionStorage.class);
++                    final boolean ready = session != null && requests != null
++                            && (session.isInventoryServerAuthoritative()
++                                || requests.canStartRecipePlacement() && !requests.isPredictingClick());
++                    if (!ready && action.mode() == NativeContainerAction.Mode.ACTIVATE) {
++                        state.handleAction(new NativeContainerAction(action.menuId(), action.sequence(), action.revision(),
++                                NativeContainerAction.Mode.DEACTIVATE, -1));
++                    }
++                    final boolean accepted = (ready || action.mode() == NativeContainerAction.Mode.DEACTIVATE)
++                            && state.handleAction(action);
+                     if (action.mode() == NativeContainerAction.Mode.ACTIVATE) {
+                         final var status = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, wrapper.user());
+                         status.write(Types.STRING, NativeContainerStatus.CHANNEL);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
 index 8ec946ec8..c695b43ce 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
@@ -573,6 +619,107 @@ index 7dccb3cc7..6cf158244 100644
      @Test
      void entityBackedGenericContainerKeepsTheWireTypeAndUsesEntitySlots() {
          final UserConnection user = (UserConnection) Proxy.newProxyInstance(
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeContainerOffhandGuardTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeContainerOffhandGuardTest.java
+new file mode 100644
+index 000000000..90dd0b300
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeContainerOffhandGuardTest.java
+@@ -0,0 +1,95 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import java.util.Map;
++import net.raphimc.viabedrock.api.model.NativeContainerAction;
++import net.raphimc.viabedrock.api.model.NativeContainerMessage;
++import net.raphimc.viabedrock.api.model.NativeContainerStatus;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
++import net.raphimc.viabedrock.protocol.storage.NativeContainerUiState;
++import org.junit.jupiter.api.Test;
++import org.mockito.ArgumentCaptor;
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class NativeContainerOffhandGuardTest {
++
++    @Test
++    void pendingOffhandOwnershipBlocksNativeTransfersButAlwaysAllowsDeactivation() throws Exception {
++        final var user = mock(UserConnection.class);
++        final var info = mock(ProtocolInfo.class);
++        final var game = mock(GameSessionStorage.class);
++        final var state = mock(NativeContainerUiState.class);
++        final var requests = new InventoryRequestTracker(user);
++        final var channels = new ChannelStorage();
++        channels.addChannels(java.util.List.of(NativeContainerMessage.CURRENT_CHANNEL, NativeContainerStatus.CHANNEL));
++        final Map<Class<?>, Object> stores = Map.of(GameSessionStorage.class, game, NativeContainerUiState.class, state,
++                InventoryRequestTracker.class, requests, ChannelStorage.class, channels);
++        when(user.get(any())).thenAnswer(call -> stores.get(call.getArgument(0)));
++        when(user.getProtocolInfo()).thenReturn(info);
++        when(info.getClientState()).thenReturn(State.PLAY);
++        final var transfer = new NativeContainerAction(6, 1, 0, NativeContainerAction.Mode.AUTO_PLACE_ONE, 9);
++        send(user, transfer);
++        verify(state).handleAction(transfer);
++        clearInvocations(state);
++        when(user.get(GameSessionStorage.class)).thenReturn(null);
++        send(user, transfer);
++        verifyNoInteractions(state);
++        when(user.get(GameSessionStorage.class)).thenReturn(game);
++        requests.awaitLegacyOffhand(new BedrockItem(1));
++        assertTrue(requests.isWaitingForLegacyOffhand());
++        send(user, transfer);
++        verifyNoInteractions(state);
++        final var deactivate = new NativeContainerAction(6, 1, 0, NativeContainerAction.Mode.DEACTIVATE, -1);
++        try (var packets = mockStatic(PacketWrapper.class)) {
++            final var response = mock(PacketWrapper.class);
++            packets.when(() -> PacketWrapper.create(
++                    ClientboundPackets26_3.CUSTOM_PAYLOAD, user)).thenReturn(response);
++            final var activate = new NativeContainerAction(6, 1, 0, NativeContainerAction.Mode.ACTIVATE, -1);
++            send(user, activate);
++            verify(state).handleAction(deactivate);
++            verify(state, never()).handleAction(activate);
++            final var status = ArgumentCaptor.forClass(NativeContainerStatus.class);
++            verify(response).write(eq(NativeContainerStatus.TYPE), status.capture());
++            assertFalse(status.getValue().accepted());
++        }
++        clearInvocations(state);
++        send(user, deactivate);
++        verify(state).handleAction(deactivate);
++        // The server-authoritative session checks its own pending request/response ownership.
++        when(game.isInventoryServerAuthoritative()).thenReturn(true);
++        send(user, transfer);
++        verify(state).handleAction(transfer);
++    }
++
++    private static void send(final UserConnection user, final NativeContainerAction action) throws Exception {
++        final var input = Unpooled.buffer();
++        try {
++            Types.STRING.write(input, NativeContainerMessage.CURRENT_CHANNEL);
++            NativeContainerAction.TYPE.write(input, action);
++            final var packet = new PacketWrapperImpl(ServerboundPackets26_3.CUSTOM_PAYLOAD, input, user);
++            MultiStatePackets.CUSTOM_PAYLOAD_HANDLER.handle(packet);
++            assertTrue(packet.isCancelled());
++            assertFalse(input.isReadable());
++        } finally {
++            input.release();
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
 index c7b0cf7ba..b69f1868d 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java

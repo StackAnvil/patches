@@ -215,3 +215,35 @@ The complete core build passes 1,153 tests with no failures; 30 optional tests r
 ## Upstream prerequisites
 
 - [viabedrock patch](../../viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.pr.md): Land the shared UI program and scene contracts before registering presentation channels.
+
+
+## Client-authoritative chest actions
+
+Authored count-one chest buttons now use normal inventory transactions when the server selects client authority.
+The adapter sends both slot changes with their before and after items.
+It does not require modern stack IDs or wait for an item stack response.
+It publishes Java prediction after transport succeeds and accepts later server slot and content corrections.
+
+Both inventory modes use the same native runtime-ID registry, immutable definitions, constructor-owned stack limits, action scope and destination selection.
+The native combined provider checks compatible occupied slots before empty slots, with hotbar slots before main inventory slots.
+Activation requires the current menu and exported presentation.
+Closing the menu or withdrawing its channels clears the action state.
+
+Native constructor controls target Bedrock 1.26.51.1, build 51061372, protocol 2193.
+The executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+The controls execute normal wrapper `14266bd30`, outgoing body `1427324a0` and packet constructor `14272c690` with owned ordinary item stacks.
+Both boolean input cases preserve the supplied container and player slot changes and complete cleanup with balanced item lifetimes.
+These controls do not verify full controller execution, authority negotiation, native wire bytes or live acceptance.
+The native graphical capture stops at a Microsoft licensing-response error before a game window opens.
+
+Targeted tests cover count conservation, unsigned stack counts, merge order, scoped activation, stale presentations, transport failure and correction before the next action.
+The production codec test writes and reads normal transactions with legacy network-item descriptors.
+It does not compare captured native bytes.
+This first adapter handles authored 27-slot and 54-slot chest presentations.
+Other native providers remain incomplete.
+
+
+The full four-project build passes 2,371 tests, with 152 optional tests skipped and no failures.
+A 180-second live Fabric capture reaches the Galaxite lobby and receives three game-selection forms after two responses.
+It contains no container-open packet and does not exercise the new chest adapter.
+Live server acceptance of that adapter remains unverified.
