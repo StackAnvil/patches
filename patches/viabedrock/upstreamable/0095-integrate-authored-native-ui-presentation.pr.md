@@ -215,6 +215,7 @@ The complete core build passes 1,153 tests with no failures; 30 optional tests r
 ## Upstream prerequisites
 
 - [viabedrock patch](../../viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.pr.md): Land the shared UI program and scene contracts before registering presentation channels.
+- [Native block data](0054-render-native-block-state-geometry-and-materials.pr.md): Land canonical auxiliary descriptors and restriction lookup before native subtype-aware merge checks.
 
 
 ## Client-authoritative chest actions
@@ -248,29 +249,16 @@ A 180-second live Fabric capture reaches the Galaxite lobby and receives three g
 It contains no container-open packet and does not exercise the new chest adapter.
 Live server acceptance of that adapter remains unverified.
 
-## Native stack queries for authored transfers
+## Native stack queries
 
-Both authority modes now use the complete network-loaded native stack query matcher.
-The transfer planner passes the destination as the query and the source as the candidate.
-It supports wildcard auxiliary values, query-sided Block identity, numeric NBT equality, canonical restriction sets, and blocking ticks.
-Cooking output admission shares this implementation through `ItemRewriter.matchesStackQuery`.
-The former cooking-specific class and API are removed.
+Recipe output admission uses the stable-registry full stack query API, `ItemRewriter.matchesStackQuery`.
+It preserves wildcard auxiliary values, query-sided Block identity, numeric NBT equality, canonical restriction sets and blocking ticks.
+The cooking transfer helper `14c54c010` uses comparator `14248dac0` before its action.
+That helper does not establish ordinary authored container merge eligibility.
 
-The target native transfer helper calls comparator `0x14248dac0` before submitting the action.
-Its subtype and durability rules differ from the native item-return predicates.
-The planner keeps those return rules separate.
-Its scope covers retained network-loaded userdata, including derived charged children.
-Independently mutated native child stacks remain outside this representation.
-
-The moved native controls pass 3,278 valid-UTF-8 NBT comparisons, 361 populated-userdata cases, and 96 output-admission controls.
-A planner regression checks merge selection across blocking ticks, restriction differences, mismatched Block pointers, wildcard auxiliary values, and signed floating zero.
-It also checks destination metadata, source metadata, and count conservation.
-These tests do not establish full native controller behavior or live server acceptance.
-
-The full 104-patch core stack replays, and the complete four-project build passes.
-This run passes 2,342 tests, skips 212 optional cases, and reports no failures or errors.
-It enables the three private native matcher fixtures named above; other optional fixture controls remain skipped.
-Offline tooling, regression tests, and patch metadata validation also pass.
+The shared query controls cover native NBT comparisons, populated userdata and output admission.
+The ordinary occupied-slot predicate uses the same userdata comparator and separate stacking rules.
+Independently mutated native charged children remain outside the retained network-stack representation.
 
 ## Client-authoritative redstone storage actions
 
@@ -302,3 +290,38 @@ The complete four-project build passes 2,345 tests, with 212 optional skips and 
 This run enables the NBT equality, populated-userdata, and cooking-admission fixtures.
 Other optional fixture controls remain skipped.
 All Checkstyle and publication tasks pass, and offline validation passes.
+
+## Native occupied-slot merges
+
+
+Both inventory modes now use the native occupied-slot merge predicate for authored count-one transfers.
+Destination durability, typed `Unbreakable` data and constructed stack limits determine stackability.
+Subtype items compare exact effective auxiliary values, including `32767` as an ordinary value.
+Other items ignore auxiliary differences.
+Native userdata, restriction and blocking-state comparisons remain part of merge eligibility.
+Recipe output queries reuse the userdata comparator and retain their separate full identity check.
+
+The pinned native state registration binds `button.container_auto_place_one` to state 12.
+Its entry `144e4bf10` calls `144dfb400`, which invokes model auto-placement.
+Base planner `1433eb800` reaches `1433e9e90` and `1433eab10`.
+Occupied capacity passes through `1431b69d0` and `147c98ca0`, which calls `142488fe0` with the source first.
+The executor also uses that predicate.
+This linkage comes from static inspection of the verified target executable.
+
+Fresh controls execute the complete native merge and destination stackability predicates for 756 cases.
+They use real ComponentItem construction, registry ownership, binary NBT parsing and cleanup.
+The matrix covers stack limits, subtype flags, durability, typed damage, unbreakable fields and auxiliary values.
+Java predicate and destination-selection comparisons pass for every case.
+The old raw planner fails the destination-selection regression.
+
+These controls use standalone Item 259 without an associated Block, restrictions or a charged child.
+Block auxiliary comparison uses the existing canonical descriptor resolver.
+Unresolved subtype metadata cannot establish occupied-slot compatibility.
+Definition replacement lifetimes, restriction hash collisions and specialized Item overrides remain unverified.
+The controls do not establish complete controller execution, native wire bytes or live server acceptance.
+
+The combined core build preserves the concurrent NBT fix and redstone provider support.
+It passes 1,485 tests, with 90 optional tests skipped and no failures.
+The run includes the 756 merge cases, native tag comparisons, populated-userdata controls and cooking-admission controls.
+Main, test and tool Checkstyle and Maven POM generation pass.
+All 104 exported core patches replay to the tested source tree.
