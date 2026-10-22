@@ -2051,7 +2051,8 @@ Validation:
 - The matching Iris replay passes transport checks and extracts 1,614 gem-bag quads across 73 native particle frames.
 - Both routes have no particle-load or observer errors.
 
-The broader rendering check still fails on unresolved marker geometry and the camera item texture.
+Those particle validation runs also report unresolved marker geometry and the camera item texture.
+The CubeConverter patch now retains the marker declaration when optional fields are absent.
 A missing waterlogged block-state warning also remains in the client log.
 This change does not establish native pixel parity or complete particle material behavior under arbitrary shader packs.
 Raw packs, native exports, observer code, and recordings remain private.
