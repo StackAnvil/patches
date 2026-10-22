@@ -100,3 +100,35 @@ All 102 core patches replay, and offline tooling and metadata checks pass.
 A fresh strict-BDS ViaProxy run passes all three cooking stations and same-world reconnect.
 Both launched profiles and the proxy match all 1,367 rebuilt core classes and both block-item resources.
 The private display stops normally. These controls use Java cooking screens.
+
+## Native cooking availability (October 22, 2026)
+
+Selected-recipe placement now evaluates native source presence before creating an inventory request.
+The station adapter checks output ownership and the native air identifier before reading providers.
+It retains station input, furnace fuel, hotbar and inventory order, with optional cursor admission for callers that request it.
+The current Java placement path keeps its empty-cursor requirement.
+
+Availability stops at the first usable alternative input.
+It does not require every alternative or apply transfer capacity and recipe-count limits.
+Available results use state 0 with filtering and state 1 without it.
+Unavailable or invalid outputs use states 3 and 2 respectively.
+Placement still checks its own stack compatibility, capacity, server identities and rollback ownership.
+
+The complete native evaluator, empty/air guard and source collector execute 6,072 cases on the pinned executable.
+Java compares all 4,272 cases with legal boolean filter flags.
+The remaining 1,800 raw-byte controls stay outside the controller contract.
+Supplied boundaries include alternative extraction, controller provider and optional-container lookup, ordinary Item ownership, generic NBT presence and runtime services.
+The actual native name initializer independently confirms `minecraft:air` as the guard's identifier.
+
+This adapter evaluates the selected registered recipe.
+The native displayed-output catalog extracts alternatives through full output-stack matching.
+That extraction, authored catalog population, screen activation and cursor-aware native actions remain unfinished.
+These checks do not establish visible native parity.
+The optional Java comparison reads `STACKANVIL_NATIVE_COOKING_AVAILABILITY`.
+
+All eighteen targeted tests and Checkstyle pass.
+All four projects build with 2,318 passing tests, 152 optional skips and no failures or errors.
+All 102 core patches replay. Tooling, all 264 regressions and patch metadata validation pass.
+A fresh strict-BDS ViaProxy run passes all three cooking stations and same-world reconnect.
+Both launched profiles and the proxy match all 1,368 rebuilt core classes and both block-item resources.
+The private display stops normally. These controls use Java cooking screens.

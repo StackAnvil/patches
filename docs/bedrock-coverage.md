@@ -9545,3 +9545,37 @@ A fresh strict-BDS ViaProxy run passes recipe selection, cooking and result tran
 Join and same-world reconnect pass, and the private display stops normally.
 Both launched profiles and the rebuilt proxy match all 1,367 current core classes and both block-item resources.
 These controls use Java cooking screens and do not establish native presentation parity.
+
+## Native cooking availability (October 22, 2026)
+
+Furnace, smoker and blast-furnace selection now evaluate source presence before starting an inventory request.
+The adapter checks output ownership and the native air identifier first.
+It retains native provider order: station input, furnace fuel, hotbar, inventory and an optional cursor.
+The Java placement path keeps its existing empty-cursor requirement.
+
+The native evaluator stops when any alternative input has a nonempty source list and a nonzero count.
+It does not require every alternative or apply placement capacity and recipe-count limits.
+Filtering produces state 0 for an available input and state 3 otherwise.
+Without filtering, those states are 1 and 2.
+The existing placement planner retains full stack compatibility, capacity, server identities and rollback checks.
+
+A fresh fixture executes the complete target evaluator, empty/air guard and source collector in 6,072 cases.
+Java matches all 4,272 cases with legal boolean filter flags.
+The other 1,800 raw-byte controls remain outside the controller contract.
+Alternative extraction, provider and optional-container lookup, ordinary Item ownership, generic NBT presence and runtime services are supplied boundaries.
+The actual native name initializer independently confirms `minecraft:air` as the guard's identifier.
+
+All eighteen targeted tests and Checkstyle pass.
+All four projects build with 2,318 passing tests, 152 optional skips and no failures or errors.
+All 102 core patches replay. Tooling checks, 264 regressions and patch metadata validation pass.
+The native comparison runs without skips.
+
+The production adapter evaluates a selected registered recipe.
+The full displayed-output catalog still needs native alternative extraction and full output-stack matching.
+Authored catalog population, screen activation, cursor-aware native actions and visible parity remain unfinished.
+The remaining movement, mount, workstation, camera and rendering requirements also remain active.
+
+A fresh strict-BDS ViaProxy run passes all three cooking stations and same-world reconnect.
+Both launched profiles and the rebuilt proxy match all 1,368 core classes and both block-item resources.
+The run exits successfully and stops the private display normally.
+These controls use Java cooking screens and do not establish native presentation parity.
