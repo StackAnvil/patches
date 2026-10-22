@@ -312,3 +312,29 @@ The combined four-project build passes 2,413 tests, with 213 optional skips and 
 All 104 core patches replay with the incoming movement changes preserved.
 The 43 focused cooking, UI-state, planner, and batch tests pass with both native wire comparisons enabled.
 Checkstyle and offline validation pass. All 1,401 core classes match the add-on's embedded core byte for byte.
+
+## Directional action negotiation
+
+Cooking action negotiation now follows the payload direction.
+The client registers its model, progress, and action-result receivers. The core advertises the separate action channel that it receives.
+The core requires play state and server-authoritative inventory before it advertises or consumes actions.
+Duplicate receiver registration does not repeat the advertisement.
+
+Receiver withdrawal removes the advertisement and retires held input without transferring items again.
+Re-registering receivers cannot resume the retired gesture. Loss of server authority also withdraws the capability and clears presentation ownership.
+Packet regressions use real registration and action handlers without registering the action channel as a client receiver.
+The original direction check rejects that valid action. The corrected handler executes it once.
+Fabric screen bindings, complete authored controls, and live route acceptance remain unfinished.
+
+The four-project build passes 2,418 tests, with 213 optional skips and no failures or errors.
+All 45 focused cooking and request tests pass with both native wire comparisons enabled.
+The 104 core and 38 add-on patches replay. Checkstyle and offline validation pass.
+All 1,401 embedded core classes match the rebuilt core byte for byte.
+
+A private Fabric observer verifies the channel lifecycle against BDS 1.26.51.1.
+It observes action sending become unavailable after result-receiver withdrawal, then available after re-registration.
+The production receiver retains all 39 slots across 187 frames from furnace, smoker, and blast-furnace menus, with no observer errors.
+Both client sessions match all 1,401 core classes and four resources.
+
+The three Java cooking cases and same-world reconnect pass. Cleanup leaves no owned client, server, or display processes, and the private observer is removed.
+The observer sends no inventory actions. These observations establish channel lifecycle, while authored action execution and native screen parity remain unverified.

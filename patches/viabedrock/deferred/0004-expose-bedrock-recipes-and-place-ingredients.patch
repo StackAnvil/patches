@@ -1,4 +1,4 @@
-From a7c88437a29a0c91858244f362007c28fb4a5d6a Mon Sep 17 00:00:00 2001
+From f9f064046c2bd8efc0c6ea33fbd3d3d58f040896 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -326,6 +326,17 @@ and the transfer loop's stop at a different item variant. Capture history
 through the empty-ingredient return before filling as the native code
 does, so an output can restore an emptied source slot with its request
 reference instead of choosing a new hotbar destination.
+
+Negotiate cooking actions in the correct payload direction. Client model,
+progress and result receivers enable a separately advertised serverbound
+action channel. Do not require a client receiver for its outgoing action.
+Retain play-state and server-authoritative inventory guards, suppress
+repeated advertisements, and retire held input when a receiver withdraws.
+Re-registration cannot release a gesture from the withdrawn capability.
+Loss of inventory authority also withdraws the capability and presentation.
+Packet regressions exercise real registration and action handlers. The
+original direction check rejects the valid request without transferring.
+Fabric cooking controls and live action acceptance remain incomplete.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 ++
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -352,14 +363,14 @@ reference instead of choosing a new hotbar destination.
  .../protocol/model/recipe/SmithingRecipe.java |   4 +-
  .../protocol/packet/InventoryPackets.java     | 127 +++-
  .../protocol/packet/JoinPackets.java          |   1 +
- .../protocol/packet/MultiStatePackets.java    |  51 ++
+ .../protocol/packet/MultiStatePackets.java    |  55 ++
  .../protocol/rewriter/ItemRewriter.java       |  30 +-
  .../protocol/storage/CraftingDataStorage.java |   3 +-
  .../protocol/storage/CraftingDataTracker.java | 573 ++++++++++++--
  .../storage/FurnaceOptionsStorage.java        | 139 ++++
  .../storage/InventoryRequestTracker.java      |   7 +
  .../protocol/storage/InventoryTracker.java    |   4 +
- .../storage/NativeCookingUiState.java         | 458 +++++++++++
+ .../storage/NativeCookingUiState.java         | 495 ++++++++++++
  .../protocol/types/BedrockTypes.java          |   1 +
  .../types/item/BedrockRecipeResultType.java   |  23 +
  .../types/model/FurnaceOptionsType.java       |  34 +
@@ -380,12 +391,12 @@ reference instead of choosing a new hotbar destination.
  .../protocol/storage/CraftingCursorTest.java  | 158 ++++
  .../storage/CraftingDataTrackerTest.java      | 400 ++++++++++
  .../storage/FurnaceRecipeRequestTest.java     | 708 ++++++++++++++++++
- .../storage/NativeCookingUiStateTest.java     | 399 ++++++++++
+ .../storage/NativeCookingUiStateTest.java     | 505 +++++++++++++
  ...NativeRecipeRegistrationReferenceTest.java | 104 +++
  .../item/BedrockRecipeResultTypeTest.java     | 106 +++
  .../types/model/FurnaceOptionsTypeTest.java   |  75 ++
  .../types/recipe/CraftingDataReaderTest.java  |  81 +-
- 58 files changed, 7063 insertions(+), 161 deletions(-)
+ 58 files changed, 7210 insertions(+), 161 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeAvailability.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeCatalog.java
@@ -2804,7 +2815,7 @@ index 97a3e328b..0056ea516 100644
          user.get(HudVisibilityStorage.class).markJoined();
          user.get(HudVisibilityStorage.class).sendSnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index b405927ae..201bf0b05 100644
+index b405927ae..56b997428 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 @@ -18,7 +18,14 @@
@@ -2822,14 +2833,12 @@ index b405927ae..201bf0b05 100644
  import net.raphimc.viabedrock.api.model.NativeContainerStatus;
  import net.raphimc.viabedrock.api.model.NativeContainerMessage;
  import com.viaversion.viaversion.api.protocol.packet.State;
-@@ -159,6 +166,25 @@ public final class MultiStatePackets {
+@@ -159,6 +166,23 @@ public final class MultiStatePackets {
      public static final PacketHandler CUSTOM_PAYLOAD_HANDLER = wrapper -> {
          wrapper.cancel();
          final String channel = Key.namespaced(wrapper.read(Types.STRING)); // channel
 +        if (channel.equals(NativeCookingAction.CHANNEL)) {
-+            final var channels = wrapper.user().get(ChannelStorage.class);
-+            if (NativeCookingUiState.enabled(wrapper.user()) && channels.hasChannel(NativeCookingAction.CHANNEL)
-+                    && channels.hasChannel(NativeCookingActionResult.CHANNEL)) {
++            if (NativeCookingUiState.actionsEnabled(wrapper.user())) {
 +                try {
 +                    final var action = wrapper.read(NativeCookingAction.TYPE);
 +                    final var state = wrapper.user().get(NativeCookingUiState.class);
@@ -2848,7 +2857,7 @@ index b405927ae..201bf0b05 100644
          if (channel.equals(CameraAimAssistActivation.Control.CHANNEL)) {
              if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY) {
                  final var input = io.netty.buffer.Unpooled.wrappedBuffer(wrapper.read(Types.REMAINING_BYTES));
-@@ -183,6 +209,20 @@ public final class MultiStatePackets {
+@@ -183,6 +207,20 @@ public final class MultiStatePackets {
              }
              return;
          }
@@ -2869,17 +2878,20 @@ index b405927ae..201bf0b05 100644
          if (channel.equals(NativeContainerMessage.CURRENT_CHANNEL)) {
              if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY
                      && wrapper.user().get(ChannelStorage.class).hasChannel(channel)
-@@ -207,6 +247,9 @@ public final class MultiStatePackets {
+@@ -207,6 +245,12 @@ public final class MultiStatePackets {
          if (channel.equals("minecraft:unregister")) {
              final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
              wrapper.user().get(ChannelStorage.class).removeChannels(channels);
++            if (wrapper.user().has(NativeCookingUiState.class)) {
++                wrapper.user().get(NativeCookingUiState.class).refreshActionCapability();
++            }
 +            if (channels.contains(NativeFurnaceOptions.CHANNEL)) {
 +                FurnaceOptionsStorage.sendNativeCapability(wrapper.user(), false);
 +            }
              if (channels.contains(PlayerInputPermissions.CHANNEL) && wrapper.user().has(PlayerInputStorage.class)) {
                  wrapper.user().get(PlayerInputStorage.class).withdrawRawInput();
              }
-@@ -219,6 +262,11 @@ public final class MultiStatePackets {
+@@ -219,6 +263,11 @@ public final class MultiStatePackets {
                      && wrapper.user().has(NativeContainerUiState.class)) {
                  wrapper.user().get(NativeContainerUiState.class).clearActions();
              }
@@ -2891,10 +2903,13 @@ index b405927ae..201bf0b05 100644
              if (wrapper.user().has(VehiclePredictionStorage.class)) {
                  wrapper.user().get(VehiclePredictionStorage.class).refresh();
              }
-@@ -265,6 +313,9 @@ public final class MultiStatePackets {
+@@ -265,6 +314,12 @@ public final class MultiStatePackets {
          if (channel.equals("minecraft:register")) {
              final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
              wrapper.user().get(ChannelStorage.class).addChannels(channels);
++            if (wrapper.user().has(NativeCookingUiState.class)) {
++                wrapper.user().get(NativeCookingUiState.class).refreshActionCapability();
++            }
 +            if (channels.contains(NativeFurnaceOptions.CHANNEL) && wrapper.user().has(FurnaceOptionsStorage.class)) {
 +                wrapper.user().get(FurnaceOptionsStorage.class).sendNativeSnapshot(wrapper.user());
 +            }
@@ -3867,10 +3882,10 @@ index a15bdeeb1..d439b6b5d 100644
      public long currentContainerGeneration() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeCookingUiState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeCookingUiState.java
 new file mode 100644
-index 000000000..8487d5f27
+index 000000000..574db575e
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeCookingUiState.java
-@@ -0,0 +1,458 @@
+@@ -0,0 +1,495 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3889,6 +3904,7 @@ index 000000000..8487d5f27
 +import com.viaversion.viaversion.libs.gson.JsonPrimitive;
 +import net.raphimc.viabedrock.api.model.NativeCookingControl;
 +import net.raphimc.viabedrock.api.model.NativeCookingAction;
++import net.raphimc.viabedrock.api.model.NativeCookingActionResult;
 +import net.raphimc.viabedrock.api.model.NativeCookingMessage;
 +import net.raphimc.viabedrock.api.model.NativeCookingProgress;
 +import net.raphimc.viabedrock.api.model.container.CookingRecipeCatalog;
@@ -3905,6 +3921,7 @@ index 000000000..8487d5f27
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.ViaBedrock;
 +
++import java.nio.charset.StandardCharsets;
 +import java.util.ArrayList;
 +import java.util.Arrays;
 +import java.util.HashMap;
@@ -3939,6 +3956,7 @@ index 000000000..8487d5f27
 +    private long lastRequestSequence;
 +    private CookingUi.Selection selection = new CookingUi.Selection("", -1);
 +    private CookingUi.Selection publishedSelection;
++    private boolean actionsAdvertised;
 +
 +    public NativeCookingUiState(final UserConnection user) {
 +        super(user);
@@ -3951,9 +3969,44 @@ index 000000000..8487d5f27
 +                && user.get(GameSessionStorage.class).isInventoryServerAuthoritative();
 +    }
 +
++    /** The client receives results; the core receives actions on a separate channel. */
++    public static boolean actionsEnabled(final UserConnection user) {
++        return enabled(user) && user.get(ChannelStorage.class).hasChannel(NativeCookingActionResult.CHANNEL);
++    }
++
++    public void refreshActionCapability() {
++        if (this.user().getProtocolInfo().getClientState() != State.PLAY) {
++            this.actionsAdvertised = false;
++            this.clearActions();
++            return;
++        }
++        final boolean available = actionsEnabled(this.user());
++        if (!available) {
++            this.clearActions();
++        }
++        if (available == this.actionsAdvertised) {
++            return;
++        }
++        final var packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++        packet.write(Types.STRING, available ? "minecraft:register" : "minecraft:unregister");
++        packet.write(Types.REMAINING_BYTES, NativeCookingAction.CHANNEL.getBytes(StandardCharsets.UTF_8));
++        packet.send(BedrockProtocol.class);
++        this.actionsAdvertised = available;
++    }
++
++    private void clearActions() {
++        this.gesture = null;
++        this.gestureCommands = Set.of();
++        this.selection = new CookingUi.Selection("", -1);
++    }
++
 +    public static void sendOpening(final UserConnection user, final ContainerUi.Title title) {
 +        final var state = user.get(NativeCookingUiState.class);
-+        if (state != null && enabled(user)) {
++        if (state == null) {
++            return;
++        }
++        state.refreshActionCapability();
++        if (enabled(user)) {
 +            state.publish(() -> state.begin(title));
 +        }
 +    }
@@ -3966,6 +4019,7 @@ index 000000000..8487d5f27
 +        if (enabled(user)) {
 +            state.publish(state::update);
 +        } else {
++            state.refreshActionCapability();
 +            state.clear();
 +        }
 +    }
@@ -4312,10 +4366,8 @@ index 000000000..8487d5f27
 +        this.stationItems = null;
 +        this.playerItems = null;
 +        this.cursorItems = null;
-+        this.gesture = null;
-+        this.gestureCommands = Set.of();
++        this.clearActions();
 +        this.lastRequestSequence = 0;
-+        this.selection = new CookingUi.Selection("", -1);
 +        this.publishedSelection = null;
 +    }
 +
@@ -7804,10 +7856,10 @@ index 000000000..6a785bb05
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeCookingUiStateTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeCookingUiStateTest.java
 new file mode 100644
-index 000000000..090f84a9d
+index 000000000..df9c62485
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeCookingUiStateTest.java
-@@ -0,0 +1,399 @@
+@@ -0,0 +1,505 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7831,6 +7883,7 @@ index 000000000..090f84a9d
 +import net.raphimc.viabedrock.api.model.NativeCookingActionResult;
 +import net.raphimc.viabedrock.api.util.PacketFactory;
 +import net.raphimc.viabedrock.protocol.packet.MultiStatePackets;
++import net.raphimc.viabedrock.protocol.packet.WorldPackets;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
 +import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
@@ -7858,6 +7911,7 @@ index 000000000..090f84a9d
 +import org.mockito.ArgumentCaptor;
 +
 +import java.lang.reflect.Proxy;
++import java.nio.charset.StandardCharsets;
 +import java.util.HashMap;
 +import java.util.ArrayList;
 +import java.util.List;
@@ -7869,6 +7923,106 @@ index 000000000..090f84a9d
 +import static org.mockito.Mockito.*;
 +
 +class NativeCookingUiStateTest {
++
++    @Test
++    void receiverNegotiationAdvertisesTheServerboundChannelAndWithdrawalRetiresHeldInput() throws Exception {
++        final var f = fixture(CookingUi.Family.FURNACE);
++        prepareActions(f);
++        f.station.markServerUpdate();
++        final var message = f.state.begin(new ContainerUi.Title("container.furnace", true)).message();
++        final int recipe = message.view().book().visibleRecipes().iterator().next();
++        final var outbound = new ArrayList<PacketWrapper>();
++        try (var world = mockStatic(WorldPackets.class);
++             var packets = mockStatic(PacketFactory.class);
++             var factory = mockStatic(PacketWrapper.class)) {
++            factory.when(() -> PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, f.user)).thenAnswer(_ -> {
++                final var packet = spy(new PacketWrapperImpl(ClientboundPackets26_3.CUSTOM_PAYLOAD, null, f.user));
++                doNothing().when(packet).send(BedrockProtocol.class);
++                outbound.add(packet);
++                return packet;
++            });
++            channels(f, "minecraft:register", NativeCookingMessage.CHANNEL);
++            channels(f, "minecraft:register", NativeCookingProgress.CHANNEL);
++            assertTrue(outbound.isEmpty());
++            channels(f, "minecraft:register", NativeCookingActionResult.CHANNEL);
++            assertEquals(1, outbound.size());
++            assertEquals("minecraft:register", outbound.getFirst().get(Types.STRING, 0));
++            assertArrayEquals(NativeCookingAction.CHANNEL.getBytes(StandardCharsets.UTF_8), outbound.getFirst().get(Types.REMAINING_BYTES, 0));
++            assertFalse(f.user.get(ChannelStorage.class).hasChannel(NativeCookingAction.CHANNEL));
++            assertTrue(NativeCookingUiState.actionsEnabled(f.user));
++            channels(f, "minecraft:register", NativeCookingActionResult.CHANNEL);
++            assertEquals(1, outbound.size());
++
++            cookingPacket(f, action(message, recipe, 0, 1));
++            assertTrue(outbound.getLast().get(NativeCookingActionResult.TYPE, 0).accepted());
++            assertEquals(10, f.station.getItem(0).amount());
++            channels(f, "minecraft:unregister", NativeCookingActionResult.CHANNEL);
++            assertFalse(NativeCookingUiState.actionsEnabled(f.user));
++            assertEquals("minecraft:unregister", outbound.getLast().get(Types.STRING, 0));
++            assertArrayEquals(NativeCookingAction.CHANNEL.getBytes(StandardCharsets.UTF_8), outbound.getLast().get(Types.REMAINING_BYTES, 0));
++            final int withdrawn = outbound.size();
++            cookingPacket(f, action(message, recipe, 2, 2));
++            assertEquals(withdrawn, outbound.size());
++            channels(f, "minecraft:unregister", NativeCookingActionResult.CHANNEL);
++            assertEquals(withdrawn, outbound.size());
++
++            channels(f, "minecraft:register", NativeCookingActionResult.CHANNEL);
++            assertEquals("minecraft:register", outbound.getLast().get(Types.STRING, 0));
++            cookingPacket(f, action(message, recipe, 2, 3));
++            assertFalse(outbound.getLast().get(NativeCookingActionResult.TYPE, 0).accepted());
++            packets.verify(() -> PacketFactory.sendBedrockInventoryRequest(eq(f.user), any()), times(1));
++            assertEquals(10, f.station.getItem(0).amount());
++            when(f.user.get(GameSessionStorage.class).isInventoryServerAuthoritative()).thenReturn(false);
++            NativeCookingUiState.sendUpdate(f.user);
++            assertEquals("minecraft:unregister", outbound.getLast().get(Types.STRING, 0));
++            assertNull(f.state.update());
++        }
++    }
++
++    @Test
++    void capabilityRequiresEveryReceiverAndPlayAuthority() throws Exception {
++        final var required = List.of(NativeCookingMessage.CHANNEL, NativeCookingProgress.CHANNEL, NativeCookingActionResult.CHANNEL);
++        for (final String missing : required) {
++            final var f = fixture(CookingUi.Family.FURNACE);
++            f.user.get(ChannelStorage.class).addChannels(required.stream().filter(channel -> !channel.equals(missing)).toList());
++            f.user.get(ChannelStorage.class).addChannels(List.of(NativeCookingAction.CHANNEL));
++            try (var factory = mockStatic(PacketWrapper.class)) {
++                assertFalse(NativeCookingUiState.actionsEnabled(f.user));
++                f.state.refreshActionCapability();
++                factory.verifyNoInteractions();
++                f.user.get(ChannelStorage.class).addChannels(List.of(missing));
++                when(f.user.getProtocolInfo().getClientState()).thenReturn(State.CONFIGURATION);
++                f.state.refreshActionCapability();
++                assertFalse(NativeCookingUiState.actionsEnabled(f.user));
++                factory.verifyNoInteractions();
++                when(f.user.getProtocolInfo().getClientState()).thenReturn(State.PLAY);
++                when(f.user.get(GameSessionStorage.class).isInventoryServerAuthoritative()).thenReturn(false);
++                f.state.refreshActionCapability();
++                assertFalse(NativeCookingUiState.actionsEnabled(f.user));
++                factory.verifyNoInteractions();
++                when(f.user.get(GameSessionStorage.class).isInventoryServerAuthoritative()).thenReturn(true);
++                final var packet = mock(PacketWrapper.class);
++                factory.when(() -> PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, f.user)).thenReturn(packet);
++                f.state.refreshActionCapability();
++                verify(packet).write(Types.STRING, "minecraft:register");
++                f.user.get(ChannelStorage.class).removeChannels(List.of(missing));
++                f.state.refreshActionCapability();
++                verify(packet).write(Types.STRING, "minecraft:unregister");
++                verify(packet, times(2)).send(BedrockProtocol.class);
++            }
++        }
++    }
++
++    private static void channels(final Fixture fixture, final String operation, final String channel) throws Exception {
++        final var input = Unpooled.buffer();
++        try {
++            Types.STRING.write(input, operation);
++            input.writeBytes(channel.getBytes(StandardCharsets.UTF_8));
++            MultiStatePackets.CUSTOM_PAYLOAD_HANDLER.handle(new PacketWrapperImpl(ServerboundPackets26_3.CUSTOM_PAYLOAD, input, fixture.user));
++        } finally {
++            input.release();
++        }
++    }
 +
 +    @Test
 +    void negotiatedRecipePacketsExecuteOnceAndReleaseOnlyTheOriginalGesture() throws Exception {
@@ -7900,7 +8054,7 @@ index 000000000..090f84a9d
 +            assertTrue(sent.isEmpty());
 +            assertTrue(outbound.isEmpty());
 +            f.user.get(ChannelStorage.class).addChannels(List.of(NativeCookingMessage.CHANNEL, NativeCookingProgress.CHANNEL,
-+                    NativeCookingAction.CHANNEL, NativeCookingActionResult.CHANNEL));
++                    NativeCookingActionResult.CHANNEL));
 +            cookingPacket(f, press);
 +            assertEquals(1, sent.size());
 +            assertEquals(2, outbound.size());
@@ -8147,6 +8301,10 @@ index 000000000..090f84a9d
 +        when(session.isInventoryServerAuthoritative()).thenReturn(true);
 +        storage.put(GameSessionStorage.class, session);
 +        storage.put(ChannelStorage.class, new ChannelStorage());
++        storage.put(NativeSkinStorage.class, mock(NativeSkinStorage.class));
++        storage.put(PlayerInputStorage.class, mock(PlayerInputStorage.class));
++        storage.put(HudVisibilityStorage.class, mock(HudVisibilityStorage.class));
++        storage.put(CameraEffectsStorage.class, mock(CameraEffectsStorage.class));
 +        storage.put(FurnaceOptionsStorage.class, new FurnaceOptionsStorage());
 +        storage.put(ResourcePackStorage.class, new ResourcePackStorage(List.of()));
 +        final var tracker = new CraftingDataTracker(user);
