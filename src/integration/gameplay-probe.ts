@@ -1064,6 +1064,17 @@ export async function driveGameplay(
         const window = await javaWindow(ui);
         await clickGui(ui, window, 176, 166, 12, 40);
         await Bun.sleep(300);
+        // The bamboo recipe sorts before the plank recipe. Select only craftable entries.
+        await ui([
+          "ui",
+          "click",
+          String((window.width / 2 - 92) / window.width),
+          String((window.height / 2 - 126) / window.height),
+          "left",
+          "--client",
+          "java",
+        ]);
+        await Bun.sleep(300);
         await ui([
           "ui",
           "click",
