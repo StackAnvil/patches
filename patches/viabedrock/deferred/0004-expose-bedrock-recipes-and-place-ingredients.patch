@@ -1,4 +1,4 @@
-From d3a59aa88cd8bc8b0efb346d9d1b3aa127300e41 Mon Sep 17 00:00:00 2001
+From 1978d2be4f08caa9f653fc55f0797474b574130f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -222,6 +222,19 @@ updates retain item authority and use a separate small revisioned message.
 This supplies the production model and transport. Client authored cooking
 screens, activation, search/navigation controls, and native quantity/cursor
 actions remain unfinished and are not inferred from Java screen controls.
+
+Return mismatched cooking input with the shared source-first occupied-slot
+merge predicate. Raw stack equality rejected auxiliary variants of items
+that do not stack by data, and accepted damaged occupied destinations that
+native stacking rejects. Keep recipe-query matching and Java recipe-book
+placement quantities separate from this ordinary return transfer.
+
+The pinned 1.26.51.1 transfer engine at 1433e8380 uses occupied-stack
+predicate 142488fe0 with the moving source first. Reuse ItemRewriter's
+constructed stacking properties and canonical auxiliary resolution. Two
+regressions fail before this change: native auxiliary merging with a full
+inventory, including request references and rejection recovery, and atomic
+refusal when only a damaged occupied destination has capacity.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 ++
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -230,7 +243,7 @@ actions remain unfinished and are not inferred from Java screen controls.
  .../model/container/CookingRecipeSources.java |  87 +++
  .../model/container/CraftingOutputPlan.java   | 109 ++++
  .../model/container/CraftingPlacement.java    | 229 +++++++
- .../container/FurnaceRecipePlacement.java     | 205 +++++++
+ .../container/FurnaceRecipePlacement.java     | 207 +++++++
  .../block/CraftingTableContainer.java         | 100 +--
  .../container/block/FurnaceContainer.java     | 112 ++++
  .../model/container/player/HudContainer.java  |   3 +
@@ -265,7 +278,7 @@ actions remain unfinished and are not inferred from Java screen controls.
  .../container/CookingRecipeSourcesTest.java   | 146 +++++
  .../container/CraftingOutputPlanTest.java     |  84 +++
  .../container/CraftingPlacementTest.java      | 161 +++++
- .../container/FurnaceRecipePlacementTest.java | 314 ++++++++++
+ .../container/FurnaceRecipePlacementTest.java | 349 +++++++++++
  .../player/InventoryContainerTest.java        | 131 ++++
  .../model/recipe/MolangTagQueryTest.java      |  53 ++
  .../model/recipe/RecipeOwnershipTest.java     |  52 ++
@@ -274,13 +287,13 @@ actions remain unfinished and are not inferred from Java screen controls.
  .../storage/CookingRecipeBookTest.java        | 154 +++++
  .../protocol/storage/CraftingCursorTest.java  | 158 +++++
  .../storage/CraftingDataTrackerTest.java      | 400 ++++++++++++
- .../storage/FurnaceRecipeRequestTest.java     | 316 ++++++++++
+ .../storage/FurnaceRecipeRequestTest.java     | 363 +++++++++++
  .../storage/NativeCookingUiStateTest.java     | 286 +++++++++
  ...NativeRecipeRegistrationReferenceTest.java | 104 ++++
  .../item/BedrockRecipeResultTypeTest.java     | 106 ++++
  .../types/model/FurnaceOptionsTypeTest.java   |  75 +++
  .../types/recipe/CraftingDataReaderTest.java  |  81 ++-
- 57 files changed, 6009 insertions(+), 161 deletions(-)
+ 57 files changed, 6093 insertions(+), 161 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeAvailability.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeCatalog.java
@@ -993,10 +1006,10 @@ index 000000000..a6c19807a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java b/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
 new file mode 100644
-index 000000000..fa88d22a4
+index 000000000..6a59bd5b9
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,207 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1022,6 +1035,7 @@ index 000000000..fa88d22a4
 +import java.util.List;
 +import java.util.Map;
 +import java.util.Set;
++import java.util.function.BiPredicate;
 +import java.util.function.Function;
 +import java.util.function.Predicate;
 +import java.util.function.ToIntFunction;
@@ -1034,6 +1048,7 @@ index 000000000..fa88d22a4
 +    public static Plan plan(final CraftingDataStorage data, final FurnaceContainer furnace,
 +            final InventoryContainer inventory, final boolean maxItems,
 +            final ToIntFunction<BedrockItem> maximum, final Function<BedrockItem, ItemRecipeKey> identity,
++            final BiPredicate<BedrockItem, BedrockItem> canMerge,
 +            final Predicate<BedrockItem> matches) {
 +        if (!furnace.acceptsRecipe(data) || inventory.size() != 36) {
 +            return null;
@@ -1060,7 +1075,7 @@ index 000000000..fa88d22a4
 +                for (int slot = 0; slot < available.length && !input.isEmpty(); slot++) {
 +                    final BedrockItem destination = available[slot];
 +                    if (!inventory.canPlaceItem(slot, input) || (merge
-+                            ? destination.isEmpty() || !hasServerId(destination) || destination.isDifferent(input)
++                            ? destination.isEmpty() || !hasServerId(destination) || !canMerge.test(input, destination)
 +                            : !destination.isEmpty())) {
 +                        continue;
 +                    }
@@ -1379,7 +1394,7 @@ index fec81fe6c..178d1ef15 100644
 -
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
-index 09fb14352..44a1dd8ec 100644
+index 09fb14352..60533d224 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
 @@ -22,10 +22,31 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -1447,7 +1462,7 @@ index 09fb14352..44a1dd8ec 100644
 +        final InventoryContainer player = inventory.getInventoryContainer();
 +        final var items = this.user.get(ItemRewriter.class);
 +        final var plan = FurnaceRecipePlacement.plan(data, this, player, maxItems,
-+                items::maxStackSize, items::recipeKey,
++                items::maxStackSize, items::recipeKey, items::canMerge,
 +                candidate -> inputs.stream().anyMatch(input -> items.matchesRecipeStack(input, candidate)));
 +        if (plan == null) {
 +            return false;
@@ -4721,10 +4736,10 @@ index 000000000..bb3b16e1d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java
 new file mode 100644
-index 000000000..80a310a94
+index 000000000..20e5d2d7d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacementTest.java
-@@ -0,0 +1,314 @@
+@@ -0,0 +1,349 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4735,12 +4750,14 @@ index 000000000..80a310a94
 +import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.nbt.tag.ListTag;
 +import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.model.NativeItemStacking;
 +import net.raphimc.viabedrock.api.model.container.block.BlastFurnaceContainer;
 +import net.raphimc.viabedrock.api.model.container.block.FurnaceContainer;
 +import net.raphimc.viabedrock.api.model.container.block.SmokerContainer;
 +import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ComponentItemStackingProperties;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptorType;
@@ -4753,6 +4770,7 @@ index 000000000..80a310a94
 +import java.lang.reflect.Proxy;
 +import java.util.Arrays;
 +import java.util.List;
++import java.util.Set;
 +import java.util.UUID;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -4890,6 +4908,31 @@ index 000000000..80a310a94
 +    }
 +
 +    @Test
++    void returnRejectsDamagedOccupiedStacksWithoutMutatingEitherInventory() {
++        final UserConnection user = user();
++        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        final InventoryContainer inventory = inventory(user);
++        for (int slot = 0; slot < inventory.size(); slot++) {
++            inventory.setItem(slot, item(9, 64, 100 + slot));
++        }
++        inventory.setItem(0, item(2, 3, 100));
++        final var tag = new CompoundTag();
++        tag.putInt("Damage", 1);
++        final var destination = item(9, 60, 109);
++        destination.setTag(tag.copy());
++        inventory.setItem(9, destination);
++        final var previous = item(9, 4, 17);
++        previous.setTag(tag);
++        furnace.setItem(0, previous);
++        final BedrockItem[] before = Arrays.stream(inventory.getItems()).map(BedrockItem::copy).toArray(BedrockItem[]::new);
++
++        assertNull(plan(recipe("furnace", 2, 1), furnace, inventory, false, 64,
++                new ComponentItemStackingProperties(64, null, false, true)));
++        assertEquals(previous, furnace.getItem(0));
++        assertArrayEquals(before, inventory.getItems());
++    }
++
++    @Test
 +    void broadIngredientSelectsUsableVariantAndBulkChoosesTheLargerStack() {
 +        final UserConnection user = user();
 +        final FurnaceContainer furnace = new FurnaceContainer(user, (byte) 5, null, null);
@@ -4991,8 +5034,15 @@ index 000000000..80a310a94
 +
 +    private static FurnaceRecipePlacement.Plan plan(final CraftingDataStorage recipe,
 +            final FurnaceContainer furnace, final InventoryContainer inventory, final boolean max, final int limit) {
++        return plan(recipe, furnace, inventory, max, limit, new ComponentItemStackingProperties(limit, null, true, false));
++    }
++
++    private static FurnaceRecipePlacement.Plan plan(final CraftingDataStorage recipe,
++            final FurnaceContainer furnace, final InventoryContainer inventory, final boolean max, final int limit,
++            final ComponentItemStackingProperties properties) {
 +        return FurnaceRecipePlacement.plan(recipe, furnace, inventory, max, item -> limit,
 +                item -> new ItemRecipeKey(item.identifier(), item.data()),
++                (source, destination) -> NativeItemStacking.canMerge(source, destination, properties, BedrockItem::data, values -> Set.of()),
 +                item -> ((ShapelessRecipe) recipe.recipe()).getIngredients().getFirst().matchesItem(null, item));
 +    }
 +
@@ -6407,10 +6457,10 @@ index 000000000..6da0ed14c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
 new file mode 100644
-index 000000000..60c246a05
+index 000000000..1d81df0ef
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,363 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -6421,6 +6471,7 @@ index 000000000..60c246a05
 +import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.nbt.tag.ListTag;
 +import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.model.NativeItemStacking;
 +import net.raphimc.viabedrock.api.model.container.NativeItemStackMatcher;
 +import net.raphimc.viabedrock.api.model.container.block.BlastFurnaceContainer;
 +import net.raphimc.viabedrock.api.model.container.block.FurnaceContainer;
@@ -6428,6 +6479,7 @@ index 000000000..60c246a05
 +import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 +import net.raphimc.viabedrock.api.util.PacketFactory;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ComponentItemStackingProperties;
 +import net.raphimc.viabedrock.protocol.model.ItemEntry;
 +import net.raphimc.viabedrock.protocol.model.ItemRegistry;
 +import net.raphimc.viabedrock.protocol.model.ItemCookingProperties;
@@ -6623,6 +6675,48 @@ index 000000000..60c246a05
 +    }
 +
 +    @Test
++    void returnUsesNativeMergeRulesAndRejectionRestoresTheOriginalVariants() {
++        final var fixture = fixture();
++        final var user = fixture.user();
++        final var inventory = fixture.inventory();
++        final var furnace = new FurnaceContainer(user, (byte) 5, null, null);
++        inventory.setCurrentContainer(furnace);
++        final var previous = item(3, 2, 17);
++        previous.setData(1);
++        furnace.setItem(0, previous);
++        final var player = inventory.getInventoryContainer();
++        for (int slot = 0; slot < player.size(); slot++) {
++            player.setItem(slot, item(3, 64, 100 + slot));
++        }
++        player.setItem(0, item(2, 8, 20));
++        player.setItem(9, item(3, 62, 29));
++        final ItemStackRequestInfo[] sent = new ItemStackRequestInfo[1];
++        try (var packets = mockStatic(PacketFactory.class)) {
++            packets.when(() -> PacketFactory.sendBedrockInventoryRequest(eq(user), any())).thenAnswer(call -> {
++                sent[0] = ((ItemStackRequestInfo[]) call.getArgument(1))[0];
++                fixture.requests().getRequest(sent[0].requestId()).capturePrediction(inventory);
++                return null;
++            });
++            assertTrue(furnace.handleRecipePlacement(recipe(), false));
++            final var returned = (ItemStackRequestAction.PlaceAction) sent[0].actions().getFirst();
++            assertEquals(17, returned.source().stackNetworkId());
++            assertEquals(29, returned.destination().stackNetworkId());
++            assertEquals(2, returned.count());
++            final var placed = (ItemStackRequestAction.PlaceAction) sent[0].actions().get(1);
++            assertEquals(sent[0].requestId(), placed.destination().stackNetworkId());
++            assertEquals(64, player.getItem(9).amount());
++            assertEquals(0, player.getItem(9).data());
++            assertEquals(1, furnace.getItem(0).amount());
++            final var pending = fixture.requests().getRequest(sent[0].requestId());
++            fixture.requests().restoreRejectedRequest(pending);
++            fixture.requests().removeRequest(sent[0].requestId());
++            assertEquals(previous, furnace.getItem(0));
++            assertEquals(item(3, 62, 29), player.getItem(9));
++            assertEquals(item(2, 8, 20), player.getItem(0));
++        }
++    }
++
++    @Test
 +    void declaredIngredientMetadataDoesNotReplaceTheNativeDefaultInputQuery() {
 +        final var fixture = fixture();
 +        final var station = new FurnaceContainer(fixture.user(), (byte) 5, null, null);
@@ -6695,6 +6789,9 @@ index 000000000..60c246a05
 +                call.getArgument(0), call.getArgument(1), call.getArgument(2), null, () -> null));
 +        when(items.recipeKey(any())).thenAnswer(call -> registry.recipeKey(call.getArgument(0), null));
 +        when(items.maxStackSize(any())).thenReturn(64);
++        when(items.canMerge(any(), any())).thenAnswer(call -> NativeItemStacking.canMerge(
++                call.getArgument(0), call.getArgument(1), new ComponentItemStackingProperties(64, null, false, false),
++                BedrockItem::data, ignored -> Set.of()));
 +        when(items.matchesRecipeStack(any(), any())).thenAnswer(call -> registry.recipeKey(call.getArgument(0), null)
 +                .matches(registry.recipeKey(call.getArgument(1), null), ignored -> null));
 +        when(items.matchesStackQuery(any(), any())).thenAnswer(call -> NativeItemStackMatcher.matches(
