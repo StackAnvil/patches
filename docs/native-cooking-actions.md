@@ -25,6 +25,7 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Native event source resolution | 240 controls | Active-tab recipe sources through the original event callbacks |
 | Installed cooking selection and release | 6 sequence steps | Real selection-only effects and release through the original input graph |
 | Installed first recipe placement | 1 controlled click | Two native Place actions, retained destination identity, and final ingredient count |
+| Repeated recipe placement | 30 input steps and snapshots | Capacity, selection clearing, return to player inventory, and placement after return |
 | Cooking item-return planner | 1,500 cases | Original-slot deficits and the remaining count passed to auto-placement |
 | Physical-slot snapshot producer | 45 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
 | Registered cooking providers | 3 ingredient descriptors | Eleven registrations, native model import, skip callbacks, and 76-slot capture order |
@@ -197,6 +198,40 @@ It uses the original FurnaceModel vtable over controlled fields, without the com
 The original chunk lookup, native backing wrapper, destination guards, ingredient watcher, result lookup, transfer executor, and action append code execute.
 The world interface supplies a controlled block-entity component rather than a constructed native furnace entity.
 Other quantities, repeated selection, complete controller ownership, wire serialization, server acceptance, and visual parity remain unverified.
+
+## Repeat placement and return
+
+A fresh process also passes five six-step sequences through the original dispatcher, cooking graph, and placement code.
+Each sequence presses and releases the same recipe three times.
+The fixture supplies one concrete recipe and an Item with a maximum stack size of `64`.
+
+| Initial hotbar slot `0` | Initial inventory slot `9` | Ingredient count after the first press | Player items left after placement |
+| ---: | ---: | ---: | ---: |
+| `1` | `0` | `1` | `0` |
+| `0` | `1` | `1` | `0` |
+| `7` | `5` | `12` | `0` |
+| `32` | `32` | `64` | `0` |
+| `64` | `64` | `64` | `64` |
+
+The first press prefers hotbar sources and fills the ingredient slot to the available count or its capacity.
+The second press returns those ingredients through combined player provider `12`, slot `0`.
+That slot belongs to the hotbar, even when the first source was inventory slot `9`.
+The native ingredient watcher then clears the selected output and its name.
+The third press places the returned items again and restores the selected output.
+
+Every press returns `1` and leaves state `25`.
+Every release returns `4` and restores state `1` without another transfer.
+The controls verify all thirty physical snapshots and conserve the supplied items.
+They verify the shared hotbar, inventory, and combined-provider views independently.
+Combined provider `12` aliases player inventory. It is distinct from cursor provider `59`.
+The cursor remains empty throughout these sequences.
+
+Each sequence uses fresh native backing wrappers, a cooking manager, and a request.
+Its six events share that open request, without request submission or server acknowledgments.
+These controls establish repeated selection under that boundary, not the complete native frame and request lifecycle.
+The first-placement fixture's recipe, world, model-owner, and external interface limits still apply.
+Other recipes, Item definitions, input modes, complete serialization, server acceptance, and visual parity remain unverified.
+The Java recipe-book planner's one-increment mode does not implement this authored primary action.
 
 ## Transfer quantities
 

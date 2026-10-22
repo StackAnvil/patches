@@ -277,3 +277,15 @@ A single raw recipe click moves seven hotbar items, then five inventory items, i
 The second Place action retains the first source's positive stack ID as its destination ID.
 This result covers controlled native action objects, not complete request serialization or live acceptance.
 The [first-placement reference](../../../docs/native-cooking-actions.md#controlled-first-placement) records the fixture boundaries.
+
+## Verify repeated native placement
+
+A fresh native process passes thirty input steps and physical snapshots across five quantity cases.
+Primary selection fills the ingredient slot up to the supplied Item's capacity of 64.
+Selecting the same recipe again returns its ingredients to combined player provider 12 and clears the selected output.
+A third selection places the returned items again. Release preserves inventory while resetting the input state.
+The fixture verifies conservation and the shared player-provider views. Cursor provider 59 remains empty.
+
+Each six-event sequence shares one open native request. Request submission and server acknowledgments do not occur.
+The full controller/model-owner, other recipe types, complete serialization, live acceptance, and visual parity remain unverified.
+The [repeated-placement reference](../../../docs/native-cooking-actions.md#repeat-placement-and-return) records the quantities and implementation implications.
