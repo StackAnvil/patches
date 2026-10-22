@@ -26,6 +26,7 @@ The [Bedrock source guide](bedrock-development-sources.md) explains source selec
 | Installed cooking selection and release | 6 sequence steps | Real selection-only effects and release through the original input graph |
 | Installed first recipe placement | 1 controlled click | Two native Place actions, retained destination identity, and final ingredient count |
 | Repeated recipe placement | 30 input steps and snapshots | Capacity, selection clearing, return to player inventory, and placement after return |
+| Request payload identities | 5 complete payloads | Native conversion and serialization preserve positive transfer IDs and empty destination IDs |
 | Cooking item-return planner | 1,500 cases | Original-slot deficits and the remaining count passed to auto-placement |
 | Physical-slot snapshot producer | 45 cases plus 2 copy controls | Provider traversal, empty slots, append behavior, vector growth, and ordinary item-copy ownership |
 | Registered cooking providers | 3 ingredient descriptors | Eleven registrations, native model import, skip callbacks, and 76-slot capture order |
@@ -191,7 +192,7 @@ The native snapshot then contains twelve items in the ingredient slot and empty 
 The selected output remains in the cooking manager.
 The second action uses the retained positive stack ID from the first source.
 This observation concerns native action objects before complete request serialization.
-It does not determine whether later serialization rewrites those IDs.
+The [payload checks](#request-payload-identities) separately verify those IDs through native serialization.
 
 The fixture supplies consistent recipe caches, station data, and world interfaces.
 It uses the original FurnaceModel vtable over controlled fields, without the complete model-owner constructor.
@@ -232,6 +233,44 @@ These controls establish repeated selection under that boundary, not the complet
 The first-placement fixture's recipe, world, model-owner, and external interface limits still apply.
 Other recipes, Item definitions, input modes, complete serialization, server acceptance, and visual parity remain unverified.
 The Java recipe-book planner's one-increment mode does not implement this authored primary action.
+
+## Request payload identities
+
+A fresh pinned native process now completes five request payloads through the original conversion and serialization code.
+The cooking control starts with a raw primary recipe click and places seven hotbar items, then five inventory items.
+Four ordinary-transfer controls move one item followed by two items, or all seven items, into empty and occupied destinations.
+Each occupied destination starts with three items.
+
+The native transfer code preserves the source's positive stack ID after a partial move.
+An empty destination inherits that ID, including after a partial move.
+An occupied destination retains its own positive ID after a merge.
+The second transfer uses those retained IDs.
+Cooking placement uses hotbar provider `28` and inventory provider `29`, with physical slot indices.
+Returns continue to use combined player provider `12`.
+A complete move clears the source ID to zero.
+
+Original request detach `0x1425b0e50` preserves these identities.
+The sender's conversion at `0x14273fc70` turns owned requests and action pointers into packet payload values.
+The packet cannot directly reuse the owned request's field layout.
+The original wrapper `0x14273aab0` constructs the serialization context and invokes packet writer `0x14273a2d0`.
+The original BinaryStream methods write all payload bytes and grow the buffer.
+The resulting cooking payload retains positive destination ID `1000` for the second Place action.
+The Java cooking planner and codecs match that complete native payload byte for byte.
+
+The cooking planner now preserves the identities that its transfers produce.
+It no longer replaces every previously changed slot with the negative request ID.
+After the planner empties the ingredient slot, its next placement targets ID zero.
+Three behavioral regressions cover bulk identity retention, clearing before placement, and rejection recovery.
+The native payload comparison also detects the former combined-provider alias on cooking sources.
+Java recipe-book quantities remain separate from native authored primary selection.
+
+The fixture supplies the BinaryStream fields from the original inline construction and uses its original vtable.
+It supplies a packet view over the original conversion output, with sender mode `5`.
+The native manager uses constructor flags `1,0`. Their broader meaning and negotiation remain unverified.
+The complete enclosing sender and containing stream exporter constructors do not execute.
+Recipe data, world interfaces, and model-owner limits remain unchanged from the first-placement fixture.
+The payloads exclude packet headers and transport framing.
+These checks do not establish network exchange, server acceptance, other action types, or complete authored cooking controls.
 
 ## Transfer quantities
 
