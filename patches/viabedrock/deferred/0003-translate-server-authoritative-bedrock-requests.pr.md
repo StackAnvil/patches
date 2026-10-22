@@ -547,3 +547,11 @@ Join and same-world reconnect pass. Both installed profiles match all 1,363 rebu
 The runtime probe mutates three temporary Items before the fix and preserves all three afterward. No observer errors occur.
 The run exits successfully and stops the private display normally.
 These controls use Java cooking screens; native workstation presentation and the other goal areas remain open.
+
+## Item userdata without NBT (October 22, 2026)
+
+A zero userdata marker omits NBT but still precedes both restriction arrays and shield timing.
+The shared loader now reads those fields instead of returning at the marker.
+Both item wire formats retain the fields, and a truncated tail retains earlier completed fields.
+The target 1.26.51.1 generic reader and shield reader establish this control flow.
+Positive legacy NBT markers and invalid-version behavior remain outside this correction.

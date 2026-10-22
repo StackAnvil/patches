@@ -161,3 +161,48 @@ Both launched profiles and the rebuilt proxy match all 1,369 core classes and bo
 The run exits successfully and stops the private display normally.
 These controls use ordinary recipes and Java cooking screens.
 The declared-metadata correction is verified by the native fixture and targeted transfer regression; visible native parity remains unverified.
+
+## Cooking output alternatives (October 22, 2026)
+
+The cooking catalog now collects all matching unlocked input alternatives for each output at its station.
+It retains native recipe order and invalidates snapshots after registration or unlock changes.
+Replacing the connection's recipe tracker also retires its old catalog and action inputs.
+Invalid, unknown and air outputs do not enter the catalog.
+Availability uses these alternatives. Java placement still uses its selected registered recipe.
+
+Output queries retain wildcard auxiliary values, query-sided Block identity, resolved restriction identities and shield timing.
+They ignore root quantity and network IDs.
+Native NBT equality distinguishes typed empty lists, treats signed floating zeroes as equal, and rejects NaNs, including within the same compound.
+Null userdata and an empty compound compare equal.
+Full network userdata determines charged-item construction within the same registry.
+Independently mutated native child stacks remain outside this comparison.
+
+The target's original userdata installer, charged-item loader and output matcher execute 361 comparisons.
+Of these, 217 include at least one charged child.
+Java matches all 361 results and the 96 earlier whole-extractor output controls.
+It also matches 3,278 native Tag comparisons with valid UTF-8.
+The other 208 cases contain malformed UTF-8, which Java strings cannot retain.
+
+Restriction resolution uses the target's 58 builtin groups, exact primary names and aliases.
+It preserves case, stops at the first missing group member, and deduplicates registered block identities.
+Java matches all 116 native builtin resolution cases.
+The shared wire loader now reads restriction arrays and shield timing after a zero NBT marker.
+Both item wire formats retain these fields, including the completed fields of truncated tails.
+
+The fixtures supply registry storage, generic Item definitions, NBT trees and runtime services.
+Full native factory installation, pointer-hash collisions and malformed UTF-8 remain unverified.
+Authored screen activation, catalog presentation and native quantity/cursor actions remain unfinished.
+The full movement, mount, inventory, workstation, camera and rendering requirements remain active.
+
+Optional comparisons read `STACKANVIL_NATIVE_COOKING_OUTPUT_DATA`, `STACKANVIL_NATIVE_ITEM_TAG_EQUALITY`,
+`STACKANVIL_NATIVE_RESTRICTION_GROUPS` and `STACKANVIL_NATIVE_COOKING_INPUTS`.
+
+The targeted run passes 53 tests and Checkstyle, with one optional block-name fixture skipped.
+All four projects build with 2,332 passing tests, 152 optional skips and no failures or errors.
+All 102 core and 38 client patches replay.
+Offline tooling checks, all 264 regressions and patch metadata validation pass.
+
+A fresh strict-BDS ViaProxy run passes all three cooking stations and same-world reconnect.
+Both launched profiles and the proxy match all 1,371 rebuilt core classes and four block metadata resources.
+The run exits successfully and stops its private display normally.
+These controls use Java cooking screens and do not establish authored presentation or native action parity.

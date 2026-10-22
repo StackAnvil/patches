@@ -451,3 +451,17 @@ The live run exits successfully and stops its private display normally. These co
 Runtime block-item numeric ownership is now separate from auxiliary descriptor encoding.
 Custom archetypes retain their supplied legacy ID even while their canonical descriptor remains unverified.
 This API prepares native Item construction without assigning a fake auxiliary value to those archetypes.
+
+## Item restriction groups (October 22, 2026)
+
+Item restrictions now use a separate case-sensitive lookup path.
+The target 1.26.51.1 registry expands 58 builtin groups before exact primary names and aliases.
+A missing member stops its group, while earlier members remain present.
+The resolver deduplicates canonical registered block identities.
+These rules differ from ordinary block-name lookup, which retains its folding and namespace fallback.
+
+The original target initializer, description constructors, registry installer and restriction resolver supply the builtin metadata.
+Java matches all 116 qualified and unqualified builtin resolution cases.
+A regression also covers primary/group collisions, partial groups, aliases, duplicates and case-sensitive lookup.
+Native factory installation and pointer-hash collisions remain unverified.
+The optional comparison reads `STACKANVIL_NATIVE_RESTRICTION_GROUPS`.

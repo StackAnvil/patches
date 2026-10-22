@@ -1,4 +1,4 @@
-From 6cded134150749b9a29d3fadd72cbf49dfcce5dc Mon Sep 17 00:00:00 2001
+From 6527bdd31699b452e1c34c506659f46ca185876f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -432,6 +432,13 @@ NetworkItemStackDescriptor producer executions. The references supply
 registry/palette storage, warm auxiliary caches and runtime seams; actual
 item installation, cold unmodeled archetypes, specialized user-data load
 callbacks and saved-NBT construction remain unverified by these fixtures.
+
+A zero user-data marker omits only NBT. Continue decoding both restriction
+arrays and shield blocking ticks, matching the target 1.26.51.1 generic
+reader 1424d06e0 and shield reader 143043940. Returning at the marker lost
+state needed to distinguish cooking outputs and item behavior. Both
+network item layouts share this loader and retain partial-tail behavior.
+Positive legacy NBT markers remain outside this correction.
 ---
  Data Asset Sources.md                         |    8 +
  build.gradle                                  |    3 +-
@@ -493,7 +500,7 @@ callbacks and saved-NBT construction remain unverified by these fixtures.
  .../storage/InventoryRequestStorage.java      |  202 +
  .../storage/InventoryRequestTracker.java      |  564 +++
  .../protocol/storage/InventoryTracker.java    |  243 +-
- .../protocol/types/item/BedrockItemType.java  |   48 +-
+ .../protocol/types/item/BedrockItemType.java  |   68 +-
  .../types/item/NetworkItemStackContext.java   |   18 +
  .../item/NetworkItemStackDescriptorType.java  |   79 +-
  .../data/bedrock/item_factories.json          | 3815 +++++++++++++++++
@@ -539,10 +546,10 @@ callbacks and saved-NBT construction remain unverified by these fixtures.
  .../storage/NativeContainerResponseTest.java  |  287 ++
  .../storage/StonecutterRecipePacketTest.java  |   53 +
  .../types/inventory/ItemStackCodecTest.java   |   12 +-
- .../item/NetworkItemConstructionTest.java     |  134 +
+ .../item/NetworkItemConstructionTest.java     |  165 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 109 files changed, 19758 insertions(+), 942 deletions(-)
+ 109 files changed, 19799 insertions(+), 952 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionBackend.java
@@ -12469,7 +12476,7 @@ index 3e0723358..a15bdeeb1 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
-index 8c3cf5c9c..a4bba1d15 100644
+index 8c3cf5c9c..44df53169 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
 @@ -19,8 +19,6 @@ package net.raphimc.viabedrock.protocol.types.item;
@@ -12499,7 +12506,7 @@ index 8c3cf5c9c..a4bba1d15 100644
          this.writeItemNetId = writeItemNetId;
      }
  
-@@ -46,29 +44,24 @@ public class BedrockItemType extends Type<BedrockItem> {
+@@ -46,58 +44,52 @@ public class BedrockItemType extends Type<BedrockItem> {
              return BedrockItem.empty();
          }
  
@@ -12535,20 +12542,31 @@ index 8c3cf5c9c..a4bba1d15 100644
 +    public static void readUserData(final ByteBuf userData, final BedrockItem item, final int blockingId) {
          try {
              final short marker = userData.readShortLE();
-             if (marker == 0) {
+-            if (marker == 0) {
 -                return item;
-+                return;
-             } else if (marker != -1) { // Bedrock client crashes if marker isn't -1
-                 throw new IllegalStateException("Expected -1 marker but got " + marker);
-             }
-@@ -77,27 +70,26 @@ public class BedrockItemType extends Type<BedrockItem> {
-                 item.setTag((CompoundTag) BedrockTypes.TAG_LE.read(userData));
-                 item.setCanPlace(BedrockTypes.UTF8_STRING_ARRAY.read(userData));
-                 item.setCanBreak(BedrockTypes.UTF8_STRING_ARRAY.read(userData));
+-            } else if (marker != -1) { // Bedrock client crashes if marker isn't -1
+-                throw new IllegalStateException("Expected -1 marker but got " + marker);
+-            }
+-            final byte version = userData.readByte();
+-            if (version == 1) {
+-                item.setTag((CompoundTag) BedrockTypes.TAG_LE.read(userData));
+-                item.setCanPlace(BedrockTypes.UTF8_STRING_ARRAY.read(userData));
+-                item.setCanBreak(BedrockTypes.UTF8_STRING_ARRAY.read(userData));
 -                if (item.identifier() == this.blockingId) {
-+                if (item.identifier() == blockingId) {
-                     item.setBlockingTicks(userData.readLongLE());
+-                    item.setBlockingTicks(userData.readLongLE());
++            if (marker != 0) {
++                if (marker != -1) {
++                    throw new IllegalStateException("Expected -1 marker but got " + marker);
++                }
++                if (userData.readByte() != 1) {
++                    return;
                  }
++                item.setTag((CompoundTag) BedrockTypes.TAG_LE.read(userData));
++            }
++            item.setCanPlace(BedrockTypes.UTF8_STRING_ARRAY.read(userData));
++            item.setCanBreak(BedrockTypes.UTF8_STRING_ARRAY.read(userData));
++            if (item.identifier() == blockingId) {
++                item.setBlockingTicks(userData.readLongLE());
              }
          } catch (final IndexOutOfBoundsException ignored) {
              // Bedrock client stops reading at whatever point and loads whatever it has read successfully
@@ -23941,10 +23959,10 @@ index e972d2d94..73d542398 100644
                  new FullContainerName(ContainerEnumName.CombinedHotbarAndInventoryContainer, null),
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemConstructionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemConstructionTest.java
 new file mode 100644
-index 000000000..dc5da1715
+index 000000000..759de9d7f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemConstructionTest.java
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,165 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -23968,12 +23986,43 @@ index 000000000..dc5da1715
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.List;
++import java.util.Arrays;
 +import java.util.Map;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.mockito.Mockito.*;
 +
 +class NetworkItemConstructionTest {
++
++    @Test
++    void absentNbtStillLoadsRestrictionsAndShieldTicksInBothWireFormats() throws Exception {
++        final var fixture = fixture();
++        final var tail = Unpooled.buffer();
++        try {
++            tail.writeShortLE(0);
++            BedrockTypes.UTF8_STRING_ARRAY.write(tail, new String[]{"stone", "minecraft:dirt"});
++            final int placeEnd = tail.writerIndex();
++            BedrockTypes.UTF8_STRING_ARRAY.write(tail, new String[]{"log"});
++            tail.writeLongLE(0x123456789ABCDEFL);
++            final byte[] bytes = new byte[tail.readableBytes()];
++            tail.getBytes(0, bytes);
++            for (final var codec : List.of(new BedrockItemType(2, false, fixture.items),
++                    new NetworkItemStackDescriptorType(2, true, fixture.items))) {
++                final var item = NetworkItemStackFixtures.decode(codec, 2, 1, 0, 0, bytes);
++                assertNull(item.tag());
++                assertArrayEquals(new String[]{"stone", "minecraft:dirt"}, item.canPlace());
++                assertArrayEquals(new String[]{"log"}, item.canBreak());
++                assertEquals(0x123456789ABCDEFL, item.blockingTicks());
++                // Partial tails retain fields read before the truncated array.
++                final var truncated = NetworkItemStackFixtures.decode(codec, 2, 1, 0, 0,
++                        Arrays.copyOf(bytes, placeEnd + 2));
++                assertArrayEquals(item.canPlace(), truncated.canPlace());
++                assertEquals(0, truncated.blockingTicks());
++            }
++        } finally {
++            tail.release();
++        }
++    }
 +
 +    @Test
 +    void associatedConstructionReceivesRawNegativeAuxiliaryAndRetainsBlockAtRuntimeZero() throws Exception {

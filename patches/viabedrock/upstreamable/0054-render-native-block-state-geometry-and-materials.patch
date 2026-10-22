@@ -1,4 +1,4 @@
-From c1c20fdc5bf0678378dc63163bf4943df3835ab0 Mon Sep 17 00:00:00 2001
+From c658e052d216c2ac7f31150a02ef6bdee671c40e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -305,12 +305,21 @@ Keep runtime BlockLegacy numeric ownership separate from canonical auxiliary
 encoding. Custom archetypes retain their supplied legacy ID even when their
 descriptor metadata is unverified, so valid runtime blocks are not rejected
 merely because recipe conversion is incomplete.
+
+Resolve item block restrictions through the target 1.26.51.1 registry
+groups before exact primary names and aliases. Native resolution is
+case-sensitive, retains a group prefix when a member is absent, and
+deduplicates BlockLegacy identities. Keep these semantics separate from
+ordinary folded block lookup. The 58 installed builtin groups come from
+the original target initializer and registry installation routines.
+Compare canonical registered identities in Java; native pointer-hash
+collisions and dynamic native factory installation remain unverified.
 ---
  Data Asset Sources.md                         |   27 +
  .../chunk/blockstate/BlockItemDescriptor.java |   29 +
  .../blockstate/BlockItemDescriptors.java      |  141 +++
  .../api/chunk/blockstate/BlockItemStates.java |  134 ++
- .../chunk/blockstate/BlockRegistryNames.java  |   92 ++
+ .../chunk/blockstate/BlockRegistryNames.java  |  143 +++
  .../chunk/blockstate/RuntimeBlockPalette.java |   68 +
  .../api/model/CustomBlockCulling.java         |  206 +++
  .../api/model/CustomBlockFaceLighting.java    |   98 ++
@@ -331,7 +340,7 @@ merely because recipe conversion is incomplete.
  .../protocol/packet/JoinPackets.java          |   31 +-
  .../protocol/packet/ResourcePackPackets.java  |   47 +-
  .../protocol/packet/VoxelShapePackets.java    |   35 +
- .../protocol/rewriter/BlockStateRewriter.java |  224 ++--
+ .../protocol/rewriter/BlockStateRewriter.java |  228 ++--
  .../rewriter/ResourcePackRewriter.java        |    2 +
  .../CustomBlockCullingCompiler.java           |  162 +++
  .../resourcepack/CustomBlockModel.java        |  565 +++++++++
@@ -345,9 +354,10 @@ merely because recipe conversion is incomplete.
  .../data/bedrock/block_item_states.json       | 1120 +++++++++++++++++
  .../data/bedrock/block_property_values.json   |  950 ++++++++++++++
  .../data/bedrock/block_registry_aliases.json  |   66 +
+ .../bedrock/block_restriction_groups.json     |  549 ++++++++
  .../blockstate/BlockItemDescriptorsTest.java  |  119 ++
  .../chunk/blockstate/BlockItemStatesTest.java |  135 ++
- .../blockstate/BlockRegistryNamesTest.java    |   74 ++
+ .../blockstate/BlockRegistryNamesTest.java    |  104 ++
  .../blockstate/RuntimeBlockPaletteTest.java   |   61 +
  .../api/model/CustomBlockCullingTest.java     |   54 +
  .../api/model/CustomBlockLightingTest.java    |  171 +++
@@ -368,7 +378,7 @@ merely because recipe conversion is incomplete.
  .../storage/CustomBlockPackStorageTest.java   |   31 +
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  230 ++++
- 62 files changed, 8605 insertions(+), 109 deletions(-)
+ 63 files changed, 9239 insertions(+), 109 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -395,6 +405,7 @@ merely because recipe conversion is incomplete.
  create mode 100644 src/main/resources/assets/viabedrock/data/bedrock/block_item_states.json
  create mode 100644 src/main/resources/assets/viabedrock/data/bedrock/block_property_values.json
  create mode 100644 src/main/resources/assets/viabedrock/data/bedrock/block_registry_aliases.json
+ create mode 100644 src/main/resources/assets/viabedrock/data/bedrock/block_restriction_groups.json
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptorsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStatesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNamesTest.java
@@ -783,10 +794,10 @@ index 000000000..492e3ed40
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNames.java b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNames.java
 new file mode 100644
-index 000000000..7c6fda27b
+index 000000000..e1547ebd6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNames.java
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,143 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -802,6 +813,8 @@ index 000000000..7c6fda27b
 +import java.util.Arrays;
 +import java.util.Collection;
 +import java.util.HashMap;
++import java.util.HashSet;
++import java.util.List;
 +import java.util.Map;
 +import java.util.Set;
 +import java.util.TreeSet;
@@ -810,6 +823,7 @@ index 000000000..7c6fda27b
 +public final class BlockRegistryNames {
 +
 +    private static final Map<String, String> BUILTIN_ALIASES = loadAliases();
++    private static final Map<String, List<String>> RESTRICTION_GROUPS = loadRestrictionGroups();
 +
 +    private final Set<String> primary;
 +    private final Map<String, String> aliases;
@@ -861,6 +875,54 @@ index 000000000..7c6fda27b
 +            }
 +        }
 +        return null;
++    }
++
++    /** Restriction strings use case-sensitive Minecraft qualification and expand groups before aliases. */
++    public Set<String> restrictionBlocks(final String[] identifiers) {
++        final Set<String> result = new HashSet<>();
++        for (final String identifier : identifiers) {
++            final String qualified = identifier.indexOf(':') >= 0 ? identifier : "minecraft:" + identifier;
++            final List<String> group = RESTRICTION_GROUPS.get(qualified);
++            if (group != null) {
++                for (final String member : group) {
++                    final String resolved = this.exact(member);
++                    if (resolved == null) {
++                        break;
++                    }
++                    result.add(resolved);
++                }
++            } else {
++                final String resolved = this.exact(qualified);
++                if (resolved != null) {
++                    result.add(resolved);
++                }
++            }
++        }
++        return Set.copyOf(result);
++    }
++
++    private String exact(final String identifier) {
++        if (this.primary.contains(identifier)) {
++            return identifier;
++        }
++        final String alias = this.aliases.get(identifier);
++        return alias != null && this.primary.contains(alias) ? alias : null;
++    }
++
++    private static Map<String, List<String>> loadRestrictionGroups() {
++        final String path = "/assets/viabedrock/data/bedrock/block_restriction_groups.json";
++        try (var input = BlockRegistryNames.class.getResourceAsStream(path)) {
++            if (input == null) {
++                throw new IllegalStateException("Missing native block restriction groups");
++            }
++            final var json = JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonObject();
++            final Map<String, List<String>> groups = new HashMap<>();
++            json.entrySet().forEach(entry -> groups.put(entry.getKey(), entry.getValue().getAsJsonArray().asList()
++                    .stream().map(value -> value.getAsString()).toList()));
++            return Map.copyOf(groups);
++        } catch (final IOException error) {
++            throw new IllegalStateException("Failed to load native block restriction groups", error);
++        }
 +    }
 +
 +    private static Map<String, String> loadAliases() {
@@ -2589,7 +2651,7 @@ index 000000000..9c9d66373
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-index 2cb4a79b6..dd8dce68d 100644
+index 2cb4a79b6..095ee51fd 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 @@ -17,23 +17,31 @@
@@ -2836,7 +2898,7 @@ index 2cb4a79b6..dd8dce68d 100644
              } else {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
                  final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
-@@ -186,10 +190,17 @@ public class BlockStateRewriter implements StorableObject {
+@@ -186,10 +190,21 @@ public class BlockStateRewriter implements StorableObject {
                  continue; // Dirty hack Mojang did in 1.12. Can be ignored safely as those values can't be used in chunk packets.
              }
  
@@ -2852,10 +2914,14 @@ index 2cb4a79b6..dd8dce68d 100644
 +
 +    public String registeredBlockIdentifier(final String identifier) {
 +        return this.registryNames.resolve(identifier);
++    }
++
++    public Set<String> restrictionBlocks(final String[] identifiers) {
++        return this.registryNames.restrictionBlocks(identifiers);
      }
  
      public int bedrockId(final CompoundTag bedrockBlockStateTag) {
-@@ -206,11 +217,37 @@ public class BlockStateRewriter implements StorableObject {
+@@ -206,11 +221,37 @@ public class BlockStateRewriter implements StorableObject {
      }
  
      public int bedrockId(final BlockState bedrockBlockState) {
@@ -2895,7 +2961,7 @@ index 2cb4a79b6..dd8dce68d 100644
      }
  
      public int bedrockId(final int legacyBlockStateId) {
-@@ -221,6 +258,15 @@ public class BlockStateRewriter implements StorableObject {
+@@ -221,6 +262,15 @@ public class BlockStateRewriter implements StorableObject {
          return this.blockStateIdMappings.get(bedrockBlockStateId);
      }
  
@@ -2911,7 +2977,7 @@ index 2cb4a79b6..dd8dce68d 100644
      public int waterlog(final int javaBlockStateId) {
          if (BedrockProtocol.MAPPINGS.getJavaPreWaterloggedBlockStates().contains(javaBlockStateId)) {
              return javaBlockStateId;
-@@ -238,4 +284,8 @@ public class BlockStateRewriter implements StorableObject {
+@@ -238,4 +288,8 @@ public class BlockStateRewriter implements StorableObject {
          return this.blockStateTags.get(bedrockBlockStateId);
      }
  
@@ -6683,6 +6749,561 @@ index 000000000..f2dcda532
 +  "minecraft:wool": "minecraft:white_wool",
 +  "minecraft:yellow_flower": "minecraft:dandelion"
 +}
+diff --git a/src/main/resources/assets/viabedrock/data/bedrock/block_restriction_groups.json b/src/main/resources/assets/viabedrock/data/bedrock/block_restriction_groups.json
+new file mode 100644
+index 000000000..0343c4459
+--- /dev/null
++++ b/src/main/resources/assets/viabedrock/data/bedrock/block_restriction_groups.json
+@@ -0,0 +1,549 @@
++{
++  "minecraft:wool": [
++    "minecraft:white_wool",
++    "minecraft:orange_wool",
++    "minecraft:magenta_wool",
++    "minecraft:light_blue_wool",
++    "minecraft:yellow_wool",
++    "minecraft:lime_wool",
++    "minecraft:pink_wool",
++    "minecraft:gray_wool",
++    "minecraft:light_gray_wool",
++    "minecraft:cyan_wool",
++    "minecraft:purple_wool",
++    "minecraft:blue_wool",
++    "minecraft:brown_wool",
++    "minecraft:green_wool",
++    "minecraft:red_wool",
++    "minecraft:black_wool"
++  ],
++  "minecraft:log": [
++    "minecraft:oak_log",
++    "minecraft:spruce_log",
++    "minecraft:birch_log",
++    "minecraft:jungle_log"
++  ],
++  "minecraft:log2": [
++    "minecraft:acacia_log",
++    "minecraft:dark_oak_log"
++  ],
++  "minecraft:coral": [
++    "minecraft:tube_coral",
++    "minecraft:brain_coral",
++    "minecraft:bubble_coral",
++    "minecraft:fire_coral",
++    "minecraft:horn_coral",
++    "minecraft:dead_tube_coral",
++    "minecraft:dead_brain_coral",
++    "minecraft:dead_bubble_coral",
++    "minecraft:dead_fire_coral",
++    "minecraft:dead_horn_coral"
++  ],
++  "minecraft:stone": [
++    "minecraft:stone",
++    "minecraft:granite",
++    "minecraft:polished_granite",
++    "minecraft:diorite",
++    "minecraft:polished_diorite",
++    "minecraft:andesite",
++    "minecraft:polished_andesite"
++  ],
++  "minecraft:fence": [
++    "minecraft:oak_fence",
++    "minecraft:spruce_fence",
++    "minecraft:birch_fence",
++    "minecraft:jungle_fence",
++    "minecraft:acacia_fence",
++    "minecraft:dark_oak_fence"
++  ],
++  "minecraft:carpet": [
++    "minecraft:white_carpet",
++    "minecraft:orange_carpet",
++    "minecraft:magenta_carpet",
++    "minecraft:light_blue_carpet",
++    "minecraft:yellow_carpet",
++    "minecraft:lime_carpet",
++    "minecraft:pink_carpet",
++    "minecraft:gray_carpet",
++    "minecraft:light_gray_carpet",
++    "minecraft:cyan_carpet",
++    "minecraft:purple_carpet",
++    "minecraft:blue_carpet",
++    "minecraft:brown_carpet",
++    "minecraft:green_carpet",
++    "minecraft:red_carpet",
++    "minecraft:black_carpet"
++  ],
++  "minecraft:shulker_box": [
++    "minecraft:white_shulker_box",
++    "minecraft:orange_shulker_box",
++    "minecraft:magenta_shulker_box",
++    "minecraft:light_blue_shulker_box",
++    "minecraft:yellow_shulker_box",
++    "minecraft:lime_shulker_box",
++    "minecraft:pink_shulker_box",
++    "minecraft:gray_shulker_box",
++    "minecraft:light_gray_shulker_box",
++    "minecraft:cyan_shulker_box",
++    "minecraft:purple_shulker_box",
++    "minecraft:blue_shulker_box",
++    "minecraft:brown_shulker_box",
++    "minecraft:green_shulker_box",
++    "minecraft:red_shulker_box",
++    "minecraft:black_shulker_box"
++  ],
++  "minecraft:concrete": [
++    "minecraft:white_concrete",
++    "minecraft:orange_concrete",
++    "minecraft:magenta_concrete",
++    "minecraft:light_blue_concrete",
++    "minecraft:yellow_concrete",
++    "minecraft:lime_concrete",
++    "minecraft:pink_concrete",
++    "minecraft:gray_concrete",
++    "minecraft:light_gray_concrete",
++    "minecraft:cyan_concrete",
++    "minecraft:purple_concrete",
++    "minecraft:blue_concrete",
++    "minecraft:brown_concrete",
++    "minecraft:green_concrete",
++    "minecraft:red_concrete",
++    "minecraft:black_concrete"
++  ],
++  "minecraft:stained_hardened_clay": [
++    "minecraft:white_terracotta",
++    "minecraft:orange_terracotta",
++    "minecraft:magenta_terracotta",
++    "minecraft:light_blue_terracotta",
++    "minecraft:yellow_terracotta",
++    "minecraft:lime_terracotta",
++    "minecraft:pink_terracotta",
++    "minecraft:gray_terracotta",
++    "minecraft:light_gray_terracotta",
++    "minecraft:cyan_terracotta",
++    "minecraft:purple_terracotta",
++    "minecraft:blue_terracotta",
++    "minecraft:brown_terracotta",
++    "minecraft:green_terracotta",
++    "minecraft:red_terracotta",
++    "minecraft:black_terracotta"
++  ],
++  "minecraft:concrete_powder": [
++    "minecraft:white_concrete_powder",
++    "minecraft:orange_concrete_powder",
++    "minecraft:magenta_concrete_powder",
++    "minecraft:light_blue_concrete_powder",
++    "minecraft:yellow_concrete_powder",
++    "minecraft:lime_concrete_powder",
++    "minecraft:pink_concrete_powder",
++    "minecraft:gray_concrete_powder",
++    "minecraft:light_gray_concrete_powder",
++    "minecraft:cyan_concrete_powder",
++    "minecraft:purple_concrete_powder",
++    "minecraft:blue_concrete_powder",
++    "minecraft:brown_concrete_powder",
++    "minecraft:green_concrete_powder",
++    "minecraft:red_concrete_powder",
++    "minecraft:black_concrete_powder"
++  ],
++  "minecraft:stained_glass": [
++    "minecraft:white_stained_glass",
++    "minecraft:orange_stained_glass",
++    "minecraft:magenta_stained_glass",
++    "minecraft:light_blue_stained_glass",
++    "minecraft:yellow_stained_glass",
++    "minecraft:lime_stained_glass",
++    "minecraft:pink_stained_glass",
++    "minecraft:gray_stained_glass",
++    "minecraft:light_gray_stained_glass",
++    "minecraft:cyan_stained_glass",
++    "minecraft:purple_stained_glass",
++    "minecraft:blue_stained_glass",
++    "minecraft:brown_stained_glass",
++    "minecraft:green_stained_glass",
++    "minecraft:red_stained_glass",
++    "minecraft:black_stained_glass"
++  ],
++  "minecraft:stained_glass_pane": [
++    "minecraft:white_stained_glass_pane",
++    "minecraft:orange_stained_glass_pane",
++    "minecraft:magenta_stained_glass_pane",
++    "minecraft:light_blue_stained_glass_pane",
++    "minecraft:yellow_stained_glass_pane",
++    "minecraft:lime_stained_glass_pane",
++    "minecraft:pink_stained_glass_pane",
++    "minecraft:gray_stained_glass_pane",
++    "minecraft:light_gray_stained_glass_pane",
++    "minecraft:cyan_stained_glass_pane",
++    "minecraft:purple_stained_glass_pane",
++    "minecraft:blue_stained_glass_pane",
++    "minecraft:brown_stained_glass_pane",
++    "minecraft:green_stained_glass_pane",
++    "minecraft:red_stained_glass_pane",
++    "minecraft:black_stained_glass_pane"
++  ],
++  "minecraft:planks": [
++    "minecraft:oak_planks",
++    "minecraft:spruce_planks",
++    "minecraft:birch_planks",
++    "minecraft:jungle_planks",
++    "minecraft:acacia_planks",
++    "minecraft:dark_oak_planks"
++  ],
++  "minecraft:hard_stained_glass": [
++    "minecraft:hard_white_stained_glass",
++    "minecraft:hard_orange_stained_glass",
++    "minecraft:hard_magenta_stained_glass",
++    "minecraft:hard_light_blue_stained_glass",
++    "minecraft:hard_yellow_stained_glass",
++    "minecraft:hard_lime_stained_glass",
++    "minecraft:hard_pink_stained_glass",
++    "minecraft:hard_gray_stained_glass",
++    "minecraft:hard_light_gray_stained_glass",
++    "minecraft:hard_cyan_stained_glass",
++    "minecraft:hard_purple_stained_glass",
++    "minecraft:hard_blue_stained_glass",
++    "minecraft:hard_brown_stained_glass",
++    "minecraft:hard_green_stained_glass",
++    "minecraft:hard_red_stained_glass",
++    "minecraft:hard_black_stained_glass"
++  ],
++  "minecraft:hard_stained_glass_pane": [
++    "minecraft:hard_white_stained_glass_pane",
++    "minecraft:hard_orange_stained_glass_pane",
++    "minecraft:hard_magenta_stained_glass_pane",
++    "minecraft:hard_light_blue_stained_glass_pane",
++    "minecraft:hard_yellow_stained_glass_pane",
++    "minecraft:hard_lime_stained_glass_pane",
++    "minecraft:hard_pink_stained_glass_pane",
++    "minecraft:hard_gray_stained_glass_pane",
++    "minecraft:hard_light_gray_stained_glass_pane",
++    "minecraft:hard_cyan_stained_glass_pane",
++    "minecraft:hard_purple_stained_glass_pane",
++    "minecraft:hard_blue_stained_glass_pane",
++    "minecraft:hard_brown_stained_glass_pane",
++    "minecraft:hard_green_stained_glass_pane",
++    "minecraft:hard_red_stained_glass_pane",
++    "minecraft:hard_black_stained_glass_pane"
++  ],
++  "minecraft:wooden_slab": [
++    "minecraft:oak_slab",
++    "minecraft:spruce_slab",
++    "minecraft:birch_slab",
++    "minecraft:jungle_slab",
++    "minecraft:acacia_slab",
++    "minecraft:dark_oak_slab"
++  ],
++  "minecraft:double_wooden_slab": [
++    "minecraft:oak_double_slab",
++    "minecraft:spruce_double_slab",
++    "minecraft:birch_double_slab",
++    "minecraft:jungle_double_slab",
++    "minecraft:acacia_double_slab",
++    "minecraft:dark_oak_double_slab"
++  ],
++  "minecraft:leaves": [
++    "minecraft:oak_leaves",
++    "minecraft:spruce_leaves",
++    "minecraft:birch_leaves",
++    "minecraft:jungle_leaves"
++  ],
++  "minecraft:leaves2": [
++    "minecraft:acacia_leaves",
++    "minecraft:dark_oak_leaves"
++  ],
++  "minecraft:wood": [
++    "minecraft:oak_wood",
++    "minecraft:stripped_oak_wood",
++    "minecraft:spruce_wood",
++    "minecraft:stripped_spruce_wood",
++    "minecraft:birch_wood",
++    "minecraft:stripped_birch_wood",
++    "minecraft:jungle_wood",
++    "minecraft:stripped_jungle_wood",
++    "minecraft:acacia_wood",
++    "minecraft:stripped_acacia_wood",
++    "minecraft:dark_oak_wood",
++    "minecraft:stripped_dark_oak_wood"
++  ],
++  "minecraft:sapling": [
++    "minecraft:oak_sapling",
++    "minecraft:spruce_sapling",
++    "minecraft:birch_sapling",
++    "minecraft:jungle_sapling",
++    "minecraft:acacia_sapling",
++    "minecraft:dark_oak_sapling"
++  ],
++  "minecraft:coral_fan": [
++    "minecraft:tube_coral_fan",
++    "minecraft:brain_coral_fan",
++    "minecraft:bubble_coral_fan",
++    "minecraft:fire_coral_fan",
++    "minecraft:horn_coral_fan"
++  ],
++  "minecraft:coral_fan_dead": [
++    "minecraft:dead_tube_coral_fan",
++    "minecraft:dead_brain_coral_fan",
++    "minecraft:dead_bubble_coral_fan",
++    "minecraft:dead_fire_coral_fan",
++    "minecraft:dead_horn_coral_fan"
++  ],
++  "minecraft:red_flower": [
++    "minecraft:poppy",
++    "minecraft:blue_orchid",
++    "minecraft:allium",
++    "minecraft:azure_bluet",
++    "minecraft:red_tulip",
++    "minecraft:orange_tulip",
++    "minecraft:white_tulip",
++    "minecraft:pink_tulip",
++    "minecraft:oxeye_daisy",
++    "minecraft:cornflower",
++    "minecraft:lily_of_the_valley"
++  ],
++  "minecraft:tallgrass": [
++    "minecraft:short_grass",
++    "minecraft:short_grass",
++    "minecraft:fern",
++    "minecraft:fern"
++  ],
++  "minecraft:coral_block": [
++    "minecraft:tube_coral_block",
++    "minecraft:brain_coral_block",
++    "minecraft:bubble_coral_block",
++    "minecraft:fire_coral_block",
++    "minecraft:horn_coral_block",
++    "minecraft:dead_tube_coral_block",
++    "minecraft:dead_brain_coral_block",
++    "minecraft:dead_bubble_coral_block",
++    "minecraft:dead_fire_coral_block",
++    "minecraft:dead_horn_coral_block"
++  ],
++  "minecraft:double_plant": [
++    "minecraft:sunflower",
++    "minecraft:lilac",
++    "minecraft:tall_grass",
++    "minecraft:large_fern",
++    "minecraft:rose_bush",
++    "minecraft:peony"
++  ],
++  "minecraft:stone_block_slab": [
++    "minecraft:smooth_stone_slab",
++    "minecraft:sandstone_slab",
++    "minecraft:petrified_oak_slab",
++    "minecraft:cobblestone_slab",
++    "minecraft:brick_slab",
++    "minecraft:stone_brick_slab",
++    "minecraft:quartz_slab",
++    "minecraft:nether_brick_slab"
++  ],
++  "minecraft:stone_block_slab2": [
++    "minecraft:red_sandstone_slab",
++    "minecraft:purpur_slab",
++    "minecraft:prismarine_slab",
++    "minecraft:dark_prismarine_slab",
++    "minecraft:prismarine_brick_slab",
++    "minecraft:mossy_cobblestone_slab",
++    "minecraft:smooth_sandstone_slab",
++    "minecraft:red_nether_brick_slab"
++  ],
++  "minecraft:stone_block_slab3": [
++    "minecraft:end_stone_brick_slab",
++    "minecraft:smooth_red_sandstone_slab",
++    "minecraft:polished_andesite_slab",
++    "minecraft:andesite_slab",
++    "minecraft:diorite_slab",
++    "minecraft:polished_diorite_slab",
++    "minecraft:granite_slab",
++    "minecraft:polished_granite_slab"
++  ],
++  "minecraft:stone_block_slab4": [
++    "minecraft:mossy_stone_brick_slab",
++    "minecraft:smooth_quartz_slab",
++    "minecraft:normal_stone_slab",
++    "minecraft:cut_sandstone_slab",
++    "minecraft:cut_red_sandstone_slab"
++  ],
++  "minecraft:double_stone_block_slab": [
++    "minecraft:smooth_stone_double_slab",
++    "minecraft:sandstone_double_slab",
++    "minecraft:petrified_oak_double_slab",
++    "minecraft:cobblestone_double_slab",
++    "minecraft:brick_double_slab",
++    "minecraft:stone_brick_double_slab",
++    "minecraft:quartz_double_slab",
++    "minecraft:nether_brick_double_slab"
++  ],
++  "minecraft:double_stone_block_slab2": [
++    "minecraft:red_sandstone_double_slab",
++    "minecraft:purpur_double_slab",
++    "minecraft:prismarine_double_slab",
++    "minecraft:dark_prismarine_double_slab",
++    "minecraft:prismarine_brick_double_slab",
++    "minecraft:mossy_cobblestone_double_slab",
++    "minecraft:smooth_sandstone_double_slab",
++    "minecraft:red_nether_brick_double_slab"
++  ],
++  "minecraft:double_stone_block_slab3": [
++    "minecraft:end_stone_brick_double_slab",
++    "minecraft:smooth_red_sandstone_double_slab",
++    "minecraft:polished_andesite_double_slab",
++    "minecraft:andesite_double_slab",
++    "minecraft:diorite_double_slab",
++    "minecraft:polished_diorite_double_slab",
++    "minecraft:granite_double_slab",
++    "minecraft:polished_granite_double_slab"
++  ],
++  "minecraft:double_stone_block_slab4": [
++    "minecraft:mossy_stone_brick_double_slab",
++    "minecraft:smooth_quartz_double_slab",
++    "minecraft:normal_stone_double_slab",
++    "minecraft:cut_sandstone_double_slab",
++    "minecraft:cut_red_sandstone_double_slab"
++  ],
++  "minecraft:monster_egg": [
++    "minecraft:infested_cobblestone",
++    "minecraft:infested_stone_bricks",
++    "minecraft:infested_mossy_stone_bricks",
++    "minecraft:infested_cracked_stone_bricks",
++    "minecraft:infested_chiseled_stone_bricks",
++    "minecraft:infested_stone"
++  ],
++  "minecraft:stonebrick": [
++    "minecraft:stone_bricks",
++    "minecraft:mossy_stone_bricks",
++    "minecraft:cracked_stone_bricks",
++    "minecraft:chiseled_stone_bricks",
++    "minecraft:stone_bricks"
++  ],
++  "minecraft:coral_fan_hang": [
++    "minecraft:tube_coral_wall_fan",
++    "minecraft:brain_coral_wall_fan",
++    "minecraft:dead_tube_coral_wall_fan",
++    "minecraft:dead_brain_coral_wall_fan"
++  ],
++  "minecraft:coral_fan_hang2": [
++    "minecraft:bubble_coral_wall_fan",
++    "minecraft:fire_coral_wall_fan",
++    "minecraft:dead_bubble_coral_wall_fan",
++    "minecraft:dead_fire_coral_wall_fan"
++  ],
++  "minecraft:coral_fan_hang3": [
++    "minecraft:horn_coral_wall_fan",
++    "minecraft:horn_coral_wall_fan",
++    "minecraft:dead_horn_coral_wall_fan",
++    "minecraft:dead_horn_coral_wall_fan"
++  ],
++  "minecraft:prismarine": [
++    "minecraft:prismarine",
++    "minecraft:dark_prismarine",
++    "minecraft:prismarine_bricks"
++  ],
++  "minecraft:light_block": [
++    "minecraft:light_block_0",
++    "minecraft:light_block_1",
++    "minecraft:light_block_2",
++    "minecraft:light_block_3",
++    "minecraft:light_block_4",
++    "minecraft:light_block_5",
++    "minecraft:light_block_6",
++    "minecraft:light_block_7",
++    "minecraft:light_block_8",
++    "minecraft:light_block_9",
++    "minecraft:light_block_10",
++    "minecraft:light_block_11",
++    "minecraft:light_block_12",
++    "minecraft:light_block_13",
++    "minecraft:light_block_14",
++    "minecraft:light_block_15"
++  ],
++  "minecraft:sandstone": [
++    "minecraft:sandstone",
++    "minecraft:chiseled_sandstone",
++    "minecraft:cut_sandstone",
++    "minecraft:smooth_sandstone"
++  ],
++  "minecraft:red_sandstone": [
++    "minecraft:red_sandstone",
++    "minecraft:chiseled_red_sandstone",
++    "minecraft:cut_red_sandstone",
++    "minecraft:smooth_red_sandstone"
++  ],
++  "minecraft:quartz_block": [
++    "minecraft:quartz_block",
++    "minecraft:chiseled_quartz_block",
++    "minecraft:quartz_pillar",
++    "minecraft:smooth_quartz"
++  ],
++  "minecraft:sand": [
++    "minecraft:sand",
++    "minecraft:red_sand"
++  ],
++  "minecraft:dirt": [
++    "minecraft:dirt",
++    "minecraft:coarse_dirt"
++  ],
++  "minecraft:anvil": [
++    "minecraft:anvil",
++    "minecraft:chipped_anvil",
++    "minecraft:damaged_anvil",
++    "minecraft:deprecated_anvil"
++  ],
++  "minecraft:structure_void": [
++    "minecraft:structure_void",
++    "minecraft:structure_void"
++  ],
++  "minecraft:purpur_block": [
++    "minecraft:purpur_block",
++    "minecraft:deprecated_purpur_block_1",
++    "minecraft:purpur_pillar",
++    "minecraft:deprecated_purpur_block_2"
++  ],
++  "minecraft:cobblestone_wall": [
++    "minecraft:cobblestone_wall",
++    "minecraft:mossy_cobblestone_wall",
++    "minecraft:granite_wall",
++    "minecraft:diorite_wall",
++    "minecraft:andesite_wall",
++    "minecraft:sandstone_wall",
++    "minecraft:brick_wall",
++    "minecraft:stone_brick_wall",
++    "minecraft:mossy_stone_brick_wall",
++    "minecraft:nether_brick_wall",
++    "minecraft:end_stone_brick_wall",
++    "minecraft:prismarine_wall",
++    "minecraft:red_sandstone_wall",
++    "minecraft:red_nether_brick_wall"
++  ],
++  "minecraft:sponge": [
++    "minecraft:sponge",
++    "minecraft:wet_sponge"
++  ],
++  "minecraft:colored_torch_rg": [
++    "minecraft:colored_torch_red",
++    "minecraft:colored_torch_green"
++  ],
++  "minecraft:colored_torch_bp": [
++    "minecraft:colored_torch_blue",
++    "minecraft:colored_torch_purple"
++  ],
++  "minecraft:chemistry_table": [
++    "minecraft:compound_creator",
++    "minecraft:material_reducer",
++    "minecraft:element_constructor",
++    "minecraft:lab_table"
++  ],
++  "minecraft:tnt": [
++    "minecraft:tnt",
++    "minecraft:underwater_tnt"
++  ],
++  "minecraft:skull": [
++    "minecraft:skeleton_skull",
++    "minecraft:wither_skeleton_skull",
++    "minecraft:zombie_head",
++    "minecraft:player_head",
++    "minecraft:creeper_head",
++    "minecraft:dragon_head",
++    "minecraft:piglin_head"
++  ]
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptorsTest.java b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptorsTest.java
 new file mode 100644
 index 000000000..56bc85da9
@@ -6951,10 +7572,10 @@ index 000000000..c9d8158b0
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNamesTest.java b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNamesTest.java
 new file mode 100644
-index 000000000..941ac5418
+index 000000000..aa68bc10a
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNamesTest.java
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,104 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -6970,12 +7591,42 @@ index 000000000..941ac5418
 +
 +import java.util.ArrayList;
 +import java.util.HashMap;
++import java.util.HashSet;
 +import java.util.List;
 +import java.util.Map;
++import java.util.Set;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class BlockRegistryNamesTest {
++
++    @Test
++    void restrictionsExpandGroupsBeforePrimaryNamesAndKeepPartialGroups() {
++        final var names = new BlockRegistryNames(List.of("minecraft:log", "minecraft:oak_log", "minecraft:spruce_log",
++                "minecraft:jungle_log", "pack:other"), Map.of("minecraft:alias", "pack:other"));
++        assertEquals(Set.of("minecraft:oak_log", "minecraft:spruce_log"), names.restrictionBlocks(new String[]{"log"}));
++        assertEquals(Set.of("minecraft:oak_log", "minecraft:spruce_log", "minecraft:jungle_log", "pack:other"),
++                names.restrictionBlocks(new String[]{"minecraft:log", "jungle_log", "alias", "pack:other", "alias"}));
++        assertTrue(names.restrictionBlocks(new String[]{"LOG", "other", "MINECRAFT:oak_log", "missing"}).isEmpty());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_RESTRICTION_GROUPS", matches = ".+")
++    void restrictionGroupsMatchNativeInstallationAndResolution() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(
++                System.getenv("STACKANVIL_NATIVE_RESTRICTION_GROUPS")))).getAsJsonObject();
++        final Set<String> primary = new HashSet<>();
++        fixture.getAsJsonArray("installed").forEach(value -> value.getAsJsonObject().getAsJsonArray("members")
++                .forEach(member -> primary.add(member.getAsString())));
++        final var names = new BlockRegistryNames(primary);
++        assertFalse(fixture.getAsJsonArray("restrictions").isEmpty());
++        for (final var value : fixture.getAsJsonArray("restrictions")) {
++            final var row = value.getAsJsonObject();
++            final Set<String> expected = new HashSet<>();
++            row.getAsJsonArray("resolved").forEach(member -> expected.add(member.getAsString()));
++            assertEquals(expected, names.restrictionBlocks(new String[]{row.get("input").getAsString()}), row::toString);
++        }
++    }
 +
 +    @Test
 +    void primaryNamesWinBeforeNormalizedAliasesAndNamespaceFallback() {
