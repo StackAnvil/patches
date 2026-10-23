@@ -1,4 +1,4 @@
-From bbb0f49011f0afe5c75f3a53384a5b4fcc0e4c1e Mon Sep 17 00:00:00 2001
+From aa5dc2b11fd80a49fb0e0eb2d1e189aee48dbcaa Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -553,6 +553,18 @@ cases; remaining controls exercise native controller rejection separately.
 Native component tables and simple physics are supplied fixture inputs;
 full live knockback/mount trajectories and remote collider sources remain
 unfinished.
+
+Keep replay ownership validation separate from restored actor metadata.
+Historical frames retain their original native lifetime and properties,
+but actor, collider and command admission compare that lifetime with the
+current registry. Replaced, removed or cleared actors cannot become valid
+again because a previous frame restores their metadata.
+
+Five real-registry regressions cover retirement, same-lifetime updates
+and historical recapture. Independent negative variants reject historical
+actor validation, historical collider validation and relabeling restored
+physics with the live replacement lifetime. Native collider prediction
+and interpolation source selection remain separate unfinished work.
 ---
  build.gradle.kts                              |   2 +-
  .../bedrock/ViaFabricPlusBedrock.java         |   8 +
@@ -624,7 +636,7 @@ unfinished.
  .../replay/PhysicalReplayHistory.java         | 190 +++++++
  .../movement/replay/PhysicalState.java        | 140 +++++
  .../movement/replay/PhysicalStateAccess.java  |  43 ++
- .../bedrock/render/BedrockActorState.java     |   2 +-
+ .../bedrock/render/BedrockActorState.java     |   8 +-
  .../viafabricplus-bedrock.accesswidener       |   5 +
  .../viafabricplus-bedrock.mixins.json         |  25 +
  .../input/BedrockVehiclePredictionsTest.java  | 155 ++++++
@@ -638,8 +650,8 @@ unfinished.
  .../movement/BedrockPlayerPostureTest.java    |  45 ++
  .../replay/AttributePhysicsStateTest.java     | 101 ++++
  .../replay/PhysicalBoundingBoxTest.java       |  21 +
- .../replay/PhysicalCollisionCacheTest.java    | 191 +++++++
- .../PhysicalCorrectionIdentityTest.java       | 143 ++++++
+ .../replay/PhysicalCollisionCacheTest.java    | 192 +++++++
+ .../PhysicalCorrectionIdentityTest.java       | 149 ++++++
  .../movement/replay/PhysicalItemUseTest.java  |  41 ++
  .../replay/PhysicalMotionReplayTest.java      | 102 ++++
  .../PhysicalMovementCorrectionTest.java       |  80 +++
@@ -647,7 +659,8 @@ unfinished.
  .../replay/PhysicalReplayHistoryTest.java     | 272 ++++++++++
  .../movement/replay/PhysicalStateTest.java    | 124 +++++
  .../replay/PhysicalWorldCollisionTest.java    | 111 ++++
- 93 files changed, 7077 insertions(+), 73 deletions(-)
+ .../render/PhysicalReplayLifetimeTest.java    | 144 ++++++
+ 94 files changed, 7234 insertions(+), 73 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAgePhysicsState.java
@@ -729,6 +742,7 @@ unfinished.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayHistoryTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalStateTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalWorldCollisionTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/PhysicalReplayLifetimeTest.java
 
 diff --git a/build.gradle.kts b/build.gradle.kts
 index 159fe40..0340595 100644
@@ -3397,7 +3411,7 @@ index 0000000..b5ac638
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalReplay.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalReplay.java
 new file mode 100644
-index 0000000..758d993
+index 0000000..3370817
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalReplay.java
 @@ -0,0 +1,483 @@
@@ -3734,7 +3748,7 @@ index 0000000..758d993
 +        private void scheduleCorrection(final PlayerCorrection correction) {
 +            final Entity actor = correction.entityId() == this.player.getId() ? this.player : this.level.getEntity(correction.entityId());
 +            if (actor == null || actor.level() != this.level || actor.isRemoved() || !actor.getUUID().equals(correction.uuid())
-+                    || !Objects.equals(BedrockActorState.lifetime(actor.getUUID()), correction.lifetime())) return;
++                    || !Objects.equals(BedrockActorState.liveLifetime(actor.getUUID()), correction.lifetime())) return;
 +            if (correction.vehicle()) {
 +                final var context = BedrockVehiclePredictions.context(this.player);
 +                if (actor != this.controlledRoot || this.controlIdentity == null || context == null
@@ -3758,7 +3772,7 @@ index 0000000..758d993
 +        private Entity motionActor(final ActorMotionCommand command) {
 +            final Entity actor = command.entityId() == this.player.getId() ? this.player : this.level.getEntity(command.entityId());
 +            if (actor == null || actor.level() != this.level || actor.isRemoved() || !actor.getUUID().equals(command.uuid())
-+                    || !Objects.equals(BedrockActorState.lifetime(actor.getUUID()), command.lifetime())) return null;
++                    || !Objects.equals(BedrockActorState.liveLifetime(actor.getUUID()), command.lifetime())) return null;
 +            if (!command.vehicle()) return actor == this.player ? actor : null;
 +            final var context = BedrockVehiclePredictions.context(this.player);
 +            return actor.getControllingPassenger() == this.player && actor.isLocalInstanceAuthoritative()
@@ -4995,7 +5009,7 @@ index 0000000..dd2b859
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalActorState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalActorState.java
 new file mode 100644
-index 0000000..cde1193
+index 0000000..10d5a13
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalActorState.java
 @@ -0,0 +1,91 @@
@@ -5087,7 +5101,7 @@ index 0000000..cde1193
 +    public boolean valid(final LocalPlayer player) {
 +        return !this.actor.isRemoved() && this.actor.level() == this.level && this.actor.getId() == this.id
 +                && this.actor.getUUID().equals(this.uuid) && (this.actor == player || this.level.getEntity(this.id) == this.actor)
-+                && Objects.equals(BedrockActorState.lifetime(this.uuid), this.nativeLifetime);
++                && Objects.equals(BedrockActorState.liveLifetime(this.uuid), this.nativeLifetime);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalBoundingBox.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalBoundingBox.java
@@ -5114,7 +5128,7 @@ index 0000000..b9515b0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCache.java
 new file mode 100644
-index 0000000..bc3c601
+index 0000000..c2182be
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCache.java
 @@ -0,0 +1,83 @@
@@ -5191,7 +5205,7 @@ index 0000000..bc3c601
 +        private boolean valid() {
 +            return !this.actor.isRemoved() && this.actor.level() == this.level && this.actor.getId() == this.id
 +                    && this.actor.getUUID().equals(this.uuid) && this.level.getEntity(this.id) == this.actor
-+                    && Objects.equals(BedrockActorState.lifetime(this.uuid), this.lifetime);
++                    && Objects.equals(BedrockActorState.liveLifetime(this.uuid), this.lifetime);
 +        }
 +    }
 +
@@ -6133,7 +6147,7 @@ index 0000000..f724541
 +    public interface Fluid { void captureFluidPhysics(PhysicalState.Builder state); }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
-index cb1aa85..a8d783c 100644
+index cb1aa85..5f33d3e 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
 @@ -56,7 +56,7 @@ public final class BedrockActorState {
@@ -6145,6 +6159,19 @@ index cb1aa85..a8d783c 100644
      }
  
      public static NativeActorMessage.Snapshot stateByRuntimeId(final long runtimeId) {
+@@ -74,6 +74,12 @@ public final class BedrockActorState {
+         return state == null ? null : state.lifetime();
+     }
+ 
++    /** Ownership checks use the current registry even while physics reads restored metadata. */
++    public static UUID liveLifetime(final UUID uuid) {
++        final var state = ACTORS.get(uuid);
++        return state == null ? null : state.lifetime();
++    }
++
+     public static NativeAnimationControllers animations(final UUID uuid) {
+         return ACTORS.animations(uuid);
+     }
 diff --git a/src/main/resources/viafabricplus-bedrock.accesswidener b/src/main/resources/viafabricplus-bedrock.accesswidener
 index f42de8f..8e8672c 100644
 --- a/src/main/resources/viafabricplus-bedrock.accesswidener
@@ -7451,10 +7478,10 @@ index 0000000..090e854
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCacheTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCacheTest.java
 new file mode 100644
-index 0000000..f0f03cc
+index 0000000..0a284fd
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCacheTest.java
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,192 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7555,6 +7582,7 @@ index 0000000..f0f03cc
 +            when(collider.getUUID()).thenReturn(uuid);
 +            when(level.getEntity(7)).thenReturn(collider);
 +            metadata.when(() -> BedrockActorState.lifetime(uuid)).thenReturn(lifetime);
++            metadata.when(() -> BedrockActorState.liveLifetime(uuid)).thenReturn(lifetime);
 +            final AABB before = new AABB(1, 0, 0, 2, 2, 1), after = before.move(0.5, 0, 0);
 +            when(collider.position()).thenReturn(new Vec3(1.5, 0, 0.5));
 +            when(collider.getBoundingBox()).thenReturn(before);
@@ -7572,7 +7600,7 @@ index 0000000..f0f03cc
 +            replacement.gather(region, ignored -> { fail(); return List.of(); });
 +            assertEquals(List.of(before), boxes(replacement.snapshot()));
 +            when(level.getEntity(7)).thenReturn(collider);
-+            metadata.when(() -> BedrockActorState.lifetime(uuid)).thenReturn(UUID.randomUUID());
++            metadata.when(() -> BedrockActorState.liveLifetime(uuid)).thenReturn(UUID.randomUUID());
 +            final var newLifetime = new PhysicalCollisionCache(Position3f.ZERO, captured);
 +            newLifetime.gather(region, ignored -> { fail(); return List.of(); });
 +            assertEquals(List.of(before), boxes(newLifetime.snapshot()));
@@ -7648,10 +7676,10 @@ index 0000000..f0f03cc
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCorrectionIdentityTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCorrectionIdentityTest.java
 new file mode 100644
-index 0000000..3c126a6
+index 0000000..4fa5486
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCorrectionIdentityTest.java
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,149 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7691,11 +7719,13 @@ index 0000000..3c126a6
 +        try (var nativeState = mockStatic(BedrockActorState.class)) {
 +            final Fixture f = new Fixture();
 +            nativeState.when(() -> BedrockActorState.lifetime(f.uuid)).thenReturn(f.lifetime);
++            nativeState.when(() -> BedrockActorState.liveLifetime(f.uuid)).thenReturn(f.lifetime);
 +            final var graph = f.capture(7);
 +            assertNotNull(graph.correctionTarget(f.boat, f.player, f.command, 7));
-+            nativeState.when(() -> BedrockActorState.lifetime(f.uuid)).thenReturn(UUID.randomUUID());
++            nativeState.when(() -> BedrockActorState.liveLifetime(f.uuid)).thenReturn(UUID.randomUUID());
 +            assertNull(graph.correctionTarget(f.boat, f.player, f.command, 7));
 +            nativeState.when(() -> BedrockActorState.lifetime(f.uuid)).thenReturn(f.lifetime);
++            nativeState.when(() -> BedrockActorState.liveLifetime(f.uuid)).thenReturn(f.lifetime);
 +            when(f.level.getEntity(42)).thenReturn(mock(Entity.class));
 +            assertNull(graph.correctionTarget(f.boat, f.player, f.command, 7));
 +            when(f.level.getEntity(42)).thenReturn(f.boat);
@@ -7714,6 +7744,7 @@ index 0000000..3c126a6
 +        try (var nativeState = mockStatic(BedrockActorState.class)) {
 +            final Fixture f = new Fixture();
 +            nativeState.when(() -> BedrockActorState.lifetime(f.uuid)).thenReturn(f.lifetime);
++            nativeState.when(() -> BedrockActorState.liveLifetime(f.uuid)).thenReturn(f.lifetime);
 +            final var graph = f.capture(7);
 +            assertNotNull(graph.correctionTarget(f.boat, f.player, f.command, 7));
 +            assertNull(graph.correctionTarget(f.boat, f.player, f.command, 9));
@@ -7733,13 +7764,15 @@ index 0000000..3c126a6
 +        try (var nativeState = mockStatic(BedrockActorState.class)) {
 +            final Fixture f = new Fixture();
 +            nativeState.when(() -> BedrockActorState.lifetime(f.uuid)).thenReturn(f.lifetime);
++            nativeState.when(() -> BedrockActorState.liveLifetime(f.uuid)).thenReturn(f.lifetime);
 +            final var motion = new ActorMotionCommand(42, f.uuid, f.lifetime, 5, f.command.timing(), new Position3f(.5F, 1, 0));
 +            final var graph = f.capture(7);
 +            assertTrue(graph.acceptsMotion(f.boat, f.player, motion, 7));
 +            assertFalse(graph.acceptsMotion(f.boat, f.player, motion, 9));
-+            nativeState.when(() -> BedrockActorState.lifetime(f.uuid)).thenReturn(UUID.randomUUID());
++            nativeState.when(() -> BedrockActorState.liveLifetime(f.uuid)).thenReturn(UUID.randomUUID());
 +            assertFalse(graph.acceptsMotion(f.boat, f.player, motion, 7));
 +            nativeState.when(() -> BedrockActorState.lifetime(f.uuid)).thenReturn(f.lifetime);
++            nativeState.when(() -> BedrockActorState.liveLifetime(f.uuid)).thenReturn(f.lifetime);
 +            when(f.boat.getControllingPassenger()).thenReturn(null);
 +            assertFalse(f.capture(7).acceptsMotion(f.boat, f.player, motion, 7));
 +            when(f.boat.getControllingPassenger()).thenReturn(f.player);
@@ -7761,6 +7794,7 @@ index 0000000..3c126a6
 +        when(player.isPassenger()).thenReturn(true);
 +        try (var nativeState = mockStatic(BedrockActorState.class)) {
 +            nativeState.when(() -> BedrockActorState.lifetime(uuid)).thenReturn(lifetime);
++            nativeState.when(() -> BedrockActorState.liveLifetime(uuid)).thenReturn(lifetime);
 +            final var graph = PhysicalGraphState.capture(List.of(player), List.of(), 7);
 +            final var timing = new MovementCorrectionTiming(100, 105, 25, 100, -1);
 +            assertTrue(graph.acceptsMotion(player, player, new ActorMotionCommand(1, uuid, lifetime, -1, timing, Position3f.ZERO), 7));
@@ -8655,6 +8689,156 @@ index 0000000..0ab2da3
 +        step.record();
 +        assertEquals(List.of(-4D), clipped);
 +        verify(level, never()).getBlockState(any(BlockPos.class));
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/PhysicalReplayLifetimeTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/PhysicalReplayLifetimeTest.java
+new file mode 100644
+index 0000000..185bfaf
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/PhysicalReplayLifetimeTest.java
+@@ -0,0 +1,144 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalActorState;
++import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalCollisionCache;
++import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalReplayContext;
++import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalStateAccess;
++import net.minecraft.SharedConstants;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.CollisionContact;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.EnumSource;
++
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class PhysicalReplayLifetimeTest {
++    @BeforeAll
++    static void initializeGame() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @ParameterizedTest
++    @EnumSource(Retirement.class)
++    void historicalMetadataCannotMakeRetiredActorOrColliderOwnershipValid(final Retirement retirement) {
++        final var fixture = new Fixture();
++        try {
++            BedrockActorState.apply(fixture.original, null);
++            final var captured = fixture.capture();
++            final var physical = fixture.physical();
++            switch (retirement) {
++                case REPLACED -> BedrockActorState.apply(snapshot(fixture.uuid, UUID.randomUUID(), Set.of()), null);
++                case REMOVED -> BedrockActorState.apply(new NativeActorMessage.Remove(fixture.uuid, fixture.lifetime, false), null);
++                case CLEARED -> BedrockActorState.clear();
++            }
++            when(fixture.actor.getBoundingBox()).thenReturn(fixture.retained.move(1, 0, 0));
++            try (var ignored = PhysicalReplayContext.enter(fixture.level, null, Set.of(fixture.actor))) {
++                PhysicalReplayContext.actor(fixture.uuid, fixture.original);
++                assertSame(fixture.original, BedrockActorState.state(fixture.uuid));
++                assertFalse(physical.valid(mock(LocalPlayer.class)));
++                final var replay = new PhysicalCollisionCache(Position3f.ZERO, captured);
++                assertEquals(fixture.retained, replay.snapshot().shapes().getFirst().bounds());
++                assertSame(fixture.original, BedrockActorState.state(fixture.uuid));
++            }
++        } finally {
++            BedrockActorState.clear();
++        }
++    }
++
++    @Test
++    void unchangedLiveLifetimeAcceptsOwnershipWhilePhysicsReadsHistoricalMetadata() {
++        final var fixture = new Fixture();
++        try {
++            BedrockActorState.apply(fixture.original, null);
++            final var captured = fixture.capture();
++            final var physical = fixture.physical();
++            final var current = snapshot(fixture.uuid, fixture.lifetime, Set.of(ActorFlags.BLOCKING));
++            BedrockActorState.apply(current, null);
++            final var bounds = fixture.retained.move(1, 0, 0);
++            when(fixture.actor.getBoundingBox()).thenReturn(bounds);
++            try (var ignored = PhysicalReplayContext.enter(fixture.level, null, Set.of(fixture.actor))) {
++                PhysicalReplayContext.actor(fixture.uuid, fixture.original);
++                assertTrue(physical.valid(mock(LocalPlayer.class)));
++                assertEquals(bounds, new PhysicalCollisionCache(Position3f.ZERO, captured).snapshot().shapes().getFirst().bounds());
++                assertSame(fixture.original, BedrockActorState.state(fixture.uuid));
++            }
++            assertSame(current, BedrockActorState.state(fixture.uuid));
++        } finally {
++            BedrockActorState.clear();
++        }
++    }
++
++    private static NativeActorMessage.Snapshot snapshot(final UUID uuid, final UUID lifetime, final Set<ActorFlags> flags) {
++        return new NativeActorMessage.Snapshot(uuid, lifetime, false, 17, "minecraft:boat", "", 1F, flags, 0, 0, null, Map.of(), 29L);
++    }
++
++    @Test
++    void recapturedHistoricalPhysicsKeepsItsOriginalOwnershipAndRejectsTheLiveReplacement() {
++        final var fixture = new Fixture();
++        try {
++            final var current = snapshot(fixture.uuid, UUID.randomUUID(), Set.of());
++            BedrockActorState.apply(current, null);
++            try (var ignored = PhysicalReplayContext.enter(fixture.level, null, Set.of(fixture.actor))) {
++                PhysicalReplayContext.actor(fixture.uuid, fixture.original);
++                final var relationships = PhysicalActorState.relationships(fixture.actor);
++                assertEquals(fixture.lifetime, relationships.nativeLifetime());
++                assertSame(fixture.original, relationships.metadata());
++                assertFalse(relationships.valid(mock(LocalPlayer.class)));
++                assertEquals(fixture.lifetime, PhysicalCollisionCache.Shape.actor(fixture.actor).owner().lifetime());
++            }
++            assertSame(current, BedrockActorState.state(fixture.uuid));
++        } finally {
++            BedrockActorState.clear();
++        }
++    }
++
++    private enum Retirement { REPLACED, REMOVED, CLEARED }
++
++    private static final class Fixture {
++        private final UUID uuid = UUID.randomUUID(), lifetime = UUID.randomUUID();
++        private final NativeActorMessage.Snapshot original = snapshot(this.uuid, this.lifetime, Set.of());
++        private final ClientLevel level = mock(ClientLevel.class);
++        private final Entity actor = mock(Entity.class, withSettings().extraInterfaces(PhysicalStateAccess.Base.class));
++        private final AABB retained = new AABB(1, 0, 0, 2, 2, 1);
++
++        private Fixture() {
++            when(this.actor.level()).thenReturn(this.level);
++            when(this.actor.getId()).thenReturn(7);
++            when(this.actor.getUUID()).thenReturn(this.uuid);
++            when(this.level.getEntity(7)).thenReturn(this.actor);
++            when(this.actor.position()).thenReturn(Vec3.ZERO);
++            when(this.actor.getBoundingBox()).thenReturn(this.retained);
++        }
++
++        private PhysicalCollisionCache.Snapshot capture() {
++            return new PhysicalCollisionCache.Snapshot(Position3f.ZERO, new CollisionContact.Box(0, -1, -1, 4, 3, 2),
++                    List.of(PhysicalCollisionCache.Shape.actor(this.actor)));
++        }
++
++        private PhysicalActorState physical() {
++            return new PhysicalActorState(this.actor, this.level, 7, this.uuid, this.lifetime, this.original, true, null, null);
++        }
 +    }
 +}
 -- 

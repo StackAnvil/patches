@@ -2002,3 +2002,34 @@ The complete combined suites pass 2,675 cases, with 163 optional skips.
 All 1,143 client classes match the packaged add-on; all 1,428 core classes match both embedded copies.
 The fixture emits no nonzero-tick vehicle velocity command.
 Native trajectory equality, exact collision/interpolation phases, complete seat ownership, and broader active-use overlap remain unfinished.
+
+## Live lifetime validation during replay
+
+Restored metadata retains the actor lifetime from its historical frame.
+The previous actor, collider, and command checks read that restored lifetime instead of the current registry lifetime.
+A replaced, removed, or cleared actor could therefore pass ownership validation after replay restored its old metadata.
+
+Ownership checks now read the live registry through a separate lifetime accessor.
+Snapshot capture and historical recapture retain their original lifetime and metadata.
+The change neither relabels old physics with a replacement lifetime nor replaces historical gameplay properties with current values.
+
+Five regressions use the actual actor registry with supplied Java entities.
+They cover replacement, removal, clear, same-lifetime updates, and historical relationship recapture.
+Three retirement cases fail before the fix.
+Independent variants restore historical actor validation, restore historical collider validation, or capture live identity for historical physics.
+They fail four, three, and one assertions respectively; restored production passes all five cases.
+The complete four-project build passes 2,679 cases, with 163 optional skips and no failures or errors.
+
+Artifact comparisons identify exactly four changed client classes: actor state, collision ownership, replay session, and the registry accessor.
+The other 1,139 client classes retain their previous bytes.
+All 1,428 core classes match both embedded copies, and all 1,143 client classes match the add-on.
+
+Both native collider source-selection counterexamples still reproduce with the updated live-lifetime fixture.
+Native prediction-history and interpolation-target integration remain unfinished.
+Collider verification now records the entire nested class family; the unchanged outer class alone cannot prove unchanged ownership behavior.
+
+Fresh direct NetherNet and ViaProxy sessions repeat the delayed impulse, mounting, release, reacquisition, dismount, and zero-reset sequence.
+Both retain valid frame bindings, historical correction execution, exact float velocity delivery, and unchanged live tick, food, and held-item counts across replay.
+Runtime artifacts match the tested build, and all owned processes stop normally without observer errors.
+These sessions cover ordinary mount lifecycle and actor removal.
+Same-Java-object native lifetime replacement remains real-registry regression coverage, rather than a claim about live server ID reuse.
