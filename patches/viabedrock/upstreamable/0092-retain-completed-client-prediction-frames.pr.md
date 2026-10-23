@@ -1762,13 +1762,18 @@ The `ADD_PLAYER` handler checks a client configuration virtual before installing
 It creates a missing component with both bytes zero and preserves an existing component.
 Sixteen controls execute the original configuration call, sparse membership checks, and payload initialization.
 Generic storage lookup, insertion, and payload allocation remain supplied boundaries.
-The configuration virtual's producer and update timing remain unverified.
+Another 640 controls replace that supplied boolean with the original configuration setter, enabled predicate, and value accessors.
+The setter stores its enabled flag, integer threshold, and float scalar without changing neighboring fields.
+The enabled predicate requires a stored flag of exactly one.
+It then compares an option integer against the stored threshold with signed less-than-or-equal admission.
+Threshold equality, both signed extrema, and the float scalar's negative zero bits retain original execution.
+The option object and integer remain supplied; the setter's caller and update timing remain unverified.
 
 The component has separate selection and interpolation-admission bytes.
 The original signed budget comparison can reject a selection attempt.
 An admitted selection sets both bytes and clears interpolation when the previous admission byte was false.
 It also copies the current native position into the previous position in that case.
-The later throttle callback clears the selection byte.
+The throttle callback clears the selection byte.
 If that byte was already false, the callback also disables interpolation admission, clears interpolation, and removes `ActorTickNeededComponent`.
 An admitted update preserves its enabled admission byte across the callback.
 
@@ -1777,7 +1782,7 @@ The original callback executes both sparse intersection traversals across 2,560 
 Each control composes the budget branch, callback, normal player packet effect, position request, and collider refresh.
 The earlier 1,280 direct-helper controls remain separate evidence for the same transitions.
 They are not an additional set of independent player scenarios.
-Five deliberate variants fail assertions: ignored budget, retained disabled target, retained first-admission target, ignored configuration, and reinitialized existing component.
+Six deliberate variants fail assertions: ignored budget, retained disabled target, retained first-admission target, ignored configuration, ignored threshold, and reinitialized existing component.
 
 These controls supply budget inputs, priority notifications, component stores, registry lookup, and marker erasure.
 They also retain the earlier supplied readiness input, region query, notifications, and float CRT.
