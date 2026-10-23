@@ -912,3 +912,34 @@ The final packaged normalizer repeats the 1,122,310-input comparison with zero d
 Its class and resource load from the verified JAR. All 1,417 core classes match both packaged copies.
 The generated data and license notices also match across the standalone core, embedded core, and proxy.
 All 1,139 production client classes match the add-on.
+
+## Preserve native naming input bytes
+
+Production NBT decoding previously replaced malformed UTF-8 before native name matching or item-data equality.
+Distinct names could become equal, and distinct compound keys could collapse.
+The native NBT scalar patch now retains those bytes in both binary and network-NBT strings.
+Copies and Java NBT transit preserve the byte identity. Ordinary packet text keeps its existing decoder.
+
+Fresh native binary userdata controls preserve raw keys, nested names, and string lists in 340 inputs and 680 directional comparisons.
+The controls execute the original constructors, loader, NBT parser, and comparator with declared registry and runtime boundaries.
+They do not establish outer packet decoding, visible text, or live malformed-NBT acceptance.
+All six focused string tests pass. Five deliberate stream or surrogate-pair regressions fail.
+The [NBT scalar notes](../patches/viabedrock/upstreamable/0101-normalize-native-nbt-floating-values.pr.md) retain the source and fixture limits.
+
+The separate factory capture now completes with 1,949 unique constructor-owned definitions, 36 key families, and seven secondary-label families.
+Its 2,627 static cleanup callbacks complete, with no remaining owned allocations or locks.
+`written_book` uses a separate primary-name virtual method.
+These pre-packet facts do not establish later component overrides, actual language selection, or complete production name dispatch.
+Search names, menu-owned transport, the authored field, and full predicate integration remain unfinished.
+
+The full four-project build passes 2,640 tests, with 163 optional skips and no failures or errors.
+The core and client stacks replay all 104 and 38 patches.
+All 35 focused NBT scalar/string checks run without skips.
+All 1,418 core classes match both packaged copies. All 1,139 production client classes match the add-on.
+The packaged core passes the six string checks with verified class origins.
+It rejects merging distinct raw names, accepts an identical raw copy, and retains malformed input for the search matcher.
+
+The unmodified ordinary BDS 1.26.51.1 route passes furnace, smoker, blast furnace, and same-world reconnect.
+Final item counts match all three cases. Installed add-on and running proxy JARs match the current build.
+Normal cleanup stops the private display and leaves no managed-profile JVM or private observer.
+This route does not inject malformed NBT or establish native authored-screen or pixel parity.
