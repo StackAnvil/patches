@@ -534,7 +534,7 @@ Block-backed builtin items now use their native constructor associations and can
 Generic block, leaf, wool/carpet and sapling providers preserve their separate native default and empty-name decisions.
 Component reconstruction replaces builtin dispatch, and removed runtime owners cannot retain a name.
 The block source stays lazy for other item methods.
-Potion, arrow and compound providers remain separate work.
+Arrow and compound providers remain separate work.
 
 The compiled table retains 1,379 native block-definition keys.
 All keys match the completed initialized native definition control.
@@ -560,7 +560,7 @@ This smoke check does not inject authored block-name controls or establish nativ
 
 ## World version ownership for potion names
 
-Potion and arrow providers remain unimplemented. Their version source now has a bounded native control.
+Potion names now use the version source described here. Arrow naming remains open.
 The target remains Bedrock 1.26.51.1, build 51061372, protocol 2193, with executable SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
 
 The native identity string names `LegacyClientNetworkHandler::handle(..., StartGamePacket)` at `1413323c0`.
@@ -576,7 +576,9 @@ Inputs include partial versions, prerelease and build suffixes, wildcard, `beta`
 Native local and registered static cleanup leave no tracked allocations or locks after the parser control.
 Reusing the existing loose session conversion disagrees on eighteen inputs. A fixed client-build version disagrees on twenty-four.
 For example, native parsing removes a valid prerelease suffix before these comparisons and rejects a fourth numeric component.
-These results reject the preserved candidate's direct use of the existing session version. Production integration needs native parsing semantics first.
+These results reject direct use of the existing loose session version.
+The connection now stores a separate native `BaseGameVersion` value parsed directly from Start Game.
+Potion receivers obtain this value lazily through the shared name context.
 
 The caller control supplies packet storage, frame storage, client and level holders, and the module allocation.
 It executes the settings copy only through its version member, with declared boundaries for unrelated typed members.
@@ -584,3 +586,44 @@ It executes the constructor's vptr store and observes the configure entry, rathe
 The parser uses the established allocator, CRT, OS and TLS hosting. The CFG dispatcher is also a declared boundary.
 These checks do not run the packet wire decoder, complete registry initialization, game session lifetime, authored screens or visible pixels.
 The earlier 2,844 potion key/I18n cases remain supplied-context evidence.
+
+
+## Native potion primary names
+
+Potion, splash and lingering names now follow the constructor-owned mode and native potion registry fields.
+The compiled table contains 47 definitions, including the four effect registrations gated at world version 1.21.0.
+The provider uses the current language engine to select the composed phrase or native fallback key.
+Missing, empty, unchanged, nested and binary translation values retain their distinct behavior.
+Absent or invalid auxiliary values use the native default entry.
+Component reconstruction replaces this provider, and removed runtime owners cannot retain it.
+Other providers keep their lazy block, language and version sources.
+
+The native version model retains partial numeric versions, wildcard and `beta`.
+It validates the original grammar and unsigned-short component range, then removes accepted suffixes before feature comparisons.
+Invalid input retains the native zero version. The complete parser/comparator corpus still passes all 36 inputs against the packaged class.
+
+All 5,688 original potion key/I18n results match the packaged registry and provider across four version contexts.
+The fresh malformed-version and prerelease contexts receive byte records produced by the separate native parser control.
+They execute original effect/potion construction, registration, mode getters, name selection and I18n formatting.
+The native registries contain 47, 43, 43 and 47 entries in the modern, legacy, malformed and prerelease contexts respectively.
+Registry field comparisons pass in all four contexts.
+The receiver corpus also covers requests for entries absent from an older registry.
+The selected language tables, descriptor transport and declared allocator/CRT/TLS/intern hosting remain supplied.
+
+The packaged converter passes all 3,504 applicable cases through raw language parsing, the typed protocol-2193 registry and item serialization.
+The previous package passes 48 and fails 3,456 under the same inputs.
+The conversion control excludes 288 non-stack descriptors and 1,896 language inputs that raw language files cannot represent.
+The separate receiver comparison covers those descriptor and dictionary inputs.
+Four private wrong variants fail behavioral assertions: fixed modern version, unconditional phrase selection, empty translation treated as missing, and invalid version treated as modern.
+The block providers retain all 4,092 native receiver comparisons and 1,337 packaged sentinel cases.
+Their private context checks also reject language or version access from block methods.
+New string-based oracle sources stay private; existing repository tests follow the required context API.
+
+The combined build passes 2,703 tests with 163 optional skips.
+All 1,446 core classes match source and both packaged consumers; all 1,144 client classes match the final add-on.
+The three naming resources match source in the standalone core, add-on and proxy.
+A fresh final-artifact BDS run passes all three cooking families and same-world reconnect.
+Both selected launches use the exact final add-on. All nine observed owned identities retire, and the private display stops normally.
+
+These checks do not establish complete native packet decoding, asset/locale ownership, authored screen acceptance or visible potion text.
+Arrow and compound names, secondary labels and cooking query transport remain open.

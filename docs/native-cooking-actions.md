@@ -1159,7 +1159,24 @@ The parser control completes native local and static cleanup without tracked all
 The existing loose session conversion cannot supply the potion provider unchanged: it disagrees with native comparisons on eighteen inputs.
 The differences include prerelease suffixes, malformed versions and values beyond the native 16-bit component range.
 A fixed client-build version also fails older world contexts.
-Potion and arrow providers remain unimplemented while native parsing is integrated.
+Potion providers now use a separate native version value parsed from Start Game. Arrow naming remains open.
 
 These controls use supplied packet storage and declared hosting boundaries. They do not execute the wire decoder or complete client startup.
 See the [native version evidence](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#world-version-ownership-for-potion-names) for the caller, offsets and limits.
+
+
+## Native potion primary names
+
+Potion, splash and lingering names now use their native constructor mode, registry fields and current language formatting.
+A separate native world-version value preserves partial versions, wildcard and `beta`, and removes accepted suffixes before feature comparisons.
+Invalid or overflowing versions follow native zero-version behavior.
+Component reconstruction and current runtime ownership still govern provider access.
+
+The packaged provider matches 5,688 original native key/I18n results across modern, legacy, malformed-version and prerelease contexts.
+All 3,504 applicable packaged conversions pass; the previous package fails 3,456 of those inputs.
+Four deliberately wrong version or fallback variants fail assertions. The block-name conversion retains all 1,337 passing sentinel cases.
+
+The combined build passes 2,703 tests with 163 optional skips.
+Fresh final-artifact BDS cooking and reconnect checks also pass, with normal cleanup of owned processes and the private display.
+These checks do not establish authored screens, complete native session ownership or visible potion text.
+See the [potion provider evidence](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#native-potion-primary-names) for inputs, exclusions and remaining work.
