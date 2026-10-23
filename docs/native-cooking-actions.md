@@ -1116,3 +1116,20 @@ The converter now preserves ordinary naming through the existing missing-visual 
 
 These checks do not complete descriptor-dependent names, appended primary text, secondary labels, cooking query transport, or native screen acceptance.
 See the [owning patch notes](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#constructor-owned-ordinary-names) for inputs and limits.
+
+## Descriptor-aware ordinary item names
+
+The registry also supplies name providers for 41 builtin definitions across thirteen descriptor-dependent native methods.
+These include buckets, dyes, books, maps, beds, banners, shields, and education items.
+The converter supplies actual stack metadata and unfiltered userdata. Providers retain constructor variants independently of stack metadata and later factory flags.
+Typed reads preserve absent values, empty compounds, wrong tag types, field presence, and each method's integer masks.
+Component reconstruction and current runtime ownership still determine which provider can run.
+
+The private native corpus contains 10,906 original outputs from two initialized registry contexts.
+The second context initializes structure identities before map names and replaces all 266 matching map inputs.
+Both native contexts complete their original cleanup assertions. Another 9,089 bounded controls cover typed fields and constructor behavior.
+The final packaged converter passes 8,282 applicable descriptor cases, all 557 fixed-name cases, and twenty component-description cases.
+These controls verify supplied registry, descriptor, userdata, and language inputs. They do not establish native packet decoding, asset precedence, or visible UI parity.
+
+Block, potion, arrow, compound, appended primary text, secondary labels, query transport, and unchanged authored-screen acceptance remain open.
+See the [descriptor provider notes](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#descriptor-aware-ordinary-names) for composition, initialization, regression controls, and build results.
