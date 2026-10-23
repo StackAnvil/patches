@@ -47,6 +47,33 @@ These controls supply the category bit and existing component stores.
 The queue erasure virtual method is an explicit fixture boundary.
 Native category producers, complete component lifetimes, request consumption, and phase ordering remain unverified.
 
+The complete native tick system body `1431ea880` passes another 1,152 controls.
+It requires `MovementInterpolatorComponent`, `StateVectorComponent`, `ActorRotationComponent`, and `InterpolateMovementNeededComponent`.
+It excludes `ProjectileComponent`.
+Original iteration and version checks execute across all four supplied dense drivers.
+The fixture supplies cached view selection, head admission, registry discovery, CRT remainder, and view cleanup.
+Marker production, normal entry selection, and complete actor lifetimes remain unverified.
+
+Original position consumer `14901d080` passes 270 controls without arithmetic or membership substitutions.
+It copies the requested position into StateVector and preserves the remaining StateVector bytes.
+`PaintingFlagComponent` selects translation of the existing bounds.
+Other actors rebuild bounds from width, height, origin offset, and the requested position.
+The fixture supplies existing components and optional painting membership, including stale generations and missing pages.
+
+Grounded callback `1431ef070` passes another 132 controls.
+An active interpolation counter can snap Y across the floor boundary after addition of the native float `0.01`.
+This callback changes only StateVector Y.
+It does not receive or update shape data.
+Its system additionally requires ground and interpolation markers and excludes minecarts.
+These controls do not establish marker lifetimes or later shape scheduling.
+
+The fresh replay-manager control dispatches all 215 registered replay systems through the original manager and replay entry.
+Within interpolation, that sequence runs the tick, position application, and grounded post-tick systems.
+It omits input capture and queued-target handling.
+All system ECS bodies return at explicit boundaries in this dispatch control.
+Native registration vectors for categories zero and one place capture before tick, followed by queued targets, position application, and grounded post-tick.
+Normal entry execution and complete game phases remain separate requirements.
+
 The packet-source prerequisite now lives in the existing core sparse-update owner.
 It retains received coordinates and rotations before local admission, independently of the mutable actor pose.
 The [spatial update notes](../../viabedrock/upstreamable/0018-preserve-sparse-actor-spatial-updates.pr.md) record 512 original-handler controls and registered packet comparisons.

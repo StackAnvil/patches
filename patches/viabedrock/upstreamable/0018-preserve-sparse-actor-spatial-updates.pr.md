@@ -1,5 +1,25 @@
 # Bedrock spatial updates
 
+## Complete received packet metadata, October 23, 2026
+
+The received cache now retains the native movement flags and every unsigned 64-bit interpolation tick.
+Sparse packets retain ground, teleport, forced-local, and force-completion bits with the native reserved high bits.
+Absolute packets replace these flags and reset the duration to zero, as the native absolute constructor does.
+Spawn bootstrap keeps the constructor flags and duration.
+Live actor changes remain independent from this received state.
+
+The original sparse handler and full cache publisher pass another 192 controls.
+They cover force completion, ground state, removed actors, and durations through `UINT64_MAX`.
+Ready-level and actor lookup callbacks plus native local-control storage remain supplied boundaries.
+Registered Java handlers match the native flags, duration bits, position, and angles.
+All seven packet-cache tests pass without skips.
+Truncated durations and dropped force completion each fail the mandatory regression and native comparison.
+The restored implementation passes both comparisons and Checkstyle.
+
+This change preserves the complete source for later interpolation target construction.
+The existing Java interpolation path still needs replacement with retained native components and their real phases.
+These controls do not establish teleport or forced-local admission, complete actor lifetimes, live trajectories, or full interpolation parity.
+
 ## Independent received movement state, October 23, 2026
 
 Sparse actor movement now fills omitted coordinates and rotations from the last received movement packet.

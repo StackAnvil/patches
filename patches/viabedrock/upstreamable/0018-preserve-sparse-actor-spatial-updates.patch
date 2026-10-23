@@ -1,4 +1,4 @@
-From a55da387157f2762d82bc6c0643f730e25399208 Mon Sep 17 00:00:00 2001
+From 4f0c277ce5d14b588e0410d37285f15a25c64414 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] fix(entities): preserve Bedrock spatial updates
@@ -32,8 +32,8 @@ The matching Bedrock 1.26.51.1 executable/protocol2193 passes 512 fresh
 handler/publisher controls over all six omission bits, ground states,
 distinct live positions and removed actors. Registered Java handler tests
 compare the native outputs and verify independent live state and encoded
-remote positions/rotations. These cases do not establish complete actor construction, interpolation
-ticking, all lifetimes or complete trajectories.
+remote positions/rotations. These cases do not establish complete actor
+construction, interpolation ticking, all lifetimes or full trajectories.
 
 Seed received angles with the native spawn bootstrap's wrapped byte
 conversion. Native helper 14103ff60 normalizes each float angle, divides
@@ -48,19 +48,35 @@ outputs. Both deliberate regressions, full-float retention and unwrapped
 byte conversion, fail the mandatory and native-reference comparisons.
 Surrounding spawn flow and allocation, complete interpolation phases and
 native trajectories remain separate verification requirements.
+
+Retain movement flags and every unsigned 64-bit interpolation-duration
+bit with the received packet cache, including updates ignored by local
+transform admission. Native delta handler 14133ef30 creates an absolute
+payload with high flag bits set, explicit ground/teleport/local-force/
+force-completion bits and the complete duration. Absolute packets replace
+that metadata with their wire flags and native zero duration. The spawn
+bootstrap preserves constructor flags and duration. Do not narrow the
+counter source before native target construction consumes it.
+
+Another 192 original handler/publisher controls cover force completion,
+ground state, removed actors and unsigned durations through UINT64_MAX.
+Registered Java handlers match the received metadata and spatial fields.
+Both duration truncation and dropped force completion fail the mandatory
+regression and native comparison. Full interpolation target application,
+normal phases, actor ownership and native trajectories remain unfinished.
 ---
- .../viabedrock/api/model/entity/Entity.java   |  32 +++
- .../protocol/packet/EntityPackets.java        |  67 +++--
+ .../viabedrock/api/model/entity/Entity.java   |  45 +++
+ .../protocol/packet/EntityPackets.java        |  74 ++--
  .../packet/EntityMovementPacketsTest.java     |  30 ++
- .../packet/MotionPredictionPacketTest.java    | 104 +++++++
- .../packet/SpatialPacketCacheTest.java        | 265 ++++++++++++++++++
- 5 files changed, 469 insertions(+), 29 deletions(-)
+ .../packet/MotionPredictionPacketTest.java    | 104 ++++++
+ .../packet/SpatialPacketCacheTest.java        | 316 ++++++++++++++++++
+ 5 files changed, 538 insertions(+), 31 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/EntityMovementPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MotionPredictionPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/SpatialPacketCacheTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 5addfdbde..5ee620321 100644
+index 5addfdbde..163c52677 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -26,6 +26,7 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
@@ -71,16 +87,18 @@ index 5addfdbde..5ee620321 100644
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
-@@ -56,6 +57,8 @@ public class Entity {
+@@ -56,6 +57,10 @@ public class Entity {
       * x, y, z
       */
      protected Position3f position;
 +    private Position3f lastReceivedPosition;
 +    private Position3f lastReceivedRotation;
++    private short lastReceivedMovementFlags = 0xFF;
++    private long lastReceivedInterpolationTicks;
      /**
       * pitch, yaw, headYaw
       */
-@@ -183,7 +186,24 @@ public class Entity {
+@@ -183,7 +188,35 @@ public class Entity {
          return this.position;
      }
  
@@ -93,9 +111,20 @@ index 5addfdbde..5ee620321 100644
 +        return this.lastReceivedRotation == null ? Position3f.ZERO : this.lastReceivedRotation;
 +    }
 +
-+    public void retainSpatialUpdate(final Position3f position, final Position3f rotation) {
++    public short lastReceivedMovementFlags() {
++        return this.lastReceivedMovementFlags;
++    }
++
++    /** The native packet carries an unsigned 64-bit duration; preserve its complete bit pattern. */
++    public long lastReceivedInterpolationTicks() {
++        return this.lastReceivedInterpolationTicks;
++    }
++
++    public void retainSpatialUpdate(final Position3f position, final Position3f rotation, final short flags, final long interpolationTicks) {
 +        this.lastReceivedPosition = position;
 +        this.lastReceivedRotation = rotation;
++        this.lastReceivedMovementFlags = flags;
++        this.lastReceivedInterpolationTicks = interpolationTicks;
 +    }
 +
      public void setPosition(final Position3f position) {
@@ -105,7 +134,7 @@ index 5addfdbde..5ee620321 100644
          this.position = position;
      }
  
-@@ -192,9 +212,21 @@ public class Entity {
+@@ -192,9 +225,21 @@ public class Entity {
      }
  
      public void setRotation(final Position3f rotation) {
@@ -128,7 +157,7 @@ index 5addfdbde..5ee620321 100644
          return this.onGround;
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-index b5d08775d..93d81aaab 100644
+index b5d08775d..fbf977223 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 @@ -73,6 +73,11 @@ public final class EntityPackets {
@@ -147,12 +176,23 @@ index b5d08775d..93d81aaab 100644
                  return;
              }
  
-+            entity.retainSpatialUpdate(position, new Position3f(pitch, yaw, headYaw));
++            entity.retainSpatialUpdate(position, new Position3f(pitch, yaw, headYaw), flags, 0);
 +
              if (entity == entityTracker.getClientPlayer()) {
                  if (!teleported && !forceMoveLocalEntity) {
                      wrapper.cancel();
-@@ -273,14 +280,20 @@ public final class EntityPackets {
+@@ -264,8 +271,8 @@ public final class EntityPackets {
+             final boolean onGround = wrapper.read(Types.BOOLEAN);
+             final boolean teleported = wrapper.read(Types.BOOLEAN); // If the position shouldn't be interpolated
+             final boolean forceMoveLocalEntity = wrapper.read(Types.BOOLEAN);
+-            wrapper.read(Types.BOOLEAN); // force completion
+-            wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // ticks
++            final boolean forceCompletion = wrapper.read(Types.BOOLEAN);
++            final long interpolationTicks = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG);
+ 
+             final Entity entity = entityTracker.getEntityByRid(entityRuntimeId);
+             if (entity == null) {
+@@ -273,14 +280,23 @@ public final class EntityPackets {
                  return;
              }
  
@@ -162,7 +202,10 @@ index b5d08775d..93d81aaab 100644
 +                    hasPitch ? MathUtil.byte2Float(pitch) : previousRotation.x(),
 +                    hasYaw ? MathUtil.byte2Float(yaw) : previousRotation.y(),
 +                    hasHeadYaw ? MathUtil.byte2Float(headYaw) : previousRotation.z());
-+            entity.retainSpatialUpdate(position, rotation);
++            // The native delta handler builds an absolute payload with its reserved flag bits set.
++            final short flags = (short) (0xF0 | (onGround ? 1 : 0) | (teleported ? 2 : 0)
++                    | (forceMoveLocalEntity ? 4 : 0) | (forceCompletion ? 8 : 0));
++            entity.retainSpatialUpdate(position, rotation, flags, interpolationTicks);
 +
              if (entity == entityTracker.getClientPlayer()) {
                  if (!teleported && !forceMoveLocalEntity) {
@@ -176,7 +219,7 @@ index b5d08775d..93d81aaab 100644
                  if (teleported) {
                      wrapper.setPacketType(ClientboundPackets26_3.PLAYER_POSITION);
                      entityTracker.getClientPlayer().writePlayerPositionPacketToClient(wrapper, Relative.union(Relative.ROTATION, Relative.VELOCITY), true);
-@@ -299,23 +312,9 @@ public final class EntityPackets {
+@@ -299,23 +315,9 @@ public final class EntityPackets {
                  return;
              }
  
@@ -202,7 +245,7 @@ index b5d08775d..93d81aaab 100644
                  PacketFactory.sendJavaRotateHead(wrapper.user(), entity);
              }
              entity.setOnGround(onGround);
-@@ -332,20 +331,19 @@ public final class EntityPackets {
+@@ -332,20 +334,19 @@ public final class EntityPackets {
              wrapper.write(Types.BOOLEAN, entity.isOnGround()); // on ground
          });
          protocol.registerClientbound(ClientboundBedrockPackets.SET_ENTITY_MOTION, ClientboundPackets26_3.SET_ENTITY_MOTION, wrapper -> {
@@ -232,7 +275,7 @@ index b5d08775d..93d81aaab 100644
          });
          protocol.registerClientbound(ClientboundBedrockPackets.REMOVE_ENTITY, ClientboundPackets26_3.REMOVE_ENTITIES, wrapper -> {
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-@@ -705,6 +703,17 @@ public final class EntityPackets {
+@@ -705,6 +706,17 @@ public final class EntityPackets {
          });
      }
  
@@ -398,10 +441,10 @@ index 000000000..43ed285c9
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/SpatialPacketCacheTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/SpatialPacketCacheTest.java
 new file mode 100644
-index 000000000..f49e78142
+index 000000000..cdfe2c6a0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/SpatialPacketCacheTest.java
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,316 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -509,6 +552,8 @@ index 000000000..f49e78142
 +        final var spawnRotation = new Position3f(170.25F, -181.125F, 540.5F);
 +        actor.setRotation(spawnRotation);
 +        assertEquals(spawnRotation, actor.rotation());
++        assertEquals((short) 0xFF, actor.lastReceivedMovementFlags());
++        assertEquals(0, actor.lastReceivedInterpolationTicks());
 +        actor.setPosition(new Position3f(100, 200, 300));
 +        actor.setRotation(new Position3f(40, 50, 60));
 +        try (var packets = mockStatic(PacketFactory.class)) {
@@ -516,6 +561,47 @@ index 000000000..f49e78142
 +            assertEquals(new Position3f(NETWORK_POSITION.x(), -2.5F, NETWORK_POSITION.z()), actor.position());
 +            assertEquals(rotation(121, 127, 45), actor.rotation());
 +            assertEquals(actor.rotation(), actor.lastReceivedRotation());
++        }
++    }
++
++    @Test
++    void ignoredUpdatesRetainForceCompletionAndUnsignedTicksUntilAnAbsolutePacketReplacesThem() throws Exception {
++        final var context = new Context();
++        final var player = context.local(new Position3f(100, 200, 300));
++        assertTrue(context.absolute((short) 8).cancelled());
++        assertEquals((short) 8, player.lastReceivedMovementFlags());
++        assertEquals(0, player.lastReceivedInterpolationTicks());
++        assertTrue(context.delta(0, false, true, Long.MIN_VALUE).cancelled());
++        assertEquals((short) 0xF8, player.lastReceivedMovementFlags());
++        assertEquals(Long.MIN_VALUE, player.lastReceivedInterpolationTicks());
++        assertTrue(context.absolute().cancelled());
++        assertEquals((short) 0, player.lastReceivedMovementFlags());
++        assertEquals(0, player.lastReceivedInterpolationTicks());
++        assertEquals(NETWORK_POSITION, player.lastReceivedPosition());
++        assertEquals(NETWORK_ROTATION, player.lastReceivedRotation());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_SPATIAL_METADATA", matches = ".+")
++    void matchesNativeCompleteMovementCacheAcrossUnsignedDurationsAndForceCompletion() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_SPATIAL_METADATA")))).getAsJsonObject();
++        for (var value : reference.getAsJsonArray("rows")) {
++            final var row = value.getAsJsonObject();
++            final var context = new Context();
++            final float live = row.get("liveCoordinate").getAsFloat();
++            final var player = context.local(new Position3f(live, live + 1, live + 2));
++            context.absolute();
++            if (row.get("removed").getAsBoolean()) {
++                when(context.tracker.getEntityByRid(RUNTIME_ID)).thenReturn(null);
++            }
++            assertTrue(context.delta(row.get("mask").getAsInt(), row.get("ground").getAsBoolean(),
++                    row.get("forceCompletion").getAsBoolean(), Long.parseUnsignedLong(row.get("incomingTicks").getAsString())).cancelled());
++            assertEquals(row.get("flags").getAsShort(), player.lastReceivedMovementFlags());
++            assertEquals(Long.parseUnsignedLong(row.get("tick").getAsString()), player.lastReceivedInterpolationTicks());
++            assertEquals(vector(row.getAsJsonArray("position")), player.lastReceivedPosition());
++            final var angles = row.getAsJsonArray("rotationBytes");
++            assertEquals(rotation(angles.get(0).getAsInt(), angles.get(1).getAsInt(), angles.get(2).getAsInt()), player.lastReceivedRotation());
++            assertEquals(new Position3f(live, live + 1, live + 2), player.position());
 +        }
 +    }
 +
@@ -595,9 +681,13 @@ index 000000000..f49e78142
 +        }
 +
 +        private Translation absolute() throws Exception {
++            return this.absolute((short) 0);
++        }
++
++        private Translation absolute(final short flags) throws Exception {
 +            return this.translate(ClientboundBedrockPackets.MOVE_ENTITY_ABSOLUTE, input -> {
 +                BedrockTypes.UNSIGNED_VAR_LONG.write(input, RUNTIME_ID);
-+                Types.UNSIGNED_BYTE.write(input, (short) 0);
++                Types.UNSIGNED_BYTE.write(input, flags);
 +                BedrockTypes.POSITION_3F.write(input, NETWORK_POSITION);
 +                for (int angle : new int[]{12, 200, 254}) {
 +                    Types.BYTE.write(input, (byte) angle);
@@ -606,6 +696,10 @@ index 000000000..f49e78142
 +        }
 +
 +        private Translation delta(final int mask, final boolean onGround) throws Exception {
++            return this.delta(mask, onGround, false, 0x100000005L);
++        }
++
++        private Translation delta(final int mask, final boolean onGround, final boolean forceCompletion, final long interpolationTicks) throws Exception {
 +            return this.translate(ClientboundBedrockPackets.MOVE_ENTITY_DELTA, input -> {
 +                BedrockTypes.UNSIGNED_VAR_LONG.write(input, RUNTIME_ID);
 +                final float[] positions = {-1.25F, -2.5F, -3.75F};
@@ -625,10 +719,10 @@ index 000000000..f49e78142
 +                    }
 +                }
 +                Types.BOOLEAN.write(input, onGround);
-+                for (int flag = 0; flag < 3; flag++) {
-+                    Types.BOOLEAN.write(input, false);
-+                }
-+                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 0x100000005L);
++                Types.BOOLEAN.write(input, false);
++                Types.BOOLEAN.write(input, false);
++                Types.BOOLEAN.write(input, forceCompletion);
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, interpolationTicks);
 +            });
 +        }
 +
