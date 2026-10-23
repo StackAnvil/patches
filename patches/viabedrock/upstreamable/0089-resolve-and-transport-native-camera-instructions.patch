@@ -1,4 +1,4 @@
-From f18c6e56c0ce58f51ad729e09b3cdf9f9c0032dd Mon Sep 17 00:00:00 2001
+From bc6c05627688badae4c67104d7a525b33fe42eaf Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(camera): resolve server presets and camera movement
@@ -353,6 +353,27 @@ results and float CRT math are boundaries. These controls exclude actual
 player/actor pivot production, constructor and packet flow, complete ECS
 scheduling, avoidance/world type lookup and GPU rendering. The existing
 follow frame and avoidance comparisons remain enabled separately.
+
+Retire lost fixed-boom attachments per camera instance after their bound
+native actor lifetime disappears or is replaced. Resume the default player
+attachment without adopting a reused identity until a new attachment
+command. Preserve orbit's separate retained-component behavior. Keep native
+identity available while Java render entities or bounds are pending so a
+missing render sample does not masquerade as native actor removal.
+
+32 pinned 1.26.51.1 controls execute original callbacks 14677e970/14677ecb0,
+optional point provider 14672dbf0, weak-actor lookup 14672dd10, center kernel
+1419f8180 and transform 14677e5a0. Native lookup rejects removed actors,
+stale sparse generations, absent type/sparse/data storage, expired worlds
+and absent client levels. Fixed failure clears the handle, releases its
+weak reference and requests component erasure. Orbit retains its handle.
+Default fixed attachment, boom, offset and look-at kernels then run against
+a supplied local-player origin, matching the source default-view exclusion
+and caller ordering. Typed registries, generations, actor positions/AABBs,
+weak controls and component inputs are supplied. Client-level/weak-world
+resolution, attachment pool lookup/erasure and float CRT calls remain
+boundaries. These controls exclude complete ECS scheduling, native player
+pivot production, actual post-loss orbit origin lookup and GPU rendering.
 ---
  .../api/model/CameraAimAssistActivation.java  | 118 +++++
  .../api/model/CameraAimAssistBlocks.java      | 436 ++++++++++++++++++
@@ -371,7 +392,7 @@ follow frame and avoidance comparisons remain enabled separately.
  .../viabedrock/api/model/CameraFadeState.java |  95 ++++
  .../api/model/CameraFadeTimeline.java         |  91 ++++
  .../viabedrock/api/model/CameraFixedBoom.java |  34 ++
- .../api/model/CameraFollowRuntime.java        | 192 ++++++++
+ .../api/model/CameraFollowRuntime.java        | 207 +++++++++
  .../api/model/CameraFollowState.java          |  96 ++++
  .../viabedrock/api/model/CameraFovState.java  | 133 ++++++
  .../api/model/CameraFovTimeline.java          |  67 +++
@@ -420,7 +441,7 @@ follow frame and avoidance comparisons remain enabled separately.
  .../api/model/CameraAudioListenerTest.java    |  52 +++
  .../api/model/CameraAvoidanceTest.java        | 128 +++++
  .../api/model/CameraFadeTimelineTest.java     | 117 +++++
- .../api/model/CameraFollowRuntimeTest.java    | 263 +++++++++++
+ .../api/model/CameraFollowRuntimeTest.java    | 358 ++++++++++++++
  .../api/model/CameraFovTimelineTest.java      | 132 ++++++
  .../viabedrock/api/model/CameraOrbitTest.java | 135 ++++++
  .../api/model/CameraPoseTimelineTest.java     | 152 ++++++
@@ -437,7 +458,7 @@ follow frame and avoidance comparisons remain enabled separately.
  .../protocol/model/CameraPresetTest.java      | 250 ++++++++++
  .../model/CameraSplineDefinitionTest.java     | 213 +++++++++
  .../storage/CameraEffectsStorageTest.java     | 255 ++++++++++
- 83 files changed, 11253 insertions(+), 10 deletions(-)
+ 83 files changed, 11363 insertions(+), 10 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAimAssistActivation.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAimAssistBlocks.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraAimAssistClientState.java
@@ -2653,10 +2674,10 @@ index 000000000..2d85086ca
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraFollowRuntime.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraFollowRuntime.java
 new file mode 100644
-index 000000000..3aa423330
+index 000000000..d6a582462
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraFollowRuntime.java
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,207 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2690,6 +2711,7 @@ index 000000000..3aa423330
 +        }
 +        if (this.state == null || next.attachmentSequence() != this.state.attachmentSequence()) {
 +            this.attachmentLifetime = null;
++            this.instances.values().forEach(instance -> instance.attachmentRetired = false);
 +        }
 +        final var ids = new HashSet<Long>();
 +        for (final var preset : next.presets()) {
@@ -2727,23 +2749,27 @@ index 000000000..3aa423330
 +            return;
 +        }
 +        final boolean attached = this.state.actorUniqueId() != null;
-+        final Actor actor = attached ? actors.apply(this.state.actorUniqueId()) : localPlayer;
-+        if (actor == null) {
-+            return;
-+        }
-+        if (attached) {
-+            if (this.attachmentLifetime == null) {
-+                this.attachmentLifetime = actor.lifetime;
-+            }
-+            if (!this.attachmentLifetime.equals(actor.lifetime)) {
-+                return;
-+            }
++        final Actor attachedActor = attached ? actors.apply(this.state.actorUniqueId()) : null;
++        final boolean lost = attached && this.attachmentLifetime != null
++                && (attachedActor == null || !this.attachmentLifetime.equals(attachedActor.lifetime));
++        if (attached && attachedActor != null && this.attachmentLifetime == null) {
++            this.attachmentLifetime = attachedActor.lifetime;
 +        }
 +        for (final var instance : this.instances.values()) {
 +            final var p = instance.preset;
-+            final Vector origin = attached ? actor.origin : actor.origin.add(new Vector(0, this.state.playerOriginOffset(), 0));
-+            final var localPoint = attached ? actor.center.subtract(origin) : Vector.ZERO;
-+            final float attachmentYaw = p.fixed() ? CameraFixedBoom.attachmentYaw(p.yaw()) : actor.yaw;
++            // Fixed-boom drops its failed weak attachment. Orbit retains its component and previous pose.
++            if (lost && p.fixed()) {
++                instance.attachmentRetired = true;
++            }
++            final boolean useAttachment = attached && !instance.attachmentRetired;
++            final Actor actor = useAttachment ? attachedActor : localPlayer;
++            if (actor == null || actor.sample == null || useAttachment && lost) {
++                continue;
++            }
++            final Sample sample = actor.sample;
++            final Vector origin = useAttachment ? sample.origin : sample.origin.add(new Vector(0, this.state.playerOriginOffset(), 0));
++            final var localPoint = useAttachment ? sample.center.subtract(origin) : Vector.ZERO;
++            final float attachmentYaw = p.fixed() ? CameraFixedBoom.attachmentYaw(p.yaw()) : sample.yaw;
 +            final Vector pivot = origin.add(attachment(localPoint, p.entityOffset(), attachmentYaw));
 +            final Vector position;
 +            if (p.fixed()) {
@@ -2815,11 +2841,20 @@ index 000000000..3aa423330
 +        return new CameraOrbit.Target(p.radius(), p.yaw() * CameraPose.DEGREES, -(p.pitch() * CameraPose.DEGREES - CameraPose.PI * .5F));
 +    }
 +
-+    /** Translated entity position and native physical center, sampled at the same render time. */
-+    public record Actor(UUID lifetime, Vector origin, Vector center, float yaw) {
++    /** Native actor identity stays available while its render entity or physical bounds are pending. */
++    public record Actor(UUID lifetime, Sample sample) {
 +        public Actor {
-+            if (lifetime == null || origin == null || center == null || !Float.isFinite(yaw)) {
++            if (lifetime == null) {
 +                throw new IllegalArgumentException("Invalid follow actor");
++            }
++        }
++    }
++
++    /** Translated entity position and native physical center, sampled at the same render time. */
++    public record Sample(Vector origin, Vector center, float yaw) {
++        public Sample {
++            if (origin == null || center == null || !Float.isFinite(yaw)) {
++                throw new IllegalArgumentException("Invalid follow actor sample");
 +            }
 +        }
 +    }
@@ -2834,6 +2869,7 @@ index 000000000..3aa423330
 +        private final CameraAvoidance avoidance;
 +        private Vector renderedPosition;
 +        private Quaternion orientation;
++        private boolean attachmentRetired;
 +
 +        private CameraPose pose(final float fov, final int renderingMode) {
 +            return this.renderedPosition == null ? null : new CameraPose(this.renderedPosition, this.orientation, fov, renderingMode);
@@ -9052,10 +9088,10 @@ index 000000000..26a5c62ba
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraFollowRuntimeTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraFollowRuntimeTest.java
 new file mode 100644
-index 000000000..3b1f64ccf
+index 000000000..b1ab59d20
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CameraFollowRuntimeTest.java
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,358 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -9187,7 +9223,7 @@ index 000000000..3b1f64ccf
 +        runtime.advance(.05F, null, id -> first, AIR);
 +        final var initial = runtime.active(1, 66, 5);
 +        assertFalse(runtime.input(1, 30, 90));
-+        final var turned = new CameraFollowRuntime.Actor(lifetime, first.origin(), first.center(), 170);
++        final var turned = new CameraFollowRuntime.Actor(lifetime, new CameraFollowRuntime.Sample(first.sample().origin(), first.sample().center(), 170));
 +        runtime.advance(.05F, null, id -> turned, AIR);
 +        assertEquals(initial, runtime.active(1, 66, 5));
 +        final var moved = actor(lifetime, 3);
@@ -9209,6 +9245,101 @@ index 000000000..3b1f64ccf
 +            assertNativeFrame(element.getAsJsonObject(), AIR);
 +        }
 +        assertEquals(192, cases.size());
++    }
++
++    @Test
++    void fixedRetirementUsesTheLocalPlayerWithoutAdoptingReplacementsOrResettingOrbitState() {
++        final var runtime = new CameraFollowRuntime();
++        final var fixed = new CameraFollowState.Preset(0, 0, 10, 0, 0, 0, 0, Vector.ZERO, -180, 180, true);
++        final var presets = List.of(fixed, preset(1, 0, 10));
++        final var local = actor(UUID.randomUUID(), 20);
++        final var first = actor(UUID.randomUUID(), 0);
++        runtime.accept(state(1, 1, 0, 1, 9L, presets));
++        runtime.advance(.05F, local, id -> first, AIR);
++        assertVector(new Vector(10, .9F, 0), runtime.active(1, 66, 5).position());
++        runtime.advance(.05F, local, id -> null, AIR);
++        assertVector(new Vector(30, 1.62F, 0), runtime.active(1, 66, 5).position());
++        final var replacement = actor(UUID.randomUUID(), 99);
++        runtime.accept(state(2, 2, 1, 1, 9L, presets));
++        runtime.advance(.05F, local, id -> replacement, AIR);
++        assertVector(new Vector(10, .9F, 0), runtime.active(2, 66, 5).position());
++        runtime.accept(state(3, 3, 0, 1, 9L, presets));
++        runtime.advance(.05F, local, id -> first, AIR);
++        assertVector(new Vector(30, 1.62F, 0), runtime.active(3, 66, 5).position());
++        runtime.advance(.05F, local, id -> replacement, AIR);
++        assertVector(new Vector(30, 1.62F, 0), runtime.active(3, 66, 5).position());
++        runtime.accept(state(4, 4, 0, 2, 9L, presets));
++        runtime.advance(.05F, local, id -> replacement, AIR);
++        assertVector(new Vector(109, .9F, 0), runtime.active(4, 66, 5).position());
++    }
++
++    @Test
++    void pendingRenderSamplesKeepActorIdentityAndDoNotRetireAnAttachment() {
++        final var runtime = new CameraFollowRuntime();
++        final var p = new CameraFollowState.Preset(0, 0, 10, 0, 0, 0, 0, Vector.ZERO, -180, 180, true);
++        final UUID lifetime = UUID.randomUUID();
++        final var local = actor(UUID.randomUUID(), 20);
++        runtime.accept(state(1, 1, 0, 1, 9L, List.of(p)));
++        runtime.advance(.05F, local, id -> new CameraFollowRuntime.Actor(lifetime, null), AIR);
++        assertNull(runtime.active(1, 66, 5));
++        runtime.advance(.05F, local, id -> actor(lifetime, 3), AIR);
++        assertVector(new Vector(13, .9F, 0), runtime.active(1, 66, 5).position());
++        runtime.advance(.05F, local, id -> new CameraFollowRuntime.Actor(lifetime, null), AIR);
++        assertVector(new Vector(13, .9F, 0), runtime.active(1, 66, 5).position());
++        runtime.advance(.05F, local, id -> actor(lifetime, 4), AIR);
++        assertVector(new Vector(14, .9F, 0), runtime.active(1, 66, 5).position());
++    }
++
++    @Test
++    void fixedRetirementWaitsForTheLocalPlayerWithoutReacquiringTheDeadGeneration() {
++        final var runtime = new CameraFollowRuntime();
++        final var p = new CameraFollowState.Preset(0, 0, 10, 0, 0, 0, 0, Vector.ZERO, -180, 180, true);
++        final var first = actor(UUID.randomUUID(), 0);
++        runtime.accept(state(1, 1, 0, 1, 9L, List.of(p)));
++        runtime.advance(.05F, null, id -> first, AIR);
++        final var retained = runtime.active(1, 66, 5);
++        runtime.advance(.05F, null, id -> null, AIR);
++        assertEquals(retained, runtime.active(1, 66, 5));
++        final var replacement = actor(UUID.randomUUID(), 99);
++        runtime.advance(.05F, actor(UUID.randomUUID(), 20), id -> replacement, AIR);
++        assertVector(new Vector(30, 1.62F, 0), runtime.active(1, 66, 5).position());
++    }
++
++    @Test
++    void matchesNativeWeakActorCleanupAndDefaultFrameAfterFixedRetirement() throws Exception {
++        final String source = System.getenv("STACKANVIL_NATIVE_CAMERA_ATTACHMENT_RETIREMENT");
++        assumeTrue(source != null);
++        final var rows = JsonParser.parseString(Files.readString(Path.of(source))).getAsJsonObject().getAsJsonArray("rows");
++        for (final var item : rows) {
++            final var row = item.getAsJsonObject();
++            final var runtime = new CameraFollowRuntime();
++            final var p = new CameraFollowState.Preset(0, 0, 10, 45, 45, 0, 0, new Vector(1, 2, 3), -180, 180,
++                    row.get("fixed").getAsBoolean());
++            final UUID lifetime = UUID.randomUUID();
++            final var origin = vector(row.getAsJsonArray("actorOrigin"));
++            final var center = vector(row.getAsJsonArray("actorCenter"));
++            final var local = new CameraFollowRuntime.Actor(UUID.randomUUID(), new CameraFollowRuntime.Sample(new Vector(4, 70, 2), Vector.ZERO, 0));
++            final var first = new CameraFollowRuntime.Actor(lifetime, new CameraFollowRuntime.Sample(origin, center, 25));
++            runtime.accept(state(1, 1, 0, 1, 9L, List.of(p)));
++            runtime.advance(1F / 60, local, id -> first, AIR);
++            final String failure = row.get("failure").getAsString();
++            final CameraFollowRuntime.Actor next = failure.equals("valid")
++                    ? new CameraFollowRuntime.Actor(lifetime, new CameraFollowRuntime.Sample(origin, center, 170))
++                    : failure.equals("stale-generation")
++                    ? new CameraFollowRuntime.Actor(UUID.randomUUID(), new CameraFollowRuntime.Sample(origin, center, 170)) : null;
++            runtime.advance(1F / 60, local, id -> next, AIR);
++            final var actual = runtime.active(1, 66, 5);
++            final var expected = row.getAsJsonObject("frame");
++            final var position = vector(expected.getAsJsonArray("position"));
++            assertEquals(position.x(), actual.position().x(), .00002F, row::toString);
++            assertEquals(position.y(), actual.position().y(), .00002F, row::toString);
++            assertEquals(position.z(), actual.position().z(), .00002F, row::toString);
++            final var q = expected.getAsJsonArray("orientation");
++            final float dot = actual.orientation().x() * q.get(0).getAsFloat() + actual.orientation().y() * q.get(1).getAsFloat()
++                    + actual.orientation().z() * q.get(2).getAsFloat() + actual.orientation().w() * q.get(3).getAsFloat();
++            assertEquals(1, Math.abs(dot), .00001F, row::toString);
++        }
++        assertEquals(32, rows.size());
 +    }
 +
 +    @Test
@@ -9282,7 +9413,7 @@ index 000000000..3b1f64ccf
 +        final var origin = vector(sample.getAsJsonArray("origin"));
 +        final boolean attached = sample.get("attached").getAsBoolean();
 +        final var feet = attached ? origin : origin.subtract(new Vector(0, 1.62F, 0));
-+        final var actor = new CameraFollowRuntime.Actor(UUID.randomUUID(), feet, feet.add(new Vector(0, .9F, 0)), sample.has("actorYaw") ? sample.get("actorYaw").getAsFloat() : 123F);
++        final var actor = new CameraFollowRuntime.Actor(UUID.randomUUID(), new CameraFollowRuntime.Sample(feet, feet.add(new Vector(0, .9F, 0)), sample.has("actorYaw") ? sample.get("actorYaw").getAsFloat() : 123F));
 +        final var view = sample.getAsJsonArray("view");
 +        final var preset = new CameraFollowState.Preset(0, 0, sample.get("radius").getAsFloat(), sample.get("pitch").getAsFloat(), sample.get("yaw").getAsFloat(),
 +                view.get(0).getAsFloat(), view.get(1).getAsFloat(), vector(sample.getAsJsonArray("entityOffset")), -180, 180, sample.has("fixed") && sample.get("fixed").getAsBoolean());
@@ -9311,7 +9442,7 @@ index 000000000..3b1f64ccf
 +    }
 +
 +    private static CameraFollowRuntime.Actor actor(final UUID lifetime, final float x) {
-+        return new CameraFollowRuntime.Actor(lifetime, new Vector(x, 0, 0), new Vector(x, .9F, 0), 0);
++        return new CameraFollowRuntime.Actor(lifetime, new CameraFollowRuntime.Sample(new Vector(x, 0, 0), new Vector(x, .9F, 0), 0));
 +    }
 +
 +    private static Vector vector(final JsonArray value) {

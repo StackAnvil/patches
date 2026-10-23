@@ -1,4 +1,4 @@
-From 049b846b9b035757bc0fedf91b3748d69e90674b Mon Sep 17 00:00:00 2001
+From 56f6e5d1906d5bd3877d869c79c38bcda2ca13fc Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(camera): render core-resolved server camera movement
@@ -116,14 +116,22 @@ ignore orbit input. The existing native actor identity, lifetime, bounds
 and origin-offset producers remain shared. Their complete native pivot
 and world geometry semantics still need comparison; this integration does
 not establish full native camera or pixel parity.
+
+Keep native attachment identity separate from render-sample readiness.
+An actor with a native lifetime but pending Java entity or matching native
+bounds remains a known actor with no ready frame sample. Only disappearance
+of the native identity is reported as actor loss. This lets the shared
+runtime retire failed fixed-boom attachments without treating delayed
+render metadata as removal, while preserving existing target-tracker
+behavior until its physical center is available.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |  44 +++++
  .../camera/BedrockCameraAimAssist.java        |  70 +++++++
  .../bedrock/camera/BedrockCameraFade.java     |  40 ++++
  .../bedrock/camera/BedrockCameraFov.java      |  68 +++++++
- .../bedrock/camera/BedrockCameraPosition.java | 176 ++++++++++++++++++
+ .../bedrock/camera/BedrockCameraPosition.java | 180 ++++++++++++++++++
  .../bedrock/camera/BedrockCameraShake.java    |  49 +++++
- .../bedrock/camera/BedrockCameraWorld.java    |  95 ++++++++++
+ .../bedrock/camera/BedrockCameraWorld.java    |  95 +++++++++
  .../camera/CameraAimAssistControlPayload.java |  22 +++
  .../camera/CameraAimAssistPayload.java        |  22 +++
  .../bedrock/camera/CameraFadePayload.java     |  22 +++
@@ -135,15 +143,15 @@ not establish full native camera or pixel parity.
  .../bedrock/camera/CameraTrackingPayload.java |  22 +++
  .../render/MixinBedrockCameraFade.java        |  23 +++
  .../render/MixinBedrockCameraFov.java         |  23 +++
- .../render/MixinBedrockCameraPerspective.java |  21 +++
- .../render/MixinBedrockCameraShake.java       |  73 ++++++++
+ .../render/MixinBedrockCameraPerspective.java |  21 ++
+ .../render/MixinBedrockCameraShake.java       |  73 +++++++
  .../render/MixinBedrockFollowInput.java       |  23 +++
  .../render/MixinMinecraftHudVisibility.java   |   6 +
  .../sound/MixinBedrockCameraListener.java     |  30 +++
  .../bedrock/settings/BedrockSettings.java     |   4 +
  .../viafabricplus-bedrock/lang/en_us.json     |   1 +
  .../viafabricplus-bedrock.mixins.json         |   8 +-
- 26 files changed, 955 insertions(+), 1 deletion(-)
+ 26 files changed, 959 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraAimAssist.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFade.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java
@@ -426,10 +434,10 @@ index 0000000..49fab8a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
 new file mode 100644
-index 0000000..84688e2
+index 0000000..09af5ad
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,180 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -576,7 +584,8 @@ index 0000000..84688e2
 +
 +    private static CameraTrackingRuntime.Actor targetActor(final long uniqueId) {
 +        final var actor = followActor(uniqueId);
-+        return actor == null ? null : new CameraTrackingRuntime.Actor(actor.lifetime(), new CameraTargetTracker.Sample(actor.center(), actor.yaw()));
++        return actor == null || actor.sample() == null ? null
++                : new CameraTrackingRuntime.Actor(actor.lifetime(), new CameraTargetTracker.Sample(actor.sample().center(), actor.sample().yaw()));
 +    }
 +
 +    private static CameraFollowRuntime.Actor localFollowActor() {
@@ -586,7 +595,7 @@ index 0000000..84688e2
 +        if (snapshot == null) return null;
 +        final var position = player.getPosition(partialTick);
 +        final var origin = new CameraPose.Vector((float) position.x, (float) position.y, (float) position.z);
-+        return new CameraFollowRuntime.Actor(snapshot.lifetime(), origin, origin, player.getYRot(partialTick));
++        return new CameraFollowRuntime.Actor(snapshot.lifetime(), new CameraFollowRuntime.Sample(origin, origin, player.getYRot(partialTick)));
 +    }
 +
 +    private static CameraFollowRuntime.Actor followActor(final long uniqueId) {
@@ -594,16 +603,19 @@ index 0000000..84688e2
 +        final var uuid = BedrockActorState.uuidByUniqueId(uniqueId);
 +        if (level == null || uuid == null) return null;
 +        final var snapshot = BedrockActorState.state(uuid);
-+        final var bounds = BedrockActorState.bounds(uuid);
++        if (snapshot == null) return null;
 +        final var entity = level.getEntity(uuid);
-+        if (entity == null || snapshot == null || bounds == null || !bounds.lifetime().equals(snapshot.lifetime()) || bounds.height() == null) return null;
++        final var bounds = BedrockActorState.bounds(uuid);
++        if (entity == null || entity.isRemoved() || bounds == null || !bounds.lifetime().equals(snapshot.lifetime()) || bounds.height() == null)
++            return new CameraFollowRuntime.Actor(snapshot.lifetime(), null);
 +        if (!Float.isFinite(bounds.height()) || bounds.height() < 0 || !Float.isFinite(snapshot.scale()) || snapshot.scale() < 0
-+                || !Float.isFinite(bounds.height() * snapshot.scale()) || bounds.height() * snapshot.scale() >= 1E9F) return null;
++                || !Float.isFinite(bounds.height() * snapshot.scale()) || bounds.height() * snapshot.scale() >= 1E9F)
++            return new CameraFollowRuntime.Actor(snapshot.lifetime(), null);
 +        final float height = NativeActorBoundsMessage.scaledDimension(bounds.height(), snapshot.scale());
 +        final var position = entity.getPosition(partialTick);
-+        return new CameraFollowRuntime.Actor(snapshot.lifetime(),
++        return new CameraFollowRuntime.Actor(snapshot.lifetime(), new CameraFollowRuntime.Sample(
 +                new CameraPose.Vector((float) position.x, (float) position.y, (float) position.z),
-+                new CameraPose.Vector((float) position.x, (float) position.y + height * .5F, (float) position.z), entity.getYRot(partialTick));
++                new CameraPose.Vector((float) position.x, (float) position.y + height * .5F, (float) position.z), entity.getYRot(partialTick)));
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraShake.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraShake.java

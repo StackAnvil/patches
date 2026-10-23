@@ -318,3 +318,27 @@ Installed checksums match, and all owned client, display, and server processes s
 The final four-project build passes 2,600 tests, with 167 optional skips and no failures or errors.
 Both packaged core copies match all 1,412 source classes, and the add-on matches all 1,139 production client classes.
 These results retain the native pivot, input, geometry, and visible-parity limits above.
+
+
+## Attachment identity and pending frames
+
+The add-on now supplies native actor identity separately from a ready render sample.
+A missing Java entity or matching physical bounds retains the known identity until those inputs become available.
+The shared runtime therefore distinguishes pending render data from native actor loss.
+Target tracking still waits for its physical center.
+
+Fixed-boom retires a lost observed attachment and resumes the local player.
+Ordinary snapshots and preset reselection cannot reacquire it; a new attachment command can.
+Orbit retains its existing separate behavior.
+The [core retirement notes](../../viabedrock/upstreamable/0089-resolve-and-transport-native-camera-instructions.pr.md#fixed-attachment-retirement) record 32 original native controls and their boundaries.
+
+The exact installed combined build passes a fresh BDS 1.26.51.1 run over direct NetherNet.
+Read-only observations verify 42 camera samples across nine stages, including removal, player movement, replacement presence, reattachment, detach, and clear.
+Artifact checksums match, and all nine owned client, display, and server identities are gone after normal shutdown.
+The live replacement uses a new actor ID; unit and native controls cover reused identity.
+Initial command-time ownership, native pivot height, post-loss orbit origin lookup, complete scheduling, and native pixels remain unverified.
+
+The combined four-project build passes 2,604 tests, with 167 optional skips and no failures or errors.
+Native camera, particle, attachable, and Iris GPU comparisons run without skips.
+All 1,413 core classes match both packaged copies, and all 1,139 production client classes match the add-on.
+The core and add-on stacks replay successfully.
