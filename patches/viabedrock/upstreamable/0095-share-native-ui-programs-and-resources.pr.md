@@ -369,3 +369,39 @@ Both runtime inventories match 2,551 project class resources and four data resou
 Normal cleanup removes the observer, restores the private driver change, and leaves no managed-profile JVM.
 The controlled scene projection preserves all 39 real slots while it removes unfinished controls and mappings.
 This run does not establish unchanged authored screens, physical mode-`2` input, carried-item screen support, or native pixels.
+
+## Shared cooking search APIs
+
+The shared UI patch now exports the query matcher, target normalizer, and raw edit-coalescing state.
+These APIs do not register a channel or replace the default cooking screen.
+The production menu still publishes an empty query until name producers, transport, and widget integration are complete.
+
+`CookingRecipeSearch` normalizes the query once and requests primary names lazily.
+A primary match skips the secondary-label producer. An empty query skips both producers.
+The secondary branch removes native formatting codes before normalization.
+The matcher does not trim spaces, split words, or substitute Java preview names.
+
+`CookingSearchText` retains the latest pending raw string until a ready tick.
+Equal edits still apply. An empty string remains a pending edit until that tick.
+A guarded mode-two clear preserves applied and pending text. Other clear events discard pending text and apply an empty value.
+The caller remains responsible for model-clear effects, settings refresh, physical field admission, and exact menu ownership.
+Repeated native eligibility checks and full recipe-predicate state remain outside these APIs.
+
+The target uses utf8proc 1.1.5 tables for Unicode 5.0.
+All 4,352 first-stage entries, 23,296 second-stage entries, 5,618 property records, and 22,500 composition entries match the immutable target data.
+The data generator uses the checksum-pinned public source and retains its MIT and Unicode notices.
+Its 45,618-byte compressed resource reproduces exactly. An altered public source fails before an existing output changes.
+
+Fresh comparisons cover 17,987 executions of the original native normalizer and 1,122,310 production Java inputs against the licensed public algorithm.
+Both comparisons report zero differences. The Java cases include every code point, invalid encodings, NUL handling, and mixed composition sequences.
+Eight focused tests pass without skips. Retained native controls cover 304 matching compositions, 22 edit/tick cases, and 16 clear cases.
+Those fixtures supply names, labels, model interfaces, and caller effects. They do not establish production name acquisition or physical editing.
+Four deliberate regressions fail: unnormalized queries, query formatting removal, early edits, and pending-text loss after a guarded clear.
+
+All four projects build with 2,634 passing tests, 163 optional skips, and no failures or errors.
+The core and client stacks replay all 104 and 38 patches.
+All eight search tests run without skips in this build.
+The final packaged normalizer repeats the 1,122,310-input comparison with zero differences.
+Its class and resource load from the verified JAR. All 1,417 core classes match both packaged copies.
+The generated data and license notices also match across the standalone core, embedded core, and proxy.
+All 1,139 production client classes match the add-on.
