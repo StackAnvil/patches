@@ -1,4 +1,4 @@
-From 266633b1ede575074e8ac8db9dccf96739f8ef3a Mon Sep 17 00:00:00 2001
+From e752a6c93d33d3f516375822581768edef79eeb1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -552,7 +552,7 @@ drift. Native asset precedence and full ordinary names remain open.
  .../protocol/packet/JoinPackets.java          |    2 +-
  .../protocol/packet/MultiStatePackets.java    |   13 +-
  .../protocol/packet/WorldPackets.java         |   12 +
- .../protocol/rewriter/ItemRewriter.java       |  228 ++-
+ .../protocol/rewriter/ItemRewriter.java       |  219 ++-
  .../rewriter/item/BundleItemRewriter.java     |   58 +-
  .../storage/CraftedItemSynchronization.java   |  128 ++
  .../protocol/storage/CraftingDataTracker.java |  206 +++
@@ -611,7 +611,7 @@ drift. Native asset precedence and full ordinary names remain open.
  .../item/NetworkItemConstructionTest.java     |  165 ++
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 107 files changed, 15628 insertions(+), 976 deletions(-)
+ 107 files changed, 15621 insertions(+), 974 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionBackend.java
@@ -7432,7 +7432,7 @@ index a3ac81345..a3b933c2a 100644
 +    public static final String WORKBENCH = "workbench";
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/BuiltinItemFactories.java b/src/main/java/net/raphimc/viabedrock/protocol/model/BuiltinItemFactories.java
-index 4d1321eca..85f8b3406 100644
+index 246bf4c98..9d62432e9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/BuiltinItemFactories.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/BuiltinItemFactories.java
 @@ -5,6 +5,7 @@
@@ -7453,10 +7453,10 @@ index 4d1321eca..85f8b3406 100644
  
  /** Constructor-owned native factories, independent of advertised runtime-ID assignments. */
  final class BuiltinItemFactories {
-@@ -35,6 +38,11 @@ final class BuiltinItemFactories {
-                 throw new IllegalStateException("Native item factories do not match the target protocol");
+@@ -36,6 +39,11 @@ final class BuiltinItemFactories {
              }
              final var componentDescriptions = data.getAsJsonObject("componentDescriptions");
+             final var ordinaryNames = data.getAsJsonObject("ordinaryNames");
 +            final var cooking = data.getAsJsonObject("cooking");
 +            final Set<String> food = identifiers(cooking.getAsJsonArray("food"));
 +            final Set<String> blocks = identifiers(cooking.getAsJsonArray("blocks"));
@@ -7465,19 +7465,19 @@ index 4d1321eca..85f8b3406 100644
              final Map<String, Definition> factories = new HashMap<>();
              for (final var element : data.getAsJsonArray("factories")) {
                  final var factory = element.getAsJsonObject();
-@@ -51,7 +59,10 @@ final class BuiltinItemFactories {
+@@ -52,7 +60,10 @@ final class BuiltinItemFactories {
                  for (final var name : factory.getAsJsonArray("identifiers")) {
                      final String identifier = name.getAsString();
                      final String description = componentDescriptions.has(identifier) ? componentDescriptions.get(identifier).getAsString() : null;
--                    if (factories.putIfAbsent(identifier, new Definition(version, stacking, description)) != null) {
+-                    if (factories.putIfAbsent(identifier, new Definition(version, stacking, description, ordinaryNames.has(identifier) ? ordinaryNames.get(identifier).getAsString() : null)) != null) {
 +                    final String block = blocks.contains(identifier) ? identifier
 +                            : blockAliases.has(identifier) ? blockAliases.get(identifier).getAsString() : null;
 +                    final var traits = new ItemCookingProperties(food.contains(identifier), block, replacements.contains(identifier));
-+                    if (factories.putIfAbsent(identifier, new Definition(version, stacking, description, traits)) != null) {
++                    if (factories.putIfAbsent(identifier, new Definition(version, stacking, description, ordinaryNames.has(identifier) ? ordinaryNames.get(identifier).getAsString() : null, traits)) != null) {
                          throw new IllegalStateException("Duplicate native item factory: " + identifier);
                      }
                  }
-@@ -62,8 +73,18 @@ final class BuiltinItemFactories {
+@@ -63,8 +74,18 @@ final class BuiltinItemFactories {
          }
      }
  
@@ -7493,8 +7493,8 @@ index 4d1321eca..85f8b3406 100644
 +
      private BuiltinItemFactories() { }
  
--    record Definition(ItemVersion version, ItemStackingProperties stacking, String componentDescription) { }
-+    record Definition(ItemVersion version, ItemStackingProperties stacking, String componentDescription, ItemCookingProperties cooking) { }
+-    record Definition(ItemVersion version, ItemStackingProperties stacking, String componentDescription, String ordinaryNameKey) { }
++    record Definition(ItemVersion version, ItemStackingProperties stacking, String componentDescription, String ordinaryNameKey, ItemCookingProperties cooking) { }
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemBlockPlacer.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemBlockPlacer.java
@@ -7624,7 +7624,7 @@ index 000000000..19e0148c5
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
-index a0d906ad5..6bea2b71f 100644
+index 88f3f61fb..543ddffdf 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
 @@ -12,6 +12,8 @@ import com.viaversion.nbt.tag.CompoundTag;
@@ -9854,7 +9854,7 @@ index 85cdb3dee..a98ad8137 100644
  
                      final BlockEntity javaBlockEntity = BlockEntityRewriter.toJava(wrapper.user(), chunkTracker.getBlockState(bedrockBlockEntity.position()), bedrockBlockEntity);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index 1b60413df..bb469954d 100644
+index bc4742c34..bbb6d33ce 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -36,6 +36,7 @@ import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
@@ -10009,7 +10009,7 @@ index 1b60413df..bb469954d 100644
          if (blockItemMappings != null) {
              final BlockState displayState;
              if (bedrockItem.hasBlockState()) {
-@@ -197,17 +230,27 @@ public class ItemRewriter extends StoredObject {
+@@ -197,9 +230,13 @@ public class ItemRewriter extends StoredObject {
              javaItemMapping = displayState != null ? blockItemMappings.get(displayState) : null;
          } else {
              final int meta = bedrockItem.data() & 0xFFFF;
@@ -10023,16 +10023,9 @@ index 1b60413df..bb469954d 100644
 +                final Map<BlockState, BedrockMappingData.JavaItemMapping> newBlockItemMappings =
 +                        BedrockProtocol.MAPPINGS.getBedrockToJavaBlockItems().get(newIdentifier);
                  if (newBlockItemMappings != null) {
--                    final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(bedrockItem.identifier());
--                    javaItemMapping = newBlockItemMappings.get(this.user().get(BlockStateRewriter.class).blockState(validBlockStates.firstInt()));
-+                    final IntSortedSet validBlockStates =
-+                            this.blockItemValidBlockStates.get(bedrockItem.identifier());
-+                    javaItemMapping =
-+                            newBlockItemMappings.get(
-+                                    this.user()
-+                                            .get(BlockStateRewriter.class)
-+                                            .blockState(validBlockStates.firstInt()));
-                 } else {
+                     final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(bedrockItem.identifier());
+                     javaItemMapping = validBlockStates != null && !validBlockStates.isEmpty()
+@@ -208,7 +245,8 @@ public class ItemRewriter extends StoredObject {
                      javaItemMapping = null;
                  }
              } else {
@@ -10042,7 +10035,7 @@ index 1b60413df..bb469954d 100644
                  if (metaItemMappings != null) {
                      if (!metaItemMappings.containsKey(meta)) {
                          if ((metaItemMappings.size() != 1 || meta != 0)
-@@ -238,8 +281,10 @@ public class ItemRewriter extends StoredObject {
+@@ -239,8 +277,10 @@ public class ItemRewriter extends StoredObject {
              }
              javaItem = new StructuredItem(javaItemMapping.id(), bedrockItem.amount(), data);
          } else {
@@ -10055,7 +10048,7 @@ index 1b60413df..bb469954d 100644
              final StructuredDataContainer data = ProtocolConstants.createStructuredDataContainer();
  
              if (itemDefinition != null) {
-@@ -257,13 +302,21 @@ public class ItemRewriter extends StoredObject {
+@@ -258,13 +298,21 @@ public class ItemRewriter extends StoredObject {
                      data.set(StructuredDataKey.ITEM_MODEL, CustomItemTextureResourceRewriter.getItemModel(itemDefinition.iconComponent()));
                      data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomItemTextureResourceRewriter.getCustomModelData("0"));
                  } else {
@@ -10066,7 +10059,7 @@ index 1b60413df..bb469954d 100644
 +                                TextUtil.stringToNbt("§7[ViaBedrock] Custom item: " + identifier)
 +                            });
                  }
-             } else if (componentDescription == null) {
+             } else if (ordinaryNameKey == null) {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java item mapping for " + identifier);
                  data.set(StructuredDataKey.ITEM_NAME, TextUtil.stringToNbt("§cMissing item: " + identifier));
              }
@@ -10078,8 +10071,8 @@ index 1b60413df..bb469954d 100644
 +                            data);
          }
  
-         if (componentDescription != null) {
-@@ -284,8 +337,12 @@ public class ItemRewriter extends StoredObject {
+         if (ordinaryNameKey != null) {
+@@ -285,8 +333,12 @@ public class ItemRewriter extends StoredObject {
  
          final CompoundTag bedrockTag = bedrockItem.tag();
          if (bedrockTag != null) {
@@ -10094,7 +10087,7 @@ index 1b60413df..bb469954d 100644
              }
              final String customName = this.registry.customName(identifier, bedrockTag);
              if (customName != null) {
-@@ -300,6 +357,8 @@ public class ItemRewriter extends StoredObject {
+@@ -301,6 +353,8 @@ public class ItemRewriter extends StoredObject {
              ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
          }
  
@@ -10103,7 +10096,7 @@ index 1b60413df..bb469954d 100644
          javaItem.dataContainer().set(StructuredDataKey.USE_EFFECTS, this.useModifiers(bedrockItem).javaComponent());
  
          CustomAttachableResourceRewriter.applyItemModel(this.user().get(ResourcePackStorage.class), identifier, javaItem);
-@@ -315,7 +374,8 @@ public class ItemRewriter extends StoredObject {
+@@ -316,7 +370,8 @@ public class ItemRewriter extends StoredObject {
              return null;
          }
          final CompoundTag javaTag = new CompoundTag();
@@ -10113,7 +10106,7 @@ index 1b60413df..bb469954d 100644
          javaTag.put("id", new StringTag(javaId));
          javaTag.put("count", new IntTag(javaItem.amount()));
          if (javaItem.tag() != null) {
-@@ -329,28 +389,31 @@ public class ItemRewriter extends StoredObject {
+@@ -330,28 +385,31 @@ public class ItemRewriter extends StoredObject {
              return null;
          }
  
@@ -10156,7 +10149,7 @@ index 1b60413df..bb469954d 100644
      }
  
      public Item[] javaItems(final BedrockItem[] bedrockItems) {
-@@ -362,7 +425,33 @@ public class ItemRewriter extends StoredObject {
+@@ -363,7 +421,33 @@ public class ItemRewriter extends StoredObject {
      }
  
      public BedrockItem bedrockItem(final Item javaItem) {
@@ -10191,7 +10184,7 @@ index 1b60413df..bb469954d 100644
      }
  
      public BedrockItem[] bedrockItems(final Item[] javaItems) {
-@@ -377,8 +466,52 @@ public class ItemRewriter extends StoredObject {
+@@ -378,8 +462,52 @@ public class ItemRewriter extends StoredObject {
          return this.items;
      }
  
@@ -10246,7 +10239,7 @@ index 1b60413df..bb469954d 100644
      }
  
      /** Match network-loaded stack queries while their connection registry remains current. */
-@@ -418,6 +551,18 @@ public class ItemRewriter extends StoredObject {
+@@ -419,6 +547,18 @@ public class ItemRewriter extends StoredObject {
          return properties == null ? 0 : properties.maximum();
      }
  
@@ -10265,7 +10258,7 @@ index 1b60413df..bb469954d 100644
      public Type<BedrockItem> itemType() {
          return this.itemType;
      }
-@@ -442,10 +587,13 @@ public class ItemRewriter extends StoredObject {
+@@ -443,10 +583,13 @@ public class ItemRewriter extends StoredObject {
          return this.newItemArrayType;
      }
  

@@ -413,3 +413,38 @@ The final packaged converter passes all twenty component cases, with five verifi
 A fresh ordinary BDS 1.26.51.1 route passes furnace, smoker, blast furnace, and same-world reconnect.
 Both selected client instances use the final add-on, and normal cleanup stops the private display.
 This route does not inject the authored name-update cases or establish native screens and pixels.
+
+## Constructor-owned ordinary names
+
+The registry now retains 559 builtin translation keys across fourteen native methods that ignore descriptors and userdata.
+These include base and alias descriptions, spawn eggs, boats, chest boats, cushions, coal, records, and fixed specialized keys.
+Java item conversion resolves these keys through the current native language engine.
+Explicit component construction replaces builtin naming before ordered metadata readers. Later network flags cannot select a different class.
+Removed runtime-ID owners cannot retain a name.
+
+The initialized native control queries 1,946 factory keys and retains all 1,949 constructor profiles.
+It runs the real element registry initializer and completes all 2,630 static cleanup callbacks without tracked allocation or lock leaks.
+Initialization corrects 118 element keys; the 559 descriptor-independent keys remain unchanged.
+Three potion methods still require a language owner.
+
+The installed 1.26.50 block archive contains exactly the 98 definitions absent from the compiled default block registry.
+These are asset definitions, separate from aliases. Their presence does not establish native asset loading or final name selection.
+Block, potion, and other descriptor-dependent methods still need their own providers.
+
+Two registry tests cover all 559 native keys, construction precedence, network flags, and runtime identity replacement.
+Three deliberate regressions fail assertions: guessing identifier suffixes, retaining builtin dispatch after reconstruction, and ignoring runtime ownership.
+
+A packaged conversion control uses 2,076 typed protocol-2193 item registrations from the versioned cross-implementation resource fixture.
+Its accepted language layer supplies distinct translations and exercises the real parser, lookup, converter, and text serializer.
+All 557 applicable builtin names pass. Two explicitly reconstructed component items retain their separate naming path.
+The previous package passes seven cases and fails 550, including 41 conversion exceptions.
+The converter now handles a missing upgraded block-state set through its existing missing-visual fallback.
+This control verifies supplied registry and language inputs. It does not establish fresh native packet decoding, asset precedence, or visible UI parity.
+
+The combined build passes 2,681 tests, with 163 optional skips and no failures or errors.
+All 105 core and 38 client patches replay. All 1,428 compiled core classes match their packaged bytes after four standard token replacements.
+Both embedded core copies match. All 1,143 client classes and the updated factory-name resource match the final artifacts.
+The final converter also retains all twenty component-description checks.
+A fresh ordinary BDS route passes all three cooking families and same-world reconnect.
+Both isolated launchers select the final add-on through the same installed integration instance.
+Normal cleanup stops the private display and all observed owned processes. This route does not inject name fixtures or establish native screen parity.

@@ -1096,3 +1096,23 @@ The final packaged converter passes all twenty component cases with five verifie
 A fresh ordinary BDS 1.26.51.1 route passes all three cooking families and same-world reconnect.
 Both selected instances use the final add-on. Normal cleanup stops the private display.
 This route does not inject the authored name-update cases or establish native screens and pixels.
+
+## Constructor-owned ordinary item names
+
+The connection registry supplies 559 builtin translation keys whose native methods ignore stack descriptors and userdata.
+Java conversion resolves these keys through the current native language engine.
+Explicit component construction replaces builtin dispatch. Later network flags do not change the constructed class.
+Removed runtime-ID owners cannot retain a name.
+
+Original native execution confirms these keys after element registry initialization, with complete tracked allocation, lock, and static cleanup.
+That initialization also corrects 118 element keys from the earlier probe.
+The installed block archive accounts for all 98 palette names absent from the compiled default registry.
+Native loading and naming for those asset definitions remain separate verification work.
+
+The packaged converter passes 557 applicable names from the typed protocol-2193 registry control.
+Two reconstructed component entries use their separate naming path.
+The old package fails 550 cases, including 41 exceptions from missing upgraded block-state sets.
+The converter now preserves ordinary naming through the existing missing-visual fallback in that case.
+
+These checks do not complete descriptor-dependent names, appended primary text, secondary labels, cooking query transport, or native screen acceptance.
+See the [owning patch notes](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#constructor-owned-ordinary-names) for inputs and limits.
