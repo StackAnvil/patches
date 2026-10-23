@@ -1,4 +1,4 @@
-From 2e47dc8fa5f09921433368ecb63b57e34b9a723d Mon Sep 17 00:00:00 2001
+From 85dcba071d333fb4fc8e2ea4ace61d739aecec2e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -620,6 +620,18 @@ Registered Java packet tests and optional native timing comparisons cover
 the negotiated path. Component stores, allocator/CRT, snapshots and simple
 physical steps are supplied native boundaries. Complete live trajectories,
 remote actor interpolation and collider-source integration remain open.
+
+Pair completed player and controlled vehicle samples before checking the
+tracked rider position. A delayed 1.26.51.1 BDS boat trace supplies 95
+matching vehicle samples whose rider positions differ from the tracked
+player. Rejecting the rider first loses every shared input-frame binding
+and prevents negotiated vehicle corrections from entering replay.
+
+Consume the completed frame once, validate player position for unmounted
+inputs, and bind mounted clocks only after the vehicle position, shared
+frame identity, actor, context and chunk admission checks pass. Preserve
+watermarks after rejection so old samples cannot bind later input ticks.
+Nine focused regression cases cover the stale rider and rejected pairs.
 ---
  build.gradle                                  |   29 +
  .../api/model/ActorMotionCommand.java         |   72 ++
@@ -653,7 +665,7 @@ remote actor interpolation and collider-source integration remain open.
  .../viabedrock/protocol/BedrockProtocol.java  |    3 +
  .../protocol/model/BedrockItem.java           |   19 +
  .../protocol/model/ItemUseModifiers.java      |   50 +
- .../protocol/packet/ClientPlayerPackets.java  |  118 +-
+ .../protocol/packet/ClientPlayerPackets.java  |  132 +-
  .../protocol/packet/EntityPackets.java        |   59 +-
  .../protocol/packet/JoinPackets.java          |    2 +
  .../packet/MovementEffectPackets.java         |   54 +
@@ -696,14 +708,15 @@ remote actor interpolation and collider-source integration remain open.
  .../model/BedrockItemEnchantmentTest.java     |   73 ++
  .../protocol/model/ItemUseModifiersTest.java  |   55 +
  .../packet/ClientPlayerPacketsTest.java       |   32 +-
- .../packet/CompletedFramePositionTest.java    | 1125 +++++++++++++++++
+ .../packet/CompletedFramePositionTest.java    | 1127 +++++++++++++++++
+ .../CompletedPredictionPairingTest.java       |  132 ++
  .../packet/ControlledVehicleSpatialTest.java  |  229 ++++
  .../packet/MovementEffectPacketsTest.java     |  116 ++
  .../packet/PlayerCorrectionPacketTest.java    |  254 ++++
  .../packet/PlayerPredictionPacketTest.java    |   87 ++
  .../packet/TickedMotionPacketTest.java        |  156 +++
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 82 files changed, 7834 insertions(+), 70 deletions(-)
+ 83 files changed, 7982 insertions(+), 70 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
@@ -760,6 +773,7 @@ remote actor interpolation and collider-source integration remain open.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/BedrockItemEnchantmentTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiersTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedPredictionPairingTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ControlledVehicleSpatialTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
@@ -3649,7 +3663,7 @@ index 000000000..72b248f9e
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index eb0c16ab4..94422f05a 100644
+index eb0c16ab4..5d8802320 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -37,7 +37,14 @@ import net.raphimc.viabedrock.api.util.EnumUtil;
@@ -3783,18 +3797,19 @@ index eb0c16ab4..94422f05a 100644
                  vehicle.setJavaRotation(new Position3f(pitch, yaw, yaw));
                  vehicle.setOnGround(onGround);
              }
-@@ -553,12 +599,23 @@ public final class ClientPlayerPackets {
+@@ -553,12 +599,24 @@ public final class ClientPlayerPackets {
          protocol.registerServerbound(ServerboundPackets26_3.CLIENT_TICK_END, ServerboundBedrockPackets.PLAYER_AUTH_INPUT, wrapper -> {
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
              final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
 +            final PlayerPredictionStorage predictionStorage = wrapper.user().get(PlayerPredictionStorage.class);
-+            final PlayerPrediction prediction = predictionStorage.take(clientPlayer.javaPosition());
              final Position3f prevPosition = clientPlayer.prevPosition();
              final boolean prevOnGround = clientPlayer.prevOnGround();
              final Set<InputFlag> prevInputFlags = clientPlayer.prevInputFlags();
 +            final Entity vehicle = predictedVehicle(entityTracker, clientPlayer);
 +            final VehiclePredictionStorage vehicleStorage = wrapper.user().get(VehiclePredictionStorage.class);
-+            final VehiclePrediction vehiclePrediction = vehicleStorage != null ? vehicleStorage.take(vehicle, prediction) : null;
++            final CompletedPredictions predictions = completedPredictions(predictionStorage, vehicleStorage, vehicle, clientPlayer.javaPosition());
++            final PlayerPrediction prediction = predictions.player();
++            final VehiclePrediction vehiclePrediction = predictions.vehicle();
 +            if (vehiclePrediction != null) {
 +                vehicle.setPredictedJavaPosition(vehiclePrediction.position());
 +            }
@@ -3808,7 +3823,7 @@ index eb0c16ab4..94422f05a 100644
                  clientPlayer.addAuthInputData(PlayerAuthInputData.StartJumping);
              }
  
-@@ -582,10 +639,10 @@ public final class ClientPlayerPackets {
+@@ -582,10 +640,10 @@ public final class ClientPlayerPackets {
              final PlayerInputStorage playerInput = wrapper.user().get(PlayerInputStorage.class);
              clientPlayer.authInputData().addAll(playerInput.takeButtonEvents());
              clientPlayer.addAuthInputData(PlayerAuthInputData.BlockBreakingDelayEnabled);
@@ -3821,7 +3836,7 @@ index eb0c16ab4..94422f05a 100644
                  clientPlayer.addAuthInputData(PlayerAuthInputData.HorizontalCollision);
              }
              if (clientPlayer.inputFlags().contains(InputFlag.FORWARD)) {
-@@ -622,9 +679,24 @@ public final class ClientPlayerPackets {
+@@ -622,9 +680,24 @@ public final class ClientPlayerPackets {
                      clientPlayer.setShieldBlockingHand(null);
                  }
              }
@@ -3848,7 +3863,7 @@ index eb0c16ab4..94422f05a 100644
              final Position3f inputPosition;
              final Position3f positionDelta;
              if (vehicle != null) {
-@@ -637,8 +709,15 @@ public final class ClientPlayerPackets {
+@@ -637,8 +710,15 @@ public final class ClientPlayerPackets {
                  inputPosition = clientPlayer.position();
                  positionDelta = inputPosition.subtract(prevPosition);
              }
@@ -3865,7 +3880,7 @@ index eb0c16ab4..94422f05a 100644
                  velocity = positionDelta;
              } else {
                  float dx = positionDelta.x() * 0.98F;
-@@ -661,7 +740,7 @@ public final class ClientPlayerPackets {
+@@ -661,7 +741,7 @@ public final class ClientPlayerPackets {
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // pitch
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // yaw
              wrapper.write(BedrockTypes.POSITION_3F, inputPosition); // predicted player or vehicle position
@@ -3874,15 +3889,15 @@ index eb0c16ab4..94422f05a 100644
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().z()); // head yaw
              if (Via.getManager().getProviders().get(EmoteProvider.class).isEmoting(wrapper.user())) {
                  clientPlayer.addAuthInputData(PlayerAuthInputData.Emoting);
-@@ -677,6 +756,7 @@ public final class ClientPlayerPackets {
+@@ -677,6 +757,7 @@ public final class ClientPlayerPackets {
              wrapper.write(BedrockTypes.VAR_INT, NewInteractionModel.Touch.getValue()); // interaction mode
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // interact pitch
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // interact yaw
-+            predictionStorage.remember(clientPlayer.age(), prediction);
++            predictionStorage.remember(clientPlayer.age(), predictions.clockFrame());
              wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, (long) clientPlayer.age()); // tick
              wrapper.write(BedrockTypes.POSITION_3F, velocity); // delta
              wrapper.write(Types.BOOLEAN, false); // no item interaction
-@@ -700,7 +780,7 @@ public final class ClientPlayerPackets {
+@@ -700,7 +781,7 @@ public final class ClientPlayerPackets {
                  wrapper.write(BedrockTypes.VAR_LONG, vehicle.uniqueId());
              }
              wrapper.write(BedrockTypes.POSITION_2F, vehicle != null
@@ -3891,6 +3906,27 @@ index eb0c16ab4..94422f05a 100644
                      : new Position2f(0F, 0F)); // analog move vector
              wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
              wrapper.write(BedrockTypes.POSITION_2F, playerInput.rawInput().movement()); // raw move vector
+@@ -761,7 +842,20 @@ public final class ClientPlayerPackets {
+         });
+     }
+ 
++    static CompletedPredictions completedPredictions(final PlayerPredictionStorage players, final VehiclePredictionStorage vehicles,
++                                                    final Entity vehicle, final Position3f playerPosition) {
++        final PlayerPrediction frame = players.take();
++        final PlayerPrediction player = frame != null && frame.matches(playerPosition) ? frame : null;
++        // Passenger position packets update the vehicle, so the tracked rider position can be stale.
++        // Validate the vehicle itself while retaining the shared frame identity for the input clock.
++        final VehiclePrediction mounted = vehicles != null ? vehicles.take(vehicle, frame) : null;
++        return new CompletedPredictions(player, mounted, vehicle == null ? player : mounted != null ? frame : null);
++    }
++
+     private ClientPlayerPackets() {
+     }
+ 
++    record CompletedPredictions(PlayerPrediction player, VehiclePrediction vehicle, PlayerPrediction clockFrame) {
++    }
++
+ }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 index 8e0cbe982..b0eff14c8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
@@ -4365,7 +4401,7 @@ index 95391851d..f8bf20f85 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
 new file mode 100644
-index 000000000..7b83e4cbd
+index 000000000..e676aa716
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
 @@ -0,0 +1,133 @@
@@ -4382,7 +4418,6 @@ index 000000000..7b83e4cbd
 +import net.raphimc.viabedrock.api.model.SneakingInputState;
 +
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
-+import net.raphimc.viabedrock.protocol.model.Position3f;
 +
 +import java.util.EnumSet;
 +import java.util.Set;
@@ -4421,10 +4456,11 @@ index 000000000..7b83e4cbd
 +        this.pending = null;
 +    }
 +
-+    public PlayerPrediction take(final Position3f position) {
++    /** Consume the shared physical frame before validating the player or controlled vehicle position. */
++    public PlayerPrediction take() {
 +        final PlayerPrediction prediction = this.pending;
 +        this.pending = null;
-+        return prediction != null && prediction.matches(position) ? prediction : null;
++        return prediction;
 +    }
 +
 +    /** START_GAME supplies the native history limit; the client bounds it to 1..1000 frames. */
@@ -6458,7 +6494,7 @@ index 000000000..8d870a5fb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
 new file mode 100644
-index 000000000..e6d7ddc79
+index 000000000..4b403b7a2
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
 @@ -0,0 +1,256 @@
@@ -6550,22 +6586,22 @@ index 000000000..e6d7ddc79
 +    }
 +
 +    @Test
-+    void consumesOnlyOneMatchingFrameAndDiscardsTeleportStaleness() {
++    void consumesTheNewestFrameOnceAndDiscardsAuthoritativePositionStaleness() {
 +        final var storage = new PlayerPredictionStorage();
 +        final var frame = new PlayerPrediction(42, new Position3f(0.5F, 101F, 0.5F), Position3f.ZERO,
 +                PlayerPosture.STANDING, false, false, true, false, 1F);
 +        storage.record(frame);
-+        assertEquals(frame, storage.take(frame.position().add(0F, 0.00001F, 0F)));
-+        assertNull(storage.take(frame.position()));
++        assertEquals(frame, storage.take());
++        assertNull(storage.take());
 +        final var misplaced = new PlayerPrediction(43, frame.position(), frame.motion(), frame.posture(), false, false, true, false, 1F);
 +        storage.record(misplaced);
-+        assertNull(storage.take(misplaced.position().add(0F, 5F, 0F)));
-+        assertNull(storage.take(frame.position()));
++        storage.discardPending();
++        assertNull(storage.take());
 +        final var next = new PlayerPrediction(44, frame.position(), frame.motion(), frame.posture(), false, false, false, false, 1F);
 +        final var replacement = new PlayerPrediction(45, frame.position(), Position3f.ZERO, frame.posture(), false, false, false, false, 1F);
 +        storage.record(next);
 +        storage.record(replacement);
-+        assertEquals(replacement, storage.take(frame.position()));
++        assertEquals(replacement, storage.take());
 +    }
 +
 +    @Test
@@ -6577,27 +6613,27 @@ index 000000000..e6d7ddc79
 +        storage.record(older);
 +        storage.record(newer);
 +        storage.record(older);
-+        assertEquals(newer, storage.take(Position3f.ZERO));
++        assertEquals(newer, storage.take());
 +        storage.record(newer);
-+        assertNull(storage.take(Position3f.ZERO));
++        assertNull(storage.take());
 +    }
 +
 +    @Test
-+    void retainsFrameIdentityAfterPositionRejectionAndResetsOnNewConnection() {
++    void retainsFrameIdentityAfterDiscardAndResetsOnNewConnection() {
 +        final var storage = new PlayerPredictionStorage();
 +        final var frame = new PlayerPrediction(Long.MAX_VALUE, Position3f.ZERO, Position3f.ZERO,
 +                PlayerPosture.STANDING, false, false, false, false, 1F);
 +        storage.record(frame);
-+        assertNull(storage.take(new Position3f(1F, 0F, 0F)));
++        storage.discardPending();
 +        storage.record(frame);
 +        storage.record(new PlayerPrediction(0, Position3f.ZERO, Position3f.ZERO,
 +                PlayerPosture.STANDING, false, false, false, false, 1F));
-+        assertNull(storage.take(Position3f.ZERO));
++        assertNull(storage.take());
 +        final var reconnected = new PlayerPredictionStorage();
 +        final var first = new PlayerPrediction(0, Position3f.ZERO, Position3f.ZERO,
 +                PlayerPosture.STANDING, false, false, false, false, 1F);
 +        reconnected.record(first);
-+        assertEquals(first, reconnected.take(Position3f.ZERO));
++        assertEquals(first, reconnected.take());
 +    }
 +
 +    @Test
@@ -6672,7 +6708,7 @@ index 000000000..e6d7ddc79
 +        storage.remember(1, null);
 +        assertTrue(storage.acceptsCorrectionTick(1));
 +        storage.record(prediction);
-+        assertNull(storage.take(Position3f.ZERO));
++        assertNull(storage.take());
 +    }
 +
 +    @Test
@@ -7844,10 +7880,10 @@ index ad55fc55c..93bdd824d 100644
          final ClientPlayerEntity player = player();
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
 new file mode 100644
-index 000000000..0507faaf7
+index 000000000..6d8d7a856
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
-@@ -0,0 +1,1125 @@
+@@ -0,0 +1,1127 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -8085,7 +8121,7 @@ index 000000000..0507faaf7
 +            fixture.accept(prediction(2, new Position3f(0.0001F, 64F, 0F)));
 +            assertEquals(boat.position(), fixture.tick().position());
 +            assertEquals(original, fixture.player.position());
-+            assertEquals(2, fixture.predictions.clientFrame(2));
++            assertEquals(-1, fixture.predictions.clientFrame(2));
 +            fixture.player.setMountEntityRuntimeId(-1);
 +            fixture.accept(prediction(3, new Position3f(0.0001F, 64F, 0F)));
 +            final Position3f corrected = new Position3f(3F, 67.62F, -1F);
@@ -8263,7 +8299,7 @@ index 000000000..0507faaf7
 +    }
 +
 +    @Test
-+    void vehiclePhysicsRequiresMatchingAdmittedPlayerFrameAndStandardVehicleCoordinates() throws Exception {
++    void vehiclePhysicsPairsSharedFramesAndValidatesVehicleCoordinatesIndependentlyOfTheRider() throws Exception {
 +        try (Fixture fixture = new Fixture(true, true, true)) {
 +            final Entity boat = fixture.mount(EntityTypes26_3.OAK_BOAT);
 +            final var context = fixture.vehicles.context();
@@ -8276,7 +8312,8 @@ index 000000000..0507faaf7
 +            assertEquals(Position3f.ZERO, fixture.tick().velocity());
 +            fixture.accept(prediction(4, fixture.player.javaPosition().add(2F, 0F, 0F)));
 +            fixture.acceptVehicle(new VehiclePrediction(4, context, boat.javaPosition(), motion));
-+            assertEquals(Position3f.ZERO, fixture.tick().velocity());
++            assertEquals(motion, fixture.tick().velocity());
++            assertEquals(4, fixture.predictions.inputFrame());
 +            fixture.accept(prediction(5, fixture.player.javaPosition()));
 +            fixture.acceptVehicle(new VehiclePrediction(5, context, boat.javaPosition().add(2F, 0F, 0F), motion));
 +            assertEquals(Position3f.ZERO, fixture.tick().velocity());
@@ -8327,6 +8364,7 @@ index 000000000..0507faaf7
 +                final Entity vehicle = fixture.mount(type);
 +                fixture.channels.addChannels(List.of(PlayerCorrection.CHANNEL));
 +                fixture.accept(prediction(0, fixture.player.javaPosition()));
++                fixture.acceptVehicle(new VehiclePrediction(0, fixture.vehicles.context(), vehicle.javaPosition(), Position3f.ZERO));
 +                fixture.tick();
 +                final var context = fixture.vehicles.context();
 +                final var before = vehicle.position();
@@ -8973,6 +9011,144 @@ index 000000000..0507faaf7
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedPredictionPairingTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedPredictionPairingTest.java
+new file mode 100644
+index 000000000..8da74028f
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedPredictionPairingTest.java
+@@ -0,0 +1,132 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.model.PlayerPosture;
++import net.raphimc.viabedrock.api.model.PlayerPrediction;
++import net.raphimc.viabedrock.api.model.VehiclePrediction;
++import net.raphimc.viabedrock.api.model.VehiclePredictionContext;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
++import net.raphimc.viabedrock.protocol.storage.PlayerPredictionStorage;
++import net.raphimc.viabedrock.protocol.storage.VehiclePredictionStorage;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.EnumSource;
++
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class CompletedPredictionPairingTest {
++
++    private static final Position3f RIDER = new Position3f(0.50786763F, 71.12046F, 0.5082658F);
++    private static final Position3f BOAT = new Position3f(0.50786763F, 71.53296F, 0.5082658F);
++
++    @Test
++    void bindsValidVehicleFramesWhenTheTrackedRiderPositionIsStale() throws Exception {
++        final var fixture = new Fixture();
++        final var frame = fixture.record(154, RIDER);
++        final var completed = ClientPlayerPackets.completedPredictions(fixture.players, fixture.vehicles, fixture.vehicle,
++                new Position3f(0.5F, 72F, 0.5F));
++        assertNull(completed.player());
++        assertEquals(frame, completed.vehicle());
++        assertEquals(154, completed.clockFrame().frameId());
++        fixture.players.remember(291, completed.clockFrame());
++        assertEquals(154, fixture.players.clientFrame(291));
++        assertEquals(154, fixture.players.inputFrame());
++        assertNull(ClientPlayerPackets.completedPredictions(fixture.players, fixture.vehicles, fixture.vehicle, RIDER).clockFrame());
++    }
++
++    @ParameterizedTest
++    @EnumSource(RejectedVehicle.class)
++    void rejectsMountedClocksFromUnpairedOrInvalidVehicles(final RejectedVehicle rejection) throws Exception {
++        final var fixture = new Fixture();
++        fixture.record(rejection == RejectedVehicle.FRAME ? 155 : 154, RIDER);
++        switch (rejection) {
++            case PLAYER -> fixture.players.discardPending();
++            case VEHICLE -> fixture.vehicles.discardPending();
++            case FRAME -> {
++                fixture.players.discardPending();
++                fixture.players.record(player(156, RIDER));
++            }
++            case CONTEXT -> set(fixture.vehicles, "context", new VehiclePredictionContext(5, fixture.context.vehicle()));
++            case ACTOR -> set(fixture.vehicles, "vehicle", mock(Entity.class));
++            case POSITION -> when(fixture.vehicle.javaPosition()).thenReturn(BOAT.add(1F, 0F, 0F));
++            case UNLOADED -> when(fixture.chunks.isInUnloadedChunkSection(any())).thenReturn(true);
++        }
++        final var completed = ClientPlayerPackets.completedPredictions(fixture.players, fixture.vehicles, fixture.vehicle, RIDER);
++        assertNull(completed.vehicle());
++        assertNull(completed.clockFrame());
++        fixture.players.remember(291, completed.clockFrame());
++        assertEquals(-1, fixture.players.inputFrame());
++    }
++
++    @Test
++    void unmountedClocksStillRequireMatchingPlayerPositionsAndCannotReuseRejectedFrames() {
++        final var players = new PlayerPredictionStorage();
++        final var first = player(154, RIDER);
++        players.record(first);
++        final var rejected = ClientPlayerPackets.completedPredictions(players, null, null, RIDER.add(1F, 0F, 0F));
++        assertNull(rejected.player());
++        assertNull(rejected.clockFrame());
++        players.record(first);
++        assertNull(ClientPlayerPackets.completedPredictions(players, null, null, RIDER).clockFrame());
++        final var next = player(155, RIDER);
++        players.record(next);
++        final var accepted = ClientPlayerPackets.completedPredictions(players, null, null, RIDER.add(0F, 0.00001F, 0F));
++        assertEquals(next, accepted.player());
++        assertEquals(next, accepted.clockFrame());
++        assertNull(accepted.vehicle());
++    }
++
++    private static PlayerPrediction player(final long frame, final Position3f position) {
++        return new PlayerPrediction(frame, position, Position3f.ZERO, PlayerPosture.STANDING, false, false, false, false, 1F);
++    }
++
++    private static void set(final Object target, final String name, final Object value) throws ReflectiveOperationException {
++        final var field = target.getClass().getDeclaredField(name);
++        field.setAccessible(true);
++        field.set(target, value);
++    }
++
++    private enum RejectedVehicle {
++        PLAYER, VEHICLE, FRAME, CONTEXT, ACTOR, POSITION, UNLOADED
++    }
++
++    private static final class Fixture {
++
++        private final PlayerPredictionStorage players = new PlayerPredictionStorage();
++        private final Entity vehicle = mock(Entity.class);
++        private final ChunkTracker chunks = mock(ChunkTracker.class);
++        private final VehiclePredictionStorage vehicles;
++        private final VehiclePredictionContext context = new VehiclePredictionContext(4,
++                new VehiclePredictionContext.Identity(8, UUID.randomUUID(), UUID.randomUUID(), 12, 17));
++
++        private Fixture() throws ReflectiveOperationException {
++            final var user = mock(UserConnection.class);
++            when(user.get(ChunkTracker.class)).thenReturn(this.chunks);
++            this.vehicles = spy(new VehiclePredictionStorage(user));
++            doNothing().when(this.vehicles).refresh();
++            set(this.vehicles, "vehicle", this.vehicle);
++            set(this.vehicles, "context", this.context);
++            when(this.vehicle.javaPosition()).thenReturn(BOAT);
++            when(this.vehicle.position()).thenReturn(BOAT);
++        }
++
++        private VehiclePrediction record(final long frame, final Position3f position) {
++            this.players.record(player(frame, position));
++            final var prediction = new VehiclePrediction(frame, this.context, BOAT, new Position3f(0.1F, 0F, 0F));
++            this.vehicles.record(prediction);
++            return prediction;
++        }
++
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ControlledVehicleSpatialTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ControlledVehicleSpatialTest.java
 new file mode 100644
 index 000000000..cfa6189df
@@ -9592,7 +9768,7 @@ index 000000000..7aea0fedc
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java
 new file mode 100644
-index 000000000..0c1d02d0b
+index 000000000..2bc45bb05
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java
 @@ -0,0 +1,87 @@
@@ -9643,13 +9819,13 @@ index 000000000..0c1d02d0b
 +        final PlayerPrediction previous = new PlayerPrediction(42, Position3f.ZERO, new Position3f(0F, -0.022315647F, 0F),
 +                new PlayerPosture(true, false, false), false, false, false, true, 1F);
 +        accept(user, previous);
-+        final PlayerPrediction consumed = predictions.take(Position3f.ZERO);
++        final PlayerPrediction consumed = predictions.take();
 +        assertEquals(previous, consumed);
 +        predictions.remember(91, consumed);
 +        assertEquals(42, predictions.clientFrame(91));
 +
 +        accept(user, previous);
-+        final PlayerPrediction replay = predictions.take(Position3f.ZERO);
++        final PlayerPrediction replay = predictions.take();
 +        assertNull(replay);
 +        predictions.remember(92, replay);
 +        assertEquals(-1, predictions.clientFrame(92));
@@ -9661,7 +9837,7 @@ index 000000000..0c1d02d0b
 +                PlayerPosture.STANDING, true, true, true, false, 1F);
 +        accept(user, current);
 +        accept(user, previous);
-+        final PlayerPrediction next = predictions.take(Position3f.ZERO);
++        final PlayerPrediction next = predictions.take();
 +        assertEquals(current, next);
 +        predictions.remember(93, next);
 +        assertEquals(43, predictions.clientFrame(93));

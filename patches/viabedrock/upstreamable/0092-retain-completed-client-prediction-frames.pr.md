@@ -1581,3 +1581,23 @@ The Java simulation phases still need separation before physical replay can use 
 `Player.aiStep` advances inventory and pickups.
 `LivingEntity.aiStep` advances equipment, applies block effects, and pushes other entities.
 Full historical player and vehicle restoration, safe physical replay, and seat ownership remain unfinished.
+
+## Mounted input clock pairing
+
+A private delayed BDS trace supplies 95 completed boat samples with matching vehicle positions, frame identities, and mount contexts.
+Every paired rider position differs from the tracked player position.
+The previous player-position check discards all 95 shared frame identities before vehicle admission.
+Consequently, none of those inputs can admit a negotiated vehicle correction into replay.
+
+The packet handler now consumes the completed frame before actor-specific position checks.
+Unmounted inputs still require a matching player position.
+Mounted inputs require an admitted vehicle sample with the same frame identity and current mount context.
+Vehicle actor identity, position, and loaded-chunk checks remain in the vehicle storage.
+A rejected vehicle sample cannot bind the input clock through a matching rider position.
+Frame watermarks still prevent rejected or consumed payloads from binding later inputs.
+
+The stale-rider regression fails before the change and passes after it.
+Nine focused cases cover valid pairs, missing samples, mismatched frames, stale contexts, different actors, displaced vehicles, unloaded chunks, and unmounted rejection.
+Existing packet tests now exercise valid paired samples when they expect negotiated vehicle correction.
+The full core, client add-on, dependency, and proxy suites pass 2,665 cases, with 163 optional skips.
+Direct and proxy live verification follows separately; these tests alone do not establish native movement parity.
