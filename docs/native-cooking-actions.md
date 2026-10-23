@@ -81,7 +81,8 @@ Supported tab, filtering, and layout toggles use their authored group, index, an
 The pointer adapter accepts consumed primary mappings. Unsupported focus and device handlers retain ordinary controls.
 Layout toggles use indices `1` and `2` and preserve the current tab and filter. Selecting the current layout sends nothing.
 Forced-profile layout controls retain ordinary screens before accepting input.
-Preference input requires its installed menu, the displayed snapshot, an empty cursor, and an idle recipe gesture.
+Preference input requires its installed menu, the displayed snapshot, and an idle recipe gesture.
+Tab and filter changes permit a carried stack. Layout changes still require an empty cursor.
 The client waits for a newer matching model before accepting another input.
 Capability loss, ambiguous transport, or a ten-second wait restores the exact original screen.
 
@@ -839,3 +840,38 @@ The [inventory request patch](../patches/viabedrock/deferred/0003-translate-serv
 Remaining production work includes complete controller initialization, remaining input branches, selection-history invalidation, loaded world targets, and authored default controls.
 The native instruction fixtures cover individual boundaries. Full controller construction requires separate evidence.
 Native visual comparisons remain separate from these instruction-level checks.
+
+## Carried stacks on supported cooking screens
+
+Supported cooking scenes retain their installed screen when the real menu cursor changes.
+Ordinary slot input and Java carried-item extraction keep their existing owners.
+The screen no longer falls back merely because the player carries a stack.
+Direct mouse recipe presses still require an empty cursor and consume their captured release without ordinary inventory input.
+
+Complete native tab and filter callbacks `0x146c99520` and `0x146c99b40` contain no held-item admission check.
+The adapter now permits those preferences while carrying, with the same idle-gesture and newer-model checks.
+Downstream native model setters remain supplied boundaries in the callback fixtures.
+Layout changes retain their carried-item guard because saved-tab and held-selection behavior remains unfinished.
+
+Three new screen regressions fail before the correction and pass after it.
+They cover counts `1` and `64`, preparation and refresh, newer snapshots, recipe suppression and resumption, and preference acknowledgment.
+Separate negative controls restore the old preference guard or remove the mouse recipe guard. Each breaks the relevant behavioral regression.
+The focused client suite passes all 34 tests without skips.
+The four-project build passes 2,626 tests, with 163 optional skips and no failures or errors.
+All 104 core patches and 38 client patches replay.
+The 1,413 core classes match both packaged copies. All 1,139 production client classes match the add-on.
+
+
+A fresh BDS 1.26.51.1 route passes furnace, smoker, and blast-furnace controls with one supplied ingredient each.
+Actual screen handlers pick up that real stack, retain the screen, suppress a held recipe gesture, and return the unchanged stack.
+The cooking model advances through both cursor transitions. Ordinary request responses do not increment the server revision counter.
+Normal recipe input then receives all six matching press/release acknowledgments, and BDS starts cooking in each family.
+All three ordinary follow-up cases and same-world reconnect pass with the expected final item counts.
+
+The private scene projection retains all 39 real slots and recipe metadata while removing unfinished controls and mappings.
+Both runtime inventories match 2,551 project class resources and four data resources.
+Normal cleanup removes the observer, restores the temporary six-second driver delay, and leaves no managed-profile JVM.
+Two earlier failed fixture attempts remain archived separately. They assumed a spare ingredient-independent stack and a response-driven server revision.
+This route does not establish carried tab/filter input, stack counts beyond one, unchanged authored screens, native opacity, or native pixels.
+
+This change does not complete carried-item opacity, native device production, default search/help controls, layout history, or visual parity.
