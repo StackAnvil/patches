@@ -1790,7 +1790,7 @@ These controls supply budget inputs, priority notifications, component stores, r
 They also retain the earlier supplied readiness input, region query, notifications, and float CRT.
 They do not establish complete priority collection, budget production, scheduler ordering, actor factory behavior, or native trajectories.
 The readiness controls below verify the setter caller and tick-system selection.
-Normal player source integration still needs membership production, the option implementation, priority membership, region lookup, and phase ordering.
+Normal player source integration still needs complete membership producers, the option implementation, priority membership, and full phase effects and timing.
 Java actor age, visibility, and smoothing cannot stand in for these native decisions.
 
 ## Native network throttle producer
@@ -1811,7 +1811,7 @@ The earlier 512 packet-prefix controls are a subset of this composed coverage.
 These controls supply decoded packet objects, an empty compression connection table, option values, and ECS storage boundaries.
 They stop before the handler's authentication continuation.
 The empty-range sort is an asserted boundary; the controls do not establish priority collection or entity selection order.
-Packet decoding, complete scheduler timing, tick-needed membership production, and the actual option implementation remain unfinished.
+Packet decoding, complete scheduler timing and membership producers, and the actual option implementation remain unfinished.
 
 ## Native player readiness
 
@@ -1835,5 +1835,37 @@ These controls set its first 32-bit value nonzero.
 The original remote-player normal tick therefore returns before its full player physics and inventory body.
 They supply actor/world state, sparse stores, initialized compiler TLS state, generic storage discovery and erasure, region results, notifications, and float CRT.
 The system is called directly; registration order does not establish scheduler execution order.
-Tick-needed membership production, full normal-tick effects, riding behavior, actual region implementation, and phase timing remain open.
+These earlier controls exclude membership production, full normal-tick effects, riding behavior, actual region implementation, and phase timing.
+The lifecycle controls below extend producer, region, and dispatch-order coverage.
 This evidence introduces no production runtime change and does not establish normal player source parity.
+
+
+## Native remote-player tick lifecycle
+
+The original `FlagRemotePlayersForTickingSystem` selects `BlockSourceComponent`, `ActorComponent`, and `RemotePlayerComponent`.
+Its marker producer locks the weak region reference and adds `ActorTickNeededComponent` only when absent.
+The original `BlockSource::getWeakRef` initializes the marker payload; existing payloads remain unchanged.
+
+A separate control executes complete native client system registration and the ordinary `EntitySystems::tick` dispatcher.
+It observes 473 dispatches from 487 registrations under the supplied client options.
+Remote-player flagging runs before `ClientDisplayThrottleTick`, followed later by `ActorLegacyTickSystem`.
+The order control observes all system bodies and custom controllers through return boundaries.
+It proves that entry's dispatch order, not the effects of every intervening system or packet interleaving.
+
+Another 23,040 controls compose the original remote-player flagging callback, marker constructor, throttle callback, legacy tick, readiness setter, and following normal movement.
+All three flagging traversals execute with valid cached component views.
+The throttle callback can retire a newly created marker before the legacy tick, leaving prior readiness unchanged.
+These controls also execute the concrete `BlockSource::hasBlock`, chunk lookup, and weak-cache paths.
+Fresh lookups require native chunk stage 2 or 11 according to the source flag, and reject the raw chunk availability flag.
+Two four-step sequences verify live-cache reuse after a stage drop, immediate flag rejection, and a fresh lookup after weak expiry.
+Five deliberately incorrect variants fail assertions: dropped marker production, existing-marker reinitialization, ignored availability flag, lowered stage threshold, and ignored live cache.
+
+The original startup initializer supplies the invalid-chunk sentinel used by the source constructor and availability check.
+This includes chunk `(0, 0)` in the verified input set; the zero-filled PE image alone does not represent initialized process state.
+The [pinned SDK layout](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/chunk/LevelChunk.h) names byte `0x82` as `mReadOnly`; this remains naming evidence, separate from the executed target behavior.
+
+These controls supply cached component views, generic sparse insertion and erasure/destruction, chunk records, load stages, source flags, and retained reference owners.
+They retain the nonzero `DimensionStateComponent` early return and the earlier notification, CRT, and optional-component boundaries.
+The native source factory and constructor execute with supplied allocator, level/listener, and thread-ID boundaries.
+Complete phase effects, chunk-state producers, other membership producers, priority collection, options, riding, packet timing, and normal player source integration remain unfinished.
+No production runtime code changes in this milestone.
