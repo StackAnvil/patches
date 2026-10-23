@@ -991,9 +991,9 @@ The native display-name reader retains its current value when an update omits th
 This also applies to missing or wrongly typed `value` fields. A valid empty string clears the override.
 A valid nonempty string replaces it, including whitespace. The native component getter falls back to its stored description for an empty override.
 
-Production now preserves that display-name field when it rebuilds a network item definition.
-Previously, unrelated or malformed updates discarded the last name. Both new regression tests fail before the fix and pass afterward.
-All six focused item-definition tests pass without skips. Three deliberate retention, type, and empty-string regressions fail by assertion.
+The earlier network-reader fix preserved that field across unrelated updates.
+The registry-owned component description path now owns this behavior and the construction phases described below.
+The superseded network-name reader and its three tests have been removed. All thirteen native results run through the registry checks.
 
 Fresh original-executable controls construct 29 ordered ItemData updates for 13 actual ComponentItem definitions.
 They use the native populated vector, registry initializer, named ItemStack constructor, description getter, and key method.
@@ -1062,3 +1062,37 @@ The refreshed pre-packet catalog records 1,949 effective default descriptions, 1
 Only the warped-fungus default description differs from its stored description in this control.
 All 2,627 static cleanup callbacks complete without owned allocation or lock leaks.
 Packet identity translation, all ordinary-key providers, secondary labels, and complete cooking search remain unfinished.
+
+## Component description construction and conversion
+
+The item registry now owns component description keys across construction and ordered updates.
+Explicit component construction precedes all readers. Valid name strings in None or Legacy entries can update that existing component.
+Empty strings restore its ordinary description. Omitted or malformed values retain the previous name.
+Unknown None entries receive their fallback class afterward and ignore earlier metadata.
+
+Builtin component-name dispatch stays separate from factory version flags.
+The recorded default warped-fungus-on-a-stick component retains its complete key until explicit data-driven reconstruction.
+Java conversion uses the registry result for both mapped vanilla items and custom items through the shared text engine.
+Other item fields retain their existing loader paths.
+
+Original native controls supply 23 final descriptions. The newest control executes 17 authored entries, records 16 native reader calls, and queries ten final definitions.
+Its 2,627 static cleanup callbacks complete without owned allocation or lock leaks.
+The old packaged converter fails twelve of twenty applicable name cases.
+Both focused checks pass, including all 23 native results. Five deliberate construction, version, empty-value, fallback, and builtin-default regressions fail.
+
+A fresh control also executes 1,946 keys through actual factory receivers with an absent descriptor and no userdata.
+Three potion methods require a language owner and remain deferred. Full native cleanup passes.
+This establishes the declared input boundary. It does not establish all descriptor, locale, packet, client-asset, or visible behavior.
+
+The [component naming notes](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#component-description-construction-and-conversion) retain the evidence and limits.
+Other ordinary-key providers, appended primary text, secondary labels, cooking search transport, and unchanged authored-screen acceptance remain unfinished.
+
+The final combined build passes 2,665 tests, with 163 optional skips and no failures or errors.
+Both new checks run without skips. The three superseded reader tests are removed, with their thirteen native results retained in the registry checks.
+All 105 core and 38 client patches replay. All 1,427 compiled core classes and both embedded copies match after the normal token replacement step.
+All 1,143 client classes match the add-on. The new factory-description resource matches each packaged copy.
+The final packaged converter passes all twenty component cases with five verified production class origins.
+
+A fresh ordinary BDS 1.26.51.1 route passes all three cooking families and same-world reconnect.
+Both selected instances use the final add-on. Normal cleanup stops the private display.
+This route does not inject the authored name-update cases or establish native screens and pixels.
