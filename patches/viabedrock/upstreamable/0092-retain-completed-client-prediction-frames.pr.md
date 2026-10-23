@@ -1739,7 +1739,8 @@ The consumer without clear handling fails; restored production passes.
 All sixteen focused core checks pass with their native references enabled.
 
 These native controls supply actor/component stores, ready/throttle inputs, region results, float CRT, and downstream reset/event boundaries.
-The original ready-field setter executes, but its scheduled producers remain unverified.
+The original ready-field setter executes with a supplied input in this earlier corpus.
+The readiness controls below extend that evidence through its native producer and tick-system callback.
 Normal remote-player source admission, complete region lookup, local-player virtuals, riding pose effects, and native scheduling remain unfinished.
 The full five-area goal remains active.
 
@@ -1788,8 +1789,8 @@ Six deliberate variants fail assertions: ignored budget, retained disabled targe
 These controls supply budget inputs, priority notifications, component stores, registry lookup, and marker erasure.
 They also retain the earlier supplied readiness input, region query, notifications, and float CRT.
 They do not establish complete priority collection, budget production, scheduler ordering, actor factory behavior, or native trajectories.
-Readiness-setter searches yield candidates but do not establish its actual caller or prove it unreachable.
-Normal player source integration still needs actual readiness and option producers, priority membership, region lookup, and phase ordering.
+The readiness controls below verify the setter caller and tick-system selection.
+Normal player source integration still needs membership production, the option implementation, priority membership, region lookup, and phase ordering.
 Java actor age, visibility, and smoothing cannot stand in for these native decisions.
 
 ## Native network throttle producer
@@ -1810,4 +1811,29 @@ The earlier 512 packet-prefix controls are a subset of this composed coverage.
 These controls supply decoded packet objects, an empty compression connection table, option values, and ECS storage boundaries.
 They stop before the handler's authentication continuation.
 The empty-range sort is an asserted boundary; the controls do not establish priority collection or entity selection order.
-Packet decoding, complete scheduler timing, readiness producers, and actual option implementation remain unfinished.
+Packet decoding, complete scheduler timing, tick-needed membership production, and the actual option implementation remain unfinished.
+
+## Native player readiness
+
+Readiness comes from the result of `Actor::tick`, published through the remote-player virtual setter.
+`ActorLegacyTickSystem` selects `ActorOwnerComponent` and `ActorTickNeededComponent`, then invokes the tick wrapper.
+It handles entities with and without `PlayerComponent` in separate passes.
+Only actors with `RemotePlayerComponent` receive the readiness publication.
+The wrapper removes the tick-needed marker after a tick attempt, including a failed attempt.
+A nonzero skip flag leaves readiness and the marker unchanged.
+
+The original wrapper, actor tick gates, setter, following normal movement, and collider refresh pass 4,608 controls.
+They cover region results, global-actor and actor-type gates, remote-player membership, prior readiness, and absent, live, or expired weak region references.
+Another 1,728 controls execute the original tick-system callback and both passes.
+Instruction observations confirm all three player traversals and both non-player traversals.
+Missing required membership or a stale tick-needed generation prevents dispatch.
+The following movement and collider paths also execute, with their input combinations sampled by case index.
+Eight deliberately incorrect executions fail assertions across the two corpora.
+
+The native type metadata identifies the required early-return state as `DimensionStateComponent`.
+These controls set its first 32-bit value nonzero.
+The original remote-player normal tick therefore returns before its full player physics and inventory body.
+They supply actor/world state, sparse stores, initialized compiler TLS state, generic storage discovery and erasure, region results, notifications, and float CRT.
+The system is called directly; registration order does not establish scheduler execution order.
+Tick-needed membership production, full normal-tick effects, riding behavior, actual region implementation, and phase timing remain open.
+This evidence introduces no production runtime change and does not establish normal player source parity.
