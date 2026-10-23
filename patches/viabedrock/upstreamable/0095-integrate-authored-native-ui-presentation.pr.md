@@ -682,3 +682,36 @@ Both selected launches use the exact final add-on; all nine observed owned ident
 
 These checks do not establish complete native packet decoding, registry/session ownership, asset/locale acquisition, authored screens or visible arrow text.
 Compound names, secondary labels and cooking query transport remain open.
+
+## Native compound primary names
+
+Compound names now use the original 38-entry enum table and the low auxiliary byte.
+An absent descriptor selects 255. Values outside the table retain the empty suffix in `item.compound..name`.
+The provider requests no block, language or world-version callback. Component reconstruction and runtime-owner retirement retain control over dispatch.
+
+The target is Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Original key `148e310b0`, selector `148e313a0`, enum `148e307d0` and recipe hash `1424e54b0` execute in 8,704 bounded cases.
+These controls supply plain descriptors, typed alias-map chains and registry interfaces.
+A separate initialized registry control constructs the actual compound receiver and its recipe aliases, then checks 263 keys.
+Its three aliases belong to sugar, ink sac and charcoal. Their recipe hashes are disjoint from every compound auxiliary value.
+That disjointness check uses the native hash formula across 65,536 inputs; it does not claim that many native calls.
+The initialized control completes all 2,630 registered cleanup callbacks, locale cleanup, allocation tracking and lock checks.
+Plain descriptor transport remains a supplied interface; complete packet and proxy lifetimes remain unverified.
+
+All 512 applicable packaged conversions pass through a typed protocol-2193 registry, raw language parsing and final item text serialization.
+The previous package fails 510 of them. Missing dictionaries and independently supplied literal translations determine the expected display text.
+The conversion control excludes 8,448 rows with other descriptor IDs, supplied alias maps or absent items.
+The actual-registry control separately checks alias admission, component replacement, owner retirement and lazy source access.
+Four private wrong variants fail behavioral assertions: a 16-bit mask, absent descriptor as salt, unknown type as garbage and eager version lookup.
+Every captured constructor now has a primary name provider or component description, covering 1,949 definitions.
+This table coverage does not establish secondary labels, locale acquisition, query transport, authored screens or visible compound text.
+
+All 1,264 arrow keys, 5,688 potion keys and 1,337 packaged block sentinel cases still pass.
+The complete build passes 2,703 tests with 163 optional skips.
+All 1,448 core classes match source and both consumers; all 1,144 client classes match the add-on.
+The three naming resources match source in the standalone core, add-on and proxy.
+
+A fresh BDS run passes all three cooking families and same-world reconnect with the final installed add-on.
+Both launches match its checksum. All nine observed owned identities retire, and the private display stops normally.
+Java cooking screens handle these controls. Unsupported authored preference mappings still prevent native screen acceptance.
+The client source tree is unchanged by this naming update.

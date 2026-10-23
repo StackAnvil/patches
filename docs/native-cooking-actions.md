@@ -1197,3 +1197,20 @@ Fresh final-artifact BDS cooking and reconnect checks also pass, with normal cle
 
 Complete native ownership, asset/locale acquisition and visible arrow text remain separate requirements.
 See the [arrow provider evidence](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#native-arrow-primary-names) for raw descriptions, exclusions and integration checks.
+
+
+## Native compound primary names
+
+Compound names select the native 38-entry enum through the low auxiliary byte.
+Absent descriptors select 255, and unknown values retain an empty name suffix.
+The provider skips block, language and world-version callbacks. Registry replacement and component reconstruction still control its lifetime.
+
+A fresh initialized native registry control matches all 263 keys and completes every registered cleanup callback.
+The actual recipe aliases are disjoint from all compound auxiliary values.
+All 512 packaged conversions pass; the previous package fails 510. Four deliberately wrong variants fail behavioral assertions.
+Every entry in the captured 1,949-constructor table now has primary naming dispatch or a component description.
+Arrow, potion and block comparisons still pass. The complete build passes 2,703 tests with 163 optional skips.
+Fresh BDS cooking and same-world reconnect checks pass through ordinary Java screens, with normal cleanup.
+
+Complete descriptor/session ownership, secondary labels, locale acquisition, query transport and visible compound text remain separate requirements.
+See the [compound provider evidence](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#native-compound-primary-names) for native inputs, exclusions and integration checks.
