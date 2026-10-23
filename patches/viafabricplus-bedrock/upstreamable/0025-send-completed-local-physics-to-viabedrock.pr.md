@@ -30,7 +30,22 @@ This callback captures current interpolation state into history; it does not res
 The original queued-target callback `1431ee220` passes 108 controls.
 It either applies target coordinates and rotation with new counters, or defers the target under its position-active flag.
 The fixture excludes optional marker removal through an explicitly absent marker store.
-Complete ECS traversal, interpolation ticks, and native phase ordering remain unverified.
+Original interpolation callback `1431e9ea0` and rotation helper `1431ea5b0` pass another 512 controls.
+Positive position counters clear velocity and emit a position request, then decrement.
+They do not directly change the StateVector position.
+Negative counters keep interpolation active for source selection but do not advance the corresponding axis.
+Body rotation also updates the previous rotation across wrap boundaries.
+An absent head component leaves the head counter unchanged.
+The fixture supplies cached view admission, registry discovery, existing position-request storage, and the CRT remainder operation.
+Native component checks, float arithmetic, counter updates, and request publication execute without substitution.
+
+Another 432 controls execute packet target producer `14103fa60` and target writer `142879300`.
+The duration uses an unsigned 64-bit maximum with three, then stores the low signed 32-bit counter.
+A current force byte of exactly one and a nonzero position counter defer an incoming unforced target.
+Native category bit two updates body and head rotation even while the positional target remains queued.
+These controls supply the category bit and existing component stores.
+The queue erasure virtual method is an explicit fixture boundary.
+Native category producers, complete component lifetimes, request consumption, and phase ordering remain unverified.
 
 The packet-source prerequisite now lives in the existing core sparse-update owner.
 It retains received coordinates and rotations before local admission, independently of the mutable actor pose.

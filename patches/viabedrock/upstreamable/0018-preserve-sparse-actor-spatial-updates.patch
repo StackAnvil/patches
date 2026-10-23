@@ -1,4 +1,4 @@
-From f008a1164e1450170cae9ffb80dc3ade2ddc6fe7 Mon Sep 17 00:00:00 2001
+From a55da387157f2762d82bc6c0643f730e25399208 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] fix(entities): preserve Bedrock spatial updates
@@ -32,24 +32,46 @@ The matching Bedrock 1.26.51.1 executable/protocol2193 passes 512 fresh
 handler/publisher controls over all six omission bits, ground states,
 distinct live positions and removed actors. Registered Java handler tests
 compare the native outputs and verify independent live state and encoded
-remote positions/rotations. This does not establish native constructor
-defaults, interpolation ticking, all lifetimes or complete trajectories.
+remote positions/rotations. These cases do not establish complete actor construction, interpolation
+ticking, all lifetimes or complete trajectories.
+
+Seed received angles with the native spawn bootstrap's wrapped byte
+conversion. Native helper 14103ff60 normalizes each float angle, divides
+by 360 and multiplies by 256 before truncating to a signed byte. Retaining
+the original spawn floats changes omitted angles in the first sparse
+packet. Keep the live spawn rotation independent from this packed cache.
+
+Original inline proxy initializers, spawn bootstrap and sparse handlers
+pass 1024 additional controls, including wrap boundaries and large finite
+angles. Actual registered Java handlers match their position and angle
+outputs. Both deliberate regressions, full-float retention and unwrapped
+byte conversion, fail the mandatory and native-reference comparisons.
+Surrounding spawn flow and allocation, complete interpolation phases and
+native trajectories remain separate verification requirements.
 ---
- .../viabedrock/api/model/entity/Entity.java   |  22 ++
- .../protocol/packet/EntityPackets.java        |  67 +++---
- .../packet/EntityMovementPacketsTest.java     |  30 +++
- .../packet/MotionPredictionPacketTest.java    | 104 +++++++++
- .../packet/SpatialPacketCacheTest.java        | 217 ++++++++++++++++++
- 5 files changed, 411 insertions(+), 29 deletions(-)
+ .../viabedrock/api/model/entity/Entity.java   |  32 +++
+ .../protocol/packet/EntityPackets.java        |  67 +++--
+ .../packet/EntityMovementPacketsTest.java     |  30 ++
+ .../packet/MotionPredictionPacketTest.java    | 104 +++++++
+ .../packet/SpatialPacketCacheTest.java        | 265 ++++++++++++++++++
+ 5 files changed, 469 insertions(+), 29 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/EntityMovementPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MotionPredictionPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/SpatialPacketCacheTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 5addfdbde..5a66363df 100644
+index 5addfdbde..5ee620321 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-@@ -56,6 +56,8 @@ public class Entity {
+@@ -26,6 +26,7 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.util.EnumUtil;
++import net.raphimc.viabedrock.api.util.MathUtil;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
+@@ -56,6 +57,8 @@ public class Entity {
       * x, y, z
       */
      protected Position3f position;
@@ -58,7 +80,7 @@ index 5addfdbde..5a66363df 100644
      /**
       * pitch, yaw, headYaw
       */
-@@ -183,7 +185,24 @@ public class Entity {
+@@ -183,7 +186,24 @@ public class Entity {
          return this.position;
      }
  
@@ -83,16 +105,28 @@ index 5addfdbde..5a66363df 100644
          this.position = position;
      }
  
-@@ -192,6 +211,9 @@ public class Entity {
+@@ -192,9 +212,21 @@ public class Entity {
      }
  
      public void setRotation(final Position3f rotation) {
 +        if (this.lastReceivedRotation == null) {
-+            this.lastReceivedRotation = rotation;
++            this.lastReceivedRotation = new Position3f(receivedAngle(rotation.x()), receivedAngle(rotation.y()), receivedAngle(rotation.z()));
 +        }
          this.rotation = rotation;
      }
  
++    private static float receivedAngle(final float angle) {
++        float wrapped = (angle + 180F) % 360F;
++        if (wrapped < 0F) {
++            wrapped += 360F;
++        }
++        // The native spawn cache packs normalized angles with division before multiplication.
++        return MathUtil.byte2Float((byte) ((wrapped - 180F) / 360F * 256F));
++    }
++
+     public boolean isOnGround() {
+         return this.onGround;
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 index b5d08775d..93d81aaab 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
@@ -364,10 +398,10 @@ index 000000000..43ed285c9
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/SpatialPacketCacheTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/SpatialPacketCacheTest.java
 new file mode 100644
-index 000000000..39d37f7e8
+index 000000000..f49e78142
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/SpatialPacketCacheTest.java
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,265 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -461,6 +495,54 @@ index 000000000..39d37f7e8
 +                assertEquals(0, output.readableBytes());
 +            } finally {
 +                output.release();
++            }
++        }
++    }
++
++    @Test
++    void firstSparseUpdateUsesPackedSpawnAnglesWithoutChangingTheSpawnRotation() throws Exception {
++        final var context = new Context();
++        final Entity actor = new Entity(context.user, 21, RUNTIME_ID, "minecraft:player", 301,
++                UUID.randomUUID(), EntityTypes26_3.PLAYER);
++        when(context.tracker.getEntityByRid(RUNTIME_ID)).thenReturn(actor);
++        actor.setPosition(NETWORK_POSITION);
++        final var spawnRotation = new Position3f(170.25F, -181.125F, 540.5F);
++        actor.setRotation(spawnRotation);
++        assertEquals(spawnRotation, actor.rotation());
++        actor.setPosition(new Position3f(100, 200, 300));
++        actor.setRotation(new Position3f(40, 50, 60));
++        try (var packets = mockStatic(PacketFactory.class)) {
++            assertFalse(context.delta(2 | 32, true).cancelled());
++            assertEquals(new Position3f(NETWORK_POSITION.x(), -2.5F, NETWORK_POSITION.z()), actor.position());
++            assertEquals(rotation(121, 127, 45), actor.rotation());
++            assertEquals(actor.rotation(), actor.lastReceivedRotation());
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_SPATIAL_BOOTSTRAP", matches = ".+")
++    void matchesNativeSpawnBootstrapAndFirstSparsePacketAcrossEveryOmittedField() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_SPATIAL_BOOTSTRAP")))).getAsJsonObject();
++        try (var packets = mockStatic(PacketFactory.class)) {
++            for (var value : reference.getAsJsonArray("rows")) {
++                final var row = value.getAsJsonObject();
++                final var context = new Context();
++                final Entity actor = new Entity(context.user, 21, RUNTIME_ID, "minecraft:player", 301,
++                        UUID.randomUUID(), EntityTypes26_3.PLAYER);
++                when(context.tracker.getEntityByRid(RUNTIME_ID)).thenReturn(actor);
++                actor.setPosition(vector(row.getAsJsonArray("spawnPosition")));
++                final var spawnRotation = vector(row.getAsJsonArray("spawnRotation"));
++                actor.setRotation(spawnRotation);
++                assertEquals(spawnRotation, actor.rotation());
++                final float live = row.get("liveCoordinate").getAsFloat();
++                actor.setPosition(new Position3f(live, live + 1, live + 2));
++                actor.setRotation(Position3f.ZERO);
++                assertFalse(context.delta(row.get("mask").getAsInt(), false).cancelled());
++                assertEquals(vector(row.getAsJsonArray("position")), actor.position());
++                assertEquals(actor.position(), actor.lastReceivedPosition());
++                final var angles = row.getAsJsonArray("rotationBytes");
++                assertEquals(rotation(angles.get(0).getAsInt(), angles.get(1).getAsInt(), angles.get(2).getAsInt()), actor.rotation());
++                assertEquals(actor.rotation(), actor.lastReceivedRotation());
 +            }
 +        }
 +    }
