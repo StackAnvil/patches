@@ -2248,3 +2248,39 @@ All four builds pass 2,583 tests, with 167 optional skips and no failures or err
 The child lifetime comparisons, retained particle fixtures, attachable comparisons, and Iris GPU regression run without skips.
 All 1,411 core classes match both packaged copies, and all 1,136 production client classes match the add-on.
 Reentrant emitter allocation during native destruction remains unverified.
+
+## Native manual-child retirement order
+
+Manual children now retire in the native cache traversal order.
+The cache uses each validated effect name's FNV-1 hash, eight initial buckets, and the target collision and growth rules.
+Bucket growth rebuilds traversal before inserting the next key.
+Java map iteration previously changed the order of expiry callbacks.
+
+Failed creation reserves an uninitialized slot before the factory runs.
+Retries and rollback retain that slot, including its effect on bucket growth and later traversal.
+Unavailable definitions now reach the same cache path.
+Successful and retired handles keep their existing weak-reference and ownership behavior.
+
+Thirty-two controls execute original leaf dispatcher `0x142164cb0` from an empty native cache.
+They record 2,870 insertion/retry observations across forward, reverse, and shuffled names, full-hash collisions, masked-bucket collisions, and growth through 513 entries.
+The parent destructor then traverses the resulting native cache through `0x1421703c2`.
+Production Java retirement matches every native traversal.
+The pinned executable version and checksum remain the same as the lifetime controls above.
+
+Parsed names and hashes, the empty cache layout, manager handles, and child records are supplied inputs.
+Allocator calls, exact bounded CRT copies/comparisons, integer `ceilf`, deallocation, failed factory returns, and expiry callbacks are supplied boundaries.
+These controls do not execute native name parsing, resource construction, complete destruction, reentrant manager allocation, live server behavior, or GPU drawing.
+Artificial hash collisions are explicit test inputs.
+
+Mandatory tests cover failed-slot growth and actual emitter expiry callbacks in bucket order.
+The native fixture also checks successful retries in a different order from their original failed attempts.
+Four private variants use Java map order, preserve insertion order, discard failed entries, or skip native rehashing.
+Each fails its native order comparison. The restored implementation passes.
+
+Reentrant manager allocation during expiry remains unverified.
+Complete registry producers, actor removal lifetimes, resource admission, and native visible parity also remain open.
+
+The combined four-project build passes 2,588 tests, with 168 optional skips and no failures or errors.
+The new child-order fixture, child-lifetime comparisons, retained particle fixtures, attachable comparisons, and Iris GPU regression run without skips.
+All 1,411 core classes match both packaged copies, and all 1,137 production client classes match the add-on.
+The newer received actor spatial-state change remains integrated in this build.

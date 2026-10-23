@@ -1,4 +1,4 @@
-From 2706f027942fdf347bef10793ebfe48696eba803 Mon Sep 17 00:00:00 2001
+From 235dbc3cd692a0a2578d511a9e6fa4d2abeac195 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -220,6 +220,24 @@ An expiry callback tail-calls original emission to observe flag ordering.
 Native instant and steady rate tables use the zero manual-capacity getter.
 The controls exclude native JSON/Molang evaluation, actual particle
 allocation, complete object destruction, live server behavior and pixels.
+
+Preserve native manual-child cache traversal for retirement callbacks.
+Use the effect name's FNV-1 hash, eight initial buckets, native collision
+placement and growth/rebucketing order. Failed factory attempts reserve a
+cache entry before construction and retain that entry for retry, including
+unavailable child definitions. Rollback clears initialization without
+removing its ordering slot. Keep weak successful/stale handle semantics.
+
+Thirty-two pinned native controls execute full leaf dispatcher 142164cb0
+from an empty cache, including insertion, collisions and rehashes. They
+record 2,870 insertion/retry receipts and run parent destructor 142170320
+through its child loop, stopping before cleanup at 1421703c2. Inputs include
+parsed names/hashes, empty cache layout, handles and child records. Allocator,
+bounded exact CRT copies/comparisons, integer ceilf, free, failed factory
+returns and expiry callbacks are supplied boundaries. Cases include real
+FNV-1 names, artificial full-hash/bucket collisions, retries and growth
+through 513 entries. Native name parsing, resource construction, complete
+destruction, reentrant manager allocation, live server and GPU remain open.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -247,7 +265,7 @@ allocation, complete object destruction, live server behavior and pixels.
  .../appearance/BedrockNativeBlocks.java       |   87 ++
  .../appearance/BedrockParticleAttachment.java |  167 +++
  .../appearance/BedrockParticleBlocks.java     |   67 +
- .../appearance/BedrockParticleChildren.java   |   49 +
+ .../appearance/BedrockParticleChildren.java   |   93 ++
  .../appearance/BedrockParticleCollision.java  |  210 ++++
  .../appearance/BedrockParticleCounts.java     |   58 +
  .../appearance/BedrockParticleCurves.java     |  173 +++
@@ -262,7 +280,7 @@ allocation, complete object destruction, live server behavior and pixels.
  .../appearance/BedrockParticleLifetime.java   |  100 ++
  .../BedrockParticleLifetimeEvents.java        |   64 +
  .../appearance/BedrockParticlePending.java    |   44 +
- .../appearance/BedrockParticlePlayback.java   |  389 ++++++
+ .../appearance/BedrockParticlePlayback.java   |  393 ++++++
  .../appearance/BedrockParticleQueries.java    |   61 +
  .../BedrockParticleRenderTypes.java           |   93 ++
  .../appearance/BedrockParticleShape.java      |  165 +++
@@ -368,7 +386,7 @@ allocation, complete object destruction, live server behavior and pixels.
  .../appearance/BedrockNativeFluidTest.java    |   34 +
  .../appearance/BedrockParticleAgingTest.java  |  118 ++
  .../appearance/BedrockParticleBlocksTest.java |  149 +++
- .../BedrockParticleChildrenTest.java          |  230 ++++
+ .../BedrockParticleChildrenTest.java          |  300 +++++
  .../BedrockParticleCollisionEventsTest.java   |  175 +++
  .../BedrockParticleCollisionTest.java         |  124 ++
  .../appearance/BedrockParticleCountsTest.java |  216 ++++
@@ -418,7 +436,7 @@ allocation, complete object destruction, live server behavior and pixels.
  .../render/BedrockPlayerModelTest.java        |  104 ++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 197 files changed, 23692 insertions(+), 15 deletions(-)
+ 197 files changed, 23810 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibility.java
@@ -4956,10 +4974,10 @@ index 0000000..1d508e5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleChildren.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleChildren.java
 new file mode 100644
-index 0000000..d4366d1
+index 0000000..0c178b0
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleChildren.java
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,93 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4968,43 +4986,87 @@ index 0000000..d4366d1
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import java.lang.ref.WeakReference;
++import java.util.ArrayList;
 +import java.util.HashMap;
++import java.util.List;
 +import java.util.Map;
 +import java.util.function.Consumer;
 +import java.util.function.Predicate;
 +import java.util.function.Supplier;
++import java.util.function.ToLongFunction;
 +
 +/** Manual child handles stay initialized after retirement and expire with their owning emitter. */
 +final class BedrockParticleChildren<K, T> {
-+    private final Map<K, WeakReference<T>> children = new HashMap<>();
++    private final Map<K, Entry<T>> children = new HashMap<>();
++    private final List<Entry<T>> order = new ArrayList<>();
++    private final ToLongFunction<K> hash;
++    private int buckets = 8;
++
++    BedrockParticleChildren(final ToLongFunction<K> hash) { this.hash = hash; }
 +
 +    Resolution<T> acquire(final K key, final Predicate<T> registered, final Supplier<T> factory) {
-+        final WeakReference<T> handle = this.children.get(key);
-+        if (handle != null) {
-+            final T child = handle.get();
++        Entry<T> entry = this.children.get(key);
++        if (entry == null) {
++            entry = new Entry<>(this.hash.applyAsLong(key));
++            if (this.children.size() == this.buckets) this.grow();
++            this.insert(entry);
++            this.children.put(key, entry);
++        }
++        if (entry.initialized) {
++            final T child = entry.child.get();
 +            if (child != null && registered.test(child)) return new Resolution<>(child, false);
-+            handle.clear();
++            entry.child.clear();
 +            return new Resolution<>(null, false);
 +        }
 +        final T child = factory.get();
-+        if (child != null) this.children.put(key, new WeakReference<>(child));
++        if (child != null) {
++            entry.child = new WeakReference<>(child);
++            entry.initialized = true;
++        }
 +        return new Resolution<>(child, child != null);
 +    }
 +
 +    void discard(final K key, final T child) {
-+        final WeakReference<T> handle = this.children.get(key);
-+        if (handle != null && handle.get() == child) this.children.remove(key);
++        final Entry<T> entry = this.children.get(key);
++        if (entry != null && entry.child.get() == child) {
++            entry.child.clear();
++            entry.initialized = false;
++        }
 +    }
 +
 +    void retire(final Predicate<T> registered, final Consumer<T> expire) {
 +        try {
-+            for (final WeakReference<T> handle : this.children.values()) {
-+                final T child = handle.get();
++            for (final Entry<T> entry : this.order) {
++                final T child = entry.child.get();
 +                if (child != null && registered.test(child)) expire.accept(child);
 +            }
 +        } finally {
 +            this.children.clear();
++            this.order.clear();
++            this.buckets = 8;
 +        }
++    }
++
++    private void grow() {
++        this.buckets *= this.buckets < 512 ? 8 : 2;
++        final var previous = List.copyOf(this.order);
++        this.order.clear();
++        previous.forEach(this::insert);
++    }
++
++    private void insert(final Entry<T> entry) {
++        final long bucket = entry.hash & (this.buckets - 1);
++        int index = 0;
++        while (index < this.order.size() && (this.order.get(index).hash & (this.buckets - 1)) != bucket) index++;
++        this.order.add(index, entry);
++    }
++
++    private static final class Entry<T> {
++        private final long hash;
++        private WeakReference<T> child = new WeakReference<>(null);
++        private boolean initialized;
++
++        private Entry(final long hash) { this.hash = hash; }
 +    }
 +
 +    record Resolution<T>(T child, boolean created) {}
@@ -7757,10 +7819,10 @@ index 0000000..812303f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java
 new file mode 100644
-index 0000000..e8a06c5
+index 0000000..37df6f5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java
-@@ -0,0 +1,389 @@
+@@ -0,0 +1,393 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7791,6 +7853,8 @@ index 0000000..e8a06c5
 +
 +import java.awt.image.BufferedImage;
 +import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import net.raphimc.viabedrock.api.util.Fnv1;
 +import java.util.ArrayList;
 +import java.util.HashMap;
 +import java.util.List;
@@ -7902,7 +7966,7 @@ index 0000000..e8a06c5
 +    private static Playing create(final Key key, final Loaded loaded, final BedrockMolang environment,
 +                                  final BedrockMolang.Program initialization, final BedrockParticleAttachment.Matrix transform,
 +                                  final Supplier<BedrockParticleAttachment> attachment, final int depth, final Playing parent) {
-+        if (EMITTERS.size() >= 512) return null;
++        if (loaded == null || EMITTERS.size() >= 512) return null;
 +        // Animation roots supply their initial variables before creation; event children own fresh variables.
 +        if (parent == null) environment.evaluate(initialization, 0);
 +        final var emitter = loaded.effect.emitter(environment, ThreadLocalRandom.current(), transform,
@@ -7948,7 +8012,7 @@ index 0000000..e8a06c5
 +        } : null;
 +        final Key key = new Key(parent.key.resources, spawn.effect());
 +        final Loaded loaded = loaded(key);
-+        if (loaded != null) start(key, loaded, new BedrockMolang(), spawn.initialization(), transform,
++        start(key, loaded, new BedrockMolang(), spawn.initialization(), transform,
 +                attachment, parent.depth + 1, manual ? request : null, parent);
 +    }
 +
@@ -8126,7 +8190,9 @@ index 0000000..e8a06c5
 +        } catch (RuntimeException invalid) { pixels.close(); throw invalid; }
 +    }
 +
-+    private record Key(BedrockResourceLibrary resources, String event) {}
++    private record Key(BedrockResourceLibrary resources, String event) {
++        private long nativeHash() { return Fnv1.fnv1_64(this.event.getBytes(StandardCharsets.UTF_8)); }
++    }
 +    private record Rendering(Identifier texture, RenderType type, long bytes) {}
 +    private record Loaded(BedrockParticleEffect effect, Optional<Rendering> rendering) {}
 +    private static final class Playing {
@@ -8136,7 +8202,7 @@ index 0000000..e8a06c5
 +        final Supplier<BedrockParticleAttachment> attachment;
 +        final int depth;
 +        final BedrockParticleInterpolation interpolation = new BedrockParticleInterpolation(BedrockParticleInterpolation.PC_FRAMES);
-+        final BedrockParticleChildren<Key, Playing> manualChildren = new BedrockParticleChildren<>();
++        final BedrockParticleChildren<Key, Playing> manualChildren = new BedrockParticleChildren<>(Key::nativeHash);
 +
 +        Playing(final Key key, final Loaded loaded, final BedrockParticleEffect.Emitter emitter,
 +                final Supplier<BedrockParticleAttachment> attachment, final int depth) {
@@ -18232,16 +18298,18 @@ index 0000000..c3e6069
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleChildrenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleChildrenTest.java
 new file mode 100644
-index 0000000..22ee43f
+index 0000000..64127e7
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleChildrenTest.java
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,300 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.google.gson.JsonObject;
 +import com.google.gson.JsonParser;
 +import com.google.gson.JsonPrimitive;
 +import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.util.Fnv1;
++import java.nio.charset.StandardCharsets;
 +import org.joml.Vector3f;
 +import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -18250,6 +18318,7 @@ index 0000000..22ee43f
 +import java.nio.file.Path;
 +import java.util.ArrayList;
 +import java.util.IdentityHashMap;
++import java.util.HashMap;
 +import java.util.List;
 +import java.util.Map;
 +import java.util.Random;
@@ -18259,8 +18328,73 @@ index 0000000..22ee43f
 +
 +final class BedrockParticleChildrenTest {
 +    @Test
++    void keepsFailedSlotsInNativeGrowthOrderWhenLaterAttemptsSucceed() {
++        final var children = new BedrockParticleChildren<Integer, Integer>(_ -> 7L);
++        for (int index = 0; index < 8; index++)
++            assertNull(children.acquire(index, _ -> true, () -> null).child());
++        assertTrue(children.acquire(8, _ -> true, () -> 8).created());
++        for (int index = 7; index >= 0; index--) {
++            final int child = index;
++            assertTrue(children.acquire(index, _ -> true, () -> child).created());
++        }
++        final var retired = new ArrayList<Integer>();
++        children.retire(_ -> true, retired::add);
++        assertEquals(List.of(8, 0, 1, 2, 3, 4, 5, 6, 7), retired);
++    }
++
++    @Test
++    void dispatchesActualExpiryCallbacksInNativeBucketOrder() throws Exception {
++        final var children = new BedrockParticleChildren<Integer, Child>(index -> index == 2 ? 1L : 0L);
++        final var registered = new ArrayList<Child>();
++        final var expired = new ArrayList<Integer>();
++        for (int index = 0; index < 3; index++) {
++            final int childIndex = index;
++            final var child = new Child(0, new ArrayList<>());
++            child.environment.addQueries(Map.of("expiry", (BedrockActorAnimation.Query) _ -> {
++                expired.add(childIndex); return 0F;
++            }));
++            registered.add(child);
++            children.acquire(index, registered::contains, () -> child);
++        }
++        children.retire(registered::contains, child -> child.emitter.expire());
++        assertEquals(List.of(1, 0, 2), expired);
++        assertTrue(registered.stream().noneMatch(child -> child.emitter.alive()));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_PARTICLE_CHILD_ORDER", matches = ".+")
++    void matchesOriginalCacheInsertionRehashAndDestructorTraversal() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_PARTICLE_CHILD_ORDER")))).getAsJsonObject();
++        int cases = 0;
++        for (final var item : fixture.getAsJsonArray("rows")) {
++            final var row = item.getAsJsonObject();
++            final Map<String, Long> hashes = new HashMap<>();
++            final Map<String, Integer> registered = new HashMap<>();
++            final var names = row.getAsJsonArray("names");
++            for (int index = 0; index < names.size(); index++) {
++                final String key = names.get(index).getAsString();
++                hashes.put(key, Long.parseUnsignedLong(row.getAsJsonArray("hashes").get(index).getAsString()));
++                if (!registered.containsKey(key)) registered.put(key, registered.size());
++            }
++            final var children = new BedrockParticleChildren<String, Integer>(key -> hashes.get(key));
++            for (final var name : names)
++                assertNull(children.acquire(name.getAsString(), _ -> true, () -> null).child());
++            // Successful retries run in a different order without changing the original cache traversal.
++            final var retry = new ArrayList<>(registered.keySet());
++            java.util.Collections.sort(retry, java.util.Comparator.reverseOrder());
++            for (final String key : retry)
++                assertTrue(children.acquire(key, registered::containsValue, () -> registered.get(key)).created());
++            final var actual = new ArrayList<Integer>();
++            children.retire(registered::containsValue, actual::add);
++            final var expected = row.getAsJsonArray("retirement").asList().stream().map(value -> value.getAsInt()).toList();
++            assertEquals(expected, actual, "native cache case " + cases++);
++        }
++        assertEquals(32, cases);
++    }
++
++    @Test
 +    void retainsInitializedHandlesAcrossExpiryAndRetirementWithoutAdoptingReplacements() throws Exception {
-+        final var children = new BedrockParticleChildren<String, Child>();
++        final var children = new BedrockParticleChildren<String, Child>(BedrockParticleChildrenTest::hash);
 +        final List<Child> registered = new ArrayList<>();
 +        final var first = new Child(4, new ArrayList<>());
 +        final int[] factories = {0};
@@ -18277,7 +18411,7 @@ index 0000000..22ee43f
 +        assertNull(children.acquire("effect", registered::contains, factory).child());
 +        assertNull(children.acquire("effect", registered::contains, factory).child());
 +        assertEquals(1, factories[0]);
-+        final var otherOwner = new BedrockParticleChildren<String, Child>();
++        final var otherOwner = new BedrockParticleChildren<String, Child>(BedrockParticleChildrenTest::hash);
 +        assertSame(replacement, otherOwner.acquire("effect", registered::contains, () -> replacement).child());
 +        assertNull(children.acquire("missing", registered::contains, () -> null).child());
 +        final var retried = children.acquire("missing", registered::contains, () -> replacement);
@@ -18290,7 +18424,7 @@ index 0000000..22ee43f
 +
 +    @Test
 +    void keepsAutomaticTargetsRegisteredWhenTheirManualCapacityIsZero() throws Exception {
-+        final var children = new BedrockParticleChildren<String, BedrockParticleEffect.Emitter>();
++        final var children = new BedrockParticleChildren<String, BedrockParticleEffect.Emitter>(BedrockParticleChildrenTest::hash);
 +        final var registered = new ArrayList<BedrockParticleEffect.Emitter>();
 +        final var emitter = BedrockParticleEffect.read(BedrockParticleEffectTest.burst())
 +                .emitter(new BedrockMolang(), new Random(1), Vec3.ZERO);
@@ -18319,7 +18453,7 @@ index 0000000..22ee43f
 +        final var effects = new IdentityHashMap<BedrockParticleEffect.Emitter, String>();
 +        effects.put(parent, "parent"); effects.put(child.emitter, "child"); effects.put(grandchild.emitter, "grandchild");
 +        final var ownership = new IdentityHashMap<BedrockParticleEffect.Emitter, BedrockParticleChildren<String, BedrockParticleEffect.Emitter>>();
-+        registered.forEach(emitter -> ownership.put(emitter, new BedrockParticleChildren<>()));
++        registered.forEach(emitter -> ownership.put(emitter, new BedrockParticleChildren<>(BedrockParticleChildrenTest::hash)));
 +        ownership.get(parent).acquire("child", registered::contains, () -> child.emitter);
 +        ownership.get(child.emitter).acquire("grandchild", registered::contains, () -> grandchild.emitter);
 +        final var counts = new BedrockParticleCounts();
@@ -18387,7 +18521,7 @@ index 0000000..22ee43f
 +            final String scenario = row.get("scenario").getAsString();
 +            if (scenario.equals("expired")) { child.emitter.expire(); trace.clear(); }
 +            final var registered = new ArrayList<Child>();
-+            final var children = new BedrockParticleChildren<String, Child>();
++            final var children = new BedrockParticleChildren<String, Child>(BedrockParticleChildrenTest::hash);
 +            if (!scenario.startsWith("new")) children.acquire("effect", _ -> true, () -> child);
 +            if (List.of("live", "expired").contains(scenario)) registered.add(child);
 +            for (int step = 0; step < 2; step++) {
@@ -18426,7 +18560,7 @@ index 0000000..22ee43f
 +            child.environment.addQueries(Map.of("expiry", (BedrockActorAnimation.Query) _ -> {
 +                trace.add("expiry"); child.emitter.emit(new Vector3f(7, 8, 9), new Vector3f(2, 3, 4), 100); return 0F;
 +            }));
-+            final var children = new BedrockParticleChildren<String, Child>();
++            final var children = new BedrockParticleChildren<String, Child>(BedrockParticleChildrenTest::hash);
 +            children.acquire("effect", _ -> true, () -> child); trace.clear();
 +            if (!scenario.equals("shutdown")) children.retire(_ -> scenario.equals("live") || scenario.equals("expired"), value -> value.emitter.expire());
 +            final var expected = row.getAsJsonArray("trace").get(0).getAsJsonArray().asList().stream()
@@ -18437,6 +18571,8 @@ index 0000000..22ee43f
 +        }
 +        assertEquals(14, cases);
 +    }
++
++    private static long hash(final String name) { return Fnv1.fnv1_64(name.getBytes(StandardCharsets.UTF_8)); }
 +
 +    private static JsonObject fixture() throws Exception {
 +        return JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_PARTICLE_CHILD_LIFETIMES")))).getAsJsonObject();
