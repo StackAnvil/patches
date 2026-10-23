@@ -1,4 +1,4 @@
-From 9a3e59c242205ad2069382bc95904c5161abc7a2 Mon Sep 17 00:00:00 2001
+From 2e47dc8fa5f09921433368ecb63b57e34b9a723d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -605,8 +605,24 @@ packet forms for all 640 admission cases. Two deliberate production
 regressions fail the corresponding tests. Full native control-system
 installation, custom actor mapping, retained interpolation and native
 vehicle correction trajectories remain unfinished.
+
+Preserve SET_ENTITY_MOTION server ticks for negotiated physical replay.
+The 1.26.51.1 command constructor144359a80, receiver142890810 and
+application144376520 apply full float motion immediately and retain it
+for the following input snapshot. Unlike corrective positions, old motion
+clocks clamp to the oldest input. Future clocks remain queued without
+forcing replay. Tick zero and clients without the channel retain the
+existing standard velocity translation.
+
+Fresh original instruction controls cover48 receiver/application cases,
+including old/current/future unsigned clocks and both controller outcomes.
+Registered Java packet tests and optional native timing comparisons cover
+the negotiated path. Component stores, allocator/CRT, snapshots and simple
+physical steps are supplied native boundaries. Complete live trajectories,
+remote actor interpolation and collider-source integration remain open.
 ---
  build.gradle                                  |   29 +
+ .../api/model/ActorMotionCommand.java         |   72 ++
  .../api/model/CollisionContact.java           |   80 ++
  .../viabedrock/api/model/FlightMovement.java  |   83 ++
  .../api/model/FlightMovementContext.java      |   50 +
@@ -615,7 +631,7 @@ vehicle correction trajectories remain unfinished.
  .../viabedrock/api/model/GlideMovement.java   |   64 +
  .../api/model/MovementCollisionQuery.java     |  181 +++
  .../api/model/MovementCollisionWorld.java     |   74 ++
- .../api/model/MovementCorrectionTiming.java   |   46 +
+ .../api/model/MovementCorrectionTiming.java   |   56 +
  .../viabedrock/api/model/MovementEffect.java  |  100 ++
  .../api/model/MovementEffectTimeline.java     |  432 +++++++
  .../api/model/PlayerCorrection.java           |  138 ++
@@ -638,7 +654,7 @@ vehicle correction trajectories remain unfinished.
  .../protocol/model/BedrockItem.java           |   19 +
  .../protocol/model/ItemUseModifiers.java      |   50 +
  .../protocol/packet/ClientPlayerPackets.java  |  118 +-
- .../protocol/packet/EntityPackets.java        |   18 +-
+ .../protocol/packet/EntityPackets.java        |   59 +-
  .../protocol/packet/JoinPackets.java          |    2 +
  .../packet/MovementEffectPackets.java         |   54 +
  .../protocol/packet/MultiStatePackets.java    |   44 +
@@ -649,6 +665,7 @@ vehicle correction trajectories remain unfinished.
  .../protocol/storage/PlayerInputStorage.java  |   11 +-
  .../storage/PlayerPredictionStorage.java      |  133 ++
  .../storage/VehiclePredictionStorage.java     |  149 +++
+ .../api/model/ActorMotionCommandTest.java     |   76 ++
  .../api/model/CollisionContactTest.java       |   60 +
  .../api/model/FlightMovementTest.java         |  112 ++
  .../api/model/FluidCurrentTest.java           |   56 +
@@ -684,8 +701,10 @@ vehicle correction trajectories remain unfinished.
  .../packet/MovementEffectPacketsTest.java     |  116 ++
  .../packet/PlayerCorrectionPacketTest.java    |  254 ++++
  .../packet/PlayerPredictionPacketTest.java    |   87 ++
+ .../packet/TickedMotionPacketTest.java        |  156 +++
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 79 files changed, 7481 insertions(+), 68 deletions(-)
+ 82 files changed, 7834 insertions(+), 70 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java
@@ -711,6 +730,7 @@ vehicle correction trajectories remain unfinished.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/VehiclePredictionStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/ActorMotionCommandTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CollisionContactTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/FlightMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/FluidCurrentTest.java
@@ -744,6 +764,7 @@ vehicle correction trajectories remain unfinished.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/TickedMotionPacketTest.java
 
 diff --git a/build.gradle b/build.gradle
 index b62e3af6d..51269fb3c 100644
@@ -788,6 +809,84 @@ index b62e3af6d..51269fb3c 100644
 +    Iterable<String> asArguments() {
 +        return ["-javaagent:${this.classpath.singleFile}"]
 +    }
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java b/src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
+new file mode 100644
+index 000000000..5bb7082dc
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
+@@ -0,0 +1,72 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import java.util.Objects;
++import java.util.UUID;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++/** Full-precision live velocity plus its placement in the actor's retained input history. */
++public record ActorMotionCommand(int entityId, UUID uuid, UUID lifetime, long vehicleEpoch,
++                                 MovementCorrectionTiming timing, Position3f motion) {
++
++    public static final String CHANNEL = "viabedrock:actor_motion_v1";
++    public static final int MAX_PAYLOAD_BYTES = 160;
++    public static final Type<ActorMotionCommand> TYPE = new Type<>(ActorMotionCommand.class) {
++        @Override
++        public ActorMotionCommand read(final ByteBuf buffer) {
++            if (buffer.readableBytes() > MAX_PAYLOAD_BYTES || Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported actor motion command");
++            }
++            final var value = new ActorMotionCommand(Types.VAR_INT.readPrimitive(buffer), Types.UUID.read(buffer), Types.UUID.read(buffer),
++                    Types.VAR_LONG.readPrimitive(buffer), new MovementCorrectionTiming(Types.VAR_LONG.readPrimitive(buffer),
++                    Types.VAR_LONG.readPrimitive(buffer), Types.VAR_LONG.readPrimitive(buffer), Types.VAR_LONG.readPrimitive(buffer),
++                    Types.VAR_LONG.readPrimitive(buffer)), new Position3f(buffer.readFloat(), buffer.readFloat(), buffer.readFloat()));
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Trailing actor motion command data");
++            }
++            return value;
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final ActorMotionCommand value) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.VAR_INT.writePrimitive(buffer, value.entityId);
++            Types.UUID.write(buffer, value.uuid);
++            Types.UUID.write(buffer, value.lifetime);
++            Types.VAR_LONG.writePrimitive(buffer, value.vehicleEpoch);
++            Types.VAR_LONG.writePrimitive(buffer, value.timing.serverTick());
++            Types.VAR_LONG.writePrimitive(buffer, value.timing.inputTick());
++            Types.VAR_LONG.writePrimitive(buffer, value.timing.inputFrame());
++            Types.VAR_LONG.writePrimitive(buffer, value.timing.historyStartTick());
++            Types.VAR_LONG.writePrimitive(buffer, value.timing.followingFrame());
++            buffer.writeFloat(value.motion.x());
++            buffer.writeFloat(value.motion.y());
++            buffer.writeFloat(value.motion.z());
++        }
++    };
++
++    public ActorMotionCommand {
++        Objects.requireNonNull(uuid);
++        Objects.requireNonNull(lifetime);
++        Objects.requireNonNull(timing);
++        Objects.requireNonNull(motion);
++        if (timing.serverTick() == 0 || !Float.isFinite(motion.x()) || !Float.isFinite(motion.y()) || !Float.isFinite(motion.z())) {
++            throw new IllegalArgumentException("Invalid actor motion command");
++        }
++    }
++
++    public boolean vehicle() {
++        return this.vehicleEpoch != -1;
++    }
++
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java b/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
 new file mode 100644
@@ -1515,10 +1614,10 @@ index 000000000..9ec345123
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementCorrectionTiming.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementCorrectionTiming.java
 new file mode 100644
-index 000000000..7b9b6c0d5
+index 000000000..3018f5d39
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementCorrectionTiming.java
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,56 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1537,6 +1636,15 @@ index 000000000..7b9b6c0d5
 +
 +    /** The receiver queues into the following snapshot, capped at the newest retained snapshot. */
 +    public Placement locate(final long oldestFrame, final long completedFrame) {
++        return this.locate(oldestFrame, completedFrame, false);
++    }
++
++    /** Explicit velocity commands clamp old clocks to the oldest retained native input. */
++    public Placement locateMotion(final long oldestFrame, final long completedFrame) {
++        return this.locate(oldestFrame, completedFrame, true);
++    }
++
++    private Placement locate(final long oldestFrame, final long completedFrame, final boolean clampExpired) {
 +        if (this.serverTick == 0 || oldestFrame < 0 || completedFrame < oldestFrame || this.inputFrame > completedFrame) {
 +            return null;
 +        }
@@ -1548,18 +1656,19 @@ index 000000000..7b9b6c0d5
 +        }
 +        final long clock = this.inputTick + completedFrame - this.inputFrame;
 +        final long firstTick = this.inputTick + oldest - this.inputFrame;
-+        if (Long.compareUnsigned(this.serverTick, firstTick) < 0) {
++        final long serverTick = clampExpired && Long.compareUnsigned(this.serverTick, firstTick) < 0 ? firstTick : this.serverTick;
++        if (Long.compareUnsigned(serverTick, firstTick) < 0) {
 +            return null;
 +        }
-+        if (this.serverTick == clock) {
++        if (serverTick == clock) {
 +            return completedFrame == Long.MAX_VALUE ? null : new Placement(completedFrame + 1, true, true);
 +        }
-+        final long offset = this.serverTick - firstTick;
++        final long offset = serverTick - firstTick;
 +        final long last = completedFrame - oldest;
 +        // Cap before adding one: unsigned MAX_VALUE must not wrap back to the oldest frame.
 +        final long target = Long.compareUnsigned(offset, last) < 0 && this.followingFrame >= oldest && this.followingFrame <= completedFrame
 +                ? this.followingFrame : Long.compareUnsigned(offset, last) >= 0 ? completedFrame : oldest + offset + 1;
-+        return new Placement(target, Long.compareUnsigned(this.serverTick, clock) < 0, false);
++        return new Placement(target, Long.compareUnsigned(serverTick, clock) < 0, false);
 +    }
 +
 +    public record Placement(long frame, boolean dirty, boolean pending) { }
@@ -3783,10 +3892,28 @@ index eb0c16ab4..94422f05a 100644
              wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
              wrapper.write(BedrockTypes.POSITION_2F, playerInput.rawInput().movement()); // raw move vector
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-index 8e0cbe982..cd5663061 100644
+index 8e0cbe982..b0eff14c8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-@@ -250,11 +250,12 @@ public final class EntityPackets {
+@@ -37,6 +37,8 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
+ import com.viaversion.viaversion.util.Key;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.api.model.ActorMotionCommand;
++import net.raphimc.viabedrock.api.model.MovementCorrectionTiming;
+ import net.raphimc.viabedrock.api.model.NativeAnimationMessage;
+ import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+ import net.raphimc.viabedrock.api.model.entity.CustomEntity;
+@@ -63,6 +65,8 @@ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ import net.raphimc.viabedrock.protocol.storage.EntityPropertyTracker;
+ import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.PlayerPredictionStorage;
++import net.raphimc.viabedrock.protocol.storage.VehiclePredictionStorage;
+ import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+@@ -250,11 +254,12 @@ public final class EntityPackets {
  
              entity.retainSpatialUpdate(position, new Position3f(pitch, yaw, headYaw), flags, 0);
  
@@ -3803,7 +3930,7 @@ index 8e0cbe982..cd5663061 100644
                  entity.setPosition(position);
  
                  if (teleported) {
-@@ -331,11 +332,12 @@ public final class EntityPackets {
+@@ -331,11 +336,12 @@ public final class EntityPackets {
                      | (forceMoveLocalEntity ? 4 : 0) | (forceCompletion ? 8 : 0));
              entity.retainSpatialUpdate(position, rotation, flags, interpolationTicks);
  
@@ -3820,6 +3947,57 @@ index 8e0cbe982..cd5663061 100644
                  entity.setPosition(position);
                  if (teleported) {
                      wrapper.setPacketType(ClientboundPackets26_3.PLAYER_POSITION);
+@@ -376,8 +382,8 @@ public final class EntityPackets {
+         protocol.registerClientbound(ClientboundBedrockPackets.SET_ENTITY_MOTION, ClientboundPackets26_3.SET_ENTITY_MOTION, wrapper -> {
+             final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
+             final Position3f motion = wrapper.read(BedrockTypes.POSITION_3F); // motion
+-            wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // tick
+-            writeEntityMotion(wrapper, entityRuntimeId, motion);
++            final long tick = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG);
++            writeTickedEntityMotion(wrapper, entityRuntimeId, motion, tick);
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.MOTION_PREDICTION_HINTS, ClientboundPackets26_3.SET_ENTITY_MOTION, wrapper -> {
+             final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
+@@ -746,6 +752,39 @@ public final class EntityPackets {
+         });
+     }
+ 
++    private static void writeTickedEntityMotion(final PacketWrapper wrapper, final long runtimeId, final Position3f motion, final long tick) {
++        final EntityTracker tracker = wrapper.user().get(EntityTracker.class);
++        final Entity entity = tracker.getEntityByRid(runtimeId);
++        final PlayerPredictionStorage predictions = wrapper.user().get(PlayerPredictionStorage.class);
++        final ChannelStorage channels = wrapper.user().get(ChannelStorage.class);
++        if (entity == null || tick == 0 || predictions == null || predictions.inputFrame() < 0
++                || channels == null || !channels.hasChannel(ActorMotionCommand.CHANNEL)
++                || entity != tracker.getClientPlayer() && !tracker.isLocallyControlledVehicle(entity)) {
++            writeEntityMotion(wrapper, runtimeId, motion);
++            return;
++        }
++        long vehicleEpoch = -1;
++        if (entity != tracker.getClientPlayer()) {
++            final VehiclePredictionStorage vehicles = wrapper.user().get(VehiclePredictionStorage.class);
++            final var context = vehicles == null ? null : vehicles.context();
++            if (context == null || context.vehicle() == null || context.vehicle().javaId() != entity.javaId()
++                    || context.vehicle().runtimeId() != entity.runtimeId() || context.vehicle().uniqueId() != entity.uniqueId()
++                    || !context.vehicle().javaUuid().equals(entity.javaUuid())
++                    || !context.vehicle().lifetime().equals(entity.nativeActorSnapshot().lifetime())) {
++                writeEntityMotion(wrapper, runtimeId, motion);
++                return;
++            }
++            vehicleEpoch = context.epoch();
++        }
++        final long retainedTick = Long.compareUnsigned(tick, predictions.oldestInputTick()) < 0 ? predictions.oldestInputTick() : tick;
++        final var timing = new MovementCorrectionTiming(tick, predictions.inputTick(), predictions.inputFrame(),
++                predictions.oldestInputTick(), predictions.clientFrame(retainedTick + 1));
++        wrapper.setPacketType(ClientboundPackets26_3.CUSTOM_PAYLOAD);
++        wrapper.write(Types.STRING, ActorMotionCommand.CHANNEL);
++        wrapper.write(ActorMotionCommand.TYPE, new ActorMotionCommand(entity.javaId(), entity.javaUuid(),
++                entity.nativeActorSnapshot().lifetime(), vehicleEpoch, timing, motion));
++    }
++
+     private static Entity writeEntityMotion(final PacketWrapper wrapper, final long runtimeId, final Position3f motion) {
+         final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByRid(runtimeId);
+         if (entity == null) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 index 006d49ff8..4dc2e0ef7 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
@@ -4476,6 +4654,88 @@ index 000000000..0920a3c8c
 +            return null;
 +        }
 +        return frame;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/ActorMotionCommandTest.java b/src/test/java/net/raphimc/viabedrock/api/model/ActorMotionCommandTest.java
+new file mode 100644
+index 000000000..4a1b11009
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/ActorMotionCommandTest.java
+@@ -0,0 +1,76 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.google.gson.JsonParser;
++import io.netty.buffer.Unpooled;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.UUID;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++import static org.junit.jupiter.api.Assertions.*;
++
++class ActorMotionCommandTest {
++
++    @Test
++    void preservesUnsignedClocksAndRawVelocityWhileRejectingMalformedPayloads() {
++        final var value = new ActorMotionCommand(41, UUID.randomUUID(), UUID.randomUUID(), -1,
++                new MovementCorrectionTiming(-1, 105, 25, 100, -1), new Position3f(-0F, Float.MIN_VALUE, 1.2345679F));
++        final var buffer = Unpooled.buffer();
++        try {
++            ActorMotionCommand.TYPE.write(buffer, value);
++            assertTrue(buffer.readableBytes() <= ActorMotionCommand.MAX_PAYLOAD_BYTES);
++            final int size = buffer.readableBytes();
++            assertEquals(value, ActorMotionCommand.TYPE.read(buffer));
++            for (int length = 0; length < size; length++) {
++                final var truncated = buffer.slice(0, length);
++                assertThrows(RuntimeException.class, () -> ActorMotionCommand.TYPE.read(truncated));
++            }
++            buffer.readerIndex(0).writeByte(1);
++            assertThrows(IllegalArgumentException.class, () -> ActorMotionCommand.TYPE.read(buffer));
++            assertThrows(IllegalArgumentException.class, () -> new ActorMotionCommand(41, value.uuid(), value.lifetime(), -1,
++                    value.timing(), new Position3f(Float.NaN, 0, 0)));
++            assertThrows(IllegalArgumentException.class, () -> new ActorMotionCommand(41, value.uuid(), value.lifetime(), -1,
++                    new MovementCorrectionTiming(0, 105, 25, 100, -1), value.motion()));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void clampsExpiredMotionWithoutChangingCorrectionAdmissionOrUnsignedFuturePlacement() {
++        final var expired = new MovementCorrectionTiming(99, 105, 25, 100, -1);
++        assertNull(expired.locate(20, 25));
++        assertEquals(new MovementCorrectionTiming.Placement(21, true, false), expired.locateMotion(20, 25));
++        assertEquals(new MovementCorrectionTiming.Placement(25, true, false), expired.locateMotion(24, 25));
++        assertEquals(new MovementCorrectionTiming.Placement(26, true, true), new MovementCorrectionTiming(105, 105, 25, 100, -1).locateMotion(20, 25));
++        assertEquals(new MovementCorrectionTiming.Placement(25, false, false), new MovementCorrectionTiming(-1, 105, 25, 100, -1).locateMotion(20, 25));
++        assertEquals(new MovementCorrectionTiming.Placement(23, true, false), new MovementCorrectionTiming(99, 105, 25, 100, 23).locateMotion(20, 25));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_TICKED_MOTION", matches = ".+")
++    void matchesOriginalReceiverQueueAndDirtyPlacement() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_TICKED_MOTION")))).getAsJsonObject();
++        int compared = 0;
++        for (var entry : reference.getAsJsonArray("rows")) {
++            final var row = entry.getAsJsonObject();
++            final long tick = Long.parseUnsignedLong(row.get("tick").getAsString());
++            final var placement = new MovementCorrectionTiming(tick, 105, 5, 100, -1).locateMotion(0, 5);
++            assertNotNull(placement);
++            assertEquals(row.get("pendingQueue").getAsInt() != 0, placement.pending());
++            if (!placement.pending()) {
++                assertEquals(row.getAsJsonArray("queued").get(0).getAsLong(), placement.frame());
++            }
++            assertEquals(!row.getAsJsonArray("dirty").isEmpty(), row.get("accept").getAsBoolean() && placement.dirty() && !placement.pending());
++            compared++;
++        }
++        assertEquals(reference.get("cases").getAsInt(), compared);
 +    }
 +
 +}
@@ -9419,6 +9679,168 @@ index 000000000..0c1d02d0b
 +            assertFalse(input.isReadable());
 +        } finally {
 +            input.release();
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/TickedMotionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/TickedMotionPacketTest.java
+new file mode 100644
+index 000000000..caaa63066
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/TickedMotionPacketTest.java
+@@ -0,0 +1,156 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import java.lang.reflect.Proxy;
++import java.util.List;
++import java.util.UUID;
++import net.raphimc.viabedrock.api.model.ActorMotionCommand;
++import net.raphimc.viabedrock.api.model.VehiclePredictionContext;
++import net.raphimc.viabedrock.api.model.entity.BoatEntity;
++import net.raphimc.viabedrock.protocol.storage.VehiclePredictionStorage;
++import net.raphimc.viabedrock.api.model.PlayerPrediction;
++import net.raphimc.viabedrock.api.model.PlayerPosture;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.PlayerPredictionStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class TickedMotionPacketTest {
++
++    @Test
++    void transportsTickedLocalMotionOnlyWithNegotiatedInputHistory() throws Exception {
++        final var predictions = new PlayerPredictionStorage();
++        for (int frame = 20; frame <= 25; frame++) {
++            predictions.remember(frame + 80, new PlayerPrediction(frame, Position3f.ZERO, Position3f.ZERO,
++                    PlayerPosture.STANDING, false, false, false, false, 1F));
++        }
++        final var channels = new ChannelStorage();
++        final ProtocolInfo info = (ProtocolInfo) Proxy.newProxyInstance(
++                UserConnection.class.getClassLoader(), new Class<?>[]{ProtocolInfo.class},
++                (proxy, method, args) -> method.getName().equals("getServerState") ? State.CONFIGURATION : null);
++        final EntityTracker[] holder = new EntityTracker[1];
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
++                (proxy, method, args) -> method.getName().equals("getProtocolInfo") ? info : method.getName().equals("get") ? args[0] == EntityTracker.class ? holder[0]
++                        : args[0] == PlayerPredictionStorage.class ? predictions : args[0] == ChannelStorage.class ? channels : null : null);
++        final var tracker = holder[0] = new EntityTracker(user);
++        final var player = new ClientPlayerEntity(user, 2, UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0));
++        player.setPosition(Position3f.ZERO);
++        tracker.addEntity(player, false);
++        final var remote = tracker.addEntity(new Entity(user, 3, 4, "minecraft:pig", 32, UUID.randomUUID(), EntityTypes26_3.PIG), false);
++        final var motion = new Position3f(1.2345679F, -.12345679F, Float.MIN_VALUE);
++        for (boolean negotiated : new boolean[]{false, true}) {
++            if (negotiated) {
++                channels.addChannels(List.of(ActorMotionCommand.CHANNEL));
++            }
++            for (Entity actor : List.of(player, remote)) {
++                for (long tick : new long[]{0, 99, 102, 105, -1}) {
++                    final var input = Unpooled.buffer();
++                    try {
++                        BedrockTypes.UNSIGNED_VAR_LONG.writePrimitive(input, actor.runtimeId());
++                        BedrockTypes.POSITION_3F.write(input, motion);
++                        BedrockTypes.UNSIGNED_VAR_LONG.writePrimitive(input, tick);
++                        final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.SET_ENTITY_MOTION, input, user);
++                        new TestProtocol().translate(packet);
++                        if (negotiated && actor == player && tick != 0) {
++                            assertEquals(ClientboundPackets26_3.CUSTOM_PAYLOAD, packet.getPacketType());
++                            assertEquals(ActorMotionCommand.CHANNEL, packet.get(Types.STRING, 0));
++                            final var command = packet.get(ActorMotionCommand.TYPE, 0);
++                            assertEquals(tick, command.timing().serverTick());
++                            assertEquals(25, command.timing().inputFrame());
++                            assertEquals(tick == 99 ? 21 : tick == 102 ? 23 : -1, command.timing().followingFrame());
++                            assertEquals(motion, command.motion());
++                            assertEquals(player.nativeActorSnapshot().lifetime(), command.lifetime());
++                            assertFalse(command.vehicle());
++                        } else {
++                            assertEquals(ClientboundPackets26_3.SET_ENTITY_MOTION, packet.getPacketType());
++                            assertEquals(actor.javaId(), packet.get(Types.VAR_INT, 0));
++                        }
++                        assertFalse(input.isReadable());
++                    } finally {
++                        input.release();
++                    }
++                }
++            }
++        }
++    }
++
++    @Test
++    void bindsControlledVehicleMotionToEveryNativeIdentityField() throws Exception {
++        final UserConnection user = mock(UserConnection.class);
++        final EntityTracker tracker = mock(EntityTracker.class);
++        final VehiclePredictionStorage vehicles = mock(VehiclePredictionStorage.class);
++        final ClientPlayerEntity player = mock(ClientPlayerEntity.class);
++        final var channels = new ChannelStorage();
++        channels.addChannels(List.of(ActorMotionCommand.CHANNEL));
++        final var predictions = new PlayerPredictionStorage();
++        predictions.remember(105, new PlayerPrediction(25, Position3f.ZERO, Position3f.ZERO, PlayerPosture.STANDING,
++                false, false, false, false, 1F));
++        when(user.get(EntityTracker.class)).thenReturn(tracker);
++        when(user.get(PlayerPredictionStorage.class)).thenReturn(predictions);
++        when(user.get(VehiclePredictionStorage.class)).thenReturn(vehicles);
++        when(user.get(ChannelStorage.class)).thenReturn(channels);
++        when(tracker.getClientPlayer()).thenReturn(player);
++        final var boat = new BoatEntity(user, 3, 4, "minecraft:boat", 32, UUID.randomUUID(), EntityTypes26_3.OAK_BOAT);
++        when(tracker.getEntityByRid(boat.runtimeId())).thenReturn(boat);
++        when(tracker.isLocallyControlledVehicle(boat)).thenReturn(true);
++        final UUID lifetime = boat.nativeActorSnapshot().lifetime();
++        for (int changed = 0; changed < 6; changed++) {
++            final var identity = new VehiclePredictionContext.Identity(boat.javaId() + (changed == 1 ? 1 : 0),
++                    changed == 2 ? UUID.randomUUID() : boat.javaUuid(), changed == 3 ? UUID.randomUUID() : lifetime,
++                    boat.runtimeId() + (changed == 4 ? 1 : 0), boat.uniqueId() + (changed == 5 ? 1 : 0));
++            when(vehicles.context()).thenReturn(new VehiclePredictionContext(7, identity));
++            final var input = Unpooled.buffer();
++            try {
++                BedrockTypes.UNSIGNED_VAR_LONG.writePrimitive(input, boat.runtimeId());
++                BedrockTypes.POSITION_3F.write(input, new Position3f(.5F, 1, -.5F));
++                BedrockTypes.UNSIGNED_VAR_LONG.writePrimitive(input, 105);
++                final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.SET_ENTITY_MOTION, input, user);
++                new TestProtocol().translate(packet);
++                if (changed == 0) {
++                    assertEquals(ClientboundPackets26_3.CUSTOM_PAYLOAD, packet.getPacketType());
++                    assertEquals(7, packet.get(ActorMotionCommand.TYPE, 0).vehicleEpoch());
++                } else {
++                    assertEquals(ClientboundPackets26_3.SET_ENTITY_MOTION, packet.getPacketType());
++                }
++                assertFalse(input.isReadable());
++            } finally {
++                input.release();
++            }
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        TestProtocol() {
++            EntityPackets.register(this);
++        }
++
++        void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
 +        }
 +    }
 +

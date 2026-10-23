@@ -1,5 +1,47 @@
 # Completed player prediction frames
 
+## Ticked velocity commands, October 23, 2026
+
+`SET_ENTITY_MOTION` now preserves its server tick for clients with the negotiated physical replay channel.
+The previous handler discarded that tick and translated every velocity into an immediate Java packet.
+The new payload carries full float motion, the input clock binding, and the actor identity.
+Tick zero and clients without this channel retain the existing standard packet path.
+
+Native constructor `144359a80`, receiver `142890810`, and application `144376520` establish two effects.
+The receiver applies motion to the live actor immediately and retains the same command for historical input.
+Old motion ticks clamp to the oldest retained input.
+A past tick queues the command before the following input and can mark that input dirty.
+The current tick enters the next input.
+Future ticks retain the command without forcing replay.
+Position corrections keep their separate expired-tick rejection rule.
+
+The client applies live motion without also recording an untimed external impulse.
+It retains motion and position commands in packet receipt order.
+Replay reapplies each motion command at its historical input before physical execution.
+Actor UUID, native lifetime, world, connection, and vehicle epoch and control lease constrain admission.
+Mounted player motion remains eligible.
+
+Fresh controls execute forty-eight original command constructions, receiver calls, applications, and replay decisions.
+They cover old, current, future, and unsigned maximum ticks, three velocities, and both supplied controller outcomes.
+Registered Java packet tests cover negotiation, full float transport, tick zero, remote actors, and stale vehicle identity fields.
+Optional Java timing comparisons cover all forty-eight cases.
+Optional client journal comparisons cover the twenty-four accepted-controller cases and compare final position and velocity.
+Additional journal tests retain the impulse through a later correction and reject historical application after authority changes.
+
+The native fixture supplies component stores, allocation interfaces, snapshots, and simple physical inputs.
+It does not execute the complete network handler, actor factory, or native world physics.
+Live delayed knockback and mounted trajectories still require verification.
+Remote history sampling, exact collider source selection, and all five goal areas remain unfinished.
+
+All four project builds pass.
+The final suites pass 2,656 tests, with 163 optional skips and no failures or errors.
+The complete retained reference set remains enabled, including the new motion controls.
+All 1,421 core classes match the standalone, add-on, and proxy packages.
+The compiled core also matches its packaged build-constant replacements.
+All 1,143 production client classes match the add-on.
+The source trees and package hashes remain unchanged after the reference-enabled test runs.
+Offline validation passes 271 tooling tests, static checks, and patch metadata checks.
+
 ## Locally controlled vehicle spatial updates, October 23, 2026
 
 Ordinary absolute and sparse movement packets now retain their source data without replacing a locally controlled vehicle pose.
