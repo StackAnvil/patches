@@ -1,5 +1,41 @@
 # Completed player prediction frames
 
+## Retained collision queries, October 23, 2026
+
+The shared query code now reproduces native collision-cache admission and query extension.
+The native build is Bedrock 1.26.51.1, protocol 2193.
+Its executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+
+The copy callback at `148b73aa0` requires squared displacement below four.
+The gather kernel at `1431c2f50` caps motion at sixteen blocks and queries uncovered regions.
+It appends new geometry and replaces the query bounds with the current request bounds.
+The shared code preserves native float operations, plane order, small advances, and volume-based merging.
+
+Fresh controls compare the production Java code with 192 original native instruction results.
+They cover 128 gather cases and 64 reuse cases, including nonempty retained geometry and strict boundary rejection.
+The fixture supplies world queries, allocation, and typed stores.
+These controls establish cache arithmetic, not native world traversal or complete movement parity.
+
+The add-on retains immutable collision inputs in each physical frame.
+Managed interpolation, unloaded-region state, native block traversal, and complete input phases remain unfinished.
+The combined four-project build passes 2,505 tests, with 214 optional skips and no failures or errors.
+All 1,407 core classes match the add-on and proxy artifacts byte for byte.
+Offline validation passes the tooling, static, and patch metadata checks.
+
+The exact installed artifact also passes a direct BDS 1.26.51.1 run with a private 300 ms inbound delay.
+The delay applies only to the owned client channel and preserves packet contents and event order.
+Fifteen correction replays execute 180 retained physical steps.
+Read-only observers record 90 historical collision caches, including 12 with retained nonempty geometry.
+They record 180 historical collision gathers and 95 additional region fetches.
+Every replay boundary preserves the live tick count, food level, and held-item count.
+Both clients and servers exit normally, and the private fixtures return to their original state.
+
+The input driver completes both requested holds, but these runs record no active item use at replay boundaries.
+Delayed replay during active food use remains unverified.
+The changed-world geometry case remains a unit control; no live wall-removal result is claimed.
+
+The earlier sections describe their respective artifacts and verification limits.
+
 ## Queued positional corrections, October 23, 2026
 
 Revision two carries exact position, velocity, optional boat angular velocity, native lifetime, coordinate offsets, and retained input clocks.

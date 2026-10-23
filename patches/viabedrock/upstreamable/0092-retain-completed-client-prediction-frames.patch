@@ -1,4 +1,4 @@
-From c108a3b69d90670a6cdcfa4f057b1b2144c5e246 Mon Sep 17 00:00:00 2001
+From 5f49b50774da0e08e1da4ecbc7f61fd709c0fb7e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -561,6 +561,21 @@ motion, unsigned wrap, delayed receipt, and the native comparator rules.
 Historical world/collision inputs and full native pre/post-input phase
 alignment remain separate requirements; fixture arithmetic does not
 establish native trajectory parity.
+
+Port the native collision replay input boundary rather than freezing a
+whole historical world. CopyCollisionShapesRewindSystem at 0x148b73aa0
+reuses captured shape/reference vectors and fetch bounds only when float
+squared position distance is strictly below 4. The live gather kernel at
+0x1431c2f50 caps motion at 16, builds step and lower-inset bounds, and queries
+only uncovered cache regions. Keep native float plane traversal, 1e-5
+advances, ordered deduplication and 0.001 volume merge comparisons.
+
+Expose the used query/reuse calculations to the client physical input
+adapter. Fresh execution controls compare 128 original gather cases and
+64 original reuse cases with the Java implementation, including nonempty
+prior vectors. Native world traversal, actor-reference lifetimes, nearby
+solid refresh and complete movement trajectories remain separate from
+these supplied-store and supplied-world-record instruction controls.
 ---
  build.gradle                                  |   29 +
  .../api/model/CollisionContact.java           |   80 ++
@@ -569,6 +584,7 @@ establish native trajectory parity.
  .../viabedrock/api/model/FluidCurrent.java    |   57 +
  .../viabedrock/api/model/GeyserMovement.java  |   87 ++
  .../viabedrock/api/model/GlideMovement.java   |   64 +
+ .../api/model/MovementCollisionQuery.java     |  181 +++
  .../api/model/MovementCorrectionTiming.java   |   46 +
  .../viabedrock/api/model/MovementEffect.java  |  100 ++
  .../api/model/MovementEffectTimeline.java     |  432 +++++++
@@ -608,6 +624,7 @@ establish native trajectory parity.
  .../model/GeyserMovementReferenceTest.java    |   50 +
  .../api/model/GeyserMovementTest.java         |  131 ++
  .../api/model/GlideMovementTest.java          |  115 ++
+ .../api/model/MovementCollisionQueryTest.java |   53 +
  .../model/MovementControllerOrderTest.java    |   52 +
  .../model/MovementCorrectionTimingTest.java   |   40 +
  .../model/MovementEffectPhysicsStateTest.java |   84 ++
@@ -635,13 +652,14 @@ establish native trajectory parity.
  .../packet/PlayerCorrectionPacketTest.java    |  254 ++++
  .../packet/PlayerPredictionPacketTest.java    |   87 ++
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 73 files changed, 6862 insertions(+), 60 deletions(-)
+ 75 files changed, 7096 insertions(+), 60 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionQuery.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementCorrectionTiming.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
@@ -665,6 +683,7 @@ establish native trajectory parity.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementReferenceTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionQueryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementControllerOrderTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementCorrectionTimingTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementEffectPhysicsStateTest.java
@@ -1188,6 +1207,193 @@ index 000000000..e3df1f47a
 +            z += (lookZ * 1.5F - z) * 0.5F + lookZ * 0.1F;
 +        }
 +        return new Position3f(x * 0.99F, y * 0.98F, z * 0.99F);
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionQuery.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionQuery.java
+new file mode 100644
+index 000000000..2f0075e6a
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionQuery.java
+@@ -0,0 +1,181 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/** Native 1.26.51.1 collision-cache admission, swept query, and uncovered-region traversal. */
++public final class MovementCollisionQuery {
++
++    private MovementCollisionQuery() {
++    }
++
++    public static boolean reuses(final Position3f captured, final Position3f corrected) {
++        final float x = captured.x() - corrected.x();
++        final float y = captured.y() - corrected.y();
++        final float z = captured.z() - corrected.z();
++        return z * z + (y * y + x * x) < 4F;
++    }
++
++    public static Position3f cap(final Position3f motion) {
++        final float squared = (motion.x() * motion.x() + motion.y() * motion.y()) + motion.z() * motion.z();
++        if (!(squared > 256F)) {
++            return motion;
++        }
++        final float length = (float) Math.sqrt(squared);
++        return new Position3f((motion.x() / length) * 16F, (motion.y() / length) * 16F, (motion.z() / length) * 16F);
++    }
++
++    /** Includes upward stepping, the lower inset probe, and native vertical query padding. */
++    public static CollisionContact.Box bounds(final CollisionContact.Box body, final Position3f motion, final float stepHeight) {
++        final float[] box = normalized(values(body));
++        final float[] swept = grow(box, motion.x(), motion.y(), motion.z());
++        final float[] step = union(union(box, swept), union(grow(box, 0F, stepHeight, 0F),
++                grow(box, motion.x(), stepHeight + motion.y(), motion.z())));
++        final float[] inset = box.clone();
++        for (int axis : new int[]{0, 2}) {
++            float min = box[axis] + 0.025F;
++            float max = box[axis + 3] - 0.025F;
++            if (max < min) {
++                min = (box[axis] + box[axis + 3]) * 0.5F;
++                max = min;
++            }
++            inset[axis] = min;
++            inset[axis + 3] = max;
++        }
++        final float lower = stepHeight * 1.01F;
++        inset[1] -= lower;
++        inset[4] -= lower;
++        final float[] query = union(step, grow(inset, motion.x(), 0F, motion.z()));
++        query[1] = Math.min(query[1], (-0.2F - Math.abs(motion.y())) + box[1]);
++        query[4] = Math.max(query[4], box[4] + 0.08F);
++        return box(union(query, box));
++    }
++
++    public static boolean contains(final CollisionContact.Box outer, final CollisionContact.Box inner) {
++        return outer != null && outer.minX() <= inner.minX() && outer.minY() <= inner.minY() && outer.minZ() <= inner.minZ()
++                && outer.maxX() >= inner.maxX() && outer.maxY() >= inner.maxY() && outer.maxZ() >= inner.maxZ();
++    }
++
++    /** Preserve native plane order, float advances, deduplication, and volume-based merging. */
++    public static List<CollisionContact.Box> missing(final CollisionContact.Box query, final CollisionContact.Box cached) {
++        if (contains(cached, query)) {
++            return List.of();
++        }
++        if (cached == null || cached.maxX() <= cached.minX() || cached.maxY() <= cached.minY() || cached.maxZ() <= cached.minZ()
++                || cached.maxX() <= query.minX() || query.maxX() <= cached.minX()
++                || cached.maxY() <= query.minY() || query.maxY() <= cached.minY()
++                || cached.maxZ() <= query.minZ() || query.maxZ() <= cached.minZ()) {
++            return List.of(query);
++        }
++        final float[] requested = values(query);
++        final float[] previous = values(cached);
++        final float[] size = new float[3];
++        final float[][] planes = new float[3][2];
++        for (int axis = 0; axis < 3; axis++) {
++            size[axis] = requested[axis + 3] - requested[axis];
++            planes[axis][0] = previous[axis] - requested[axis];
++            planes[axis][1] = previous[axis + 3] - requested[axis];
++        }
++        final List<float[]> pending = new ArrayList<>();
++        final List<float[]> cells = new ArrayList<>();
++        pending.add(new float[3]);
++        for (int index = 0; index < pending.size(); index++) {
++            final float[] origin = pending.get(index);
++            final float[] ends = new float[3];
++            boolean interior = true;
++            for (int axis = 0; axis < 3; axis++) {
++                final int first = before(planes[axis], origin[axis]);
++                final int last = before(planes[axis], size[axis]);
++                if (first == last) {
++                    ends[axis] = size[axis];
++                    interior &= first == 1;
++                } else {
++                    ends[axis] = planes[axis][first];
++                    final float[] candidate = origin.clone();
++                    candidate[axis] = ends[axis] + 0.00001F;
++                    if (pending.stream().noneMatch(prior -> same(candidate, prior))) {
++                        pending.add(candidate);
++                    }
++                    interior &= first != 0;
++                }
++            }
++            final float[] cell = normalized(new float[]{origin[0], origin[1], origin[2], ends[0], ends[1], ends[2]});
++            if (!interior && cell[0] < cell[3] && cell[1] < cell[4] && cell[2] < cell[5]) {
++                cells.add(cell);
++            }
++        }
++        final List<float[]> emitted = new ArrayList<>();
++        for (float[] cell : cells) {
++            boolean merged = false;
++            for (float[] prior : emitted) {
++                // Native compares a local candidate with the already translated emitted boxes.
++                final float[] combined = union(cell, prior);
++                if (Math.abs(volume(combined) - (volume(prior) + volume(cell))) <= 0.001F) {
++                    System.arraycopy(combined, 0, prior, 0, 6);
++                    merged = true;
++                    break;
++                }
++            }
++            if (!merged) {
++                final float[] translated = new float[6];
++                for (int index = 0; index < 6; index++) {
++                    translated[index] = cell[index] + requested[index % 3];
++                }
++                emitted.add(translated);
++            }
++        }
++        return emitted.stream().map(MovementCollisionQuery::box).toList();
++    }
++
++    private static int before(final float[] planes, final float value) {
++        return (planes[0] < value ? 1 : 0) + (planes[1] < value ? 1 : 0);
++    }
++
++    private static boolean same(final float[] a, final float[] b) {
++        return Math.abs(a[0] - b[0]) <= 0x1.0p-23F && Math.abs(a[1] - b[1]) <= 0x1.0p-23F
++                && Math.abs(a[2] - b[2]) <= 0x1.0p-23F;
++    }
++
++    private static float volume(final float[] box) {
++        return ((box[3] - box[0]) * (box[4] - box[1])) * (box[5] - box[2]);
++    }
++
++    private static float[] normalized(final float[] box) {
++        return new float[]{Math.min(box[0], box[3]), Math.min(box[1], box[4]), Math.min(box[2], box[5]),
++                Math.max(box[0], box[3]), Math.max(box[1], box[4]), Math.max(box[2], box[5])};
++    }
++
++    private static float[] union(final float[] a, final float[] b) {
++        return new float[]{Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.min(a[2], b[2]),
++                Math.max(a[3], b[3]), Math.max(a[4], b[4]), Math.max(a[5], b[5])};
++    }
++
++    private static float[] grow(final float[] box, final float x, final float y, final float z) {
++        final float[] result = box.clone();
++        final float[] motion = {x, y, z};
++        for (int axis = 0; axis < 3; axis++) {
++            if (motion[axis] < 0F) {
++                result[axis] += motion[axis];
++            } else if (motion[axis] > 0F) {
++                result[axis + 3] += motion[axis];
++            }
++        }
++        return result;
++    }
++
++    private static float[] values(final CollisionContact.Box box) {
++        return new float[]{box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()};
++    }
++
++    private static CollisionContact.Box box(final float[] values) {
++        return new CollisionContact.Box(values[0], values[1], values[2], values[3], values[4], values[5]);
 +    }
 +
 +}
@@ -4640,6 +4846,65 @@ index 000000000..be74f06d7
 +
 +    private record Case(float x, float y, float z, float pitch, float yaw, float previousPitch, float previousYaw,
 +                        boolean slowFalling, int expectedX, int expectedY, int expectedZ) {
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionQueryTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionQueryTest.java
+new file mode 100644
+index 000000000..88f1b3b20
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionQueryTest.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class MovementCollisionQueryTest {
++
++    @Test
++    void reusesOnlyStrictlyInsideTheNativeSquaredPositionLimit() {
++        assertTrue(MovementCollisionQuery.reuses(Position3f.ZERO, Position3f.ZERO));
++        assertTrue(MovementCollisionQuery.reuses(Position3f.ZERO, new Position3f(Math.nextDown(2F), 0F, 0F)));
++        assertFalse(MovementCollisionQuery.reuses(Position3f.ZERO, new Position3f(2F, 0F, 0F)));
++        assertFalse(MovementCollisionQuery.reuses(Position3f.ZERO, new Position3f(-2F, 0F, 0F)));
++        assertTrue(MovementCollisionQuery.reuses(Position3f.ZERO, new Position3f(1F, 1F, 1F)));
++        assertFalse(MovementCollisionQuery.reuses(Position3f.ZERO, new Position3f(1.5F, 1.5F, 0F)));
++        assertFalse(MovementCollisionQuery.reuses(Position3f.ZERO, new Position3f(Float.NaN, 0F, 0F)));
++        assertFalse(MovementCollisionQuery.reuses(Position3f.ZERO, new Position3f(Float.POSITIVE_INFINITY, 0F, 0F)));
++    }
++
++    @Test
++    void capsTheWholeMotionVectorBeforeBuildingStepAndLowerInsetBounds() {
++        final Position3f motion = new Position3f(12F, 0F, 16F);
++        assertEquals(new Position3f(9.6F, 0F, 12.8F), MovementCollisionQuery.cap(motion));
++        final Position3f boundary = new Position3f(16F, 0F, 0F);
++        assertSame(boundary, MovementCollisionQuery.cap(boundary));
++        final var body = new CollisionContact.Box(0F, 0F, 0F, 0.6F, 1.8F, 0.6F);
++        final var query = MovementCollisionQuery.bounds(body, new Position3f(1F, -0.08F, 0F), 0.6F);
++        assertEquals(new CollisionContact.Box(0F, -0.606F, 0F, 1.6F, 2.4F, 0.6F), query);
++        assertTrue(MovementCollisionQuery.contains(query, body));
++    }
++
++    @Test
++    void leavesContainedQueriesAloneAndFetchesDisjointRegionsOnce() {
++        final var query = new CollisionContact.Box(-1F, -1F, -1F, 1F, 1F, 1F);
++        assertTrue(MovementCollisionQuery.missing(query, query).isEmpty());
++        assertEquals(java.util.List.of(query), MovementCollisionQuery.missing(query, null));
++        assertEquals(java.util.List.of(query), MovementCollisionQuery.missing(query,
++                new CollisionContact.Box(1F, -1F, -1F, 3F, 1F, 1F)));
++        final var half = new CollisionContact.Box(0F, 0F, 0F, 0.5F, 1F, 1F);
++        final var whole = new CollisionContact.Box(0F, 0F, 0F, 1F, 1F, 1F);
++        final var missing = MovementCollisionQuery.missing(whole, half);
++        assertEquals(1, missing.size());
++        assertEquals(new CollisionContact.Box(0.50001F, 0.00001F, 0.00001F, 1F, 1F, 1F), missing.getFirst());
 +    }
 +
 +}

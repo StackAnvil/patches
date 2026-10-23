@@ -1,5 +1,42 @@
 # Send local player prediction to core
 
+## Retained collision inputs, October 23, 2026
+
+Each physical frame now retains its collision geometry and query bounds.
+Replay receives a separate mutable cache, so new queries cannot overwrite the original frame input.
+This preserves captured geometry after the live world changes.
+
+Native Bedrock 1.26.51.1 reuses captured geometry only below squared displacement four.
+Its gather kernel caps motion at sixteen blocks and appends geometry from uncovered regions.
+The adapter uses the shared native query arithmetic before the ordinary Java collision resolver.
+Zero-displacement requests also capture geometry.
+
+Cached actor shapes retain their original world, instance, UUID, and native lifetime.
+A stale reference preserves its captured shape instead of following a replacement actor.
+Current actor geometry supplies eligible refreshes; exact native interpolation sampling still needs verification.
+
+Targeted tests cover changed geometry, the strict reuse boundary, query extension, repeated replay isolation, stale actors, and stationary capture.
+The shared production code matches 192 fresh original native instruction controls.
+Those controls supply world queries and typed stores, so they do not establish full native trajectories.
+Unloaded-region state, native block traversal, managed interpolation, and complete native input phases remain unfinished.
+The combined four-project build passes 2,505 tests, with 214 optional skips and no failures or errors.
+All 1,407 core classes match the add-on and proxy artifacts byte for byte.
+Offline validation passes the tooling, static, and patch metadata checks.
+
+The exact installed artifact also passes a direct BDS 1.26.51.1 run with a private 300 ms inbound delay.
+The delay applies only to the owned client channel and preserves packet contents and event order.
+Fifteen correction replays execute 180 retained physical steps.
+Read-only observers record 90 historical collision caches, including 12 with retained nonempty geometry.
+They record 180 historical collision gathers and 95 additional region fetches.
+Every replay boundary preserves the live tick count, food level, and held-item count.
+Both clients and servers exit normally, and the private fixtures return to their original state.
+
+The input driver completes both requested holds, but these runs record no active item use at replay boundaries.
+Delayed replay during active food use remains unverified.
+The changed-world geometry case remains a unit control; no live wall-removal result is claimed.
+
+The earlier sections describe their respective artifacts and verification limits.
+
 ## Queued player and mount corrections, October 23, 2026
 
 The adapter now schedules negotiated positional corrections against retained physical frames.

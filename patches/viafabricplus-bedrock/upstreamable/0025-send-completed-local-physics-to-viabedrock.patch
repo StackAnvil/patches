@@ -1,4 +1,4 @@
-From ebcebdfd4193421a9fe87288e76ead29827ee4bf Mon Sep 17 00:00:00 2001
+From 95efa9ebe479f6a34190cdb2c9a3e0eb2e451a1f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -503,6 +503,22 @@ count remain unchanged across those boundaries. Four command applications
 also preserve active item use. Eleven apples finish during live input.
 These controls do not establish delayed historical replay during active
 consumption, live vehicle correction parity, or complete native trajectories.
+
+Retain each ordinary movement request's immutable collision geometry and
+query bounds as physical input. Replay receives a separate mutable cache,
+so querying newly exposed regions cannot replace the original frame input.
+Native 1.26.51.1 copies retained shapes only below squared distance four,
+caps request motion at sixteen blocks, and appends newly queried regions.
+Port its float query expansion, partition order and cache-bound updates.
+
+Bind cached actor shapes to their original world, instance, UUID and native
+lifetime before refreshing their current geometry. Stale references retain
+the captured shape. Exact native MovementInterpolator sampling, unloaded
+region state and complete collision traversal parity remain unfinished.
+
+Verify cache arithmetic against 192 original native instruction controls.
+Targeted tests cover changed live geometry, repeated replay isolation, the
+strict reuse boundary, actor identity and zero-displacement input capture.
 ---
  build.gradle.kts                              |   2 +-
  .../bedrock/ViaFabricPlusBedrock.java         |   8 +
@@ -516,6 +532,7 @@ consumption, live vehicle correction parity, or complete native trajectories.
  .../MixinConnectionPhysicsReplay.java         |  24 +
  .../movement/MixinElytraPhysicsState.java     |  36 ++
  .../mixin/features/movement/MixinEntity.java  |  25 +-
+ .../movement/MixinEntityCollisionReplay.java  |  54 +++
  .../movement/MixinEntityFluidInteraction.java |  16 +
  ...tyFluidInteraction_CurrentAccumulator.java |  73 ++-
  .../MixinEntityFluidPhysicsState.java         |  51 +++
@@ -562,17 +579,19 @@ consumption, live vehicle correction parity, or complete native trajectories.
  .../movement/replay/FluidPhysicsState.java    |  26 ++
  .../movement/replay/PhysicalActorState.java   |  84 ++++
  .../movement/replay/PhysicalBoundingBox.java  |  16 +
+ .../replay/PhysicalCollisionCache.java        |  83 ++++
+ .../movement/replay/PhysicalCollisions.java   |  83 ++++
  .../movement/replay/PhysicalGraphState.java   |  84 ++++
  .../movement/replay/PhysicalInput.java        |  20 +
  .../movement/replay/PhysicalItemUse.java      |  21 +
  .../replay/PhysicalMovementCorrection.java    |  35 ++
- .../replay/PhysicalReplayContext.java         | 215 +++++++++
+ .../replay/PhysicalReplayContext.java         | 234 ++++++++++
  .../replay/PhysicalReplayHistory.java         | 182 ++++++++
  .../movement/replay/PhysicalState.java        | 140 ++++++
  .../movement/replay/PhysicalStateAccess.java  |  43 ++
  .../bedrock/render/BedrockActorState.java     |   2 +-
  .../viafabricplus-bedrock.accesswidener       |   5 +
- .../viafabricplus-bedrock.mixins.json         |  24 +
+ .../viafabricplus-bedrock.mixins.json         |  25 ++
  .../input/BedrockVehiclePredictionsTest.java  | 155 +++++++
  .../input/VehiclePredictionPayloadTest.java   |  75 ++++
  .../input/VehiclePredictionSessionTest.java   | 284 ++++++++++++
@@ -584,13 +603,14 @@ consumption, live vehicle correction parity, or complete native trajectories.
  .../movement/BedrockPlayerPostureTest.java    |  45 ++
  .../replay/AttributePhysicsStateTest.java     | 101 +++++
  .../replay/PhysicalBoundingBoxTest.java       |  21 +
+ .../replay/PhysicalCollisionCacheTest.java    | 178 ++++++++
  .../PhysicalCorrectionIdentityTest.java       | 101 +++++
  .../movement/replay/PhysicalItemUseTest.java  |  41 ++
  .../PhysicalMovementCorrectionTest.java       |  80 ++++
  .../replay/PhysicalReplayContextTest.java     |  90 ++++
  .../replay/PhysicalReplayHistoryTest.java     | 272 +++++++++++
  .../movement/replay/PhysicalStateTest.java    | 124 +++++
- 86 files changed, 6261 insertions(+), 73 deletions(-)
+ 90 files changed, 6679 insertions(+), 73 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAgePhysicsState.java
@@ -600,6 +620,7 @@ consumption, live vehicle correction parity, or complete native trajectories.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinClientLevelPhysicsReplay.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinConnectionPhysicsReplay.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinElytraPhysicsState.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityCollisionReplay.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidPhysicsState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidTrackerState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityPhysicsState.java
@@ -640,6 +661,8 @@ consumption, live vehicle correction parity, or complete native trajectories.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/FluidPhysicsState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalActorState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalBoundingBox.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCache.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisions.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalGraphState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalInput.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalItemUse.java
@@ -659,6 +682,7 @@ consumption, live vehicle correction parity, or complete native trajectories.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/AttributePhysicsStateTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalBoundingBoxTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCacheTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCorrectionIdentityTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalItemUseTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalMovementCorrectionTest.java
@@ -1120,6 +1144,66 @@ index 236c05d..dda48a4 100644
          } else {
              return box;
          }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityCollisionReplay.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityCollisionReplay.java
+new file mode 100644
+index 0000000..082ce4d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityCollisionReplay.java
+@@ -0,0 +1,54 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
++
++import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.llamalad7.mixinextras.sugar.Local;
++import com.llamalad7.mixinextras.sugar.ref.LocalRef;
++import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalCollisions;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.level.Level;
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.Vec3;
++import net.minecraft.world.phys.shapes.CollisionContext;
++import net.minecraft.world.phys.shapes.VoxelShape;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import java.util.List;
++
++@Mixin(Entity.class)
++public abstract class MixinEntityCollisionReplay {
++    @WrapOperation(method = "move", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;collide(Lnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/Vec3;"))
++    private Vec3 recordCollisionInputs(final Entity actor, final Vec3 motion, final Operation<Vec3> original,
++                                       @Local(argsOnly = true) final LocalRef<Vec3> requested) {
++        return PhysicalCollisions.collide(actor, motion, effective -> {
++            requested.set(effective);
++            return original.call(actor, effective);
++        });
++    }
++
++    @WrapOperation(method = "collide", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/Level;getEntityCollisions(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/phys/AABB;)Ljava/util/List;"))
++    private List<VoxelShape> gatherActorsWithTheRecordedQuery(final Level level, final Entity actor, final AABB bounds,
++                                                            final Operation<List<VoxelShape>> original) {
++        return PhysicalCollisions.active(actor) ? List.of() : original.call(level, actor, bounds);
++    }
++
++    @WrapMethod(method = "collectCollidersIgnoringWorldBorder(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/level/Level;Ljava/util/List;Lnet/minecraft/world/phys/AABB;)Ljava/util/List;")
++    private static List<VoxelShape> recordedActorColliders(final Entity actor, final Level level, final List<VoxelShape> entities,
++                                                         final AABB bounds, final Operation<List<VoxelShape>> original) {
++        final var captured = PhysicalCollisions.active(actor) ? PhysicalCollisions.collect(level) : null;
++        return captured != null ? captured : original.call(actor, level, entities, bounds);
++    }
++
++    @WrapMethod(method = "collectCollidersIgnoringWorldBorder(Lnet/minecraft/world/phys/shapes/CollisionContext;Lnet/minecraft/world/level/Level;Ljava/util/List;Lnet/minecraft/world/phys/AABB;)Ljava/util/List;")
++    private static List<VoxelShape> recordedContextColliders(final CollisionContext context, final Level level, final List<VoxelShape> entities,
++                                                           final AABB bounds, final Operation<List<VoxelShape>> original) {
++        final var captured = PhysicalCollisions.collect(level);
++        return captured != null ? captured : original.call(context, level, entities, bounds);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction.java
 index 9eb826a..1823e14 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction.java
@@ -4887,6 +4971,184 @@ index 0000000..b9515b0
 +        return this.bounds.move(corrected.subtract(this.position));
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCache.java
+new file mode 100644
+index 0000000..bc3c601
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCache.java
+@@ -0,0 +1,83 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement.replay;
++
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.level.Level;
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.Vec3;
++import net.minecraft.world.phys.shapes.Shapes;
++import net.minecraft.world.phys.shapes.VoxelShape;
++import net.raphimc.viabedrock.api.model.CollisionContact;
++import net.raphimc.viabedrock.api.model.MovementCollisionQuery;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Objects;
++import java.util.UUID;
++import java.util.function.Function;
++
++/** Each execution owns its mutable query cache; retained inputs own immutable geometry. */
++public final class PhysicalCollisionCache {
++    private final Position3f position;
++    private CollisionContact.Box bounds;
++    private final List<Shape> shapes = new ArrayList<>();
++
++    public PhysicalCollisionCache(final Position3f position, final Snapshot captured) {
++        this.position = position;
++        if (captured != null && MovementCollisionQuery.reuses(captured.position, position)) {
++            this.bounds = captured.bounds;
++            captured.shapes.forEach(shape -> this.shapes.add(shape.refresh()));
++        }
++    }
++
++    public List<VoxelShape> gather(final CollisionContact.Box requested, final Function<CollisionContact.Box, List<Shape>> fetch) {
++        final var missing = MovementCollisionQuery.missing(requested, this.bounds);
++        if (!missing.isEmpty()) {
++            for (var region : missing) this.shapes.addAll(fetch.apply(region));
++            this.bounds = requested;
++        }
++        return this.shapes.stream().map(shape -> Shapes.create(shape.bounds)).toList();
++    }
++
++    public Snapshot snapshot() {
++        return new Snapshot(this.position, this.bounds, this.shapes);
++    }
++
++    public record Shape(AABB bounds, Owner owner) {
++        public static Shape fixed(final AABB bounds) {
++            return new Shape(bounds, null);
++        }
++
++        public static Shape actor(final Entity actor) {
++            return new Shape(actor.getBoundingBox(), new Owner(actor, actor.level(), actor.getId(), actor.getUUID(),
++                    BedrockActorState.lifetime(actor.getUUID()), actor.position()));
++        }
++
++        private Shape refresh() {
++            if (this.owner == null || !this.owner.valid()) return this;
++            final Entity actor = this.owner.actor;
++            return PhysicalReplayContext.predicts(actor) || !actor.position().equals(this.owner.position)
++                    ? new Shape(actor.getBoundingBox(), this.owner) : this;
++        }
++    }
++
++    public record Owner(Entity actor, Level level, int id, UUID uuid, UUID lifetime, Vec3 position) {
++        private boolean valid() {
++            return !this.actor.isRemoved() && this.actor.level() == this.level && this.actor.getId() == this.id
++                    && this.actor.getUUID().equals(this.uuid) && this.level.getEntity(this.id) == this.actor
++                    && Objects.equals(BedrockActorState.lifetime(this.uuid), this.lifetime);
++        }
++    }
++
++    public record Snapshot(Position3f position, CollisionContact.Box bounds, List<Shape> shapes) {
++        public Snapshot {
++            shapes = List.copyOf(shapes);
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisions.java
+new file mode 100644
+index 0000000..b857d9b
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisions.java
+@@ -0,0 +1,83 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement.replay;
++
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.EntitySelector;
++import net.minecraft.world.level.Level;
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.Vec3;
++import net.minecraft.world.phys.shapes.VoxelShape;
++import net.raphimc.viabedrock.api.model.CollisionContact;
++import net.raphimc.viabedrock.api.model.MovementCollisionQuery;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.function.Function;
++
++/** The native movement request gathers once, including the native step and inset regions. */
++public final class PhysicalCollisions {
++    private static final ThreadLocal<Move> CURRENT = new ThreadLocal<>();
++
++    private PhysicalCollisions() {}
++
++    public static Vec3 collide(final Entity actor, final Vec3 requested, final Function<Vec3, Vec3> original) {
++        final PhysicalCollisionCache cache = PhysicalReplayContext.collisions(actor);
++        if (cache == null) return original.apply(requested);
++        final Position3f motion = position(requested);
++        final Position3f capped = MovementCollisionQuery.cap(motion);
++        // Preserve precise Java contact boundaries unless the native request actually hits its motion cap.
++        final Vec3 effective = capped == motion ? requested : new Vec3(capped.x(), capped.y(), capped.z());
++        final Move previous = CURRENT.get();
++        CURRENT.set(new Move(actor, cache, MovementCollisionQuery.bounds(box(actor.getBoundingBox()), capped, actor.maxUpStep())));
++        try {
++            // Native captures a collision request even when its resulting displacement is zero.
++            collect(actor.level());
++            return original.apply(effective);
++        } finally {
++            if (previous == null) CURRENT.remove();
++            else CURRENT.set(previous);
++        }
++    }
++
++    public static boolean active(final Entity actor) {
++        final Move move = CURRENT.get();
++        return move != null && move.actor == actor;
++    }
++
++    public static List<VoxelShape> collect(final Level level) {
++        final Move move = CURRENT.get();
++        return move != null && move.actor.level() == level ? move.cache.gather(move.query, region -> fetch(move.actor, region)) : null;
++    }
++
++    private static List<PhysicalCollisionCache.Shape> fetch(final Entity actor, final CollisionContact.Box region) {
++        final Level level = actor.level();
++        final AABB bounds = new AABB(region.minX(), region.minY(), region.minZ(), region.maxX(), region.maxY(), region.maxZ());
++        final List<PhysicalCollisionCache.Shape> boxes = new ArrayList<>();
++        for (var collider : level.getEntities(actor, bounds.inflate(1E-7), EntitySelector.NO_SPECTATORS.and(actor::canCollideWith))) {
++            boxes.add(PhysicalCollisionCache.Shape.actor(collider));
++        }
++        final var border = level.getWorldBorder();
++        if (border.isInsideCloseToBorder(actor, bounds)) copy(border.getCollisionShape(), boxes);
++        for (var shape : level.getBlockCollisions(actor, bounds)) copy(shape, boxes);
++        return boxes;
++    }
++
++    private static void copy(final VoxelShape shape, final List<PhysicalCollisionCache.Shape> target) {
++        shape.forAllBoxes((minX, minY, minZ, maxX, maxY, maxZ) -> target.add(PhysicalCollisionCache.Shape.fixed(new AABB(minX, minY, minZ, maxX, maxY, maxZ))));
++    }
++
++    static Position3f position(final Vec3 position) {
++        return new Position3f((float) position.x, (float) position.y, (float) position.z);
++    }
++
++    private static CollisionContact.Box box(final AABB box) {
++        return new CollisionContact.Box((float) box.minX, (float) box.minY, (float) box.minZ, (float) box.maxX, (float) box.maxY, (float) box.maxZ);
++    }
++
++    private record Move(Entity actor, PhysicalCollisionCache cache, CollisionContact.Box query) {}
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalGraphState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalGraphState.java
 new file mode 100644
 index 0000000..31c3ae8
@@ -5073,10 +5335,10 @@ index 0000000..79ccffe
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayContext.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayContext.java
 new file mode 100644
-index 0000000..b64c436
+index 0000000..10e89c1
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayContext.java
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,234 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5199,6 +5461,18 @@ index 0000000..b64c436
 +        CURRENT.get().metadata.put(uuid, value);
 +    }
 +
++    public static PhysicalCollisionCache collisions(final Entity actor) {
++        final State state = CURRENT.get();
++        if (state != null) {
++            if (state.step == null || !state.step.predictedActors.contains(actor)) return null;
++            return state.collisions.computeIfAbsent(actor, entity -> new PhysicalCollisionCache(
++                    PhysicalCollisions.position(entity.position()), state.step.collisionInputs.get(entity)));
++        }
++        final PhysicalStep recording = RECORDING.get();
++        if (recording == null || !recording.predictedActors.contains(actor)) return null;
++        return recording.collisions.computeIfAbsent(actor, entity -> new PhysicalCollisionCache(PhysicalCollisions.position(entity.position()), null));
++    }
++
 +    public static void poll(final net.minecraft.client.player.ClientInput input, final Runnable livePoll) {
 +        final State state = CURRENT.get();
 +        if (state != null) {
@@ -5222,6 +5496,8 @@ index 0000000..b64c436
 +        private final Map<Entity, PhysicalItemUse> itemUse = new IdentityHashMap<>();
 +        private final Map<LivingEntity, Map<EquipmentSlot, ItemStack>> equipment = new IdentityHashMap<>();
 +        private final java.util.List<PhysicalInput> inputs = new java.util.ArrayList<>();
++        private final Map<Entity, PhysicalCollisionCache.Snapshot> collisionInputs = new IdentityHashMap<>();
++        private final Map<Entity, PhysicalCollisionCache> collisions = new IdentityHashMap<>();
 +
 +        public PhysicalStep(final long gameTime, final Set<Entity> predictedActors, final Entity camera,
 +                            final Iterable<Entity> actors, final Runnable run) {
@@ -5251,6 +5527,8 @@ index 0000000..b64c436
 +            try {
 +                this.run.run();
 +            } finally {
++                this.collisions.forEach((actor, cache) -> this.collisionInputs.put(actor, cache.snapshot()));
++                this.collisions.clear();
 +                if (previous == null) RECORDING.remove();
 +                else RECORDING.set(previous);
 +            }
@@ -5260,12 +5538,14 @@ index 0000000..b64c436
 +            final State state = CURRENT.get();
 +            state.step = this;
 +            state.poll = 0;
++            state.collisions.clear();
 +            try {
 +                this.historical.run();
 +                if (state.poll != this.inputs.size()) throw new IllegalStateException("Historical physics skipped a recorded input poll");
 +            } finally {
 +                state.step = null;
 +                state.poll = 0;
++                state.collisions.clear();
 +            }
 +        }
 +    }
@@ -5283,6 +5563,7 @@ index 0000000..b64c436
 +        private GameType gameMode;
 +        private long frame = -1;
 +        private PhysicalStep step;
++        private final Map<Entity, PhysicalCollisionCache> collisions = new IdentityHashMap<>();
 +        private int poll;
 +
 +        private State(final Level level, final Connection connection, final Set<Entity> actors) {
@@ -5704,10 +5985,10 @@ index f42de8f..8e8672c 100644
  
  accessible field net/minecraft/client/renderer/RenderPipelines ENTITY_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 103a613..c9121c4 100644
+index 103a613..1dd5634 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -141,12 +141,36 @@
+@@ -141,12 +141,37 @@
      "features.input.MixinMouseHandler",
      "features.input.MixinInputPermissionConnection",
      "features.input.MixinMinecraftInputPermissions",
@@ -5726,6 +6007,7 @@ index 103a613..c9121c4 100644
 +    "features.movement.MixinHorsePhysicsState",
 +    "features.movement.MixinAgePhysicsState",
 +    "features.movement.MixinClientLevelPhysicsReplay",
++    "features.movement.MixinEntityCollisionReplay",
 +    "features.movement.MixinPassengerPhysicsReplay",
 +    "features.movement.MixinLevelPhysicsReplay",
 +    "features.movement.MixinGameModePhysicsReplay",
@@ -6989,6 +7271,190 @@ index 0000000..090e854
 +        final var shape = new PhysicalBoundingBox(new AABB(7.75, .5, 2.25, 9.5, 3, 4.25), new Vec3(8, 1, 3));
 +        assertEquals(new AABB(-4.25, 4.5, 8.25, -2.5, 7, 10.25), shape.at(new Vec3(-4, 5, 9)));
 +        assertEquals(new AABB(7.75, .5, 2.25, 9.5, 3, 4.25), shape.bounds());
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCacheTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCacheTest.java
+new file mode 100644
+index 0000000..dbc1861
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisionCacheTest.java
+@@ -0,0 +1,178 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement.replay;
++
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.SharedConstants;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.Vec3;
++import net.minecraft.world.level.border.WorldBorder;
++import net.minecraft.world.phys.shapes.Shapes;
++import net.raphimc.viabedrock.api.model.CollisionContact;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Set;
++import java.util.UUID;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class PhysicalCollisionCacheTest {
++    @BeforeAll
++    static void initializeGame() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    private static List<AABB> boxes(final PhysicalCollisionCache.Snapshot snapshot) {
++        return snapshot.shapes().stream().map(PhysicalCollisionCache.Shape::bounds).toList();
++    }
++
++    @Test
++    void usesCapturedGeometryAfterAWorldChangeAndFetchesFreshGeometryAtTheNativeDistanceBoundary() {
++        final var query = new CollisionContact.Box(-1F, -1F, -1F, 4F, 3F, 1F);
++        final var oldWall = new AABB(1, 0, 0, 2, 2, 1);
++        final var newWall = new AABB(3, 0, 0, 4, 2, 1);
++        final var calls = new AtomicInteger();
++        final var source = new ArrayList<>(List.of(PhysicalCollisionCache.Shape.fixed(oldWall)));
++        final var original = new PhysicalCollisionCache(Position3f.ZERO, null);
++        original.gather(query, ignored -> { calls.incrementAndGet(); return source; });
++        final var captured = original.snapshot();
++        source.clear();
++        source.add(PhysicalCollisionCache.Shape.fixed(newWall));
++        final var replay = new PhysicalCollisionCache(new Position3f(0.25F, 0F, 0F), captured);
++        final var reused = replay.gather(query, ignored -> { calls.incrementAndGet(); return source; });
++        assertEquals(1, calls.get());
++        assertEquals(List.of(oldWall), reused.stream().map(shape -> shape.bounds()).toList());
++        final var outside = new PhysicalCollisionCache(new Position3f(2F, 0F, 0F), captured);
++        final var refreshed = outside.gather(query, ignored -> { calls.incrementAndGet(); return source; });
++        assertEquals(2, calls.get());
++        assertEquals(List.of(newWall), refreshed.stream().map(shape -> shape.bounds()).toList());
++        assertEquals(List.of(oldWall), boxes(captured));
++    }
++
++    @Test
++    void queriesOnlyTheNewRegionAndKeepsRetainedInputsIndependentOfLaterReplayCaches() {
++        final var first = new CollisionContact.Box(0F, 0F, 0F, 1F, 1F, 1F);
++        final var second = new CollisionContact.Box(0F, 0F, 0F, 2F, 1F, 1F);
++        final var oldWall = new AABB(0, 0, 0, 0.25, 1, 1);
++        final var addedWall = new AABB(1.5, 0, 0, 1.75, 1, 1);
++        final var original = new PhysicalCollisionCache(Position3f.ZERO, null);
++        original.gather(first, ignored -> List.of(PhysicalCollisionCache.Shape.fixed(oldWall)));
++        final var captured = original.snapshot();
++        final var replay = new PhysicalCollisionCache(new Position3f(0.5F, 0F, 0F), captured);
++        final List<CollisionContact.Box> queries = new ArrayList<>();
++        replay.gather(second, region -> { queries.add(region); return List.of(PhysicalCollisionCache.Shape.fixed(addedWall)); });
++        assertEquals(List.of(new CollisionContact.Box(1.00001F, 0.00001F, 0.00001F, 2F, 1F, 1F)), queries);
++        assertEquals(List.of(oldWall, addedWall), boxes(replay.snapshot()));
++        assertEquals(List.of(oldWall), boxes(captured));
++        replay.gather(second, region -> { fail(); return List.of(); });
++        final var again = new PhysicalCollisionCache(new Position3f(0.5F, 0F, 0F), captured);
++        again.gather(first, region -> { fail(); return List.of(); });
++        assertEquals(List.of(oldWall), boxes(again.snapshot()));
++    }
++
++    @Test
++    void refreshesMovingColliderGeometryWithoutFollowingRecycledIdsOrMutatingCapturedShapes() {
++        try (var metadata = mockStatic(BedrockActorState.class)) {
++            final Entity collider = mock(Entity.class);
++            final ClientLevel level = mock(ClientLevel.class);
++            final UUID uuid = UUID.randomUUID(), lifetime = UUID.randomUUID();
++            when(collider.level()).thenReturn(level);
++            when(collider.getId()).thenReturn(7);
++            when(collider.getUUID()).thenReturn(uuid);
++            when(level.getEntity(7)).thenReturn(collider);
++            metadata.when(() -> BedrockActorState.lifetime(uuid)).thenReturn(lifetime);
++            final AABB before = new AABB(1, 0, 0, 2, 2, 1), after = before.move(0.5, 0, 0);
++            when(collider.position()).thenReturn(new Vec3(1.5, 0, 0.5));
++            when(collider.getBoundingBox()).thenReturn(before);
++            final var region = new CollisionContact.Box(0F, -1F, -1F, 4F, 3F, 2F);
++            final var captured = new PhysicalCollisionCache.Snapshot(Position3f.ZERO, region,
++                    List.of(PhysicalCollisionCache.Shape.actor(collider)));
++            when(collider.position()).thenReturn(new Vec3(2, 0, 0.5));
++            when(collider.getBoundingBox()).thenReturn(after);
++            final var moving = new PhysicalCollisionCache(Position3f.ZERO, captured);
++            moving.gather(region, ignored -> { fail(); return List.of(); });
++            assertEquals(List.of(after), boxes(moving.snapshot()));
++            assertEquals(List.of(before), boxes(captured));
++            when(level.getEntity(7)).thenReturn(mock(Entity.class));
++            final var replacement = new PhysicalCollisionCache(Position3f.ZERO, captured);
++            replacement.gather(region, ignored -> { fail(); return List.of(); });
++            assertEquals(List.of(before), boxes(replacement.snapshot()));
++            when(level.getEntity(7)).thenReturn(collider);
++            metadata.when(() -> BedrockActorState.lifetime(uuid)).thenReturn(UUID.randomUUID());
++            final var newLifetime = new PhysicalCollisionCache(Position3f.ZERO, captured);
++            newLifetime.gather(region, ignored -> { fail(); return List.of(); });
++            assertEquals(List.of(before), boxes(newLifetime.snapshot()));
++        }
++    }
++
++    @Test
++    void recordsZeroDisplacementCollisionRequestsBeforeTheOrdinaryCollisionCallback() {
++        final Entity actor = mock(Entity.class);
++        final ClientLevel level = mock(ClientLevel.class);
++        when(actor.level()).thenReturn(level);
++        when(actor.position()).thenReturn(Vec3.ZERO);
++        when(actor.getBoundingBox()).thenReturn(new AABB(0, 0, 0, 0.6, 1.8, 0.6));
++        when(actor.maxUpStep()).thenReturn(0.6F);
++        when(level.getWorldBorder()).thenReturn(mock(WorldBorder.class));
++        final var wall = new AABB(1, 0, 0, 2, 2, 1);
++        when(level.getBlockCollisions(eq(actor), any(AABB.class))).thenReturn(List.of(Shapes.create(wall)));
++        final var seen = new ArrayList<List<AABB>>();
++        final var step = new PhysicalReplayContext.PhysicalStep(10, Set.of(actor), actor, List.of(), () ->
++                PhysicalCollisions.collide(actor, Vec3.ZERO, motion -> {
++                    seen.add(PhysicalCollisions.collect(level).stream().map(shape -> shape.bounds()).toList());
++                    return motion;
++                }));
++        step.record();
++        when(level.getBlockCollisions(eq(actor), any(AABB.class))).thenReturn(List.of());
++        try (var ignored = PhysicalReplayContext.enter(level, null, Set.of(actor))) {
++            step.replay();
++        }
++        assertEquals(List.of(List.of(wall), List.of(wall)), seen);
++        verify(level, times(1)).getBlockCollisions(eq(actor), any(AABB.class));
++        assertNull(PhysicalCollisions.collect(level));
++    }
++
++    @Test
++    void capturesAndRestoresCollisionInputsThroughActualPhysicalStepScopes() {
++        final Entity actor = mock(Entity.class);
++        final Entity other = mock(Entity.class);
++        when(actor.position()).thenReturn(Vec3.ZERO);
++        final var query = new CollisionContact.Box(0F, 0F, 0F, 2F, 2F, 2F);
++        final var source = new ArrayList<>(List.of(PhysicalCollisionCache.Shape.fixed(new AABB(1, 0, 0, 2, 2, 2))));
++        final var queries = new AtomicInteger();
++        final List<List<AABB>> observed = new ArrayList<>();
++        final var step = new PhysicalReplayContext.PhysicalStep(10, Set.of(actor), actor, List.of(), () -> {
++            assertNull(PhysicalReplayContext.collisions(other));
++            final var cache = PhysicalReplayContext.collisions(actor);
++            assertNotNull(cache);
++            final var shapes = cache.gather(query, ignored -> { queries.incrementAndGet(); return source; });
++            observed.add(shapes.stream().map(shape -> shape.bounds()).toList());
++        });
++        assertNull(PhysicalReplayContext.collisions(actor));
++        step.record();
++        source.clear();
++        when(actor.position()).thenReturn(new Vec3(0.25, 0, 0));
++        try (var ignored = PhysicalReplayContext.enter(null, null, Set.of(actor))) {
++            step.replay();
++            step.replay();
++        }
++        assertEquals(1, queries.get());
++        assertEquals(3, observed.size());
++        assertEquals(observed.getFirst(), observed.get(1));
++        assertEquals(observed.getFirst(), observed.getLast());
++        assertNull(PhysicalReplayContext.collisions(actor));
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCorrectionIdentityTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCorrectionIdentityTest.java
