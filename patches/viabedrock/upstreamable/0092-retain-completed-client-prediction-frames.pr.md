@@ -1767,7 +1767,8 @@ The setter stores its enabled flag, integer threshold, and float scalar without 
 The enabled predicate requires a stored flag of exactly one.
 It then compares an option integer against the stored threshold with signed less-than-or-equal admission.
 Threshold equality, both signed extrema, and the float scalar's negative zero bits retain original execution.
-The option object and integer remain supplied; the setter's caller and update timing remain unverified.
+The option object and integer remain supplied.
+The packet controls below cover the setter's network caller; runtime update timing remains unverified.
 
 The component has separate selection and interpolation-admission bytes.
 The original signed budget comparison can reject a selection attempt.
@@ -1788,5 +1789,25 @@ These controls supply budget inputs, priority notifications, component stores, r
 They also retain the earlier supplied readiness input, region query, notifications, and float CRT.
 They do not establish complete priority collection, budget production, scheduler ordering, actor factory behavior, or native trajectories.
 Readiness-setter searches yield candidates but do not establish its actual caller or prove it unreachable.
-Normal player source integration still needs those producers and phase boundaries.
+Normal player source integration still needs actual readiness and option producers, priority membership, region lookup, and phase ordering.
 Java actor age, visibility, and smoothing cannot stand in for these native decisions.
+
+## Native network throttle producer
+
+The native `NETWORK_SETTINGS` dispatcher reaches handler `0x141330030` through the client callback table.
+The handler supplies the configuration setter's enabled flag, unsigned-byte threshold, and float scalar.
+An enabled packet preserves its threshold and scalar bits.
+A disabled packet clears the stored threshold and scalar, including stale values from an earlier configuration.
+The current translator discards these fields; complete player-source integration must retain their behavior.
+
+Another 3,584 controls compose the original handler prefix, configuration accessors, player-component installation, and budget calculation.
+The budget reads the option integer and scalar, multiplies as native floats, then truncates to a signed integer.
+NaN, infinity, and out-of-range products produce the native invalid-conversion result.
+Retaining disabled configuration values fails its control.
+Rounding a budget instead of truncating it also fails; one native case requires 63 rather than 64.
+The earlier 512 packet-prefix controls are a subset of this composed coverage.
+
+These controls supply decoded packet objects, an empty compression connection table, option values, and ECS storage boundaries.
+They stop before the handler's authentication continuation.
+The empty-range sort is an asserted boundary; the controls do not establish priority collection or entity selection order.
+Packet decoding, complete scheduler timing, readiness producers, and actual option implementation remain unfinished.

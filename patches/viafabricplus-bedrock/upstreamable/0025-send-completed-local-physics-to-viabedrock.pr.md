@@ -2138,4 +2138,38 @@ Every replay boundary preserves live tick, food, and held-item count.
 Each route retains four ticked player impulses and their exact following historical frames.
 Observers report no errors, and all recorded run-owned identities exit normally.
 The original server script, manifest, and configuration are restored.
-Normal-player source admission, configured providers, local-player virtuals, riding pose, active-use overlap, complete seat ownership, and native trajectories remain unfinished.
+Normal-player source admission, configured providers, local-player virtuals, riding pose, complete native use cycles, complete seat ownership, and native trajectories remain unfinished.
+
+## Active use during controlled-boat replay
+
+Fresh direct and ViaProxy runs verify the current full artifacts with a 300 ms inbound delay.
+Real mouse holds target the owned game's window on the private display, with the usual zero-volume defaults.
+The fixture provides standing and mounted food windows, each starting with hunger four and sixteen apples.
+Scripted hunger resets keep food usable during the longer mounted window.
+The observer adds read-only use-counter fields; it changes no movement, command, inventory, or use state.
+
+| Route | Real rewinds | Physical steps | Active-use rewinds | Controlled-boat active use | Boat rewinds with positive counter |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Direct NetherNet | 20 | 129 | 17 | 10 | 9 |
+| ViaProxy | 20 | 126 | 17 | 10 | 9 |
+
+All forty replay boundaries preserve live tick, food, held count, active use, remaining use ticks, start state, and use-stack count.
+Both routes include positive counters during standing and controlled-boat rewinds.
+Each retains four native ticked player impulses in the correct historical frames and applies ten historical vehicle corrections.
+Vehicle epoch and controller checks pass.
+Neither route receives nonzero-tick vehicle velocity, so that requirement remains open.
+
+The server confirms six completed apple uses per route: two standing and four during the mounted window.
+Client and server settle with twelve apples and the same food value after the final scripted hunger reset.
+The client stops using the item after input release.
+Observers report no errors, package hashes match the validated build, and all recorded owned identities exit normally.
+The original server fixture returns byte-for-byte.
+
+The first direct attempt failed its private-display identity check before food input; it is excluded.
+An earlier proxy attempt failed signaling before receiving any Bedrock packets or starting the fixture; it is also excluded.
+The successful proxy attempt adds a read-only local HTTP capability preflight.
+These results do not establish a fix for that signaling failure.
+
+This closes the final-artifact active-use overlap gap for the tested standing and controlled-boat cases.
+The affected public-server rollback and eating reports, other authority modes, remaining mounts, complete native use cycles, seat/lifetime parity, and native trajectories remain unverified.
+The full five-area implementation goal remains active.
