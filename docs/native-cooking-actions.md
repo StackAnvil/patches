@@ -143,7 +143,9 @@ Fallback restores the exact original screen on the same connected menu after pre
 It cannot replace a later screen or a reused menu.
 
 Unsupported required controls keep the ordinary screen.
-This includes the default search, help, focus, and carried-item branches.
+This includes required help, focus, and carried-item branches.
+The pinned desktop layout exposes category/search tabs without an inline text box.
+Native text callbacks for authored controls remain unfinished.
 Layout selection history and its profile/device branches also remain unfinished.
 Tab and filtering controls also retain ordinary screens when their required focus or device mappings remain unsupported.
 The pointer and fallback regressions use constructed authored scenes and genuine Java menus.
@@ -646,6 +648,24 @@ Abstract Dimension and BlockSource interfaces exercise the unresolved-world-targ
 These checks do not cover a loaded furnace block entity or its world updates.
 An empty notification subscriber list, shared world ownership, and three diagnostic string formatters are also supplied.
 Full cooking-manager and controller construction, recipe selection, input delivery, wire serialization, server acceptance, and graphical behavior remain unverified.
+
+## Resolve controller captions
+
+Cooking snapshots retain native tab-caption keys.
+The search tab uses the all-recipes key when filtering is disabled.
+When filtering is enabled, it uses the furnace or smoker key.
+The inventory tab uses the shared crafting survival key.
+
+Program export collects translations from the current tab label and authoritative title.
+This preserves computed controller captions that do not appear as literals in the UI declarations.
+Preference changes advance the model update identity while retaining the opening and item authority.
+
+Sixty original native getter controls bind the caption rules.
+Complete scene and action-scope round trips verify translation export for all three station families.
+A controlled client fixture verifies fourteen model caption keys and eleven visible caption draws.
+All three cooking cases and same-world reconnect pass with the rebuilt artifacts.
+The fixture removes unfinished controls and mappings.
+Native fallback title acquisition, physical input, and complete controller initialization remain separate work.
 
 ## Implementation boundaries
 

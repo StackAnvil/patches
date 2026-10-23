@@ -338,3 +338,29 @@ Both client sessions match all 1,401 core classes and four resources.
 
 The three Java cooking cases and same-world reconnect pass. Cleanup leaves no owned client, server, or display processes, and the private observer is removed.
 The observer sends no inventory actions. These observations establish channel lifecycle, while authored action execution and native screen parity remain unverified.
+
+## Native cooking captions
+
+The publisher now uses the shared native tab-label rules.
+Disabling filtering selects the all-recipes caption; enabling it selects the furnace or smoker caption.
+The inventory tab uses the shared survival key.
+Program export preserves the current controller label's translation along with the authoritative title.
+
+A publisher regression covers all three families, both filter states, and search/inventory tabs.
+Preference changes advance the model update while opening and item authority remain stable.
+Complete program round trips match the core-resolved scene.
+The previous publisher fails this regression; the corrected publisher passes.
+Sixty original getter controls establish the shared rules with supplied controller fields and bounded allocation/CRT seams.
+Native fallback titles, complete input handling, and full screen parity remain open.
+
+The final four-project build passes 2,487 tests, with 212 optional skips and no failures or errors.
+The native navigation and caption suite runs without skips.
+All 104 core and 38 add-on patches replay, and all 1,404 embedded core classes match.
+
+A controlled BDS 1.26.51.1 client fixture exercises fourteen preference changes and six recipe press/release replies.
+All fourteen model caption keys match the native getter cases and the shipped English table.
+Eleven visible caption draws match their exported translations.
+Furnace, smoker, and blast-furnace cooking and same-world reconnect pass.
+Two runtime inventories match 2,520 classes and four data resources each.
+Normal cleanup removes the private observer, restores the driver, and leaves no managed-profile JVM.
+The scene projection removes unfinished controls and mappings, so it does not establish full default-screen or native pixel parity.

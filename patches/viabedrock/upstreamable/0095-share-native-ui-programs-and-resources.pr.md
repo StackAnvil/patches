@@ -295,3 +295,37 @@ The fixture verifies conservation and the shared player-provider views. Cursor p
 Each six-event sequence shares one open native request. Request submission and server acknowledgments do not occur.
 The full controller/model-owner, other recipe types, complete serialization, live acceptance, and visual parity remain unverified.
 The [repeated-placement reference](../../../docs/native-cooking-actions.md#repeat-placement-and-return) records the quantities and implementation implications.
+
+## Controller text in cooking programs
+
+Cooking exports now use the same menu snapshot as the published model.
+Translation discovery includes the current tab label and authoritative title.
+Computed search captions can therefore use the accepted language pack after export and import.
+The exporter retains language keys and the existing translation lookup.
+
+The regression compares complete scenes and action scopes for all three cooking families.
+It fails when export omits the controller label and passes with the dependency restored.
+Default smoker captions still carry a Java key; their native fallback source remains unverified.
+The pinned desktop cooking declarations expose category/search tabs without an inline text box.
+Native text callbacks, full input handling, and pixel parity remain open.
+
+The pinned native tab-label getter also distinguishes filtered search captions from the all-recipes caption.
+Its inventory tab uses the shared crafting survival key.
+The shared navigation model now retains these exact keys.
+Sixty unchanged native getter controls cover all families, both filter states, valid tabs, and signed invalid tabs.
+The fixture verifies ingredient descriptors against the generated target enum.
+Restoring either earlier label rule fails the native comparison; the corrected model passes.
+Allocation and CRT copies are bounded test boundaries.
+Field producers, final translation, and pixels remain separate checks.
+
+The final four-project build passes 2,487 tests, with 212 optional skips and no failures or errors.
+The native navigation and caption suite runs without skips.
+All 104 core and 38 add-on patches replay, and all 1,404 embedded core classes match.
+
+A controlled BDS 1.26.51.1 client fixture exercises fourteen preference changes and six recipe press/release replies.
+All fourteen model caption keys match the native getter cases and the shipped English table.
+Eleven visible caption draws match their exported translations.
+Furnace, smoker, and blast-furnace cooking and same-world reconnect pass.
+Two runtime inventories match 2,520 classes and four data resources each.
+Normal cleanup removes the private observer, restores the driver, and leaves no managed-profile JVM.
+The scene projection removes unfinished controls and mappings, so it does not establish full default-screen or native pixel parity.
