@@ -190,3 +190,10 @@ Native actor pose timing and the camera's mount-offset scheduling remain separat
 The production world-query adapter matches 1,120 native scalar results across 224 live contexts.
 A private camel scene consumes both sitting and standing flags during native model submissions.
 The world actor patch records the full build and runtime results.
+
+## Refresh attached custom-actor particle inputs
+
+Bound custom-actor particles sample current common actor inputs and native metadata independently of another actor submission.
+Resource, actor-instance, and native lifetime guards retain their existing ownership checks.
+Locator poses and unrelated graph inputs keep their existing sampling.
+See the [shared runtime evidence](0008-share-native-actor-and-resource-runtime.pr.md#fresh-common-particle-actor-inputs) for tested queries, native boundaries, and remaining limits.

@@ -1,10 +1,16 @@
-From 505404d7e48e821c97e03ffe7dd10ea176d96f0d Mon Sep 17 00:00:00 2001
+From 717eda3c2a20a1005300a2b626340b4ce85d8a7f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(appearance): manage Character Creator accounts and
  wardrobes
 
 Keep character slots, persona recipe assembly, owned catalogs, purchases and emote account selection above the shared native rendering runtime. Preserve signed appearance selection, classic skin changes and account-specific asset lifetimes.
+
+Refresh common actor inputs and native properties for attached player
+particles at each attachment sample, even without another body render.
+Keep the sampled locator pose and unrelated graph inputs. Reject a
+changed native actor lifetime before reading its metadata, while retaining
+the existing registry-only path after actor removal with the same owner.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    3 +
  .../appearance/BedrockAppearanceStore.java    |  186 +-
@@ -36,7 +42,7 @@ Keep character slots, persona recipe assembly, owned catalogs, purchases and emo
  .../render/MixinMinecraftSkinLifecycle.java   |   12 +
  .../features/render/MixinOptionsEmote.java    |   34 +
  .../bedrock/render/BedrockPlayerRenderer.java |    7 +-
- .../bedrock/render/BedrockPlayerSkins.java    |  656 ++++++-
+ .../bedrock/render/BedrockPlayerSkins.java    |  657 ++++++-
  .../screen/BedrockCharacterSlotsScreen.java   | 1401 +++++++++++++++
  .../screen/BedrockClassicSkinPackScreen.java  |   83 +-
  .../screen/BedrockDressingRoomScreen.java     |   88 +-
@@ -71,7 +77,7 @@ Keep character slots, persona recipe assembly, owned catalogs, purchases and emo
  .../appearance/BedrockPersonaTintTest.java    |  280 +++
  .../BedrockPlayerAnimationsTest.java          |   90 +
  .../render/BedrockActorQuerySnapshotTest.java |   89 +
- 65 files changed, 14275 insertions(+), 107 deletions(-)
+ 65 files changed, 14276 insertions(+), 107 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicAssets.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
@@ -6361,7 +6367,7 @@ index f00c62a..5ddf747 100644
      }
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 7164045..4018b14 100644
+index 7164045..fde1d8c 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -19,37 +19,63 @@
@@ -6530,7 +6536,7 @@ index 7164045..4018b14 100644
              return null;
          }
          if (appearance.renderer == null || appearance.rendererEpoch != rendererEpoch) {
-@@ -212,13 +273,449 @@ public final class BedrockPlayerSkins {
+@@ -212,13 +273,450 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(surface.geometry().model(), appearance.slim, surface.geometry().meshes()),
                  surface.texture())).toList();
              appearance.renderer = new BedrockPlayerRenderer(rendererContext,
@@ -6909,8 +6915,8 @@ index 7164045..4018b14 100644
 +        for (final var particle : particles) {
 +            if (particle.attached()) {
 +                particle.play(net.minecraft.world.phys.Vec3.ZERO,
-+                        () -> Minecraft.getInstance().level != world || entity.isRemoved()
-+                                && (registryOwner == null || !registryOwner.equals(BedrockActorState.lifetime(entity.getUUID())))
++                        () -> Minecraft.getInstance().level != world || entity.isRemoved() && registryOwner == null
++                                || registryOwner != null && !registryOwner.equals(BedrockActorState.lifetime(entity.getUUID()))
 +                                ? null : particleAttachment(appearance, geometry, entity, particle.locator()));
 +            } else {
 +                final var position = effectPosition(appearance, geometry, entity, state.bodyRot, particle.locator());
@@ -6930,7 +6936,8 @@ index 7164045..4018b14 100644
 +        if (entity.isRemoved())
 +            return BedrockParticleAttachment.registry(new net.minecraft.world.phys.Vec3(entity.xo, entity.yo, entity.zo),
 +                    entity.position(), entity.yBodyRotO, entity.yBodyRot, partialTick, world);
-+        return new BedrockParticleAttachment(position, yaw, world, entity.getBoundingBox(), appearance.particleQueries);
++        return new BedrockParticleAttachment(position, yaw, world, entity.getBoundingBox(),
++                BedrockParticleQueries.actor(entity, BedrockActorState.state(entity.getUUID()), appearance.particleQueries));
 +    }
 +
 +    private static net.minecraft.world.phys.Vec3 effectPosition(
@@ -6981,7 +6988,7 @@ index 7164045..4018b14 100644
      public static AvatarRenderer<?> renderer(final PlayerSkin skin, final float ageInTicks) {
          if (skin == null || skin.body() == null) {
              return null;
-@@ -238,10 +735,55 @@ public final class BedrockPlayerSkins {
+@@ -238,10 +736,55 @@ public final class BedrockPlayerSkins {
      public static Model.Simple previewModel(final Identifier texture) {
          final UUID id = PLAYER_BY_TEXTURE.get(texture);
          final Appearance appearance = id == null ? null : APPEARANCES.get(id);
@@ -7040,7 +7047,7 @@ index 7164045..4018b14 100644
      }
  
      /** Supplies the additional animated surfaces in the same pose as a menu's primary skin. */
-@@ -251,14 +793,19 @@ public final class BedrockPlayerSkins {
+@@ -251,14 +794,19 @@ public final class BedrockPlayerSkins {
          if (appearance == null || appearance.surfaces.isEmpty()) return List.of();
          if (appearance.previewSurfaces == null)
              appearance.previewSurfaces = appearance.surfaces.stream().map(surface -> new PreviewSurface(
@@ -7062,7 +7069,7 @@ index 7164045..4018b14 100644
  
      public static void rendererContext(final EntityRendererProvider.Context context) {
          BedrockActorResources.clear();
-@@ -271,6 +818,7 @@ public final class BedrockPlayerSkins {
+@@ -271,6 +819,7 @@ public final class BedrockPlayerSkins {
          APPEARANCES.values().forEach(BedrockPlayerSkins::release);
          APPEARANCES.clear();
          PLAYER_BY_TEXTURE.clear();
@@ -7070,7 +7077,7 @@ index 7164045..4018b14 100644
          SKIN_ASSEMBLER.clear();
          skinConnection = null;
      }
-@@ -288,7 +836,8 @@ public final class BedrockPlayerSkins {
+@@ -288,7 +837,8 @@ public final class BedrockPlayerSkins {
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
@@ -7080,7 +7087,7 @@ index 7164045..4018b14 100644
      }
  
      private static boolean supportedImage(final BufferedImage image) {
-@@ -314,7 +863,10 @@ public final class BedrockPlayerSkins {
+@@ -314,7 +864,10 @@ public final class BedrockPlayerSkins {
  
      static String geometryName(final String resourcePatch, final String binding) {
          try {
@@ -7092,7 +7099,7 @@ index 7164045..4018b14 100644
              final var name = geometry.get(binding);
              return name != null && name.isJsonPrimitive() && name.getAsJsonPrimitive().isString()
                  ? name.getAsString() : "";
-@@ -344,7 +896,8 @@ public final class BedrockPlayerSkins {
+@@ -344,7 +897,8 @@ public final class BedrockPlayerSkins {
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
              final BedrockGeometryModel model = models.stream().filter(value -> value.getIdentifier().equals(name)).findFirst()
                  .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
@@ -7102,7 +7109,7 @@ index 7164045..4018b14 100644
          } catch (RuntimeException e) {
              LOGGER.warn("Failed to parse Bedrock player geometry", e);
              return null;
-@@ -371,7 +924,8 @@ public final class BedrockPlayerSkins {
+@@ -371,7 +925,8 @@ public final class BedrockPlayerSkins {
              final Map<Integer, JsonObject> animatedModels = new HashMap<>();
              for (final var entry : models) {
                  final JsonObject model = entry.getAsJsonObject();
@@ -7112,7 +7119,7 @@ index 7164045..4018b14 100644
                  if (name.equals(identifier)) {
                      if (body != null) {
                          return null;
-@@ -410,7 +964,8 @@ public final class BedrockPlayerSkins {
+@@ -410,7 +965,8 @@ public final class BedrockPlayerSkins {
                  final JsonObject model = animatedModels.get(type);
                  final var animation = animationByType.get(type);
                  if (model == null) {
@@ -7122,7 +7129,7 @@ index 7164045..4018b14 100644
                          return null;
                      }
                      continue;
-@@ -425,7 +980,8 @@ public final class BedrockPlayerSkins {
+@@ -425,7 +981,8 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(parsed, false, meshes);
                  surfaces.add(new Surface(parsed, Map.copyOf(meshes), animation));
              }
@@ -7132,7 +7139,7 @@ index 7164045..4018b14 100644
                  if (!coverage.getOrDefault(part, false)) {
                      return null;
                  }
-@@ -436,7 +992,8 @@ public final class BedrockPlayerSkins {
+@@ -436,7 +993,8 @@ public final class BedrockPlayerSkins {
                  return null;
              }
              BedrockGeometry.playerModel(parsedBody, false, bodyMeshes);
@@ -7142,7 +7149,7 @@ index 7164045..4018b14 100644
          } catch (RuntimeException e) {
              LOGGER.warn("Failed to parse Bedrock persona geometry", e);
              return null;
-@@ -473,12 +1030,21 @@ public final class BedrockPlayerSkins {
+@@ -473,12 +1031,21 @@ public final class BedrockPlayerSkins {
                      }
                  }
              }
@@ -7167,7 +7174,7 @@ index 7164045..4018b14 100644
              }
          }
          return meshes;
-@@ -500,7 +1066,13 @@ public final class BedrockPlayerSkins {
+@@ -500,7 +1067,13 @@ public final class BedrockPlayerSkins {
          return vector;
      }
  
@@ -7182,7 +7189,7 @@ index 7164045..4018b14 100644
          Surface face() {
              return this.surfaces.stream().filter(surface -> surface.animation().type() == 1).findFirst().orElse(null);
          }
-@@ -518,13 +1090,23 @@ public final class BedrockPlayerSkins {
+@@ -518,13 +1091,23 @@ public final class BedrockPlayerSkins {
          private final Identifier headId;
          private final long started = System.nanoTime();
          private final Geometry geometry;

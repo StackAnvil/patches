@@ -1,4 +1,4 @@
-From 9326c8f46c11ddb82a123b37a31de9b631193179 Mon Sep 17 00:00:00 2001
+From 46b43624a73a6d95db88fc0785d609057f9699bf Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -178,6 +178,21 @@ resource lookup and the component callback are supplied boundaries.
 Random-variable registration is explicitly skipped. This proves the
 constructor query boundary, not JSON/Molang evaluation, actor admission,
 child lifetime parity or visible native rendering.
+
+Refresh common particle actor queries when sampling attachments, rather
+than retaining the last actor draw's motion, water state and metadata.
+Server particle packets now share native property, variant and spell-color
+inputs with animation-bound effects. Keep each sampled map immutable and
+preserve unrelated graph inputs and emitter/particle variables. Retire
+server bindings when their captured native actor lifetime changes.
+
+Eight pinned 1.26.51.1 controls run original initialization/context refresh
+1421603e0/142159bd0 once, then original speed and water callbacks
+14220ecd0/14220f040 after in-place ECS and motion changes on the same actor.
+Actor resolution, level/physical-component getters, variable access and
+expression callbacks are supplied. No later context refresh, native actor
+animation, property evaluation, live server or GPU runs in these controls.
+This supports fresh actor reads, not complete native query producer parity.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -220,7 +235,7 @@ child lifetime parity or visible native rendering.
  .../BedrockParticleLifetimeEvents.java        |   64 +
  .../appearance/BedrockParticlePending.java    |   44 +
  .../appearance/BedrockParticlePlayback.java   |  379 ++++++
- .../appearance/BedrockParticleQueries.java    |   39 +
+ .../appearance/BedrockParticleQueries.java    |   61 +
  .../BedrockParticleRenderTypes.java           |   93 ++
  .../appearance/BedrockParticleShape.java      |  165 +++
  .../appearance/BedrockParticleSpace.java      |   43 +
@@ -231,7 +246,7 @@ child lifetime parity or visible native rendering.
  .../appearance/BedrockPlayerAnimations.java   |   33 +
  .../appearance/BedrockPlayerControllers.java  |  217 ++++
  .../appearance/BedrockResourceLibrary.java    |  438 +++++++
- .../appearance/BedrockServerParticles.java    |   98 ++
+ .../appearance/BedrockServerParticles.java    |  102 ++
  .../appearance/BedrockServerResources.java    |   46 +
  .../appearance/BedrockServerSounds.java       |   69 ++
  .../bedrock/appearance/BedrockSoundBank.java  |  137 +++
@@ -339,7 +354,7 @@ child lifetime parity or visible native rendering.
  .../BedrockParticleInterpolationTest.java     |  164 +++
  .../BedrockParticleLifetimeTest.java          |  148 +++
  .../BedrockParticlePendingTest.java           |   62 +
- .../BedrockParticleQueriesTest.java           |  163 +++
+ .../BedrockParticleQueriesTest.java           |  260 ++++
  .../BedrockParticleRegistryTest.java          |  130 ++
  .../BedrockParticleRenderTypesTest.java       |   69 ++
  .../appearance/BedrockParticleShapeTest.java  |  164 +++
@@ -374,7 +389,7 @@ child lifetime parity or visible native rendering.
  .../render/BedrockPlayerModelTest.java        |  104 ++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 195 files changed, 23281 insertions(+), 15 deletions(-)
+ 195 files changed, 23404 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibility.java
@@ -8040,10 +8055,10 @@ index 0000000..c2db680
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueries.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueries.java
 new file mode 100644
-index 0000000..7263ab7
+index 0000000..826b710
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueries.java
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,61 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -8052,6 +8067,8 @@ index 0000000..7263ab7
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import net.minecraft.world.phys.Vec3;
++import net.minecraft.world.entity.Entity;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
 +import org.joml.Vector3f;
 +
 +import java.util.HashMap;
@@ -8062,6 +8079,26 @@ index 0000000..7263ab7
 +    private static final BedrockActorAnimation.Query ZERO = _ -> 0F;
 +
 +    private BedrockParticleQueries() {}
++
++    /** Refreshes common actor inputs without advancing the actor's animation or locator pose. */
++    public static Map<String, Object> actor(final Entity actor, final NativeActorMessage.Snapshot state,
++                                            final Map<String, ?> rendered) {
++        final Map<String, Object> queries = new HashMap<>(rendered);
++        queries.put("is_alive", actor.isAlive());
++        queries.put("is_on_ground", actor.onGround());
++        queries.put("is_in_water", actor.isInWater());
++        queries.put("ground_speed", groundSpeed(actor.getDeltaMovement()));
++        final Map<String, Object> properties = state == null ? Map.of() : state.properties();
++        queries.put("variant", state == null ? 0 : state.variant());
++        queries.put("mark_variant", state == null ? 0 : state.markVariant());
++        queries.put("property", (BedrockActorAnimation.Query) args -> args.isEmpty() ? 0F
++                : properties.getOrDefault(String.valueOf(args.getFirst()), 0F));
++        queries.put("has_property", (BedrockActorAnimation.Query) args -> !args.isEmpty()
++                && properties.containsKey(String.valueOf(args.getFirst())));
++        queries.put("spellcolor", state == null || state.spellColor() == null ? BedrockMolangColor.ZERO
++                : BedrockMolangColor.fromArgb(state.spellColor()));
++        return Map.copyOf(queries);
++    }
 +
 +    static Map<String, Object> sample(final BedrockParticleAttachment attachment, final Vector3f origin, final Vec3 camera) {
 +        final Map<String, Object> queries = new HashMap<>();
@@ -9589,10 +9626,10 @@ index 0000000..d302d89
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
 new file mode 100644
-index 0000000..ceb82a0
+index 0000000..8b9d1f6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,102 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9601,6 +9638,7 @@ index 0000000..ceb82a0
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
 +import io.netty.buffer.Unpooled;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.multiplayer.ClientLevel;
@@ -9611,6 +9649,7 @@ index 0000000..ceb82a0
 +import net.minecraft.world.entity.LivingEntity;
 +import net.minecraft.world.phys.Vec3;
 +import net.raphimc.viabedrock.api.model.NativeParticlePlaybackMessage;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
 +
 +import java.io.IOException;
@@ -9635,12 +9674,15 @@ index 0000000..ceb82a0
 +            final Entity actor = level.getEntity(message.actor().javaId());
 +            if (actor == null || !actor.getUUID().equals(message.actor().javaUuid()) || actor.isRemoved()) return;
 +            final Vec3 offset = position(message.effect().position());
++            final var owner = BedrockActorState.lifetime(actor.getUUID());
 +            origin = Vec3.ZERO;
 +            attachment = () -> {
 +                if (minecraft.level != level || actor.isRemoved() || level.getEntity(actor.getId()) != actor) return null;
++                final var current = BedrockActorState.state(actor.getUUID());
++                if (owner != null && (current == null || !owner.equals(current.lifetime()))) return null;
 +                final float partialTick = minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false);
 +                return new BedrockParticleAttachment(actor.getPosition(partialTick), actor.getYRot(partialTick), null,
-+                        actor.getInterpolatedBoundingBox(partialTick), queries(actor)).withOffset(offset);
++                        actor.getInterpolatedBoundingBox(partialTick), queries(actor, current)).withOffset(offset);
 +            };
 +        }
 +        try {
@@ -9660,11 +9702,10 @@ index 0000000..ceb82a0
 +        return new Vec3(position.x(), position.y(), position.z());
 +    }
 +
-+    private static Map<String, Object> queries(final Entity actor) {
-+        return Map.of("is_alive", actor.isAlive(), "is_on_ground", actor.onGround(), "is_in_water", actor.isInWater(),
-+                "ground_speed", BedrockParticleQueries.groundSpeed(actor.getDeltaMovement()), "is_sneaking", actor.isShiftKeyDown(),
++    private static Map<String, Object> queries(final Entity actor, final NativeActorMessage.Snapshot state) {
++        return BedrockParticleQueries.actor(actor, state, Map.of("is_sneaking", actor.isShiftKeyDown(),
 +                "is_riding", actor.isPassenger(), "is_swimming", actor.isSwimming(),
-+                "is_gliding", actor instanceof LivingEntity living && living.isFallFlying());
++                "is_gliding", actor instanceof LivingEntity living && living.isFallFlying()));
 +    }
 +
 +    private static void fallback(final NativeParticlePlaybackMessage message, final ClientLevel level) {
@@ -20794,17 +20835,22 @@ index 0000000..8759f93
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueriesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueriesTest.java
 new file mode 100644
-index 0000000..93fbee7
+index 0000000..a10e267
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueriesTest.java
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,260 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.google.gson.JsonArray;
 +import com.google.gson.JsonParser;
 +import net.minecraft.world.phys.Vec3;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.SharedConstants;
++import net.minecraft.server.Bootstrap;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
 +import org.joml.Vector3f;
 +import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.BeforeAll;
 +import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 +
 +import java.nio.file.Files;
@@ -20813,10 +20859,102 @@ index 0000000..93fbee7
 +import java.util.List;
 +import java.util.Map;
 +import java.util.Random;
++import java.util.Set;
++import java.util.UUID;
 +
 +import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
 +
 +final class BedrockParticleQueriesTest {
++    @BeforeAll
++    static void bootstrap() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void refreshesExistingParticlesFromActorChangesWithoutAnotherActorRender() throws Exception {
++        final var actor = mock(Entity.class);
++        when(actor.isAlive()).thenReturn(true);
++        when(actor.onGround()).thenReturn(true);
++        when(actor.isInWater()).thenReturn(true);
++        when(actor.getDeltaMovement()).thenReturn(new Vec3(.15, 0, 0));
++        final var first = snapshot(2, 3, 0xff204060, Map.of("growth", 4F, "enabled", true, "style", "wide"));
++        final Map<String, Object> rendered = Map.of("ground_speed", 99F, "is_in_water", false,
++                "variant", 99F, "mark_variant", 99F, "geometry_scale", 2F,
++                "property", (BedrockActorAnimation.Query) _ -> 99F, "spellcolor", BedrockMolangColor.ZERO);
++        final var document = BedrockParticleEffectTest.burst();
++        final var components = document.getAsJsonObject("particle_effect").getAsJsonObject("components");
++        components.add("minecraft:particle_initialization", JsonParser.parseString("{\"creation_expression\":\"v.local=7;\"}"));
++        components.add("minecraft:particle_appearance_billboard", JsonParser.parseString("""
++                {"size":["v.local+q.ground_speed+q.property('growth')+q.geometry_scale",
++                         "q.is_in_water+q.variant+q.mark_variant"]}
++                """));
++        components.add("minecraft:particle_appearance_tinting", JsonParser.parseString("""
++                {"color":["q.spellcolor.r","q.spellcolor.g","q.spellcolor.b","q.spellcolor.a"]}
++                """));
++        final var environment = new BedrockMolang();
++        final var emitter = BedrockParticleEffect.read(document).emitter(environment, new Random(1), Vec3.ZERO);
++        final var sampled = attachment(BedrockParticleQueries.actor(actor, first, rendered));
++        emitter.queryContext(sampled, Vec3.ZERO);
++        emitter.advance(0, 10, sampled, (x, y, z) -> List.of());
++        assertEquals(16, BedrockParticleEffectTest.sample(emitter).getFirst().width());
++        assertEquals(6, BedrockParticleEffectTest.sample(emitter).getFirst().height());
++        assertEquals(0xff204060, BedrockParticleEffectTest.sample(emitter).getFirst().color());
++        assertEquals(1, evaluate(environment, "q.has_property('growth')&&q.property('enabled')&&q.property('style')=='wide'"));
++        when(actor.isAlive()).thenReturn(false);
++        when(actor.onGround()).thenReturn(false);
++        when(actor.isInWater()).thenReturn(false);
++        when(actor.getDeltaMovement()).thenReturn(new Vec3(0, -.25, 0));
++        final var second = snapshot(4, 5, 0xff806040, Map.of("growth", 1F));
++        emitter.queryContext(attachment(BedrockParticleQueries.actor(actor, second, rendered)), Vec3.ZERO);
++        assertEquals(15, BedrockParticleEffectTest.sample(emitter).getFirst().width());
++        assertEquals(9, BedrockParticleEffectTest.sample(emitter).getFirst().height());
++        assertEquals(0xff806040, BedrockParticleEffectTest.sample(emitter).getFirst().color());
++        assertEquals(0, evaluate(environment, "q.is_alive+q.is_on_ground+q.has_property('enabled')+q.property('missing')"));
++        final var captured = new BedrockMolang();
++        captured.queries(BedrockParticleQueries.sample(sampled, new Vector3f(), Vec3.ZERO));
++        assertEquals(3, evaluate(captured, "q.ground_speed"));
++        assertEquals(4, evaluate(captured, "q.property('growth')"));
++        assertEquals(99F, rendered.get("ground_speed"));
++        assertThrows(UnsupportedOperationException.class, () -> sampled.queries().put("ground_speed", 0F));
++    }
++
++    @Test
++    void clearsStaleNativeMetadataWhenTheCurrentActorHasNoSnapshot() throws Exception {
++        final var actor = mock(Entity.class);
++        when(actor.getDeltaMovement()).thenReturn(Vec3.ZERO);
++        final var old = BedrockParticleQueries.actor(actor, snapshot(3, 4, 0xff123456, Map.of("growth", 7)), Map.of());
++        final var current = new BedrockMolang();
++        current.queries(BedrockParticleQueries.actor(actor, null, old));
++        assertEquals(0, evaluate(current, "q.property('growth')+q.has_property('growth')+q.variant+q.mark_variant"
++                + "+q.spellcolor.r+q.spellcolor.g+q.spellcolor.b+q.spellcolor.a"));
++        assertTrue(current.hasCompleteQueries());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_PARTICLE_ACTOR_QUERIES", matches = ".+")
++    void matchesNativeCallbacksAfterActorMotionAndWaterChangeWithoutRendering() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_PARTICLE_ACTOR_QUERIES")))).getAsJsonObject();
++        final var actor = mock(Entity.class);
++        for (final var element : fixture.getAsJsonArray("rows")) {
++            final var row = element.getAsJsonObject();
++            when(actor.getDeltaMovement()).thenReturn(vector(row.getAsJsonArray("motion")));
++            when(actor.isInWater()).thenReturn(row.get("water").getAsBoolean());
++            final var environment = new BedrockMolang();
++            environment.queries(BedrockParticleQueries.actor(actor, null, Map.of("ground_speed", 99F, "is_in_water", false)));
++            assertEquals(row.get("ground_speed").getAsFloat(), evaluate(environment, "q.ground_speed"));
++            assertEquals(row.get("is_in_water").getAsFloat(), evaluate(environment, "q.is_in_water"));
++        }
++        assertEquals(8, fixture.getAsJsonArray("rows").size());
++    }
++
++    private static NativeActorMessage.Snapshot snapshot(final int variant, final int markVariant,
++                                                       final Integer color, final Map<String, Object> properties) {
++        return new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), false, 1,
++                "test:actor", "", 1, Set.of(), variant, markVariant, color, properties);
++    }
++
 +    @Test
 +    void createsAnUnboundContextWithoutLosingPreEffectVariablesOrChangingTheActor() throws Exception {
 +        final var queries = List.of("ground_speed", "is_in_water", "anim_time", "delta_time", "frame_alpha",

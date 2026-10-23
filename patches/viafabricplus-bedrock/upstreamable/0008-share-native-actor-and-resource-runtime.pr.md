@@ -2170,3 +2170,36 @@ Licensed asset comparisons cover 115 base particle definitions, 108 versioned ov
 All 1,411 core classes match both packaged copies, and all 1,134 production client classes match the add-on.
 This checkpoint verifies CPU context boundaries and existing Java integration tests.
 Fresh live particle rendering, actor admission and query producers, complete child lifetimes, and native visible parity remain open.
+
+## Fresh common particle actor inputs
+
+Particle attachment sampling now refreshes common actor inputs from the current Java actor and transported native snapshot.
+The refreshed queries are `is_alive`, `is_on_ground`, `is_in_water`, `ground_speed`, `variant`, `mark_variant`, `property`, `has_property`, and `spellcolor`.
+Packet-driven particles receive native metadata that their previous eight-query map omitted.
+Player, custom-actor, and world-actor animation attachments use the same sampler.
+They preserve unrelated graph inputs and the existing locator pose without advancing the actor animation again.
+Each returned map retains its own immutable values, including typed native properties.
+An absent native snapshot clears retained properties, variants, and spell color.
+Server bindings reject changes to a captured native lifetime.
+Player bindings also reject a changed lifetime before actor removal, while preserving their existing retained-registry path.
+
+Eight controls execute the pinned native initialization gate `0x1421603e0` and context refresh `0x142159bd0` once.
+They then change motion and water components in place on the same bound actor.
+Original callbacks `0x14220ecd0` and `0x14220f040` read every changed value without another context refresh, actor animation, or render pass.
+The target and binary checksum are the same as the constructor controls above.
+Actor resolution, level and physical-component getters, variable access, and expression dispatch are supplied boundaries.
+Native property evaluation, live server behavior, and GPU drawing do not run in these controls.
+
+Eight query tests pass, including the new native comparison and two producer regressions.
+Existing particles change size and tint after new actor samples without another actor render in the Java fixture.
+The tests retain particle variables, graph inputs, earlier snapshots, immutable maps, and typed properties.
+They also remove stale metadata when no current native snapshot exists.
+
+Remaining render-derived queries still use their existing inputs.
+This change does not establish fresh locator animation, every native query producer, complete actor or child lifetimes, or native visible parity.
+
+Three private variants keep stale actor inputs, retain missing metadata, or discard unrelated graph inputs.
+Each fails its corresponding particle regression. The corrected sampler passes.
+All four builds pass 2,577 tests, with 167 optional skips and no failures or errors.
+The new native live-query comparison, retained particle fixtures, attachable comparisons, and Iris GPU regression run without skips.
+All 1,411 core classes match both packaged copies, and all 1,134 production client classes match the add-on.
