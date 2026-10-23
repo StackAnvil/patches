@@ -1,4 +1,4 @@
-From 7ea41915eb05e2ea2af7eabebb32b0b45a168eac Mon Sep 17 00:00:00 2001
+From 1e15f48d408ffac32ee6e72b4f790f85ce0f5cf6 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -499,6 +499,21 @@ network definitions retain ordinary naming after clearing an override; a later
 nonempty or whitespace value still replaces it. Fresh original name-producer
 controls cover 1,299 typed NBT/component/append cases. Regression tests cover
 network replacement and upper-pack precedence across primitive/object forms.
+
+Retain the current display-name component across omitted and malformed
+network updates. The native reader replaces it only for a valid StringTag
+value. A valid empty string clears the override and restores the ordinary
+constructor-owned description. Preserve this field when rebuilding the
+network definition instead of erasing it after an unrelated update.
+
+Fresh original 1.26.51.1 execution constructs a populated ItemData vector
+with 29 ordered updates for 13 actual ComponentItem definitions, resolves
+each through native ItemStack construction, and queries the real
+description/key methods. All 2,630 static callbacks complete without
+owned allocation or lock leaks. The six targeted tests match all 13
+definitions; both new checks fail before the fix and three deliberate
+regressions fail. Native pack/client precedence, complete ordinary-key
+providers, language ownership and screen parity remain separate gates.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   66 +-
@@ -530,7 +545,7 @@ network replacement and upper-pack precedence across primitive/object forms.
  .../container/player/InventoryContainer.java  |   87 +-
  .../player/InventorySubContainer.java         |    6 +
  .../container/player/OffhandContainer.java    |   50 +-
- .../definition/ItemDefinitions.java           |   57 +-
+ .../definition/ItemDefinitions.java           |   62 +-
  .../viabedrock/api/util/PacketFactory.java    |  187 ++-
  .../viabedrock/protocol/BedrockProtocol.java  |  122 +-
  .../protocol/data/BedrockMappingData.java     |  707 +++++---
@@ -570,7 +585,7 @@ network replacement and upper-pack precedence across primitive/object forms.
  .../block/EnchantmentContainerTest.java       |  120 ++
  .../container/block/LecternContainerTest.java |   84 +
  .../player/OffhandRequestSlotsTest.java       |   37 +
- .../definition/ItemDefinitionsTest.java       |  107 ++
+ .../definition/ItemDefinitionsTest.java       |  171 ++
  .../api/util/ContainerContentPacketTest.java  |   95 ++
  .../ComponentItemStackingPropertiesTest.java  |  173 ++
  .../model/ItemCookingPropertiesTest.java      |  201 +++
@@ -607,7 +622,7 @@ network replacement and upper-pack precedence across primitive/object forms.
  .../item/NetworkItemConstructionTest.java     |  165 ++
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 107 files changed, 15693 insertions(+), 984 deletions(-)
+ 107 files changed, 15762 insertions(+), 984 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionBackend.java
@@ -5367,7 +5382,7 @@ index 22ad60398..c10493db1 100644
              mobEquipment.write(Types.BYTE, (byte) 1); // slot
              mobEquipment.write(Types.BYTE, (byte) 0); // selected slot
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
-index 8a5a49326..3667f13a8 100644
+index 8a5a49326..d4657f48e 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
 @@ -19,6 +19,7 @@ package net.raphimc.viabedrock.api.resourcepack.definition;
@@ -5394,7 +5409,7 @@ index 8a5a49326..3667f13a8 100644
                      final ItemDefinition itemDefinition = new ItemDefinition(identifier);
                      if (item.has("components")) {
                          final JsonObject components = item.getAsJsonObject("components");
-@@ -57,20 +63,58 @@ public class ItemDefinitions {
+@@ -57,22 +63,65 @@ public class ItemDefinitions {
                                      cooldown.get("duration").getAsFloat());
                          }
                          if (components.has("minecraft:icon")) {
@@ -5455,8 +5470,15 @@ index 8a5a49326..3667f13a8 100644
 +
      public void addFromNetworkTag(final String identifier, final CompoundTag tag) {
          final ItemDefinition itemDefinition = new ItemDefinition(identifier);
++        final ItemDefinition previous = this.items.get(identifier);
++        if (previous != null) {
++            // The native display-name reader updates this component only for a StringTag value.
++            itemDefinition.displayNameComponent = previous.displayNameComponent;
++        }
          if (tag.get("components") instanceof CompoundTag components) {
-@@ -123,7 +167,8 @@ public class ItemDefinitions {
+             itemDefinition.cooldown = ItemCooldown.fromNetworkComponents(components);
+             itemDefinition.useModifiers = ItemUseModifiers.fromNetworkComponents(components);
+@@ -123,7 +172,8 @@ public class ItemDefinitions {
          }
  
          public String displayNameComponent() {
@@ -13618,26 +13640,90 @@ index 000000000..33741180e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitionsTest.java
 new file mode 100644
-index 000000000..6c13c0eb4
+index 000000000..a6f32200a
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitionsTest.java
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,171 @@
 +package net.raphimc.viabedrock.api.resourcepack.definition;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import com.viaversion.viaversion.libs.gson.JsonParser;
++import io.netty.buffer.Unpooled;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 +
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.HexFormat;
 +import java.util.List;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.mockito.Mockito.*;
 +
 +class ItemDefinitionsTest {
++
++    @Test
++    void omittedAndMalformedDisplayNameUpdatesRetainTheLastString() {
++        final ResourcePackStorage packs = mock(ResourcePackStorage.class);
++        when(packs.getPackStackBottomToTop()).thenReturn(List.of());
++        final ItemDefinitions definitions = new ItemDefinitions(packs);
++        final String identifier = "custom:probe";
++        final var name = new CompoundTag();
++        name.putString("value", "Initial");
++        final var components = new CompoundTag();
++        components.put("minecraft:display_name", name);
++        final var data = new CompoundTag();
++        data.put("components", components);
++        definitions.addFromNetworkTag(identifier, data);
++        definitions.addFromNetworkTag(identifier, new CompoundTag());
++        assertEquals("Initial", definitions.get(identifier).displayNameComponent());
++        name.putInt("value", 7);
++        definitions.addFromNetworkTag(identifier, data);
++        assertEquals("Initial", definitions.get(identifier).displayNameComponent());
++        components.putInt("minecraft:display_name", 7);
++        definitions.addFromNetworkTag(identifier, data);
++        assertEquals("Initial", definitions.get(identifier).displayNameComponent());
++        components.put("minecraft:display_name", name);
++        name.putString("value", "");
++        definitions.addFromNetworkTag(identifier, data);
++        assertNull(definitions.get(identifier).displayNameComponent());
++        name.putString("value", "Updated");
++        definitions.addFromNetworkTag(identifier, data);
++        assertEquals("Updated", definitions.get(identifier).displayNameComponent());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_ITEM_NAME_UPDATES", matches = ".+")
++    void nameUpdatesMatchNativeConstructedDefinitions() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_ITEM_NAME_UPDATES")))).getAsJsonObject();
++        final ResourcePackStorage packs = mock(ResourcePackStorage.class);
++        when(packs.getPackStackBottomToTop()).thenReturn(List.of());
++        int cases = 0;
++        for (final var element : fixture.getAsJsonArray("rows")) {
++            final var row = element.getAsJsonObject();
++            final var definitions = new ItemDefinitions(packs);
++            final String identifier = row.get("identifier").getAsString();
++            for (final var update : row.getAsJsonArray("updates")) {
++                final var buffer = Unpooled.wrappedBuffer(HexFormat.of().parseHex(update.getAsString()));
++                try {
++                    final var data = (CompoundTag) BedrockTypes.TAG_LE.read(buffer);
++                    assertFalse(buffer.isReadable());
++                    definitions.addFromNetworkTag(identifier, data);
++                } finally {
++                    buffer.release();
++                }
++            }
++            final String override = definitions.get(identifier).displayNameComponent();
++            assertEquals(row.get("key").getAsString(), override == null ? row.get("storedDescription").getAsString() : override, identifier);
++            cases++;
++        }
++        assertEquals(fixture.get("cases").getAsInt(), cases);
++    }
 +
 +    @Test
 +    void readsPinnedSpearAndLegacyIconShapes() {

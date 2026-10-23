@@ -620,3 +620,25 @@ This batch API does not activate authored cooking controls. Their backend remain
 The full four-project build passes 2,399 tests, with 213 optional skips and no failures or errors.
 All 104 core patches replay. Offline validation passes.
 All 1,392 core classes match the add-on's embedded core byte for byte.
+
+
+## Retain native display-name updates
+
+The network item-definition reader now preserves the last display name across omitted or wrongly typed updates.
+Only a valid `StringTag` value replaces it. A valid empty string clears the override and restores the ordinary description.
+
+Fresh native 1.26.51.1 controls construct 29 ordered updates for 13 actual component definitions.
+They execute the populated registry initializer, named stack construction, description getter `143fd2be0`, and key method `143fd6ac0`.
+All 13 results match the Java reader. All 2,630 static cleanup callbacks complete without owned allocation or lock leaks.
+Both new checks fail before the fix. All six focused tests pass without skips; three deliberate regressions fail by assertion.
+
+The controls supply authored ItemData through the real typed vector and registry lifecycle.
+They do not establish normal packet decoding, full native pack/client precedence, language selection, or screen parity.
+The [ordinary-name reference](../../../docs/native-cooking-actions.md#ordinary-name-component-updates) retains the scope and block-name research limits.
+
+
+The current four-project build passes 2,646 tests, with 163 optional skips and no failures or errors.
+All 104 core and 38 client patches replay. All six item-definition tests run without skips.
+The packaged reader passes the same six tests, with five production class origins verified against the current core JAR.
+All 1,419 core classes match both packaged copies. All 1,139 production client classes match the add-on.
+Tooling, offline tests, and patch metadata checks pass.

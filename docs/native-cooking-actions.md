@@ -983,3 +983,39 @@ All 1,419 core classes match the embedded add-on and proxy copies. All 1,139 cli
 Four focused packaged checks pass, including the registry's book-class dispatch.
 The packaged selector matches all 2,286 applicable native rows. Production class origins are verified against the current standalone core JAR.
 This checkpoint does not establish full cooking search or native screen and pixel parity.
+
+
+## Ordinary-name component updates
+
+The native display-name reader retains its current value when an update omits the component or supplies the wrong type.
+This also applies to missing or wrongly typed `value` fields. A valid empty string clears the override.
+A valid nonempty string replaces it, including whitespace. The native component getter falls back to its stored description for an empty override.
+
+Production now preserves that display-name field when it rebuilds a network item definition.
+Previously, unrelated or malformed updates discarded the last name. Both new regression tests fail before the fix and pass afterward.
+All six focused item-definition tests pass without skips. Three deliberate retention, type, and empty-string regressions fail by assertion.
+
+Fresh original-executable controls construct 29 ordered ItemData updates for 13 actual ComponentItem definitions.
+They use the native populated vector, registry initializer, named ItemStack constructor, description getter, and key method.
+The real getters match all 13 Java results. All 2,630 static cleanup callbacks complete without owned allocation or lock leaks.
+The controls use authored inputs. They do not establish normal packet decoding, native pack/client precedence, or complete language ownership.
+
+A separate native block probe queries all 1,379 constructed default states through the actual block-name getter.
+It records nine Legacy key families. In 140 cases, the result differs from the stored description plus `.name`.
+Examples include skulls, fences, planks, seagrass, elements, and brewing stands.
+All 2,628 static cleanup callbacks complete without owned allocation or lock leaks.
+These are defaults under the declared bootstrap, version, and Experiments control.
+Element names use an independent registry lookup that remains unresolved in this control. Its unknown results are not a universal name baseline.
+State-dependent keys, all ordinary-name providers, secondary labels, language ownership, and complete cooking search remain unfinished.
+
+
+The current four-project build passes 2,646 tests, with 163 optional skips and no failures or errors.
+All 104 core and 38 client patches replay. All six item-definition tests run without skips.
+The packaged reader passes the same six tests, with five production class origins verified against the current core JAR.
+All 1,419 core classes match both packaged copies. All 1,139 production client classes match the add-on.
+Tooling, offline tests, and patch metadata checks pass.
+
+
+Builtin override controls also distinguish wire runtime IDs from native internal item IDs.
+Passing an authored changed wire ID directly to the native stack constructor can select a different builtin item.
+That result cannot prove the requested definition's class or name. Complete packet identity translation remains an open producer boundary.
