@@ -222,3 +222,31 @@ The candidate remains private; production input delivery is unchanged.
 Complete native focus production and lifetime, hover callbacks, radio sibling state, device translation and full event propagation before admitting these mappings.
 The shared scene already retains focus identifiers, directional overrides and precedence fields; the client must consume their native semantics.
 These controls do not establish controller navigation, unchanged authored screens or native pixels.
+
+### Native focus ownership and hover production
+
+Original focus admission `14464fd50` executes in 16,384 cases.
+It acquires the control owner, publishes the manager, and rejects duplicate registration.
+The optional disabled-control component remains unidentified. Its disjoint type ID and presence are supplied inputs.
+
+Original focus construction `1444fd670`, default selection `14464a7d0` and indexed selection `144651290` execute in 3,840 default-selection cases.
+The native ranking uses a zero precedence floor and separate binary32 operations for `y * weight + x`.
+Equal scores retain registration order. Maximum-float scores do not select a control.
+Geometry, the manager weight, component IDs, owner state and history storage are supplied interfaces.
+
+Another 1,024 sequences execute 3,072 original directional-manager steps through `14464c7a0` on a four-control grid.
+They cover both registration orders, all initial selections, all three-step directional paths, and enabled or disabled wrapping.
+Original focus destruction `14450d050` runs after every case. Every focus-owned allocation completes its recorded free.
+Supplied managers and control owners remain outside that ledger.
+These controls do not establish arbitrary directional scoring, nonempty overrides, parent clipping, scrolling or selection listeners.
+
+Original hover delivery `144506500` now feeds focused dispatch and the original toggle pipeline in 144 sequences.
+All 720 hover calls and 720 dispatch calls execute original hover-state mutation, component callbacks, phase storage and toggle changes.
+Hover delivery produces flag `0x02` and honors the delegated-hover marker.
+Focused dispatch consumes the resulting flags instead of repeating pointer eligibility.
+Strong-owner balance passes. Queued weak-event retirement and complete manager lifetime remain outside these controls.
+
+A private Java candidate matches all new controls. Six wrong candidates fail behavioral assertions.
+The rejected variants ignore authored focus disabling, inherited eligibility, the zero precedence floor, binary32 ranking, wrapping or delegated hover.
+Production code remains unchanged. Verify the focus-selection listener, implicit hover bindings, radio siblings, device translation and full event propagation before scene admission.
+The [focus and hover notes](../../../docs/native-cooking-actions.md#native-focus-admission-and-hover-delivery) retain the integration limits.

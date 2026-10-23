@@ -1229,3 +1229,32 @@ Production input delivery remains unchanged.
 
 Native focus production, hover events, radio sibling state, device translation and event propagation remain required before complete scene admission.
 See the [toggle input contract](../patches/viafabricplus-bedrock/upstreamable/0029-present-authored-native-containers.pr.md#authored-toggle-input-contract) for original functions and supplied interfaces.
+
+## Native focus admission and hover delivery
+
+Original native focus admission now has 16,384 cases across all low-byte flags, focus settings, registration state and component presence.
+Admission retains the control owner, publishes the manager to its focus component, and prevents duplicate registration.
+The optional component that admits some disabled controls remains unidentified. Its type ID and presence are supplied inputs.
+
+Another 3,840 cases run original default selection after original focus construction and admission.
+Default ranking starts with a precedence floor of zero. It then compares `y * weight + x` through separate binary32 operations.
+Equal scores retain registration order. A score equal to `Float.MAX_VALUE` does not select a control.
+The manager weight, geometry and precedence are supplied fields.
+
+The original directional manager executes 1,024 three-step sequences on a four-control grid.
+These controls vary registration order, initial selection and wrapping. All 3,072 steps match a private Java grid model.
+Every native focus component completes its original destructor, and its allocation ledger is empty after each case.
+Supplied control owners and manager storage remain outside that allocation ledger.
+The grid model does not establish arbitrary directional scoring, authored overrides, parent clipping or scrolling.
+
+Original hover delivery now feeds focused dispatch and the original toggle handler in 144 sequences.
+These controls execute 720 hover calls and 720 dispatch calls.
+Hover delivery produces control flag `0x02` from eligible geometry and honors the delegated-hover marker.
+Focused dispatch then reads the resulting flags. It does not repeat the pointer-bounds test.
+The controls retain new-press activation for mouse/gamepad and new-release activation for touch.
+They check strong-owner balance but do not retire queued weak events or establish complete manager lifetime.
+
+A private Java candidate matches these admission, default, grid and hover/dispatch controls.
+Six wrong variants fail assertions, including double-precision ranking, missing wrapping and overwritten delegated hover.
+Production input delivery remains unchanged. The focus-selection listener, implicit hover bindings, radio siblings and device translation still require native verification.
+These controls do not establish unchanged authored screen acceptance or native pixels.
