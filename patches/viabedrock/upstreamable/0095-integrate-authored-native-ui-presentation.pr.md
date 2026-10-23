@@ -448,3 +448,44 @@ The final converter also retains all twenty component-description checks.
 A fresh ordinary BDS route passes all three cooking families and same-world reconnect.
 Both isolated launchers select the final add-on through the same installed integration instance.
 Normal cleanup stops the private display and all observed owned processes. This route does not inject name fixtures or establish native screen parity.
+
+## Descriptor-aware ordinary names
+
+Builtin definitions now retain name providers for 41 definitions across thirteen additional native methods.
+These cover buckets, dyes, written books, empty and filled maps, beds, balloons, banners, shields, medicine, glow sticks, sparklers, and boards.
+Providers use constructor descriptions and variants separately from stack metadata, runtime IDs, and later factory flags.
+The converter passes the actual descriptor metadata and unfiltered userdata to the registry.
+Explicit component construction still takes precedence. Removed runtime owners cannot retain builtin naming.
+
+Typed userdata reads preserve native distinctions between integers, other numeric tags, strings, absent values, and empty compounds.
+Book filtering follows field presence and the constructor variant. Bucket naming uses its definition variant rather than stack metadata.
+Map naming preserves exploration identities, signed map numbers, and the difference between absent and empty userdata.
+Color providers retain each method's native masks, unsigned conversions, extended colors, and invalid-value defaults.
+
+Original Bedrock 1.26.51.1 controls supply 10,906 composed results across all 41 actual registry receivers.
+The base context retains 10,640 results for forty definitions. A second initialized context supplies all 266 filled-map results.
+Both contexts query identical map input tuples and native methods. No expected key strings are authored for the composition.
+The second context runs the complete structure-identity CRT initializer before registry and key startup.
+That initialization corrects 66 cold-context map results. The other 200 map results remain unchanged.
+The base context completes 2,630 cleanup callbacks; the map context completes 2,662. Both retain zero tracked allocations and locks.
+The base control constructs, copies, and destroys 2,419 native userdata compounds. The map control constructs another 59 typed compounds.
+These controls supply descriptor transport and userdata boundaries. They do not execute complete native descriptors, network decoding, world ownership, or client asset loading.
+
+Another 9,089 bounded original-method controls cover typed tags, constructor variants, presence, and bit masks.
+Nine focused registry and provider tests pass without skips.
+Five deliberate regressions fail assertions: stack metadata as a bucket variant, numeric-tag coercion, absent/empty conflation, content-based filtered-title selection, and stale runtime ownership.
+
+The packaged converter passes all 8,282 applicable nonnegative descriptor cases with no exceptions or missing runtime owners.
+The previous package passes 1,010 and fails 7,272 under the same initialized fixture.
+The control supplies a protocol-2193 registry and an accepted language layer, then exercises the real NBT parser, name provider, converter, and serializer.
+It verifies ordinary item names, not final custom-name append composition or visible UI parity.
+All 557 fixed-name checks and twenty component-description checks also pass against the final package.
+
+The combined build passes 2,686 tests, with 163 optional skips and no failures or errors.
+All 105 core patches replay. All 1,432 compiled core classes match the standalone package after the four standard token replacements.
+Both embedded core copies match. All 1,143 client classes and the updated factory resource match the final artifacts.
+Block, potion, arrow, and compound providers, primary append composition, secondary labels, cooking query transport, and unchanged authored screens remain unfinished.
+
+A fresh ordinary BDS 1.26.51.1 run passes furnace, smoker, blast furnace, and same-world reconnect with the final add-on.
+Both isolated launchers select that package through the same installed integration instance.
+Normal cleanup stops all observed run-owned processes and the private display. This run does not inject descriptor fixtures or establish native screen parity.
