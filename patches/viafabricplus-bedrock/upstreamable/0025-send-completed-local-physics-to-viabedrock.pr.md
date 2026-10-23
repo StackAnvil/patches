@@ -1,5 +1,82 @@
 # Send local player prediction to core
 
+## Retained history sampler, October 23, 2026
+
+The private Java history port now implements retained sample selection and its surrounding state transitions.
+It keeps previous selected messages separate from the received deque and the latest message of each type.
+Selection preserves native timestamp comparisons, unsigned sequence ties, startup fallbacks, and the previous selected timestamp floor.
+The port also handles marker position requests, forced resume requests, completed sequences, and deque trimming.
+
+Fresh controls compare 1,936 frames across forty-four original native histories.
+They cover both timing profiles, head publication, empty histories, single messages, movement and motion, timestamp ties, regressions, and submillisecond gaps.
+Additional cases cross both signed and unsigned sequence boundaries.
+The same controls compare initialized-history reset, six forced pose requests, and forty-six marker position requests.
+Every frame compares target bytes, state-vector values, retained sequences, marker sequences, prior selections, completed sequence, resume state, and timing windows.
+Another 162 earlier sampling cases also match the Java port.
+
+A selected ending message with a nonzero ground byte applies the complete pose delta.
+The airborne branch uses the native whole-millisecond fraction and permits negative fractions in supplied early-time controls.
+Grounded application retains float subtraction and addition instead of directly copying the ending coordinates.
+Original reset `142888c50` clears history, prior selections, resume state, and statistics.
+It preserves the completed sequence, timing profile, configured delay, and shared sequence source.
+The supplied reset clock passes through the original performance-counter conversion.
+
+Four deliberately incorrect Java variants fail these comparisons.
+They ignore the ending ground byte, compare sequences as signed values, retain the resume request, or clear the completed sequence during reset.
+The original interpolation target publisher executes throughout these controls.
+Position requests and forced actor-proxy pose application remain observed boundaries.
+
+Actual receive clocks, complete factory admission, native system scheduling, actor pose application, and shape integration remain unfinished.
+The private port does not replace the production movement path yet.
+Both documented collider mismatches remain unresolved, and this checkpoint claims no new live trajectory.
+
+## Movement construction, timing, and Java port prototype, October 23, 2026
+
+Original base actor constructor `1419e3640` passes ninety interpolation construction controls.
+Its final sparse membership and generation checks preserve existing interpolation or call original constructor `141a94ba0`.
+The latter initializes all forty component bytes.
+The original receive-proxy allocation and cache initialization also execute.
+Actor-data, built-in-state, definition, and callback initialization remain supplied boundaries.
+A null level and empty definition strings do not establish complete derived actor construction or factory behavior.
+
+Original transfer routine `1408c71e0` passes another two hundred controls, including 128 prediction constructions.
+Without valid player membership, it preserves an existing prediction component or constructs one through original `1428888d0`.
+A nonzero source actor byte at `0x354` then sets prediction byte `0x80` and the qword at `0x88` to one.
+Valid player membership skips these writes; it does not itself remove an existing prediction component.
+Original particle-dispatcher pair writes and attribute callback reset also execute.
+Actor transfer and initialization helpers, registry discovery, and sparse insertion remain supplied boundaries.
+The actual initialization helper can determine membership, so this does not establish prediction admission for every Java actor class.
+
+Original statistics updater `147cae990` and consumer `142888de0` pass 186 timing comparisons across six long-lived histories.
+An independent model compares received intervals and all three old/target/current/step windows after updates.
+An instruction observer reads the resulting delay and sample-time calculation without replacing arithmetic or stopping execution.
+Normal timing uses the smoothed movement interval; the alternate profile uses the raw combined interval.
+A zero interval gives a zero scale; other intervals produce a scale clamped between one and eight.
+Effective delay cannot fall below its base delay.
+Each statistics step truncates the scaled float difference before adding the old integer value.
+Requested sample time also respects the previous selected message's timestamp.
+This floor is not the previous interpolated pose's timestamp.
+The controls include long gaps, changing intervals, and deliberately reordered timestamps.
+They supply clocks, startup interfaces, and a separate global statistics object.
+
+Private Java 25 prototypes now implement message construction, timing, retained interpolation, queued targets, and grounded adjustment.
+Timing matches all 186 native frames.
+Interpolation matches 432 packet targets, 512 ticks, 108 queue cases, 132 grounded adjustments, and twenty valid sample-target publications.
+History construction matches 192 packets, 4,704 retained-message comparisons, and both initial seed messages.
+The comparisons also check the auxiliary marker sequence queue.
+That queue uses virtual predicate offset `0x10`, distinct from pose availability at offset `0x08`.
+Move byte sixty-five and its copied motion marker control insertion.
+
+These prototypes remain private while runtime integration remains unfinished.
+The retained sampler section records the later independent comparisons of mixed and sequential sampling.
+Actual clock production, initialized-history transitions, factory admission, normal/replay phases, and full actor physics still require implementation and verification.
+This checkpoint changes no production runtime class and does not resolve either documented collider mismatch.
+The combined runtime baseline passes 2,640 tests, with 163 optional skips and no failures or errors.
+All 1,418 embedded core classes match across the add-on and proxy packages.
+The completed incoming NBT build supplies this baseline.
+Its archived reports, source trees, package hashes, and 1,139 production client classes match the combined branch.
+This validation does not claim a fresh Gradle build or live run.
+
 ## Packet history construction and vehicle intent writers, October 23, 2026
 
 Fresh controls execute the original history enqueue functions instead of stopping at their entry points.
