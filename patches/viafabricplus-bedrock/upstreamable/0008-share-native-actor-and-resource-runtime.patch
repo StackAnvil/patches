@@ -1,4 +1,4 @@
-From af28dd017351d2f89e59a06d0cc265a7d93bc754 Mon Sep 17 00:00:00 2001
+From 9326c8f46c11ddb82a123b37a31de9b631193179 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -160,6 +160,24 @@ the basis for entity-relative rotation after accepting a copied matrix.
 Keep the common operation in the actor transform helper so explicit
 bindings and ordinary bones use the same rule. Ordinary composition
 retains its position, rotation and scale order.
+
+Start each emitter with a fresh unbound query context before lifetime
+configuration and the first creation expression. Animation pre-effect
+variables survive, but captured actor queries and animation clocks do
+not. Detach missing-query tracking from the animation owner so an unbound
+creation expression cannot invalidate the owner's rendering context.
+Retain refreshed actor/count queries on loop restarts and reused children.
+
+Bedrock 1.26.51.1/build51061372/protocol2193, binary SHA-256
+537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7:
+original factory 14216ba90 through first creation dispatch in 142157210
+initializes actor and count-owner pointers to zero even with a dirty
+allocation. Eleven original scalar/count callbacks return zero against
+that captured context. Allocation, bounded CRT copies, mutex operations,
+resource lookup and the component callback are supplied boundaries.
+Random-variable registration is explicitly skipped. This proves the
+constructor query boundary, not JSON/Molang evaluation, actor admission,
+child lifetime parity or visible native rendering.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -180,7 +198,7 @@ retains its position, rotation and scale order.
  .../appearance/BedrockLevelSounds.java        |  164 +++
  .../bedrock/appearance/BedrockLimbSide.java   |   67 +
  .../appearance/BedrockMarketplaceAssets.java  |  330 +++++
- .../bedrock/appearance/BedrockMolang.java     |  331 +++++
+ .../bedrock/appearance/BedrockMolang.java     |  337 +++++
  .../appearance/BedrockMolangColor.java        |   40 +
  .../appearance/BedrockMolangVariables.java    |  108 ++
  .../appearance/BedrockNativeBlockUpdates.java |   72 ++
@@ -191,7 +209,7 @@ retains its position, rotation and scale order.
  .../appearance/BedrockParticleCounts.java     |   58 +
  .../appearance/BedrockParticleCurves.java     |  173 +++
  .../appearance/BedrockParticleDefinition.java |  261 ++++
- .../appearance/BedrockParticleEffect.java     |  869 +++++++++++++
+ .../appearance/BedrockParticleEffect.java     |  868 +++++++++++++
  .../appearance/BedrockParticleEvents.java     |  170 +++
  .../appearance/BedrockParticleFacing.java     |  151 +++
  .../appearance/BedrockParticleFrames.java     |   49 +
@@ -321,7 +339,7 @@ retains its position, rotation and scale order.
  .../BedrockParticleInterpolationTest.java     |  164 +++
  .../BedrockParticleLifetimeTest.java          |  148 +++
  .../BedrockParticlePendingTest.java           |   62 +
- .../BedrockParticleQueriesTest.java           |   99 ++
+ .../BedrockParticleQueriesTest.java           |  163 +++
  .../BedrockParticleRegistryTest.java          |  130 ++
  .../BedrockParticleRenderTypesTest.java       |   69 ++
  .../appearance/BedrockParticleShapeTest.java  |  164 +++
@@ -356,7 +374,7 @@ retains its position, rotation and scale order.
  .../render/BedrockPlayerModelTest.java        |  104 ++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 195 files changed, 23212 insertions(+), 15 deletions(-)
+ 195 files changed, 23281 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibility.java
@@ -3972,10 +3990,10 @@ index 0000000..b887250
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
 new file mode 100644
-index 0000000..b3f847c
+index 0000000..84a333c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
-@@ -0,0 +1,331 @@
+@@ -0,0 +1,337 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4103,6 +4121,12 @@ index 0000000..b3f847c
 +    }
 +
 +    void queries(final Map<String, ?> queries) { this.queries = queries; }
++
++    /** Starts an independent query context without discarding pre-effect variables. */
++    void resetQueries(final Map<String, ?> queries) {
++        this.queries(queries, 0, 0, 0);
++        this.missingQueries = new java.util.HashSet<>();
++    }
 +
 +    void addQueries(final Map<String, ?> queries) {
 +        final Map<String, Object> merged = new HashMap<>(this.queries);
@@ -5612,10 +5636,10 @@ index 0000000..bebb9e5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
 new file mode 100644
-index 0000000..298dc36
+index 0000000..c2a9263
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
-@@ -0,0 +1,869 @@
+@@ -0,0 +1,868 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5786,8 +5810,7 @@ index 0000000..298dc36
 +                        final BedrockParticleBlocks.World world, final Map<String, Object> countQueries) {
 +            this.world = world;
 +            this.countQueries = Map.copyOf(countQueries);
-+            environment.addQueries(BedrockParticleCounts.UNBOUND);
-+            environment.addQueries(Map.of("spellcolor", BedrockMolangColor.ZERO));
++            environment.resetQueries(BedrockParticleQueries.sample(null, new Vector3f(), net.minecraft.world.phys.Vec3.ZERO));
 +            this.environment = environment;
 +            this.random = random;
 +            this.baseOrigin = transform.origin();
@@ -16322,7 +16345,7 @@ index 0000000..fec4182
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmitterEventsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmitterEventsTest.java
 new file mode 100644
-index 0000000..c1f7f37
+index 0000000..9967f68
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmitterEventsTest.java
 @@ -0,0 +1,181 @@
@@ -16392,12 +16415,12 @@ index 0000000..c1f7f37
 +            definition.add("events", graph);
 +            final List<Integer> observed = new ArrayList<>();
 +            final var environment = new BedrockMolang();
++            final var base = vector(row, "base");
++            final var emitter = BedrockParticleEffect.read(document).emitter(environment, new Random(4), new Vec3(base.x, base.y, base.z));
 +            environment.queries(Map.of("trace", (BedrockActorAnimation.Query) arguments -> {
 +                observed.add(((Number) arguments.getFirst()).intValue());
 +                return 0;
 +            }), 0, 0, 0);
-+            final var base = vector(row, "base");
-+            final var emitter = BedrockParticleEffect.read(document).emitter(environment, new Random(4), new Vec3(base.x, base.y, base.z));
 +            final List<BedrockParticleEvents.Action> emitterActions = new java.util.ArrayList<>();
 +            emitter.dispatcher(emitterActions::add);
 +            for (final var update : row.getAsJsonArray("steps")) {
@@ -17792,7 +17815,7 @@ index 0000000..61d128e
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAgingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAgingTest.java
 new file mode 100644
-index 0000000..a9c2713
+index 0000000..70d7c4b
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAgingTest.java
 @@ -0,0 +1,118 @@
@@ -17848,6 +17871,7 @@ index 0000000..a9c2713
 +            final List<Callback> observed = new ArrayList<>();
 +            final int[] born = {0};
 +            final var environment = new BedrockMolang();
++            final var emitter = BedrockParticleEffect.read(document).emitter(environment, new Random(1), Vec3.ZERO);
 +            environment.queries(Map.of(
 +                    "birth_position", (BedrockActorAnimation.Query) _ -> born[0] + 1,
 +                    "born", (BedrockActorAnimation.Query) _ -> { observed.add(new Callback("birth", 0)); return ++born[0]; },
@@ -17856,7 +17880,6 @@ index 0000000..a9c2713
 +                        observed.add(new Callback("expiration", ((Number) args.getFirst()).floatValue()));
 +                        return config.get("expire").getAsBoolean() ? 1 : 0;
 +                    }), 0, 0, 0);
-+            final var emitter = BedrockParticleEffect.read(document).emitter(environment, new Random(1), Vec3.ZERO);
 +            for (final var item : row.getAsJsonArray("steps")) {
 +                final var step = item.getAsJsonObject();
 +                observed.clear();
@@ -18382,7 +18405,7 @@ index 0000000..bc368c4
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCountsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCountsTest.java
 new file mode 100644
-index 0000000..ec88b01
+index 0000000..369e649
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCountsTest.java
 @@ -0,0 +1,216 @@
@@ -18499,7 +18522,7 @@ index 0000000..ec88b01
 +        final var document = BedrockParticleEffectTest.burst();
 +        final var components = document.getAsJsonObject("particle_effect").getAsJsonObject("components");
 +        components.add("minecraft:emitter_initialization", JsonParser.parseString("""
-+                {"creation_expression":"v.prior=q.effect_emitter_count;v.actor=q.scale;"}
++                {"creation_expression":"v.prior=q.effect_emitter_count;v.actor=q.ground_speed;"}
 +                """));
 +        components.add("minecraft:particle_appearance_billboard", JsonParser.parseString("""
 +                {"size":["q.effect_particle_count", "q.total_emitter_count"]}
@@ -18507,11 +18530,11 @@ index 0000000..ec88b01
 +        final var counts = new BedrockParticleCounts();
 +        counts.created("test:burst");
 +        final var environment = new BedrockMolang();
-+        environment.queries(Map.of("scale", 7F));
++        environment.queries(Map.of("ground_speed", 7F));
 +        final var emitter = BedrockParticleEffect.read(document).emitter(environment, new Random(1),
 +                BedrockParticleAttachment.Matrix.IDENTITY, null, counts.queries("test:burst"));
 +        assertEquals(0, evaluate(environment, "v.prior"));
-+        assertEquals(7, evaluate(environment, "v.actor"));
++        assertEquals(0, evaluate(environment, "v.actor"));
 +        counts.created("test:burst");
 +        emitter.queryContext(null, Vec3.ZERO);
 +        emitter.initialize(program("v.registered=q.effect_emitter_count;"));
@@ -18926,7 +18949,7 @@ index 0000000..93eb9f7
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDispatchTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDispatchTest.java
 new file mode 100644
-index 0000000..2701ccd
+index 0000000..778d29f
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDispatchTest.java
 @@ -0,0 +1,101 @@
@@ -18971,11 +18994,6 @@ index 0000000..2701ccd
 +                if (step.has("child_initialization")) expected.add(1);
 +                if (step.has("source_expression")) expected.add(2);
 +            }
-+            source.queries(Map.of("trace", (BedrockActorAnimation.Query) _ -> {
-+                assertEquals(expected.contains(1) ? 7 : 0, childEnvironment.evaluate(initialized, 0));
-+                actual.add(2);
-+                return 0;
-+            }));
 +            final var parentDocument = BedrockParticleEffectTest.burst();
 +            final var definition = parentDocument.getAsJsonObject("particle_effect");
 +            definition.add("events", JsonParser.parseString("""
@@ -18988,6 +19006,11 @@ index 0000000..2701ccd
 +            components.getAsJsonObject("minecraft:emitter_rate_instant").addProperty("num_particles", 0);
 +            components.add("minecraft:emitter_lifetime_events", JsonParser.parseString("{\"creation_event\":\"run\"}"));
 +            final var parent = BedrockParticleEffect.read(parentDocument).emitter(source, new Random(1), Vec3.ZERO);
++            source.queries(Map.of("trace", (BedrockActorAnimation.Query) _ -> {
++                assertEquals(expected.contains(1) ? 7 : 0, childEnvironment.evaluate(initialized, 0));
++                actual.add(2);
++                return 0;
++            }));
 +            final String binding = row.get("binding").getAsString();
 +            final BedrockParticleAttachment attachment = binding.equals("none") ? null : binding.equals("actor")
 +                    ? new BedrockParticleAttachment(Vec3.ZERO, 180, null, null, Map.of())
@@ -19033,7 +19056,7 @@ index 0000000..2701ccd
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
 new file mode 100644
-index 0000000..03382cb
+index 0000000..edce939
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
 @@ -0,0 +1,676 @@
@@ -19540,12 +19563,12 @@ index 0000000..03382cb
 +                {"creation_expression":"v.phase=0;", "per_render_expression":"v.phase=v.phase+1;"}
 +                """));
 +        components.add("minecraft:particle_appearance_billboard", json("""
-+                {"size":["v.phase+q.scale",0.25],"facing_camera_mode":"rotate_xyz"}
++                {"size":["v.phase+q.ground_speed",0.25],"facing_camera_mode":"rotate_xyz"}
 +                """));
 +        final var environment = new BedrockMolang();
 +        environment.variable("phase", 9);
-+        environment.queries(Map.of("scale", 2), 0, 0, 0);
 +        final var emitter = BedrockParticleEffect.read(document).emitter(environment.copy(), new Random(1), Vec3.ZERO);
++        emitter.queryContext(new BedrockParticleAttachment(Vec3.ZERO, 180, null, null, Map.of("ground_speed", 2F)), Vec3.ZERO);
 +        emitter.advance(0, 10, null, (x, y, z) -> List.of());
 +        final var first = BedrockParticleEffectTest.sample(emitter);
 +        assertEquals(2, first.size());
@@ -20549,7 +20572,7 @@ index 0000000..2bf35e1
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetimeTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetimeTest.java
 new file mode 100644
-index 0000000..6db31b3
+index 0000000..b348f55
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetimeTest.java
 @@ -0,0 +1,148 @@
@@ -20605,9 +20628,9 @@ index 0000000..6db31b3
 +            // The native probe supplies the creation callback and its zero initial counter.
 +            environment.variable("creations", 0);
 +            final int[] births = {0};
-+            environment.queries(java.util.Map.of("birth", (BedrockActorAnimation.Query) _ -> ++births[0]), 0, 0, 0);
 +            components.add("minecraft:particle_initialization", JsonParser.parseString("{\"creation_expression\":\"q.birth();\"}"));
 +            final var emitter = BedrockParticleEffect.read(document).emitter(environment, new Random(1), Vec3.ZERO);
++            environment.queries(java.util.Map.of("birth", (BedrockActorAnimation.Query) _ -> ++births[0]), 0, 0, 0);
 +            int creations = 1;
 +            for (final var step : row.getAsJsonArray("steps")) {
 +                final var expected = step.getAsJsonObject();
@@ -20771,10 +20794,10 @@ index 0000000..8759f93
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueriesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueriesTest.java
 new file mode 100644
-index 0000000..e64e910
+index 0000000..93fbee7
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueriesTest.java
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,163 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.google.gson.JsonArray;
@@ -20794,6 +20817,70 @@ index 0000000..e64e910
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class BedrockParticleQueriesTest {
++    @Test
++    void createsAnUnboundContextWithoutLosingPreEffectVariablesOrChangingTheActor() throws Exception {
++        final var queries = List.of("ground_speed", "is_in_water", "anim_time", "delta_time", "frame_alpha",
++                "life_time", "distance_from_camera", "effect_emitter_count", "effect_particle_count",
++                "total_emitter_count", "total_particle_count");
++        final Map<String, Object> actorQueries = new HashMap<>();
++        queries.forEach(name -> actorQueries.put(name, 7F));
++        final int[] propertyCalls = {0};
++        actorQueries.put("property", (BedrockActorAnimation.Query) _ -> { propertyCalls[0]++; return 9F; });
++        final var actor = new BedrockMolang();
++        actor.queries(actorQueries, 11, 12, 13);
++        evaluate(actor, "v.parameter=q.ground_speed+q.property('growth');");
++        final var captured = actor.copy();
++        final var document = BedrockParticleEffectTest.burst();
++        final var components = document.getAsJsonObject("particle_effect").getAsJsonObject("components");
++        final var initialization = new com.google.gson.JsonObject();
++        initialization.addProperty("creation_expression", String.join(";", queries.stream()
++                .map(name -> "v." + name + "=q." + name).toList()) + ";v.property=q.property('growth');");
++        components.add("minecraft:emitter_initialization", initialization);
++        components.add("minecraft:emitter_lifetime_once", JsonParser.parseString("""
++                {"active_time":"v.duration=q.ground_speed+q.anim_time+q.delta_time;return v.parameter;"}
++                """));
++        final var emitter = BedrockParticleEffect.read(document).emitter(captured, new Random(1), new Vec3(3, 4, 12));
++        for (final String query : queries) assertEquals(0, evaluate(captured, "v." + query), query);
++        assertEquals(0, evaluate(captured, "v.duration+v.property"));
++        assertEquals(16, evaluate(captured, "v.parameter"));
++        assertEquals(1, propertyCalls[0]);
++        assertFalse(captured.hasCompleteQueries());
++        assertTrue(actor.hasCompleteQueries());
++        assertEquals(11, evaluate(actor, "q.anim_time"));
++        assertEquals(7, evaluate(actor, "q.ground_speed"));
++        emitter.queryContext(attachment(actorQueries), Vec3.ZERO);
++        emitter.initialize(BedrockMolang.Program.parse(new com.google.gson.JsonPrimitive(
++                "v.initialized=v.parameter+q.ground_speed+q.property('growth');"), 0));
++        assertEquals(32, evaluate(captured, "v.initialized"));
++        assertEquals(2, propertyCalls[0]);
++    }
++
++    @Test
++    void keepsRefreshedQueriesAndVariablesWhenAnEmitterRestarts() throws Exception {
++        final var document = BedrockParticleEffectTest.burst();
++        final var components = document.getAsJsonObject("particle_effect").getAsJsonObject("components");
++        components.remove("minecraft:emitter_lifetime_once");
++        components.add("minecraft:emitter_lifetime_looping", JsonParser.parseString("{\"active_time\":0.05,\"sleep_time\":0}"));
++        components.add("minecraft:emitter_initialization", JsonParser.parseString("""
++                {"creation_expression":"v.creations=(v.creations??0)+1;v.speed=q.ground_speed;v.generic=q.anim_time+q.delta_time+q.life_time;"}
++                """));
++        final var environment = new BedrockMolang();
++        environment.variable("parameter", 8);
++        environment.queries(Map.of("ground_speed", 99F), 91, 92, 93);
++        final var emitter = BedrockParticleEffect.read(document).emitter(environment, new Random(1), Vec3.ZERO);
++        assertEquals(1, evaluate(environment, "v.creations"));
++        assertEquals(0, evaluate(environment, "v.speed+v.generic"));
++        final var actor = attachment(Map.of("ground_speed", 4F));
++        emitter.queryContext(actor, Vec3.ZERO);
++        emitter.advance(0, 0, actor, (x, y, z) -> List.of());
++        emitter.advance(50_000_001, 0, actor, (x, y, z) -> List.of());
++        assertEquals(2, evaluate(environment, "v.creations"));
++        assertEquals(4, evaluate(environment, "v.speed"));
++        assertEquals(0, evaluate(environment, "v.generic"));
++        assertEquals(8, evaluate(environment, "v.parameter"));
++        assertTrue(emitter.alive());
++    }
++
 +    @Test
 +    @EnabledIfEnvironmentVariable(named = "STACKANVIL_PARTICLE_REFERENCE", matches = ".+")
 +    void matchesNativeActorQueriesCameraDistanceAndSeparateClocks() throws Exception {

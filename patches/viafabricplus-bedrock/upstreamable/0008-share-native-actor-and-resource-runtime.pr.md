@@ -2136,3 +2136,37 @@ The equipment patch records the native binding controls and their boundaries.
 All four builds pass 2,522 tests, with 212 optional skips and no failures or errors.
 The native binding fixture, native slot fixture, and Iris GPU regression run without skips.
 All 1,410 core classes match both packaged copies. All 1,134 production client classes match the add-on.
+
+## Particle creation query context
+
+A new emitter now starts with an unbound query context before lifetime configuration and its first creation expression.
+Animation pre-effect variables survive. Captured actor queries and animation clocks do not.
+Previously, animation roots retained actor queries until their first context refresh, while event children started with fresh queries.
+Missing-query tracking now belongs to the new emitter, so unbound creation cannot invalidate its animation owner's query coverage.
+Later context refreshes, child initialization, loop restarts, and reused emitters keep their existing query and variable behavior.
+
+The pinned Bedrock 1.26.51.1 executable initializes the actor and count-owner pointers to zero before first creation.
+The probe runs original factory `0x14216ba90` through first creation dispatch in `0x142157210`, starting with an allocation filled with `0xa5`.
+The supplied transform has translation `(3, 4, 12)`, and the manager camera is `(-1, 8, 10)`.
+Eleven original scalar and count callbacks return zero against that captured context.
+They cover actor speed and water state, generic animation clocks, camera distance, and all four particle counts.
+The binary SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Allocation, bounded CRT copies, mutex operations, resource lookup, and the component callback are supplied boundaries.
+Random-variable registration is explicitly skipped.
+This verifies the constructor query boundary. It does not execute native JSON/Molang evaluation, actor admission, or visible rendering.
+
+Two regressions cover unbound construction, lifetime expressions, pre-effect variables, owner query coverage, refreshed initialization, and loop restarts.
+Existing schedule controls install their synthetic tracing queries after construction.
+Their callbacks observe scheduling and dispatch rather than testing actor-query inheritance.
+Private licensed asset comparisons use files from the checksum-verified versioned archive, with unchanged decoded particle expectations and native receipts.
+
+Both new regressions fail against the previous implementation and pass after the correction.
+Two deliberate variants retain shared missing-query tracking or reset refreshed queries on every loop restart.
+Each fails its corresponding regression. The restored implementation passes.
+
+The combined four-project build passes 2,574 tests, with 167 optional skips and no failures or errors.
+The retained native particle fixtures, native attachable comparisons, and Iris GPU regression run without skips.
+Licensed asset comparisons cover 115 base particle definitions, 108 versioned overlays, and real drip sound resolution and decoding.
+All 1,411 core classes match both packaged copies, and all 1,134 production client classes match the add-on.
+This checkpoint verifies CPU context boundaries and existing Java integration tests.
+Fresh live particle rendering, actor admission and query producers, complete child lifetimes, and native visible parity remain open.
