@@ -2203,3 +2203,48 @@ Each fails its corresponding particle regression. The corrected sampler passes.
 All four builds pass 2,577 tests, with 167 optional skips and no failures or errors.
 The new native live-query comparison, retained particle fixtures, attachable comparisons, and Iris GPU regression run without skips.
 All 1,411 core classes match both packaged copies, and all 1,134 production client classes match the add-on.
+
+## Manual child ownership and retirement
+
+Manual child handles now belong to their parent emitter until that parent retires.
+A registered child still receives initialization after its emission lifetime ends.
+A retired child leaves an initialized handle, so later requests cannot create a replacement or adopt another emitter in its registry slot.
+Failed initial creation remains retryable.
+Weak references keep those cached handles from retaining retired child runtimes.
+
+Parent retirement expires its valid manual children and preserves their existing particles until natural death.
+Grandchildren expire when their own parent retires, rather than when an ancestor first expires.
+Registry removal and count updates precede retirement callbacks.
+The manager retains its single traversal, so an earlier child that expires during later retirement can remain until the next batch.
+Expiry callbacks retain the native ordering before emission closes.
+Full-manager shutdown keeps its separate clear path and does not dispatch these retirement events.
+
+Child construction also accepts automatic rate targets.
+Their native manual-capacity slot returns zero, while the emitter remains available for ordinary updates.
+The previous admission check rejected those targets before construction.
+
+Forty-six controls use the pinned Bedrock 1.26.51.1 executable and checksum recorded above.
+They cover two manual request kinds, repeated requests, initial factory failure, registered expiry, stale generations, invalid slots, absent arrays, null children, and shutdown.
+Original leaf dispatcher `0x142164cb0`, weak resource lookup `0x142158740`, force expiry `0x14215cc60`/`0x142158940`, and manual emission `0x142160c20` execute.
+The controls also execute original capacity getters `0x1462a4d10` with literal four and `0x140076c20` with zero.
+Native instant and steady rate tables use the zero manual-capacity getter.
+
+Parent destructor `0x142170320` executes through its child retirement loop, stopping before cache/resource cleanup at `0x1421703c2`.
+Cache entries, generational handles, components, and emitter memory are supplied inputs.
+Factory returns, initialization callbacks, context refresh, birth allocation, and source expressions are supplied boundaries.
+The controlled expiry callback observes the native flag and tail-calls original manual emission.
+The existing manager instructions decrement the effect count and retire the slot before invoking destruction.
+These controls do not execute the native JSON/Molang VM, actual particle allocation, complete destruction, live server behavior, or pixels.
+
+Nineteen focused tests pass, including the retained manager/count/dispatch schedules and all 46 new native comparisons.
+The production ownership and emitter tests cover stale handles, independent owners, failed creation, rollback identity, automatic targets, particle draining, and grandchild retirement.
+Four private variants recreate stale handles, omit child expiry, close emission before callbacks, or update counts after callbacks.
+Each fails the relevant regressions. The restored implementation passes.
+
+Complete native registry producers, actor removal lifetimes, graph/resource limits, and live particle rendering remain open.
+The broader five-area production goal remains active.
+
+All four builds pass 2,583 tests, with 167 optional skips and no failures or errors.
+The child lifetime comparisons, retained particle fixtures, attachable comparisons, and Iris GPU regression run without skips.
+All 1,411 core classes match both packaged copies, and all 1,136 production client classes match the add-on.
+Reentrant emitter allocation during native destruction remains unverified.
