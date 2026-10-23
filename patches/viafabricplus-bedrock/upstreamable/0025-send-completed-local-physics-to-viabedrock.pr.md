@@ -1,5 +1,42 @@
 # Send local player prediction to core
 
+## Actor collision refresh inputs, October 23, 2026
+
+Fresh native controls now distinguish the refresh sources from the current adapter approximation.
+The production adapter still uses a changed actor position or a predicted-actor flag to select the current Java box.
+Two private probes against that production class contradict the original native refresh results.
+A moved actor without an eligible source incorrectly replaces the retained box.
+An active interpolation target with an unchanged current position incorrectly retains the old box.
+These probes establish component-boundary mismatches, without claiming a live collision trajectory.
+
+The original refresh kernel `1482d8e10` passes 256 fresh instruction controls from the pinned Bedrock 1.26.51.1 executable.
+Eligible prediction history takes priority and selects its latest ring entry.
+An active movement interpolator supplies the fallback target.
+All three interpolation counters use integer-bit zero checks, including the third counter.
+A missing source retains the existing shape.
+Available shape and origin-offset components rebuild bounds with native float arithmetic.
+Missing shape or origin-offset components preserve the retained bounds.
+
+The fixture supplies valid cached ECS stores, history positions through a virtual getter, and the global history guard result.
+The original history ring selection, source priority, activation checks, and box reconstruction execute without substitution.
+Global guard semantics, component creation, and complete source lifetimes remain outside these controls.
+
+The original input callback `1431f0530` also passes 140 controls.
+It captures the current movement interpolator only with a position counter of at least three and a matching available input frame.
+Its original virtual method `14328cfa0` copies all thirty-eight component bytes into the input snapshot and sets the presence flag.
+Other snapshot bytes remain unchanged.
+This callback captures current interpolation state into history; it does not restore interpolation from history.
+
+The original queued-target callback `1431ee220` passes 108 controls.
+It either applies target coordinates and rotation with new counters, or defers the target under its position-active flag.
+The fixture excludes optional marker removal through an explicitly absent marker store.
+Complete ECS traversal, interpolation ticks, and native phase ordering remain unverified.
+
+The next production change must retain and restore the actual interpolation component and wire both refresh sources.
+The current Java position and bounding box cannot substitute for those inputs.
+Native target producers, frame capture, replay ordering, and actor lifetime checks must agree before replacing the approximation.
+No production refresh fix or new whole-package runtime result is claimed by this research section.
+
 ## Food use during historical replay, October 23, 2026
 
 A controlled BDS fixture now starts with hunger four and sixteen apples.
