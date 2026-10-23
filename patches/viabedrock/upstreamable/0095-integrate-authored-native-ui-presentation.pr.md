@@ -557,3 +557,30 @@ Both embedded core copies match. All 1,144 client classes and both changed data 
 The four block oracle tests remain private and run against the final package.
 A fresh ordinary BDS smoke check covers all three cooking families and same-world reconnect.
 This smoke check does not inject authored block-name controls or establish native screen parity.
+
+## World version ownership for potion names
+
+Potion and arrow providers remain unimplemented. Their version source now has a bounded native control.
+The target remains Bedrock 1.26.51.1, build 51061372, protocol 2193, with executable SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+
+The native identity string names `LegacyClientNetworkHandler::handle(..., StartGamePacket)` at `1413323c0`.
+Its copy call at `141332536` takes level settings from packet offset `30`.
+The original settings copy at `1407f5740` copies the version member at offset `220` through `141e20310`.
+The resulting local supplies the fifth argument of the client configure call at `1413340ab`.
+The actual client constructor installs vtable `14e775c50`, whose configure slot is `18`.
+The earlier `98` offset used the adjacent table's start and did not establish the caller.
+Native schema registration also binds the named Base Game Version field to that settings member.
+
+Thirty-six controls execute the complete native string parser and comparator, followed by original local-copy and virtual-dispatch instructions.
+Inputs include partial versions, prerelease and build suffixes, wildcard, `beta`, malformed strings, whitespace and 16-bit component boundaries.
+Native local and registered static cleanup leave no tracked allocations or locks after the parser control.
+Reusing the existing loose session conversion disagrees on eighteen inputs. A fixed client-build version disagrees on twenty-four.
+For example, native parsing removes a valid prerelease suffix before these comparisons and rejects a fourth numeric component.
+These results reject the preserved candidate's direct use of the existing session version. Production integration needs native parsing semantics first.
+
+The caller control supplies packet storage, frame storage, client and level holders, and the module allocation.
+It executes the settings copy only through its version member, with declared boundaries for unrelated typed members.
+It executes the constructor's vptr store and observes the configure entry, rather than running either complete function.
+The parser uses the established allocator, CRT, OS and TLS hosting. The CFG dispatcher is also a declared boundary.
+These checks do not run the packet wire decoder, complete registry initialization, game session lifetime, authored screens or visible pixels.
+The earlier 2,844 potion key/I18n cases remain supplied-context evidence.

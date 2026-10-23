@@ -1148,3 +1148,18 @@ The final package matches all 78 results after parsing the supplied raw language
 See the [append evidence](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#ordinary-name-append-composition) for mutation controls and scope.
 
 Unmodeled ordinary providers, secondary labels, cooking query transport, and unchanged authored-screen acceptance remain open.
+
+## Potion version ownership
+
+Potion naming must use the world version received through Start Game.
+The original native handler copies that version from the packet's level settings and supplies it to the client module's configure call.
+Thirty-six native parser, comparison, copy and dispatch controls establish this bounded path.
+The parser control completes native local and static cleanup without tracked allocations or held locks.
+
+The existing loose session conversion cannot supply the potion provider unchanged: it disagrees with native comparisons on eighteen inputs.
+The differences include prerelease suffixes, malformed versions and values beyond the native 16-bit component range.
+A fixed client-build version also fails older world contexts.
+Potion and arrow providers remain unimplemented while native parsing is integrated.
+
+These controls use supplied packet storage and declared hosting boundaries. They do not execute the wire decoder or complete client startup.
+See the [native version evidence](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#world-version-ownership-for-potion-names) for the caller, offsets and limits.
