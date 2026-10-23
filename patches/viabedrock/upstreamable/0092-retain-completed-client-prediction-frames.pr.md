@@ -1699,7 +1699,7 @@ These limits prevent a claim of complete native collision or trajectory parity.
 The [client source validation](../../viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md#combined-source-validation) records the combined build and fresh delayed sessions.
 Both recorded selector counterexamples now pass their registered client regressions.
 The live routes check collider refreshes against independent float calculations and retain valid mounted input bindings.
-Ordinary `MOVE_PLAYER` source production and the remaining native component and simulation phases remain unfinished.
+Normal `MOVE_PLAYER` source production and the remaining native component and simulation phases remain unfinished.
 
 The source publisher waits until its actor snapshot is available before it emits the first source command.
 When it publishes native removal, it clears the cached source and dimension publications.
@@ -1716,4 +1716,38 @@ The accepted cases reach either the player-mode effect or the riding rotation, h
 The ordinary branch also computes motion from the received position and previous native position before its mode effect.
 These checks supply virtual queries, packet admission, actor lookup, diagnostics, and downstream effects.
 They establish callback routing, rather than complete player movement or collider-source behavior.
-Player-mode effects, riding pose ownership, and source integration remain unfinished.
+The composed controls below execute the reset effects. Normal source admission and riding pose ownership remain unfinished.
+
+## Remote player reset sources
+
+Remote player respawn and teleport packets now publish an explicit interpolation clear.
+A resolved riding actor selects the separate native riding branch and suppresses this clear.
+Normal movement and head-only packets retain their existing source state.
+The clear retires live interpolation without changing the absolute/delta receive cache or a historical capture.
+Later admitted movement can establish a new source.
+The second revision of the unreleased spatial codec distinguishes movement from clearing.
+
+The original player mode helper composes with the real remote-player virtual, target writers, reset paths, position-request stores, and collider refresh.
+All 3,456 controls pass across four modes, ready/throttle inputs, region results, missing interpolators, signed counters, forced state, and three positions.
+The positions include negative coordinates and chunk boundaries.
+The respawn and teleport paths execute their original interpolation clearing.
+Four deliberate variants fail: ignored readiness, omitted target publication, all modes treated as normal, and omitted teleport clearing.
+
+A serialized packet-to-registry regression covers all four modes, riding references, and present or missing vehicles.
+It also preserves the prior historical target and receive cache, then admits later movement.
+The consumer without clear handling fails; restored production passes.
+All sixteen focused core checks pass with their native references enabled.
+
+These native controls supply actor/component stores, ready/throttle inputs, region results, float CRT, and downstream reset/event boundaries.
+The original ready-field setter executes, but its scheduled producers remain unverified.
+Normal remote-player source admission, complete region lookup, local-player virtuals, riding pose effects, and native scheduling remain unfinished.
+The full five-area goal remains active.
+
+A fresh target BDS fixture uses a simulated player in a separate test-world copy with Beta APIs enabled.
+Each direct and proxy capture contains two remote-player teleport packets and receives two matching clear commands for that UUID.
+Both preserve the admitted position and actor lifetime, with inactive interpolation after each clear.
+The fixture also respawns the simulated player, but the recorded packets contain no respawn mode.
+Live targets before the clears are inactive; active-target retirement retains native and serialized regression coverage.
+Observers report no errors, runtime package hashes match, and all recorded run-owned identities exit normally.
+The original server configuration, script, and manifest are restored.
+The [client validation](../../viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md#remote-player-reset-validation) records the combined build and delayed movement checks.

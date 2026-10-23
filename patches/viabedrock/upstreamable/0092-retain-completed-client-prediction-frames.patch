@@ -1,4 +1,4 @@
-From 6e979c328b80711df97f02226dae0bc53569ecb9 Mon Sep 17 00:00:00 2001
+From a21c7c7627a7c3b1f69d460543215bfc4c78625d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -650,10 +650,24 @@ Publish source bootstrap only after its actor snapshot, and clear source
 and bounds publication caches on actor retirement. A serialized
 publisher-to-registry regression catches both premature source delivery
 and missing identical dependencies after re-publication.
+
+Retire remote-player interpolation for admitted MOVE_PLAYER respawn and
+teleport branches. Send an explicit clear action in revision two of the
+unreleased spatial codec; do not reinterpret MoveActor flags or overwrite
+the separate received/admitted positions. Skip the native riding branch
+when its actor resolves, and preserve historical captures during replay.
+
+Original Bedrock 1.26.51.1/build51061372 protocol2193 instructions compose
+the player mode helper, real RemotePlayer virtual, target writers,
+respawn/teleport clearing, position-request stores and collider refresh in
+3456 cases. Component stores, ready/throttle inputs, region query, CRT
+and downstream notifications are supplied boundaries. Four incorrect
+variants fail. Normal-player admission producers, local-player virtuals,
+riding pose effects and complete native phases remain separate work.
 ---
  build.gradle                                  |   29 +
  .../api/model/ActorMotionCommand.java         |   72 ++
- .../api/model/ActorSpatialCommand.java        |   65 +
+ .../api/model/ActorSpatialCommand.java        |   80 ++
  .../api/model/CollisionContact.java           |   80 ++
  .../viabedrock/api/model/FlightMovement.java  |   83 ++
  .../api/model/FlightMovementContext.java      |   50 +
@@ -666,7 +680,7 @@ and missing identical dependencies after re-publication.
  .../viabedrock/api/model/MovementEffect.java  |  100 ++
  .../api/model/MovementEffectTimeline.java     |  432 +++++++
  .../api/model/NativeActorStates.java          |   30 +
- .../api/model/NativeMovementSources.java      |  133 ++
+ .../api/model/NativeMovementSources.java      |  137 ++
  .../api/model/PlayerCorrection.java           |  138 ++
  .../api/model/PlayerCorrectionTracker.java    |   36 +
  .../viabedrock/api/model/PlayerPosture.java   |   63 +
@@ -678,7 +692,7 @@ and missing identical dependencies after re-publication.
  .../api/model/VehiclePredictionContext.java   |   90 ++
  .../viabedrock/api/model/WaterMovement.java   |   69 +
  .../api/model/entity/ClientPlayerEntity.java  |  123 +-
- .../viabedrock/api/model/entity/Entity.java   |  111 +-
+ .../viabedrock/api/model/entity/Entity.java   |  120 +-
  .../api/model/entity/LivingEntity.java        |   32 +-
  .../api/model/entity/PlayerEntity.java        |    2 +-
  .../definition/ItemDefinitions.java           |   13 +
@@ -691,6 +705,7 @@ and missing identical dependencies after re-publication.
  .../protocol/packet/JoinPackets.java          |    2 +
  .../packet/MovementEffectPackets.java         |   54 +
  .../protocol/packet/MultiStatePackets.java    |   48 +-
+ .../protocol/packet/OtherPlayerPackets.java   |    6 +-
  .../protocol/packet/WorldPackets.java         |    1 +
  .../protocol/rewriter/ItemDataRewriter.java   |    7 +-
  .../protocol/rewriter/ItemRewriter.java       |   19 +
@@ -737,9 +752,10 @@ and missing identical dependencies after re-publication.
  .../packet/MovementEffectPacketsTest.java     |  116 ++
  .../packet/PlayerCorrectionPacketTest.java    |  254 ++++
  .../packet/PlayerPredictionPacketTest.java    |   87 ++
+ .../packet/PlayerSpatialResetTest.java        |  147 +++
  .../packet/TickedMotionPacketTest.java        |  156 +++
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 88 files changed, 8521 insertions(+), 71 deletions(-)
+ 90 files changed, 8701 insertions(+), 72 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
@@ -805,6 +821,7 @@ and missing identical dependencies after re-publication.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpatialResetTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/TickedMotionPacketTest.java
 
 diff --git a/build.gradle b/build.gradle
@@ -931,10 +948,10 @@ index 000000000..5bb7082dc
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java b/src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java
 new file mode 100644
-index 000000000..3f5943235
+index 000000000..2df5cf0f4
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,80 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -952,7 +969,7 @@ index 000000000..3f5943235
 +import java.util.UUID;
 +
 +/** Admitted native movement, independent of both the receive cache and Java interpolation. */
-+public record ActorSpatialCommand(int entityId, UUID uuid, UUID lifetime, boolean localPlayer, long revision,
++public record ActorSpatialCommand(Action action, int entityId, UUID uuid, UUID lifetime, boolean localPlayer, long revision,
 +                                  Position3f position, short flags, long duration, boolean predictionComponent,
 +                                  boolean headRotation, boolean clientPredicted, float originOffset) {
 +
@@ -961,11 +978,11 @@ index 000000000..3f5943235
 +    public static final Type<ActorSpatialCommand> TYPE = new Type<>(ActorSpatialCommand.class) {
 +        @Override
 +        public ActorSpatialCommand read(final ByteBuf buffer) {
-+            if (buffer.readableBytes() > MAX_PAYLOAD_BYTES || Types.VAR_INT.readPrimitive(buffer) != 1
++            if (buffer.readableBytes() > MAX_PAYLOAD_BYTES || Types.VAR_INT.readPrimitive(buffer) != 2
 +                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
 +                throw new IllegalArgumentException("Unsupported actor spatial command");
 +            }
-+            final var result = new ActorSpatialCommand(Types.VAR_INT.readPrimitive(buffer), Types.UUID.read(buffer),
++            final var result = new ActorSpatialCommand(readAction(buffer), Types.VAR_INT.readPrimitive(buffer), Types.UUID.read(buffer),
 +                    Types.UUID.read(buffer), buffer.readBoolean(), buffer.readLong(),
 +                    new Position3f(buffer.readFloat(), buffer.readFloat(), buffer.readFloat()), buffer.readUnsignedByte(),
 +                    buffer.readLong(), buffer.readBoolean(), buffer.readBoolean(), buffer.readBoolean(), buffer.readFloat());
@@ -977,8 +994,9 @@ index 000000000..3f5943235
 +
 +        @Override
 +        public void write(final ByteBuf buffer, final ActorSpatialCommand value) {
-+            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, 2);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            buffer.writeByte(value.action.ordinal());
 +            Types.VAR_INT.writePrimitive(buffer, value.entityId);
 +            Types.UUID.write(buffer, value.uuid);
 +            Types.UUID.write(buffer, value.lifetime);
@@ -989,7 +1007,21 @@ index 000000000..3f5943235
 +        }
 +    };
 +
++    private static Action readAction(final ByteBuf buffer) {
++        return switch (buffer.readUnsignedByte()) {
++            case 0 -> Action.MOVE;
++            case 1 -> Action.CLEAR_INTERPOLATION;
++            default -> throw new IllegalArgumentException("Unknown actor spatial action");
++        };
++    }
++
++    public enum Action {
++        MOVE,
++        CLEAR_INTERPOLATION
++    }
++
 +    public ActorSpatialCommand {
++        Objects.requireNonNull(action);
 +        Objects.requireNonNull(uuid);
 +        Objects.requireNonNull(lifetime);
 +        Objects.requireNonNull(position);
@@ -2408,10 +2440,10 @@ index 82d9ed3a8..34711a6a4 100644
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeMovementSources.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeMovementSources.java
 new file mode 100644
-index 000000000..54be35d83
+index 000000000..76bf5d591
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeMovementSources.java
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,137 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2453,6 +2485,10 @@ index 000000000..54be35d83
 +    }
 +
 +    private void receive(final ActorSpatialCommand next) {
++        if (next.action() == ActorSpatialCommand.Action.CLEAR_INTERPOLATION) {
++            this.interpolation = Interpolation.EMPTY;
++            return;
++        }
 +        if (next.predictionComponent() && !this.disabled) {
 +            this.historyPosition = next.position();
 +            return;
@@ -3526,7 +3562,7 @@ index f69b430bf..dcae62809 100644
  
      public record DimensionChangeInfo(Long loadingScreenId) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 70c675dbf..0d3ab8f8f 100644
+index 70c675dbf..37fa0d48a 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -22,14 +22,14 @@ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
@@ -3570,11 +3606,12 @@ index 70c675dbf..0d3ab8f8f 100644
      protected final String type;
      protected final int javaId;
      protected final UUID javaUuid;
-@@ -68,6 +73,11 @@ public class Entity {
+@@ -68,6 +73,12 @@ public class Entity {
      private Position3f lastReceivedRotation;
      private short lastReceivedMovementFlags = 0xFF;
      private long lastReceivedInterpolationTicks;
 +    private Position3f admittedPosition;
++    private ActorSpatialCommand.Action spatialAction = ActorSpatialCommand.Action.MOVE;
 +    private short admittedMovementFlags = 0xFF;
 +    private long admittedInterpolationTicks;
 +    private long spatialRevision;
@@ -3582,7 +3619,7 @@ index 70c675dbf..0d3ab8f8f 100644
      /**
       * pitch, yaw, headYaw
       */
-@@ -125,6 +135,8 @@ public class Entity {
+@@ -125,6 +136,8 @@ public class Entity {
          if (this.publishedNativeState != null && this.nativeStateAvailable()) {
              this.sendNativeActorMessage(new NativeActorMessage.Remove(this.javaUuid(), this.nativeLifetime, this instanceof ClientPlayerEntity));
              this.publishedNativeState = null;
@@ -3591,7 +3628,7 @@ index 70c675dbf..0d3ab8f8f 100644
          }
          if (this.hasBossBar) {
              this.hasBossBar = false;
-@@ -162,6 +174,7 @@ public class Entity {
+@@ -162,6 +175,7 @@ public class Entity {
                  // ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received unknown entity data: " + dataId + " for entity type: " + this.type);
              }
          }
@@ -3599,7 +3636,7 @@ index 70c675dbf..0d3ab8f8f 100644
          this.onEntityDataChanged();
      }
  
-@@ -200,6 +213,31 @@ public class Entity {
+@@ -200,6 +214,31 @@ public class Entity {
          return this.uniqueId;
      }
  
@@ -3631,12 +3668,13 @@ index 70c675dbf..0d3ab8f8f 100644
      public long runtimeId() {
          return this.runtimeId;
      }
-@@ -253,6 +291,15 @@ public class Entity {
+@@ -253,6 +292,23 @@ public class Entity {
          this.lastReceivedInterpolationTicks = interpolationTicks;
      }
  
-+    /** The native receive cache changes even for updates that cannot enter movement history. */
++    /** Retain admitted network movement independently of ignored updates and live simulation. */
 +    public void admitSpatialUpdate(final Position3f position, final short flags, final long interpolationTicks) {
++        this.spatialAction = ActorSpatialCommand.Action.MOVE;
 +        this.admittedPosition = position;
 +        this.admittedMovementFlags = flags;
 +        this.admittedInterpolationTicks = interpolationTicks;
@@ -3644,10 +3682,17 @@ index 70c675dbf..0d3ab8f8f 100644
 +        this.sendNativeSpatialCommand(false);
 +    }
 +
++    /** Retire interpolation independently of the absolute/delta receive cache and admitted history. */
++    public final void clearSpatialInterpolation() {
++        this.spatialAction = ActorSpatialCommand.Action.CLEAR_INTERPOLATION;
++        this.spatialRevision = Math.incrementExact(this.spatialRevision);
++        this.sendNativeSpatialCommand(false);
++    }
++
      public Position3f javaPosition() {
          return this.position.subtract(0F, this.eyeOffset(), 0F);
      }
-@@ -261,10 +308,24 @@ public class Entity {
+@@ -261,10 +317,24 @@ public class Entity {
          this.setPosition(position.add(0F, this.eyeOffset(), 0F));
      }
  
@@ -3660,19 +3705,19 @@ index 70c675dbf..0d3ab8f8f 100644
          if (this.lastReceivedPosition == null) {
              this.lastReceivedPosition = position;
 +            this.admittedPosition = position;
-+        }
+         }
 +        this.updatePosition(position);
 +        final VehiclePredictionStorage vehicles = this.user != null ? this.user.get(VehiclePredictionStorage.class) : null;
 +        if (vehicles != null) {
 +            vehicles.invalidate(this);
-         }
++        }
 +    }
 +
 +    private void updatePosition(final Position3f position) {
          this.position = position;
      }
  
-@@ -345,16 +406,19 @@ public class Entity {
+@@ -345,16 +415,19 @@ public class Entity {
      public void addPassenger(final long passengerRuntimeId) {
          if (!this.passengers.contains(passengerRuntimeId)) {
              this.passengers.add(passengerRuntimeId);
@@ -3692,7 +3737,7 @@ index 70c675dbf..0d3ab8f8f 100644
      }
  
      public List<Long> passengers() {
-@@ -363,6 +427,15 @@ public class Entity {
+@@ -363,6 +436,15 @@ public class Entity {
  
      public void setMountEntityRuntimeId(final long runtimeId) {
          this.mountRuntimeId = runtimeId;
@@ -3708,7 +3753,7 @@ index 70c675dbf..0d3ab8f8f 100644
      }
  
      public long mountEntityRuntimeId() {
-@@ -381,7 +454,12 @@ public class Entity {
+@@ -381,7 +463,12 @@ public class Entity {
          return EntityMetadataRewriter.rewrite(this.user, this, id, entityData, javaEntityData);
      }
  
@@ -3721,7 +3766,7 @@ index 70c675dbf..0d3ab8f8f 100644
          this.sendNativeActorSnapshot();
      }
  
-@@ -422,6 +500,33 @@ public class Entity {
+@@ -422,6 +509,33 @@ public class Entity {
                  this.publishedNativeBounds = bounds;
              }
          }
@@ -3748,7 +3793,7 @@ index 70c675dbf..0d3ab8f8f 100644
 +        final var tracker = this.user == null ? null : this.user.get(EntityTracker.class);
 +        // The horse writer sets VehicleInputIntent.mIsClientPredicted only for a saddled, tamed local controller.
 +        final boolean clientPredicted = tracker != null && this instanceof AbstractHorseEntity && tracker.isLocallyControlledVehicle(this);
-+        return new ActorSpatialCommand(this.javaId(), this.javaUuid(), this.nativeLifetime,
++        return new ActorSpatialCommand(this.spatialAction, this.javaId(), this.javaUuid(), this.nativeLifetime,
 +                this instanceof ClientPlayerEntity, this.spatialRevision, this.admittedPosition,
 +                this.admittedMovementFlags, this.admittedInterpolationTicks, !(this instanceof PlayerEntity),
 +                this instanceof LivingEntity, clientPredicted, this.eyeOffset());
@@ -4616,6 +4661,30 @@ index 910b5a13d..6c8e9b600 100644
              wrapper.user().get(PlayerInputStorage.class).sendSnapshot();
              wrapper.user().get(HudVisibilityStorage.class).sendSnapshot();
              wrapper.user().get(CameraEffectsStorage.class).sendSnapshot();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+index 5b3311913..36233420b 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+@@ -157,7 +157,7 @@ public final class OtherPlayerPackets {
+             final Position3f rotation = wrapper.read(BedrockTypes.POSITION_3F); // rotation
+             final PositionMode mode = PositionMode.getByValue(wrapper.read(Types.BYTE), PositionMode.OnlyHeadRot); // mode
+             final boolean onGround = wrapper.read(Types.BOOLEAN); // on ground
+-            wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // riding entity runtime id
++            final long ridingEntityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // riding entity runtime id
+             if (wrapper.read(Types.BOOLEAN) && mode == PositionMode.Teleport) {
+                 wrapper.read(BedrockTypes.INT_LE); // teleportation cause
+                 wrapper.read(BedrockTypes.INT_LE); // entity type
+@@ -187,6 +187,10 @@ public final class OtherPlayerPackets {
+             entity.setPosition(position);
+             entity.setRotation(rotation);
+             entity.setOnGround(onGround);
++            if (entity instanceof PlayerEntity && !(entity instanceof ClientPlayerEntity) && (mode == PositionMode.Teleport || mode == PositionMode.Respawn)
++                    && (ridingEntityRuntimeId == 0 || entityTracker.getEntityByRid(ridingEntityRuntimeId) == null)) {
++                entity.clearSpatialInterpolation();
++            }
+ 
+             if ((mode == PositionMode.Teleport || mode == PositionMode.Respawn) && entity instanceof ClientPlayerEntity clientPlayer) {
+                 wrapper.setPacketType(ClientboundPackets26_3.PLAYER_POSITION);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 index 0655a9d42..f61b4f387 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
@@ -5196,7 +5265,7 @@ index 000000000..4a1b11009
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/ActorSpatialCommandTest.java b/src/test/java/net/raphimc/viabedrock/api/model/ActorSpatialCommandTest.java
 new file mode 100644
-index 000000000..0defa1930
+index 000000000..a3173cc03
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/ActorSpatialCommandTest.java
 @@ -0,0 +1,70 @@
@@ -5261,7 +5330,7 @@ index 000000000..0defa1930
 +    }
 +
 +    private static ActorSpatialCommand command(final UUID uuid, final UUID lifetime, final long revision, final long duration) {
-+        return new ActorSpatialCommand(7, uuid, lifetime, false, revision, new Position3f(1.25F, -2.5F, 3.75F),
++        return new ActorSpatialCommand(ActorSpatialCommand.Action.MOVE, 7, uuid, lifetime, false, revision, new Position3f(1.25F, -2.5F, 3.75F),
 +                (short) 0xFF, duration, true, false, false, .375F);
 +    }
 +
@@ -6724,7 +6793,7 @@ index 000000000..04bfaf9b1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeMovementSourcesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeMovementSourcesTest.java
 new file mode 100644
-index 000000000..31b5041c1
+index 000000000..bdb0afe80
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeMovementSourcesTest.java
 @@ -0,0 +1,126 @@
@@ -6841,7 +6910,7 @@ index 000000000..31b5041c1
 +
 +    private static ActorSpatialCommand command(final long revision, final Position3f position, final boolean prediction,
 +                                                final boolean head, final boolean clientPredicted, final int flags, final long duration) {
-+        return new ActorSpatialCommand(7, UUID_VALUE, LIFETIME, false, revision, position, (short) flags, duration, prediction, head, clientPredicted, .375F);
++        return new ActorSpatialCommand(ActorSpatialCommand.Action.MOVE, 7, UUID_VALUE, LIFETIME, false, revision, position, (short) flags, duration, prediction, head, clientPredicted, .375F);
 +    }
 +
 +    private static Position3f point(final JsonArray values) {
@@ -10544,6 +10613,159 @@ index 000000000..2bc45bb05
 +            assertFalse(input.isReadable());
 +        } finally {
 +            input.release();
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpatialResetTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpatialResetTest.java
+new file mode 100644
+index 000000000..2ef7f72b8
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpatialResetTest.java
+@@ -0,0 +1,147 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.protocol.packet.PacketType;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.ActorSpatialCommand;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.api.model.NativeActorStates;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import java.util.Set;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class PlayerSpatialResetTest {
++
++    @Test
++    void remoteResetModesRetireOnlyTheirNativeBranchAndKeepHistoricalTargets() throws Exception {
++        for (int mode = 0; mode < 4; mode++) {
++            for (boolean riding : new boolean[]{false, true}) {
++                for (boolean vehiclePresent : new boolean[]{false, true}) {
++                    final var user = mock(UserConnection.class);
++                    final var info = mock(ProtocolInfo.class);
++                    final var tracker = spy(new EntityTracker(user));
++                    final var channels = new ChannelStorage();
++                    when(user.get(any())).thenAnswer(call -> mock((Class<?>) call.getArgument(0)));
++                    when(user.getProtocolInfo()).thenReturn(info);
++                    when(info.getServerState()).thenReturn(State.PLAY);
++                    when(user.get(EntityTracker.class)).thenReturn(tracker);
++                    when(user.get(ChannelStorage.class)).thenReturn(channels);
++                    when(tracker.nativeActorsJoined()).thenReturn(false);
++                    channels.addChannels(Set.of(NativeActorMessage.CURRENT_CHANNEL, ActorSpatialCommand.CHANNEL));
++                    final var player = new PlayerEntity(user, 101, 7, UUID.randomUUID(), new PlayerAbilities(21, (byte) 0, (byte) 0));
++                    tracker.addEntity(player, false);
++                    when(tracker.getEntityByUid(player.uniqueId())).thenReturn(player);
++                    final var vehicle = new Entity(user, 22, 102, "minecraft:boat", 8, UUID.randomUUID(), EntityTypes26_3.OAK_BOAT);
++                    if (vehiclePresent) {
++                        tracker.addEntity(vehicle, false);
++                    }
++                    final var first = new Position3f(10.25F, 20.5F, 30.75F);
++                    final var next = new Position3f(-11.5F, 25F, 42F);
++                    player.setPosition(first);
++                    player.retainSpatialUpdate(first, Position3f.ZERO, (short) 8, 3);
++                    final var registry = new NativeActorStates();
++                    try (var packets = mockStatic(PacketWrapper.class);
++                         var helpers = mockStatic(PacketFactory.class)) {
++                        packets.when(() -> PacketWrapper.create(any(PacketType.class), eq(user))).thenAnswer(call -> {
++                            final var packet = spy(new PacketWrapperImpl(call.getArgument(0), null, user));
++                            doAnswer(_ -> {
++                                final var bytes = Unpooled.buffer();
++                                try {
++                                    packet.writeToBuffer(bytes);
++                                    assertEquals(ClientboundPackets26_3.CUSTOM_PAYLOAD.getId(), Types.VAR_INT.readPrimitive(bytes));
++                                    final String channel = Types.STRING.read(bytes);
++                                    if (channel.equals(ActorSpatialCommand.CHANNEL)) {
++                                        registry.apply(ActorSpatialCommand.TYPE.read(bytes), null);
++                                    } else {
++                                        registry.apply(NativeActorMessage.CURRENT_TYPE.read(bytes), null);
++                                    }
++                                    assertFalse(bytes.isReadable());
++                                } finally {
++                                    bytes.release();
++                                }
++                                return null;
++                            }).when(packet).send(eq(BedrockProtocol.class), eq(true));
++                            return packet;
++                        });
++                        when(tracker.nativeActorsJoined()).thenReturn(true);
++                        player.sendNativeActorSnapshot();
++                        player.admitSpatialUpdate(first, (short) 8, 3);
++                        final var source = registry.movement(player.javaUuid());
++                        final var historical = source.interpolation();
++                        assertTrue(historical.active());
++                        final long revision = source.command().revision();
++                        final var input = Unpooled.buffer();
++                        try {
++                            BedrockTypes.UNSIGNED_VAR_LONG.write(input, player.runtimeId());
++                            BedrockTypes.POSITION_3F.write(input, next);
++                            BedrockTypes.POSITION_3F.write(input, new Position3f(12, 24, 48));
++                            input.writeByte(mode).writeBoolean(true);
++                            BedrockTypes.UNSIGNED_VAR_LONG.write(input, riding ? vehicle.runtimeId() : 0L);
++                            input.writeBoolean(false);
++                            BedrockTypes.UNSIGNED_VAR_LONG.write(input, 200L);
++                            final var packet = new PacketWrapperImpl(ClientboundBedrockPackets.MOVE_PLAYER, input, user);
++                            new TestProtocol().translate(packet);
++                            assertFalse(input.isReadable());
++                        } finally {
++                            input.release();
++                        }
++                        final boolean reset = (mode == 1 || mode == 2) && !(riding && vehiclePresent);
++                        assertEquals(!reset, source.interpolation().active());
++                        assertEquals(revision + (reset ? 1 : 0), source.command().revision());
++                        assertEquals(reset ? ActorSpatialCommand.Action.CLEAR_INTERPOLATION : ActorSpatialCommand.Action.MOVE, source.command().action());
++                        assertEquals(first, source.position(historical));
++                        assertEquals(first, player.lastReceivedPosition());
++                        assertEquals((short) 8, player.lastReceivedMovementFlags());
++                        assertEquals(3, player.lastReceivedInterpolationTicks());
++                        if (reset) {
++                            assertFalse(source.interpolation().mustComplete());
++                            assertNull(source.position(source.interpolation()));
++                            player.admitSpatialUpdate(next, (short) 0, 3);
++                            assertTrue(source.interpolation().active());
++                            assertEquals(next, source.position(source.interpolation()));
++                        }
++                    }
++                }
++            }
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private TestProtocol() {
++            OtherPlayerPackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
 +        }
 +    }
 +

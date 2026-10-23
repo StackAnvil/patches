@@ -2104,3 +2104,38 @@ The production artifacts remain unchanged across that observer correction.
 
 Configured history-provider behavior, ordinary `MOVE_PLAYER` source production, full component admission, and native interpolation and pose phases remain unfinished.
 The live checks do not establish complete native trajectories, fresh collider membership, active-use overlap, or full mount and seat parity.
+
+## Remote player interpolation retirement
+
+The shared source channel now carries explicit clears for verified remote-player respawn and teleport branches.
+The existing connection, world, actor identity, and lifetime gates still constrain delivery.
+A clear retires the live target while historical collider captures retain their original interpolation inputs.
+The source, cache, and lifetime regressions use explicit movement actions with the revised codec.
+Normal remote-player admission, local-player virtuals, riding pose effects, and complete native phases remain unfinished.
+The [core reset notes](../../viabedrock/upstreamable/0092-retain-completed-client-prediction-frames.pr.md#remote-player-reset-sources) retain the original instruction controls and packet regression.
+
+## Remote player reset validation
+
+The full four-project build passes 2,703 tests with 49 environment settings, 163 optional skips, and no failures or errors.
+All 1,438 core classes match the standalone, add-on, and proxy packages after the four expected replacements for build constants.
+All 1,144 client production classes match the add-on.
+Both affected patch stacks replay completely.
+
+Fresh delayed sessions use the final packages and a target BDS simulated player.
+Each route captures two native remote-player teleport packets and receives two matching interpolation clears.
+Live targets before these clears are inactive.
+The fixture's successful simulated-player respawn produces no recorded respawn-mode packet.
+Active-target retirement and respawn clearing retain native and serialized regression coverage.
+These checks do not establish complete human-player behavior.
+
+| Route | Vehicle frames paired and bound | Vehicle corrections | Replay boundaries | Replayed steps | Collider refreshes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Direct NetherNet | 160 | 12 | 22 | 142 | 8 |
+| ViaProxy | 159 | 9 | 20 | 125 | 9 |
+
+All seventeen refreshed boxes match independent source selection and float calculations and differ from captured and current Java geometry.
+Every replay boundary preserves live tick, food, and held-item count.
+Each route retains four ticked player impulses and their exact following historical frames.
+Observers report no errors, and all recorded run-owned identities exit normally.
+The original server script, manifest, and configuration are restored.
+Normal-player source admission, configured providers, local-player virtuals, riding pose, active-use overlap, complete seat ownership, and native trajectories remain unfinished.
