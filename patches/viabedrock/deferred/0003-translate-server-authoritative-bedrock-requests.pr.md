@@ -3,6 +3,24 @@
 This patch follows the inventory work owned by [ViaBedrock #276](https://github.com/ViaVersionAddons/ViaBedrock/pull/276).
 It remains deferred until that prerequisite lands.
 
+## Empty display-name components
+
+An empty `minecraft:display_name` component now retains ordinary naming instead of installing a blank Java label.
+The shared definition accessor applies this rule to pack and network definitions.
+An empty upper-pack definition replaces a lower override. Whitespace and later nonempty values remain valid overrides.
+
+Fresh controls on Bedrock 1.26.51.1/build 51061372 execute 1,299 primary-name cases, including ComponentItem getter `0x143fd2be0`.
+The native getter ignores an empty display-name component and retains its ordinary description.
+Typed NBT lookups, custom-name selection, ordinary naming, and three translation-key families execute unchanged.
+Language translation, component lookup, allocation, and runtime services remain supplied boundaries.
+Full specialized-name, secondary-label, language, search-input, and visual parity remain unfinished.
+
+Two regressions fail before the correction and pass afterward.
+They cover repeated network updates and upper-pack precedence across primitive and object component forms.
+The full 104-patch core stack replays, and all four projects build.
+Verification passes 2,623 tests, with 163 optional skips and no failures or errors.
+All 1,413 packaged core classes match the copies in the add-on and proxy.
+
 ## Brewing stand addressing
 
 The target BDS 1.26.51.1 inventory exposes ingredient slot 0, bottle slots 1 through 3, and fuel slot 4.

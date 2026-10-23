@@ -1,4 +1,4 @@
-From 3a50ca876c6fc9f163b6654e99a9e81f94d834da Mon Sep 17 00:00:00 2001
+From 70d8bfb659eac6150d31f417a468e9efe0c3c131 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -492,6 +492,13 @@ newer server state.
 Submit prepared batches through the request tracker and restore their
 oldest snapshots if packet submission throws. Release pending ownership
 and queued input on that failure so an unsent batch cannot lock inventory.
+
+Ignore an empty display_name override in the ComponentItem description getter,
+matching getter 0x143fd2be0 on Bedrock 1.26.51.1/build 51061372. Pack and
+network definitions retain ordinary naming after clearing an override; a later
+nonempty or whitespace value still replaces it. Fresh original name-producer
+controls cover 1,299 typed NBT/component/append cases. Regression tests cover
+network replacement and upper-pack precedence across primitive/object forms.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   66 +-
@@ -523,7 +530,7 @@ and queued input on that failure so an unsent batch cannot lock inventory.
  .../container/player/InventoryContainer.java  |   87 +-
  .../player/InventorySubContainer.java         |    6 +
  .../container/player/OffhandContainer.java    |   50 +-
- .../definition/ItemDefinitions.java           |   54 +-
+ .../definition/ItemDefinitions.java           |   57 +-
  .../viabedrock/api/util/PacketFactory.java    |  187 ++-
  .../viabedrock/protocol/BedrockProtocol.java  |  122 +-
  .../protocol/data/BedrockMappingData.java     |  707 +++++---
@@ -563,7 +570,7 @@ and queued input on that failure so an unsent batch cannot lock inventory.
  .../block/EnchantmentContainerTest.java       |  120 ++
  .../container/block/LecternContainerTest.java |   84 +
  .../player/OffhandRequestSlotsTest.java       |   37 +
- .../definition/ItemDefinitionsTest.java       |   45 +
+ .../definition/ItemDefinitionsTest.java       |  107 ++
  .../api/util/ContainerContentPacketTest.java  |   95 ++
  .../ComponentItemStackingPropertiesTest.java  |  173 ++
  .../model/ItemCookingPropertiesTest.java      |  201 +++
@@ -600,7 +607,7 @@ and queued input on that failure so an unsent batch cannot lock inventory.
  .../item/NetworkItemConstructionTest.java     |  165 ++
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 107 files changed, 15635 insertions(+), 985 deletions(-)
+ 107 files changed, 15699 insertions(+), 986 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionBackend.java
@@ -5360,7 +5367,7 @@ index 22ad60398..c10493db1 100644
              mobEquipment.write(Types.BYTE, (byte) 1); // slot
              mobEquipment.write(Types.BYTE, (byte) 0); // selected slot
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
-index 8a5a49326..ff686f4ac 100644
+index 8a5a49326..3667f13a8 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
 @@ -19,6 +19,7 @@ package net.raphimc.viabedrock.api.resourcepack.definition;
@@ -5449,6 +5456,16 @@ index 8a5a49326..ff686f4ac 100644
      public void addFromNetworkTag(final String identifier, final CompoundTag tag) {
          final ItemDefinition itemDefinition = new ItemDefinition(identifier);
          if (tag.get("components") instanceof CompoundTag components) {
+@@ -123,7 +167,8 @@ public class ItemDefinitions {
+         }
+ 
+         public String displayNameComponent() {
+-            return this.displayNameComponent;
++            // ComponentItem's native description getter ignores an empty override.
++            return this.displayNameComponent == null || this.displayNameComponent.isEmpty() ? null : this.displayNameComponent;
+         }
+ 
+         public ItemUseModifiers useModifiers() {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java b/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
 index c51ffd409..fba5d12ab 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
@@ -13611,14 +13628,17 @@ index 000000000..33741180e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitionsTest.java
 new file mode 100644
-index 000000000..5b6701866
+index 000000000..6c13c0eb4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitionsTest.java
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,107 @@
 +package net.raphimc.viabedrock.api.resourcepack.definition;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.libs.gson.JsonObject;
 +import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import org.junit.jupiter.api.Test;
 +
@@ -13657,6 +13677,65 @@ index 000000000..5b6701866
 +        data.put("components", components);
 +        definitions.addFromNetworkTag("geysermc:furnace_minecart", data);
 +        assertEquals("minecart_furnace", definitions.get("geysermc:furnace_minecart").iconComponent());
++    }
++
++    @Test
++    void emptyNetworkDisplayNameRestoresOrdinaryNameAfterAnOverride() {
++        final ResourcePackStorage packs = mock(ResourcePackStorage.class);
++        when(packs.getPackStackBottomToTop()).thenReturn(List.of());
++        final ItemDefinitions definitions = new ItemDefinitions(packs);
++        final CompoundTag name = new CompoundTag();
++        final CompoundTag components = new CompoundTag();
++        components.put("minecraft:display_name", name);
++        final CompoundTag data = new CompoundTag();
++        data.put("components", components);
++        final String identifier = "custom:probe";
++        for (final String value : List.of(identifier, "", " ", identifier.repeat(16), "")) {
++            name.putString("value", value);
++            definitions.addFromNetworkTag(identifier, data);
++            assertEquals(value.isEmpty() ? null : value, definitions.get(identifier).displayNameComponent());
++        }
++        name.putInt("value", 1);
++        definitions.addFromNetworkTag(identifier, data);
++        assertNull(definitions.get(identifier).displayNameComponent());
++    }
++
++    @Test
++    void emptyPackDisplayNameOverridesLowerPackWithoutHidingOrdinaryName() {
++        final String identifier = "custom:probe";
++        final ResourcePackStorage packs = mock(ResourcePackStorage.class);
++        for (final boolean objectForm : List.of(false, true)) {
++            for (final String value : List.of("", " ", identifier)) {
++                final ResourcePack lower = itemPack(identifier, identifier, false);
++                final ResourcePack upper = itemPack(identifier, value, objectForm);
++                when(packs.getPackStackBottomToTop()).thenReturn(List.of(lower, upper));
++                final var definition = new ItemDefinitions(packs).get(identifier);
++                assertEquals(value.isEmpty() ? null : value, definition.displayNameComponent());
++            }
++        }
++    }
++
++    private static ResourcePack itemPack(final String identifier, final String name, final boolean objectForm) {
++        final var content = new InMemoryContent();
++        final JsonObject description = new JsonObject();
++        description.addProperty("identifier", identifier);
++        final JsonObject components = new JsonObject();
++        if (objectForm) {
++            final JsonObject value = new JsonObject();
++            value.addProperty("value", name);
++            components.add("minecraft:display_name", value);
++        } else {
++            components.addProperty("minecraft:display_name", name);
++        }
++        final JsonObject item = new JsonObject();
++        item.add("description", description);
++        item.add("components", components);
++        final JsonObject file = new JsonObject();
++        file.add("minecraft:item", item);
++        content.putJson("items/probe.json", file);
++        final ResourcePack pack = mock(ResourcePack.class);
++        when(pack.content()).thenReturn(content);
++        return pack;
 +    }
 +
 +}

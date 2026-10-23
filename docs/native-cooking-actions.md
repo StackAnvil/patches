@@ -188,9 +188,10 @@ Without filtering, a failed eligibility check returns evaluation `3` before any 
 With filtering, the predicate continues to the name and availability checks.
 
 An empty query does not require a name lookup.
-A nonempty query first matches a normalized custom name as a contiguous substring.
-If that match fails, the predicate obtains the localized Item name and removes its formatting codes.
-It normalizes that name, then repeats the substring match.
+A nonempty query first matches a normalized primary Item name as a contiguous substring.
+If that match fails, the predicate obtains the secondary Item label and removes its formatting codes.
+It normalizes that label, then repeats the substring match.
+The ordinary secondary label includes enchantment text.
 The predicate neither trims spaces nor splits the query into words.
 A failed match returns evaluation `3`, regardless of the supplied availability result.
 A successful match retains the availability result `0..3`.
@@ -200,16 +201,40 @@ Its string wrapper truncates the result at an embedded NUL.
 The retained 23 normalization controls distinguish this behavior from lowercase conversion and the ICU NFKC-casefold shortcut.
 For example, `STRASSE` matches `Straße`, and composed `CAFÉ` matches its decomposed spelling.
 Zero-width spaces remain significant.
-Formatting removal applies to the localized-name branch, not the query.
+Formatting removal applies to the secondary-label branch, not the query.
 Complete equality between the native Unicode tables and a Java library remains unverified.
 
 Executable predicate controls cover 19 text cases across both filtering flags, both eligibility results, and four availability results.
 All 304 captured results match the expected composition.
 The original predicate, normalization helper, formatting removal, and Item empty/air guard execute unchanged.
-The controls supply the custom name, localized name, eligibility, availability, and model filtering interface.
+The controls supply the primary name, secondary label, eligibility, availability, and model filtering interface.
 The earlier runtime and external service boundaries also apply.
-They do not establish actual name production, language selection, physical text input, or visible parity.
+They do not establish actual name or label production, language selection, physical text input, or visible parity.
 Production search input and filtering remain unfinished.
+
+### Primary Item names
+
+Primary-name helper `0x142489b10` selects between a custom name and the ordinary description.
+For an ordinary Item, a compound `display` with a present `Name` selects the custom branch.
+An empty or wrongly typed `Name` still selects that branch and produces empty primary text.
+`FilteredName` remains separate from the primary search name.
+
+Without a custom name, the helper obtains the translated ordinary description.
+ComponentItem getter `0x143fd2be0` uses its display-name component only when that component is nonempty.
+An empty component retains the ordinary description. Whitespace remains a nonempty override.
+The production definition accessor now follows this rule for both pack and network definitions.
+An empty upper-pack definition replaces a lower override, then ordinary naming applies.
+
+Fresh native controls cover 1,299 name-selection cases, including typed NBT, component names, and appended text.
+The controls execute the original primary selector, typed NBT lookups, ordinary description, ComponentItem getter, and three translation-key families.
+Translation, formatting, component lookup, initialized runtime storage, allocation, and external CRT services remain supplied boundaries.
+Other specialized key families, enchantment labels, actual language selection, and visible parity remain unverified by these controls.
+Two production regressions cover network replacement and pack precedence. Both fail against the previous getter.
+
+Separate native controls cover 4,276 ordinary secondary-label cases through `0x1424d0020`.
+They execute enchantment parsing, flattened entries, descriptions, signed levels, category ordering, and line composition.
+Typed tags, locale translation, registry identifier interning, allocation, and runtime services remain supplied boundaries.
+These controls establish the enchantment-label branch, not other specialized labels, actual language selection, or visible parity.
 
 ### Projected client fixtures
 
