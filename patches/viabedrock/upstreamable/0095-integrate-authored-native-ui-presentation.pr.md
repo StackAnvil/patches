@@ -534,7 +534,7 @@ Block-backed builtin items now use their native constructor associations and can
 Generic block, leaf, wool/carpet and sapling providers preserve their separate native default and empty-name decisions.
 Component reconstruction replaces builtin dispatch, and removed runtime owners cannot retain a name.
 The block source stays lazy for other item methods.
-Arrow and compound providers remain separate work.
+Compound providers remain separate work.
 
 The compiled table retains 1,379 native block-definition keys.
 All keys match the completed initialized native definition control.
@@ -560,7 +560,7 @@ This smoke check does not inject authored block-name controls or establish nativ
 
 ## World version ownership for potion names
 
-Potion names now use the version source described here. Arrow naming remains open.
+Potion and arrow names now use the version source described here.
 The target remains Bedrock 1.26.51.1, build 51061372, protocol 2193, with executable SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
 
 The native identity string names `LegacyClientNetworkHandler::handle(..., StartGamePacket)` at `1413323c0`.
@@ -626,4 +626,38 @@ A fresh final-artifact BDS run passes all three cooking families and same-world 
 Both selected launches use the exact final add-on. All nine observed owned identities retire, and the private display stops normally.
 
 These checks do not establish complete native packet decoding, asset/locale ownership, authored screen acceptance or visible potion text.
-Arrow and compound names, secondary labels and cooking query transport remain open.
+Compound names, secondary labels and cooking query transport remain open.
+
+
+## Native arrow primary names
+
+Arrow names now use the compiled ArrowItem constructor description and the shared native potion registry.
+Auxiliary zero uses the ordinary description key and skips version lookup.
+Other descriptors select potion auxiliary minus one. Absent, out-of-range and unavailable entries keep the native empty-arrow fallback.
+Nonempty potion descriptions take precedence over effect names.
+The arrow receiver requests neither block lookup nor language formatting. The converter supplies the shared name and text composition afterward.
+Component reconstruction and runtime-owner retirement still replace or remove builtin dispatch.
+
+The initialized native factory control identifies one receiver: `minecraft:arrow`, description `item.arrow`, key method `1426866b0`.
+All 1,264 original key results match across modern, legacy, malformed-version and prerelease contexts.
+The corpus includes absent and negative descriptors, sentinel values, and empty, NUL-containing and malformed UTF-8 descriptions.
+Of those results, 316 use the actual constructor description and pass through the registered provider too.
+Fresh malformed and prerelease controls consume the records from the complete native version parser control and run original potion construction, registration and arrow key selection.
+Their descriptor transport and allocator/CRT/TLS/intern hosting remain declared boundaries.
+
+All 584 applicable packaged conversions pass through the typed protocol-2193 registry, raw language files and item serialization.
+Missing dictionaries and known literal translations provide independent expected display values.
+The previous package passes eight and fails 576 under the same inputs.
+The control excludes 48 non-stack and 1,896 row/table combinations with other descriptions; the receiver corpus covers those fields separately.
+Five provider class origins and eight converter class origins match the tested package.
+Four private wrong variants fail assertions: omitted auxiliary offset, absent descriptor treated as ordinary, fixed modern version and eager version lookup.
+
+All 5,688 potion receiver comparisons and 1,337 packaged block sentinel cases still pass.
+The complete build passes 2,703 tests with 163 optional skips.
+All 1,447 core classes match source and both consumers; all 1,144 client classes match the add-on.
+Naming resources match source in the standalone core, add-on and proxy.
+A fresh final-artifact BDS run passes all three cooking families and same-world reconnect.
+Both selected launches use the exact final add-on; all nine observed owned identities retire, and the private display stops normally.
+
+These checks do not establish complete native packet decoding, registry/session ownership, asset/locale acquisition, authored screens or visible arrow text.
+Compound names, secondary labels and cooking query transport remain open.

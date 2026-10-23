@@ -1159,7 +1159,7 @@ The parser control completes native local and static cleanup without tracked all
 The existing loose session conversion cannot supply the potion provider unchanged: it disagrees with native comparisons on eighteen inputs.
 The differences include prerelease suffixes, malformed versions and values beyond the native 16-bit component range.
 A fixed client-build version also fails older world contexts.
-Potion providers now use a separate native version value parsed from Start Game. Arrow naming remains open.
+Potion and arrow providers now use a separate native version value parsed from Start Game.
 
 These controls use supplied packet storage and declared hosting boundaries. They do not execute the wire decoder or complete client startup.
 See the [native version evidence](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#world-version-ownership-for-potion-names) for the caller, offsets and limits.
@@ -1180,3 +1180,20 @@ The combined build passes 2,703 tests with 163 optional skips.
 Fresh final-artifact BDS cooking and reconnect checks also pass, with normal cleanup of owned processes and the private display.
 These checks do not establish authored screens, complete native session ownership or visible potion text.
 See the [potion provider evidence](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#native-potion-primary-names) for inputs, exclusions and remaining work.
+
+
+## Native arrow primary names
+
+Ordinary arrows use their constructor description. Tipped arrows select the native potion entry at auxiliary minus one.
+Absent or unavailable entries retain the empty-arrow name. Ordinary arrows skip the version source; arrow keys do not request block or language callbacks.
+Component reconstruction and runtime-owner retirement retain their existing control over naming.
+
+The provider matches all 1,264 original native key results across four world-version contexts.
+All 584 applicable packaged conversions pass; the previous package fails 576.
+Four wrong auxiliary, version and source access variants fail assertions.
+The 5,688 potion receiver cases and 1,337 packaged block sentinel cases still pass.
+The combined build passes 2,703 tests with 163 optional skips.
+Fresh final-artifact BDS cooking and reconnect checks also pass, with normal cleanup.
+
+Complete native ownership, asset/locale acquisition and visible arrow text remain separate requirements.
+See the [arrow provider evidence](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#native-arrow-primary-names) for raw descriptions, exclusions and integration checks.
