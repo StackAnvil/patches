@@ -32,7 +32,10 @@ It either applies target coordinates and rotation with new counters, or defers t
 The fixture excludes optional marker removal through an explicitly absent marker store.
 Complete ECS traversal, interpolation ticks, and native phase ordering remain unverified.
 
-The next production change must retain and restore the actual interpolation component and wire both refresh sources.
+The packet-source prerequisite now lives in the existing core sparse-update owner.
+It retains received coordinates and rotations before local admission, independently of the mutable actor pose.
+The [spatial update notes](../../viabedrock/upstreamable/0018-preserve-sparse-actor-spatial-updates.pr.md) record 512 original-handler controls and registered packet comparisons.
+The actual interpolation component and both refresh sources still require production wiring.
 The current Java position and bounding box cannot substitute for those inputs.
 Native target producers, frame capture, replay ordering, and actor lifetime checks must agree before replacing the approximation.
 No production refresh fix or new whole-package runtime result is claimed by this research section.
