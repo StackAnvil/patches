@@ -62,8 +62,41 @@ The saved CubeCraft pack retains 107 attachables and 24 equipped models, compare
 
 ## Native held equipment
 
-Supported held attachables now render in both first-person and world views. Evaluate authored bone bindings with the equipment slot and handedness. Bind each model to the owner's complete bone matrix. First-person equipment keeps its own playback lifetime.
+Supported held attachables now render in both first-person and world views. Evaluate authored bone bindings with the equipment slot. Bind each model to the owner's complete bone matrix. First-person equipment keeps its own playback lifetime.
 
 Current equipment supplies parent setup before owner animations on every frame. This also restores native armor visibility on ordinary classic skins. First-person bindings check the selected owner's bones before replacing a Java item draw. Unsupported surfaces, enchanted items and banner-pattern items retain Java rendering.
 
-Focused tests cover handedness, spyglass bindings and owner transforms. These checks do not establish complete native item parity.
+Focused tests cover slot selection, spyglass bindings and owner transforms. These checks do not establish complete native item parity.
+
+## Native item-slot bone lookup
+
+The target callback maps `main_hand` to `rightitem` and `off_hand` to `leftitem`.
+It does not inspect handedness after checking that an associated owner exists.
+Other strings pass through unchanged, including body and custom bone names.
+The callback reads the first argument and returns an empty string for missing or non-string arguments.
+Owner animation state remains separate from this lookup.
+
+The previous Java query swapped hand names for left-handed owners and rejected most other slots.
+Both owner setup and attachable evaluation now use the verified native lookup.
+Remove the handedness parameter instead of retaining a second query implementation.
+
+Evidence uses Bedrock 1.26.51.1, build 51061372, protocol 2193, callback `0x1422265b0`.
+The executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+The [Creator query reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions/query_item_slot_to_bone_name)
+describes the query's purpose. The pinned callback establishes the behavior above.
+
+Validation:
+
+- Execute 104 unchanged native callback controls, including absent owners, empty and multiple arguments, both hands, other strings, and numeric values.
+- Supply typed expression results at the native evaluator boundary. Bound error logging and empty temporary cleanup separately.
+- Compare all 52 owner-present native results with the Java query through the optional `STACKANVIL_NATIVE_ATTACHABLE_SLOTS` fixture.
+- Ten focused tests pass without skips. They cover authored query evaluation, numeric rejection, model admission, full matrices, and repeated slot changes.
+- The model regression resolves both hands and a custom slot, then checks the actual bone and drawing matrices across six selections.
+- Three private negative controls reject other names, swap hand bones, or reject additional arguments. Each fails the native comparison; restored code passes.
+- All four builds pass 2,510 tests, with 212 optional skips and no failures or errors. This includes the existing Iris GPU regression.
+- All 1,407 core classes match the add-on and proxy copies. All 1,134 final production client classes match the built add-on.
+
+These checks verify callback semantics and the Java model path.
+They do not establish full native Molang admission, context producers, or binding variable ownership.
+Nested binding transforms, missing-bone behavior, and visible native parity also remain unverified.
+Those remain part of the attachable work. Raw native controls and diagnostic variants remain private.
