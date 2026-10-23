@@ -1,5 +1,51 @@
 # Send local player prediction to core
 
+## Native world collision traversal, October 23, 2026
+
+The physical adapter now visits loaded blocks in native X/Z/Y order.
+The visitor uses float-rounded padding and clamps the vertical interval to the world height.
+It scans unavailable chunks in X-first order with eight blocks of horizontal padding.
+Those chunks supply solid barriers from Y -100000 to Y 100000.
+A separate native floor sits forty blocks below the minimum world height.
+
+Each frame retains this geometry with its existing collision inputs.
+A chunk arrival does not replace a retained barrier during a contained replay query.
+At the strict reuse boundary, replay queries current chunk availability.
+The adapter never creates chunks during collision queries.
+
+The shared production code matches 64 fresh executions of native visitor `142d883c0` from Bedrock 1.26.51.1, protocol 2193.
+The fixture supplies chunk states, loaded columns, and block shapes.
+The comparison covers traversal, chunk scans, and null-source barrier geometry.
+Native border callbacks execute in the fixture but remain outside the Java comparison.
+
+Client tests use voxel collision clipping to verify unavailable boundaries, later chunk arrival, fresh queries, and the below-world floor.
+Removing only unavailable-chunk barrier emission changes the expected clipped displacement from 0.4 to 1.0 and fails the regression.
+The restored implementation passes the focused suite.
+
+The combined build passes 2,511 tests, with 215 optional skips and no failures or errors.
+All 1,410 core classes match the add-on and proxy distributions byte for byte.
+Offline tooling, static, and patch metadata checks pass.
+
+The installed world-traversal candidate completes a direct native BDS run with a private 300 ms inbound delay.
+Sixteen correction replays execute 171 historical physical steps.
+Observers record 87 historical collision caches, including 34 with retained nonempty geometry.
+Eighteen ordinary collision gathers contain the native unavailable-chunk barrier geometry during loading.
+Every replay boundary preserves tick count, food level, and held-item count.
+The live chunk-arrival clipping case remains unverified; its targeted unit control passes.
+Eight inbound events remain delayed at normal shutdown, and the final command awaits the next capture.
+
+The input hold finishes, but these observers record no active item use at replay boundaries.
+This run does not establish correct feeding or delayed replay during active food use.
+The client and server exit normally, and the original private fixtures return to their prior state.
+
+The live run precedes the preserved attachable-slot update.
+All 126 movement/input classes and the complete mixin configuration match the final combined build byte for byte.
+The core source tree also remains unchanged.
+This establishes the tested movement code in the combined package, not a fresh runtime check of the whole package.
+
+Native block-shape generation and source references, border-block permissions, all chunk readiness stages, and near-unloaded flag consumers remain unfinished.
+Exact actor refresh, native input phases, both connection routes, and complete trajectory parity also remain open.
+
 ## Retained collision inputs, October 23, 2026
 
 Each physical frame now retains its collision geometry and query bounds.

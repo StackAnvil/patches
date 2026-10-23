@@ -1,4 +1,4 @@
-From 5f49b50774da0e08e1da4ecbc7f61fd709c0fb7e Mon Sep 17 00:00:00 2001
+From 7ce08b1cfbfd9196464ecc3d07928708b8891e98 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -576,6 +576,17 @@ adapter. Fresh execution controls compare 128 original gather cases and
 prior vectors. Native world traversal, actor-reference lifetimes, nearby
 solid refresh and complete movement trajectories remain separate from
 these supplied-store and supplied-world-record instruction controls.
+
+Port the native world visitor's X/Z/Y loaded-block order and float query
+padding. Scan unavailable chunks in X-first order with eight-block margins
+and preserve their full-height solid barriers in the retained geometry.
+Reproduce the native floor below the world's minimum height.
+
+The 1.26.51.1 visitor at 0x142d883c0 supplies this behavior. Production Java
+traversal and null-source barriers match 64 fresh original instruction
+controls. World, chunk state and block shapes are explicit fixture sources;
+real block shape generation, native border blocks, component readiness and
+complete native collision scheduling remain separate requirements.
 ---
  build.gradle                                  |   29 +
  .../api/model/CollisionContact.java           |   80 ++
@@ -585,6 +596,7 @@ these supplied-store and supplied-world-record instruction controls.
  .../viabedrock/api/model/GeyserMovement.java  |   87 ++
  .../viabedrock/api/model/GlideMovement.java   |   64 +
  .../api/model/MovementCollisionQuery.java     |  181 +++
+ .../api/model/MovementCollisionWorld.java     |   74 ++
  .../api/model/MovementCorrectionTiming.java   |   46 +
  .../viabedrock/api/model/MovementEffect.java  |  100 ++
  .../api/model/MovementEffectTimeline.java     |  432 +++++++
@@ -625,6 +637,7 @@ these supplied-store and supplied-world-record instruction controls.
  .../api/model/GeyserMovementTest.java         |  131 ++
  .../api/model/GlideMovementTest.java          |  115 ++
  .../api/model/MovementCollisionQueryTest.java |   53 +
+ .../api/model/MovementCollisionWorldTest.java |   54 +
  .../model/MovementControllerOrderTest.java    |   52 +
  .../model/MovementCorrectionTimingTest.java   |   40 +
  .../model/MovementEffectPhysicsStateTest.java |   84 ++
@@ -652,7 +665,7 @@ these supplied-store and supplied-world-record instruction controls.
  .../packet/PlayerCorrectionPacketTest.java    |  254 ++++
  .../packet/PlayerPredictionPacketTest.java    |   87 ++
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 75 files changed, 7096 insertions(+), 60 deletions(-)
+ 77 files changed, 7224 insertions(+), 60 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java
@@ -660,6 +673,7 @@ these supplied-store and supplied-world-record instruction controls.
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionQuery.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionWorld.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementCorrectionTiming.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
@@ -684,6 +698,7 @@ these supplied-store and supplied-world-record instruction controls.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionQueryTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionWorldTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementControllerOrderTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementCorrectionTimingTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementEffectPhysicsStateTest.java
@@ -1394,6 +1409,86 @@ index 000000000..2f0075e6a
 +
 +    private static CollisionContact.Box box(final float[] values) {
 +        return new CollisionContact.Box(values[0], values[1], values[2], values[3], values[4], values[5]);
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionWorld.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionWorld.java
+new file mode 100644
+index 000000000..9ec345123
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionWorld.java
+@@ -0,0 +1,74 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import java.util.function.Consumer;
++
++/** Native 1.26.51.1 collision-world traversal and unavailable-region geometry. */
++public final class MovementCollisionWorld {
++
++    private MovementCollisionWorld() {
++    }
++
++    /** The native chunk scan advances X first and includes eight blocks of horizontal padding. */
++    public static void unloaded(final CollisionContact.Box query, final ColumnPredicate loaded, final Consumer<CollisionContact.Box> shapes) {
++        final int minX = (floor(query.minX()) - 8) >> 4;
++        final int minZ = (floor(query.minZ()) - 8) >> 4;
++        final int maxX = (floor(query.maxX()) + 8) >> 4;
++        final int maxZ = (floor(query.maxZ()) + 8) >> 4;
++        for (int z = minZ; z <= maxZ; z++) {
++            for (int x = minX; x <= maxX; x++) {
++                if (!loaded.test(x, z)) {
++                    shapes.accept(new CollisionContact.Box(x * 16, -100000F, z * 16, x * 16 + 16, 100000F, z * 16 + 16));
++                }
++            }
++        }
++    }
++
++    public static CollisionContact.Box belowWorld(final CollisionContact.Box query, final int minimumY) {
++        return query.maxY() < minimumY ? new CollisionContact.Box(query.minX(), -Float.MAX_VALUE, query.minZ(),
++                query.maxX(), (short) (minimumY - 40), query.maxZ()) : null;
++    }
++
++    /** Loaded columns advance X/Z, then visit Y from bottom to top, including the upper endpoint. */
++    public static void blocks(final CollisionContact.Box query, final int minimumY, final int maximumY,
++                              final ColumnPredicate loaded, final BlockVisitor visitor) {
++        final int minY = Math.max(floor(query.minY() - 1F), minimumY);
++        final int maxY = Math.min(floor(query.maxY() + 1F), maximumY);
++        if (minY >= maxY) {
++            return;
++        }
++        final int minX = floor(query.minX() - 1F);
++        final int minZ = floor(query.minZ() - 1F);
++        final int maxX = floor(query.maxX() + 1F);
++        final int maxZ = floor(query.maxZ() + 1F);
++        for (int x = minX; x <= maxX; x++) {
++            for (int z = minZ; z <= maxZ; z++) {
++                if (loaded.test(x, z)) {
++                    for (int y = minY; y <= maxY; y++) {
++                        visitor.accept(x, y, z);
++                    }
++                }
++            }
++        }
++    }
++
++    private static int floor(final float value) {
++        final int integer = (int) value;
++        return value < integer ? integer - 1 : integer;
++    }
++
++    @FunctionalInterface
++    public interface ColumnPredicate {
++        boolean test(int x, int z);
++    }
++
++    @FunctionalInterface
++    public interface BlockVisitor {
++        void accept(int x, int y, int z);
 +    }
 +
 +}
@@ -4905,6 +5000,66 @@ index 000000000..88f1b3b20
 +        final var missing = MovementCollisionQuery.missing(whole, half);
 +        assertEquals(1, missing.size());
 +        assertEquals(new CollisionContact.Box(0.50001F, 0.00001F, 0.00001F, 1F, 1F, 1F), missing.getFirst());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionWorldTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionWorldTest.java
+new file mode 100644
+index 000000000..9123e0e0d
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionWorldTest.java
+@@ -0,0 +1,54 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import java.util.ArrayList;
++import java.util.List;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class MovementCollisionWorldTest {
++
++    @Test
++    void visitsPaddedColumnsInNativeOrderAndSkipsUnavailableColumns() {
++        final var query = new CollisionContact.Box(-0.2F, -0.2F, -0.2F, 0.2F, 0.2F, 0.2F);
++        final List<List<Integer>> columns = new ArrayList<>();
++        final List<List<Integer>> blocks = new ArrayList<>();
++        MovementCollisionWorld.blocks(query, -1, 1, (x, z) -> {
++            columns.add(List.of(x, z));
++            return x == 0 && z == 0 || x == 1 && z == -1;
++        }, (x, y, z) -> blocks.add(List.of(x, y, z)));
++        assertEquals(List.of(-2, -2), columns.getFirst());
++        assertEquals(List.of(1, 1), columns.getLast());
++        assertEquals(16, columns.size());
++        assertEquals(List.of(List.of(0, -1, 0), List.of(0, 0, 0), List.of(0, 1, 0),
++                List.of(1, -1, -1), List.of(1, 0, -1), List.of(1, 1, -1)), blocks);
++        MovementCollisionWorld.blocks(query, 1, 1, (x, z) -> {
++            fail();
++            return true;
++        }, (x, y, z) -> fail());
++    }
++
++    @Test
++    void scansPaddedChunksBeforeCreatingUnavailableAndBelowWorldBarriers() {
++        final var query = new CollisionContact.Box(-0.2F, -60F, -0.2F, 0.2F, -58F, 0.2F);
++        final List<List<Integer>> chunks = new ArrayList<>();
++        final List<CollisionContact.Box> barriers = new ArrayList<>();
++        MovementCollisionWorld.unloaded(query, (x, z) -> {
++            chunks.add(List.of(x, z));
++            return x == -1 && z == -1;
++        }, barriers::add);
++        assertEquals(List.of(List.of(-1, -1), List.of(0, -1), List.of(-1, 0), List.of(0, 0)), chunks);
++        assertEquals(List.of(new CollisionContact.Box(0F, -100000F, -16F, 16F, 100000F, 0F),
++                new CollisionContact.Box(-16F, -100000F, 0F, 0F, 100000F, 16F),
++                new CollisionContact.Box(0F, -100000F, 0F, 16F, 100000F, 16F)), barriers);
++        assertEquals(new CollisionContact.Box(-0.2F, -Float.MAX_VALUE, -0.2F, 0.2F, -56F, 0.2F),
++                MovementCollisionWorld.belowWorld(query, -16));
++        assertNull(MovementCollisionWorld.belowWorld(query, -64));
 +    }
 +
 +}
