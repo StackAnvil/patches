@@ -100,3 +100,46 @@ These checks verify callback semantics and the Java model path.
 They do not establish full native Molang admission, context producers, or binding variable ownership.
 Nested binding transforms, missing-bone behavior, and visible native parity also remain unverified.
 Those remain part of the attachable work. Raw native controls and diagnostic variants remain private.
+
+
+## Share the equipped item scope
+
+Animation, render-controller selection, and bone bindings now use the same sampled scope for each equipped item.
+Previously, controller selection repeated scripts in a second scope, while the global geometry cache retained binding variables for unrelated items.
+Compiled binding definitions now contain no mutable evaluator.
+Binding variables follow the existing owner, slot, item, and perspective playback lifetime.
+Standalone controller selection also supplies its scope when the raw animation graph is unavailable.
+
+Bindings run in authored bone order and require string results.
+The early held-geometry check inspects declared ancestry without running expressions before item initialization.
+The later drawing check still resolves actual owner bones before replacing Java equipment.
+
+Evidence uses the same pinned Bedrock executable identified in the preceding section.
+Resolver `0x141c38f40` derives the child Molang context from the selected component at offset `0x88`.
+Initialization, pre-animation, animation update, and binding evaluation receive that child context.
+Parent setup receives the separate parent context.
+The gate at `0x141c3a5cc` accepts only string values, represented by kind 1.
+
+Twelve bounded instruction controls cover four supplied components, two parent contexts, and value kinds 0, 1, and 2.
+These controls run unchanged argument setup and result-kind instructions.
+Context setup, script dispatch, animation update, and expression evaluation remain explicit return boundaries.
+Component selection and frame locals are supplied inputs.
+This evidence establishes argument identity and the string gate, rather than complete resolver or Molang execution.
+
+Fifteen focused controls pass, including the existing native slot comparison and actual model matrices.
+Four new tests cover shared phase writes, bone order, owner and perspective isolation, replacement, rewind, standalone selection, declaration inspection, and result types.
+Four private diagnostic variants share the first item scope, reorder bones, coerce numeric results, or separate controller state.
+Each variant fails its relevant regression. Restored code passes.
+
+All four builds pass 2,518 tests, with 212 optional skips and no failures or errors.
+The native slot fixture and Iris GPU regression run without skips.
+All 1,410 core classes match both packaged copies. All 1,134 production client classes match the add-on.
+
+The current launcher completes a plain CubeCraft replay with playable spawn, complete payloads, and resource-pack loading.
+Its verification report matches the earlier plain replay, including the unresolved `cubecraft:empty.entity` mapping and overall rendering failure.
+The client records no equipment-evaluation or runtime errors. Build artifact checksums remain unchanged across the run.
+Normal cleanup removes the mutable runtime files and leaves no owned Java or display process.
+These scene checks do not establish native equipment pixel parity.
+
+Native component lifetime, internal controller evaluation, nested binding transforms, missing-bone behavior, and visible parity remain unverified.
+The native instruction controls and diagnostic variants remain private.
