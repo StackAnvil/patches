@@ -1133,3 +1133,18 @@ These controls verify supplied registry, descriptor, userdata, and language inpu
 
 Block, potion, arrow, compound, appended primary text, secondary labels, query transport, and unchanged authored-screen acceptance remain open.
 See the [descriptor provider notes](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#descriptor-aware-ordinary-names) for composition, initialization, regression controls, and build results.
+
+## Ordinary name append composition
+
+Java conversion now applies the native append path to modeled ordinary name providers.
+The lazy primary selector uses the same implementation. Java custom names keep their separate override of the ordinary item component.
+Only nonzero byte flags enable append text. Group names precede body formatting and raw suffixes.
+Group and color translation use the current language engine. Body formatting retains the native color argument count, including an empty first argument.
+
+A fresh native control composes the selector with the actual I18n virtual functions, manager, formatter, and dictionary lookup.
+All 2,442 supplied-input results match. The control supplies selected English table state and retains explicit descriptor, tag, allocation, and ownership boundaries.
+Another control records 39 native coal primary and ordinary name pairs.
+The final package matches all 78 results after parsing the supplied raw language files. The previous package fails 33 of the 39 paired cases.
+See the [append evidence](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#ordinary-name-append-composition) for mutation controls and scope.
+
+Unmodeled ordinary providers, secondary labels, cooking query transport, and unchanged authored-screen acceptance remain open.
