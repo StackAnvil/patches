@@ -1214,3 +1214,18 @@ Fresh BDS cooking and same-world reconnect checks pass through ordinary Java scr
 
 Complete descriptor/session ownership, secondary labels, locale acquisition, query transport and visible compound text remain separate requirements.
 See the [compound provider evidence](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#native-compound-primary-names) for native inputs, exclusions and integration checks.
+
+## Authored toggle input delivery
+
+The packaged preference parser still rejects the target's focused and implicit hover mappings.
+Fresh resolution of the three default cooking fixtures produces 15 toggle controls, and the current package rejects all 15.
+
+Original native dispatch and toggle controls now establish the event phases required for integration.
+Focused input uses native control flags independently of pointer bounds.
+Mouse and gamepad activation occurs on a new press; touch activation occurs on a new release.
+Repeated phases do not activate again. Checked radio controls still notify their group.
+A private candidate matches 4,320 dispatch cases and 1,440 toggle steps; four wrong candidates fail behavioral assertions.
+Production input delivery remains unchanged.
+
+Native focus production, hover events, radio sibling state, device translation and event propagation remain required before complete scene admission.
+See the [toggle input contract](../patches/viafabricplus-bedrock/upstreamable/0029-present-authored-native-containers.pr.md#authored-toggle-input-contract) for original functions and supplied interfaces.

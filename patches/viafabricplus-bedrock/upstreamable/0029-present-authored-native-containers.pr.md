@@ -193,3 +193,32 @@ Two earlier failed fixture attempts remain archived separately. They assumed a s
 This route does not establish carried tab/filter input, stack counts beyond one, unchanged authored screens, native opacity, or native pixels.
 
 This change does not complete carried-item opacity, native device production, default search/help controls, layout history, or visual parity.
+
+## Authored toggle input contract
+
+The current package rejects all 15 toggle controls in fresh default cooking scenes from the packaged core fixtures.
+The furnace fixture has seven controls; smoker and blast-furnace fixtures each have four because their category contents differ.
+The resolved scenes retain the target's focused `menu_ok` mappings and the filter's implicit hover mapping.
+This confirms the parser rejection seen during the ordinary BDS run. It does not establish unchanged native screen acceptance.
+
+Original Bedrock 1.26.51.1, build 51061372, protocol 2193 supplies the input contract.
+Input dispatch `1445056d0` executes in 4,320 cases covering mapping kind, control flags, device mode, bounds, phase history and consumption.
+These cases execute the original pointer eligibility, empty-parent clip walk, cached-name lookup and event construction without replacement hooks.
+Their mapping records, control geometry, flags, absent weak owner and fixed queue capacity are supplied boundaries.
+Double-press tracking, pointer capture, dirty layouts, parent clips and focus production remain outside this control.
+
+Another 288 sequences execute 1,440 original dispatch calls through the actual input and toggle vtables.
+They run the original ToggleComponent constructor, event handler `144575660`, checked-state setter `144575910` and toggle-change event construction.
+Binding publication, visual synchronization, radio sibling propagation and settings notification remain observed host interfaces.
+Factory fields, control flags, geometry and event capacity are supplied. Complete construction and native settings persistence remain unverified.
+
+Focused mapping eligibility uses the native control flags rather than pointer bounds.
+Mouse and gamepad toggles activate on a new press; touch toggles activate on a new release.
+Repeated phases do not create another toggle change. Radio controls still notify when already checked.
+A private Java candidate matches every dispatch case and toggle step.
+Four wrong candidates fail behavior assertions: focused input treated as pointer input, touch activation on press, repeated activation and discarded checked-radio notifications.
+The candidate remains private; production input delivery is unchanged.
+
+Complete native focus production and lifetime, hover callbacks, radio sibling state, device translation and full event propagation before admitting these mappings.
+The shared scene already retains focus identifiers, directional overrides and precedence fields; the client must consume their native semantics.
+These controls do not establish controller navigation, unchanged authored screens or native pixels.
