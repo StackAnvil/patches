@@ -1629,3 +1629,36 @@ The private fixture now resets initial health and disables drowning damage; moti
 
 These checks establish live clock binding and correction execution on both routes.
 Exact native trajectories, collider refresh, retained interpolation, and complete mount lifetime and seat ownership remain unfinished.
+
+## Native packet source for collider refresh
+
+The collider source is the newest network-history message position.
+It is independent of the completed Java physics frame and the current Java transform.
+The native movement getter at `1401c5610` returns the position at message offset `0x28`.
+The motion getter at `142887770` returns the retained movement position at offset `0x44`.
+It does not return the raw or accumulated velocity.
+
+A combined check executes the original prediction constructor, all three packet enqueue functions, both position getters, and collider refresh.
+All 192 cases pass, including motion before the first movement and consecutive motion messages.
+A second check executes the original packet publisher, admission gate, history insertion, statistics update, target writer, and collider refresh together.
+All 768 cases pass across movement flags, local control, prediction disablement, actor predictability, provider state, and seeded histories.
+These checks target Bedrock 1.26.51.1, build 51061372, protocol 2193.
+The executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+
+The receive cache updates before the local-control gate.
+An ignored ordinary update therefore changes the receive cache without changing the admitted history or interpolation target.
+A predictable actor can enqueue a message while prediction is disabled.
+Collider refresh still rejects that history source until the prediction component permits it.
+A missing global provider permits history use through the original `1410400c0` guard.
+A configured provider supplies its own boolean through the native virtual callback.
+
+Collider refresh first selects enabled, nonempty prediction history.
+Otherwise, any nonzero interpolation counter selects the retained interpolation target, including negative counters.
+Without either source, the retained collider stays unchanged.
+This source lookup does not compare packet receive clocks.
+The separate interpolation sampler still requires receive timing and native scheduling.
+
+Three negative controls fail after replacement of the motion getter, bypass of local-control admission, or bypass of prediction disablement.
+The fixtures supply allocation, CRT, TLS, clock interfaces, component membership, shape inputs, and selected registry callbacks.
+They exclude actor factory classification, intent producers, history sampling, scheduler integration, and complete live trajectories.
+Production collider source selection remains unchanged, and both existing source-selection counterexamples remain open.

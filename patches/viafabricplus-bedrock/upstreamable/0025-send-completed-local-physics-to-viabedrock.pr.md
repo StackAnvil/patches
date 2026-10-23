@@ -2033,3 +2033,16 @@ Both retain valid frame bindings, historical correction execution, exact float v
 Runtime artifacts match the tested build, and all owned processes stop normally without observer errors.
 These sessions cover ordinary mount lifecycle and actor removal.
 Same-Java-object native lifetime replacement remains real-registry regression coverage, rather than a claim about live server ID reuse.
+
+## Collider source integration contract
+
+The [core movement notes](../../viabedrock/upstreamable/0092-retain-completed-client-prediction-frames.pr.md#native-packet-source-for-collider-refresh) record the combined native publisher and collider checks.
+The checks distinguish the receive cache, admitted network history, retained interpolation target, and current actor transform.
+In particular, an ignored local-control update changes only the receive cache.
+A motion message retains its last movement position independently of its velocity.
+
+The native source lookup itself requires no comparison between proxy and client receive clocks.
+Production still needs retained component state, correct admission, actor lifetimes, shape inputs, and native simulation phases.
+The interpolation sampler separately requires receive timing.
+The current Java transform heuristic remains incorrect for both recorded counterexamples.
+These native checks establish the producer contract and do not change production collider behavior.
