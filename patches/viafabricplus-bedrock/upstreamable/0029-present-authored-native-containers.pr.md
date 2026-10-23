@@ -330,3 +330,19 @@ Screen-host input preservation, held-selection/reset commands, help, drop, searc
 This change does not establish complete native workstation or input parity.
 The full stack build passes 2,743 tests with 163 optional skips.
 The packaged transition adapter matches 48,384 native cases across all three families and both filter states, within the boundaries above.
+
+## Screen-host input ownership
+
+Cooking scenes retain their real authored screen root.
+Navigation-only screen hosts now share the existing button/input-panel consumer and retained component phases.
+A host-owned press remains held across a model update, then releases before another activation.
+The real screen regression fails against the previous content-only core.
+Its fixture declares an actual screen and content hierarchy, with no substitute input wrapper.
+
+The unimplemented player-hurt close policy retains the ordinary menu before input.
+The complete default hosts also retain view-owned navigation, layout, cursor/drop and other commands that still need handlers.
+Search/edit controls, held-input/reset flow, remaining policies, physical devices and pixels remain open.
+Preserving the full host does not establish full default-screen admission.
+All four builds pass: 2,745 tests, with 163 optional skips.
+Final JARs pass the three desktop host structure checks and both actual host-owned screen regressions, with mandatory production class origins.
+Pocket self-reference handling remains a separate native resolver requirement.

@@ -431,3 +431,21 @@ All 1,419 core classes match the embedded add-on and proxy copies. All 1,139 cli
 Four focused packaged checks pass, including the registry's book-class dispatch.
 The packaged selector matches all 2,286 applicable native rows. Production class origins are verified against the current standalone core JAR.
 This checkpoint does not establish full cooking search or native screen and pixel parity.
+
+## Complete cooking screen hosts
+
+Cooking resolution now expands the authored screen host through the shared control expander.
+It retains host input mappings, policies, variables, overlays and inherited hierarchy.
+Independent cooking programs declare a screen root and their own content graph.
+The resolver no longer invents a fallback content panel for an empty authored screen.
+Other domain consumers retain their existing resolution APIs.
+
+The pinned desktop Furnace, Blast Furnace and Smoker hosts resolve without missing templates.
+Each complete host round-trips exactly through program export and is accepted by the shared client scene parser.
+The scenes remain within the existing payload and node limits.
+All 23 targeted cooking program tests pass with title authority, layering, recipe/slot identity, selection and action scopes preserved.
+These structural checks do not establish screen-controller, device or native pixel parity.
+The combined build passes 2,745 tests with 163 optional skips.
+Packaged production classes pass three desktop host checks and two real screen interaction regressions.
+Pocket expansion reaches a self-parent in the original `furnace_screen_pocket.json`.
+Neither acquired vanilla UI archive supplies a lower definition for it. Native resolver behavior remains unproven, and the recursion guard is unchanged.
