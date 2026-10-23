@@ -1,4 +1,4 @@
-From 6e733a09960b29fdd69b7502e9d2725b72ff9988 Mon Sep 17 00:00:00 2001
+From 6e979c328b80711df97f02226dae0bc53569ecb9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -645,6 +645,11 @@ position getters and composed publisher/refresh routing. The registered
 refresh comparison covers all 256 source and box cases. Receive clocks,
 complete remote interpolation, custom actor component classification,
 and full native trajectories remain separate work.
+
+Publish source bootstrap only after its actor snapshot, and clear source
+and bounds publication caches on actor retirement. A serialized
+publisher-to-registry regression catches both premature source delivery
+and missing identical dependencies after re-publication.
 ---
  build.gradle                                  |   29 +
  .../api/model/ActorMotionCommand.java         |   72 ++
@@ -673,7 +678,7 @@ and full native trajectories remain separate work.
  .../api/model/VehiclePredictionContext.java   |   90 ++
  .../viabedrock/api/model/WaterMovement.java   |   69 +
  .../api/model/entity/ClientPlayerEntity.java  |  123 +-
- .../viabedrock/api/model/entity/Entity.java   |  109 +-
+ .../viabedrock/api/model/entity/Entity.java   |  111 +-
  .../api/model/entity/LivingEntity.java        |   32 +-
  .../api/model/entity/PlayerEntity.java        |    2 +-
  .../definition/ItemDefinitions.java           |   13 +
@@ -720,7 +725,7 @@ and full native trajectories remain separate work.
  .../api/model/WaterMovementTest.java          |   88 ++
  .../ClientPlayerMovementAttributeTest.java    |   17 +-
  .../entity/FlightMovementSnapshotTest.java    |  189 +++
- .../entity/NativeActorPublicationTest.java    |  156 +++
+ .../entity/NativeActorPublicationTest.java    |  214 ++++
  .../UnderwaterMovementTransportTest.java      |  129 ++
  .../api/util/MathUtilMovementTest.java        |   44 +
  .../model/BedrockItemEnchantmentTest.java     |   73 ++
@@ -734,7 +739,7 @@ and full native trajectories remain separate work.
  .../packet/PlayerPredictionPacketTest.java    |   87 ++
  .../packet/TickedMotionPacketTest.java        |  156 +++
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 88 files changed, 8461 insertions(+), 71 deletions(-)
+ 88 files changed, 8521 insertions(+), 71 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
@@ -3521,7 +3526,7 @@ index f69b430bf..dcae62809 100644
  
      public record DimensionChangeInfo(Long loadingScreenId) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 70c675dbf..9968186df 100644
+index 70c675dbf..0d3ab8f8f 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -22,14 +22,14 @@ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
@@ -3577,7 +3582,16 @@ index 70c675dbf..9968186df 100644
      /**
       * pitch, yaw, headYaw
       */
-@@ -162,6 +172,7 @@ public class Entity {
+@@ -125,6 +135,8 @@ public class Entity {
+         if (this.publishedNativeState != null && this.nativeStateAvailable()) {
+             this.sendNativeActorMessage(new NativeActorMessage.Remove(this.javaUuid(), this.nativeLifetime, this instanceof ClientPlayerEntity));
+             this.publishedNativeState = null;
++            this.publishedNativeBounds = null;
++            this.publishedSpatialCommand = null;
+         }
+         if (this.hasBossBar) {
+             this.hasBossBar = false;
+@@ -162,6 +174,7 @@ public class Entity {
                  // ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received unknown entity data: " + dataId + " for entity type: " + this.type);
              }
          }
@@ -3585,7 +3599,7 @@ index 70c675dbf..9968186df 100644
          this.onEntityDataChanged();
      }
  
-@@ -200,6 +211,31 @@ public class Entity {
+@@ -200,6 +213,31 @@ public class Entity {
          return this.uniqueId;
      }
  
@@ -3617,7 +3631,7 @@ index 70c675dbf..9968186df 100644
      public long runtimeId() {
          return this.runtimeId;
      }
-@@ -253,6 +289,15 @@ public class Entity {
+@@ -253,6 +291,15 @@ public class Entity {
          this.lastReceivedInterpolationTicks = interpolationTicks;
      }
  
@@ -3633,7 +3647,7 @@ index 70c675dbf..9968186df 100644
      public Position3f javaPosition() {
          return this.position.subtract(0F, this.eyeOffset(), 0F);
      }
-@@ -261,10 +306,24 @@ public class Entity {
+@@ -261,10 +308,24 @@ public class Entity {
          this.setPosition(position.add(0F, this.eyeOffset(), 0F));
      }
  
@@ -3658,7 +3672,7 @@ index 70c675dbf..9968186df 100644
          this.position = position;
      }
  
-@@ -345,16 +404,19 @@ public class Entity {
+@@ -345,16 +406,19 @@ public class Entity {
      public void addPassenger(final long passengerRuntimeId) {
          if (!this.passengers.contains(passengerRuntimeId)) {
              this.passengers.add(passengerRuntimeId);
@@ -3678,7 +3692,7 @@ index 70c675dbf..9968186df 100644
      }
  
      public List<Long> passengers() {
-@@ -363,6 +425,15 @@ public class Entity {
+@@ -363,6 +427,15 @@ public class Entity {
  
      public void setMountEntityRuntimeId(final long runtimeId) {
          this.mountRuntimeId = runtimeId;
@@ -3694,7 +3708,7 @@ index 70c675dbf..9968186df 100644
      }
  
      public long mountEntityRuntimeId() {
-@@ -381,7 +452,12 @@ public class Entity {
+@@ -381,7 +454,12 @@ public class Entity {
          return EntityMetadataRewriter.rewrite(this.user, this, id, entityData, javaEntityData);
      }
  
@@ -3707,7 +3721,7 @@ index 70c675dbf..9968186df 100644
          this.sendNativeActorSnapshot();
      }
  
-@@ -422,6 +498,33 @@ public class Entity {
+@@ -422,6 +500,33 @@ public class Entity {
                  this.publishedNativeBounds = bounds;
              }
          }
@@ -3715,7 +3729,7 @@ index 70c675dbf..9968186df 100644
 +    }
 +
 +    public final void sendNativeSpatialCommand(final boolean force) {
-+        if (!this.nativeStateAvailable() || this.admittedPosition == null
++        if (this.publishedNativeState == null || !this.nativeStateAvailable() || this.admittedPosition == null
 +                || !this.user.get(ChannelStorage.class).hasChannel(ActorSpatialCommand.CHANNEL)
 +                || this.user.get(EntityTracker.class).getEntityByUid(this.uniqueId()) != this) {
 +            return;
@@ -7930,10 +7944,10 @@ index 000000000..aa3e68c3d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/NativeActorPublicationTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/NativeActorPublicationTest.java
 new file mode 100644
-index 000000000..df7db4832
+index 000000000..a80bf1da3
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/NativeActorPublicationTest.java
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,214 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7952,6 +7966,9 @@ index 000000000..df7db4832
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
 +import io.netty.buffer.Unpooled;
 +import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.api.model.NativeActorStates;
++import net.raphimc.viabedrock.api.model.ActorSpatialCommand;
++import net.raphimc.viabedrock.protocol.model.Position3f;
 +import net.raphimc.viabedrock.api.model.NativeActorBoundsMessage;
 +import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
@@ -7966,12 +7983,67 @@ index 000000000..df7db4832
 +
 +import java.util.ArrayList;
 +import java.util.List;
++import java.util.Set;
 +import java.util.UUID;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.mockito.Mockito.*;
 +
 +class NativeActorPublicationTest {
++
++    @Test
++    void metadataPublishesBeforeSpatialBootstrapAndRemovalRetiresItsDependencies() throws Exception {
++        final var user = mock(UserConnection.class);
++        final var info = mock(ProtocolInfo.class);
++        final var tracker = spy(new EntityTracker(user));
++        final var channels = new ChannelStorage();
++        when(user.get(any())).thenAnswer(call -> mock((Class<?>) call.getArgument(0)));
++        when(user.getProtocolInfo()).thenReturn(info);
++        when(info.getServerState()).thenReturn(State.PLAY);
++        when(user.get(EntityTracker.class)).thenReturn(tracker);
++        when(user.get(ChannelStorage.class)).thenReturn(channels);
++        when(tracker.nativeActorsJoined()).thenReturn(true);
++        channels.addChannels(Set.of(NativeActorMessage.CURRENT_CHANNEL, NativeActorBoundsMessage.CHANNEL, ActorSpatialCommand.CHANNEL));
++        final var actor = new BoatEntity(user, 170, 91, "minecraft:boat", 7, UUID.randomUUID(), EntityTypes26_3.OAK_BOAT);
++        when(tracker.getEntityByUid(actor.uniqueId())).thenReturn(actor);
++        actor.setPosition(new Position3f(.5F, 70.375F, .5F));
++        actor.entityData().put(ActorDataIds.RESERVED_053, new EntityData(53, EntityDataTypesBedrock.FLOAT, 1.4F));
++        actor.entityData().put(ActorDataIds.RESERVED_054, new EntityData(54, EntityDataTypesBedrock.FLOAT, .455F));
++        final var registry = new NativeActorStates();
++        try (var factory = mockStatic(PacketWrapper.class)) {
++            factory.when(() -> PacketWrapper.create(any(PacketType.class), eq(user))).thenAnswer(call -> {
++                final var packet = spy(new PacketWrapperImpl(call.getArgument(0), null, user));
++                doAnswer(_ -> {
++                    final var bytes = Unpooled.buffer();
++                    try {
++                        packet.writeToBuffer(bytes);
++                        assertEquals(ClientboundPackets26_3.CUSTOM_PAYLOAD.getId(), Types.VAR_INT.readPrimitive(bytes));
++                        final String channel = Types.STRING.read(bytes);
++                        if (channel.equals(ActorSpatialCommand.CHANNEL)) {
++                            registry.apply(ActorSpatialCommand.TYPE.read(bytes), null);
++                        } else if (channel.equals(NativeActorBoundsMessage.CHANNEL)) {
++                            registry.apply(NativeActorBoundsMessage.TYPE.read(bytes), null);
++                        } else {
++                            registry.apply(NativeActorMessage.CURRENT_TYPE.read(bytes), null);
++                        }
++                        assertFalse(bytes.isReadable());
++                    } finally {
++                        bytes.release();
++                    }
++                    return null;
++                }).when(packet).send(eq(BedrockProtocol.class), eq(true));
++                return packet;
++            });
++            actor.onEntityDataChanged();
++            assertNotNull(registry.movement(actor.javaUuid()));
++            assertEquals(actor.position(), registry.movement(actor.javaUuid()).position(registry.movement(actor.javaUuid()).interpolation()));
++            actor.remove();
++            assertNull(registry.movement(actor.javaUuid()));
++            actor.sendNativeActorSnapshot();
++            assertNotNull(registry.movement(actor.javaUuid()));
++            assertNotNull(registry.bounds(actor.javaUuid()));
++        }
++    }
 +
 +    @Test
 +    void registrationUpgradeAndDowngradeReemitEqualStateWithTheSelectedCodec() throws Exception {

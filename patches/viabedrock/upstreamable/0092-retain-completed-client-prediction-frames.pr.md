@@ -1700,3 +1700,9 @@ The [client source validation](../../viafabricplus-bedrock/upstreamable/0025-sen
 Both recorded selector counterexamples now pass their registered client regressions.
 The live routes exercise sixteen collider refreshes against independent float calculations and retain valid mounted input bindings.
 Ordinary `MOVE_PLAYER` source production and the remaining native component and simulation phases remain unfinished.
+
+The source publisher waits until its actor snapshot is available before it emits the first source command.
+When it publishes native removal, it clears the cached source and dimension publications.
+Equal inputs therefore initialize the receiver again after re-publication.
+A packet-codec regression feeds the real actor registry through ordinary metadata publication and removal.
+It fails first for premature source delivery, then for retained publication caches, and passes with both fixes.
