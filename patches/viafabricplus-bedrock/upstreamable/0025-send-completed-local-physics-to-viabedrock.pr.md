@@ -1,5 +1,24 @@
 # Send local player prediction to core
 
+## Food use during historical replay, October 23, 2026
+
+A controlled BDS fixture now starts with hunger four and sixteen apples.
+The direct route executes five historical replays with fifty-four physical steps.
+Three active-use replays preserve use timers of twelve, twenty-eight, and eighteen ticks.
+The proxy route executes six replays with fifty-five physical steps.
+Three active-use replays preserve timers of twenty-three, seventeen, and ten ticks.
+All replay boundaries preserve tick count, hunger, held count, and active-use state.
+
+Both routes finish each ordinary-food phase at hunger twenty with twelve apples.
+Each records four server starts, four completions, and no start at full hunger.
+A separate full-hunger golden-apple control completes four uses on each route.
+The core item-use owner now rejects ordinary-food requests after hunger reaches its native maximum.
+The [item-use notes](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) record the regression and admission evidence.
+
+These runs close the active-food replay observation gap for the stated cases on both routes.
+They do not establish all inventory authority modes, native use-cycle semantics, mount trajectories, or the complete reported rollback case.
+Earlier sections retain their historical test counts, artifacts, and limits.
+
 ## Native world collision traversal, October 23, 2026
 
 The physical adapter now visits loaded blocks in native X/Z/Y order.
