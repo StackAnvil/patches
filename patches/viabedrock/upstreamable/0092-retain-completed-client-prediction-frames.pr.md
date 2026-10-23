@@ -1661,4 +1661,42 @@ The separate interpolation sampler still requires receive timing and native sche
 Three negative controls fail after replacement of the motion getter, bypass of local-control admission, or bypass of prediction disablement.
 The fixtures supply allocation, CRT, TLS, clock interfaces, component membership, shape inputs, and selected registry callbacks.
 They exclude actor factory classification, intent producers, history sampling, scheduler integration, and complete live trajectories.
-Production collider source selection remains unchanged, and both existing source-selection counterexamples remain open.
+The client adapter now integrates these source inputs. The next section records the implementation and its remaining limits.
+
+## Retained sources in the client bridge
+
+The core now retains admitted movement separately from the raw receive cache.
+Only accepted absolute or delta updates advance the admitted revision.
+Ignored local-control updates still populate the receive cache for later sparse updates.
+Local predicted transforms cannot overwrite the admitted position.
+The negotiated `viabedrock:actor_spatial` channel publishes the position, flags, unsigned duration, actor identity, revision, and bridge component profile.
+Capability replay publishes the retained source after the actor snapshot.
+
+The client registry rejects stale lifetimes and retires sources with their actor.
+Duplicate revisions can update control inputs without restarting interpolation.
+The source model retains forced and queued targets, signed counters, and the native rotation override.
+The normal client phase advances counters and handles prediction reset or resume before local physics.
+Historical replay does not advance the live source model.
+Each cached collider captures immutable interpolation inputs while eligible network history remains live.
+
+The supported bridge profiles use player exclusion from base prediction and the verified local horse control predicate.
+Twenty additional instruction controls execute the original vehicle-intent initialization stores.
+All twenty initialize the client-prediction byte to zero, preserve surrounding guards, and match the complete 72-byte payload.
+Sparse insertion and slot lookup remain supplied boundaries.
+The existing horse writer controls establish the later saddle, tame, and controller gates.
+
+The registered Java comparison matches all 256 original source-selector and float-box cases.
+The packet regressions also verify that rejected vehicle updates preserve their previous admitted position and revision.
+Focused source, codec, registry, and packet checks pass.
+The native constructor and source controls use the executable identity recorded in the previous section.
+
+History use currently follows the native guard's absent-provider default.
+The configured provider and its Java setting remain unmapped.
+Complete custom actor/component admission, optional head-component behavior, remote sampling, and native pose phases remain unfinished.
+Fresh collider membership still uses the existing Java world adapter.
+These limits prevent a claim of complete native collision or trajectory parity.
+
+The [client source validation](../../viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md#combined-source-validation) records the combined build and fresh delayed sessions.
+Both recorded selector counterexamples now pass their registered client regressions.
+The live routes exercise sixteen collider refreshes against independent float calculations and retain valid mounted input bindings.
+Ordinary `MOVE_PLAYER` source production and the remaining native component and simulation phases remain unfinished.

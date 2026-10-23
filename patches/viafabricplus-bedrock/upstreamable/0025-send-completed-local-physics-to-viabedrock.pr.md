@@ -2024,8 +2024,8 @@ Artifact comparisons identify exactly four changed client classes: actor state, 
 The other 1,139 client classes retain their previous bytes.
 All 1,428 core classes match both embedded copies, and all 1,143 client classes match the add-on.
 
-Both native collider source-selection counterexamples still reproduce with the updated live-lifetime fixture.
-Native prediction-history and interpolation-target integration remain unfinished.
+At the lifetime-validation milestone, both collider source-selection counterexamples still reproduced.
+The source integration described below now covers those selector inputs.
 Collider verification now records the entire nested class family; the unchanged outer class alone cannot prove unchanged ownership behavior.
 
 Fresh direct NetherNet and ViaProxy sessions repeat the delayed impulse, mounting, release, reacquisition, dismount, and zero-reset sequence.
@@ -2044,5 +2044,63 @@ A motion message retains its last movement position independently of its velocit
 The native source lookup itself requires no comparison between proxy and client receive clocks.
 Production still needs retained component state, correct admission, actor lifetimes, shape inputs, and native simulation phases.
 The interpolation sampler separately requires receive timing.
-The current Java transform heuristic remains incorrect for both recorded counterexamples.
-These native checks establish the producer contract and do not change production collider behavior.
+The implementation below replaces the Java transform heuristic with the retained native source inputs.
+
+## Native sources for retained collider geometry
+
+Replay collider refresh now selects an eligible admitted network position before a retained interpolation target.
+An actor's current Java position, bounding box, or Java interpolation handler cannot substitute for either source.
+Without an eligible source or usable dimensions, refresh preserves the captured geometry.
+The existing live lifetime check still protects ownership.
+
+The registry receives source commands on the current connection and resolves local Java identity through the actor registry.
+The normal client phase advances source counters before physical capture.
+Each cached shape retains immutable interpolation inputs for its historical frame.
+Later packets and live counter completion cannot replace that target during replay.
+The refresh reconstructs dimensions and origin offsets with native float operations before it creates a Java box.
+
+Six new regressions use the actual actor registry with supplied Java entities.
+Four fail against the previous production collider code, including both recorded native source-selection counterexamples.
+All six pass with the new implementation.
+The existing five cache tests and five lifetime tests also pass.
+A source-priority variant and a live-target variant each fail their comparison.
+These checks establish the recorded selector inputs, historical target retention, and lifecycle behavior under their supplied component profiles.
+
+The adapter does not replace the complete remote interpolation sampler or native actor pose simulation.
+Configured history-provider behavior, custom actor factories, optional head components, fresh collider membership, and exact native phases remain unfinished.
+The unchanged five-area goal also retains inventory authority, native screens and controls, camera execution, and rendering integration.
+
+## Combined source validation
+
+All four project builds pass with 45 environment settings, including the new native collider reference.
+The full suites pass 2,694 tests, with 164 optional skips and no failures or errors.
+All 1,433 core classes match the standalone, add-on, and proxy packages.
+All 1,144 client production classes match the packaged add-on.
+A separate two-test run enables the incoming 559-row native factory reference and passes both cases.
+The factory comparison remains separate from the full-build totals.
+
+Fresh delayed direct and proxy sessions add a moving unoccupied boat to the existing impulse and mount fixture.
+Each route exercises eight owned collider refreshes.
+Every result matches an independent calculation of source priority and native float bounds.
+All sixteen boxes differ from both the captured geometry and the current Java box.
+Both observers report no errors, runtime hashes match the tested artifacts, and all owned test processes stop normally.
+
+| Route | Vehicle frames paired and bound | Vehicle corrections | Replay boundaries | Replayed steps | Owned collider refreshes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Direct NetherNet | 159 | 12 | 22 | 142 | 8 |
+| ViaProxy | 154 | 9 | 19 | 122 | 8 |
+
+Each route preserves live tick, food level, and held-item count across every replay.
+Each route also applies four ticked player impulses live and in their exact following historical frames.
+The fixture emits no nonzero-tick vehicle velocity packet.
+The moving boat uses the base prediction profile, so these runs do not exercise the interpolation fallback or local horse reset live.
+Those paths retain their registered and bounded controls.
+The original server script is restored after each run.
+
+An earlier direct attempt fails before the fixture starts because the new observer generates an invalid stack-map entry.
+The corrected observer reads the completed cache constructor and does not rewrite shape return frames.
+The failed attempt is excluded from all live behavior claims.
+The production artifacts remain unchanged across that observer correction.
+
+Configured history-provider behavior, ordinary `MOVE_PLAYER` source production, full component admission, and native interpolation and pose phases remain unfinished.
+The live checks do not establish complete native trajectories, fresh collider membership, active-use overlap, or full mount and seat parity.
