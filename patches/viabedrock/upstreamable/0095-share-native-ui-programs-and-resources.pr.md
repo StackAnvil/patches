@@ -329,3 +329,21 @@ Furnace, smoker, and blast-furnace cooking and same-world reconnect pass.
 Two runtime inventories match 2,520 classes and four data resources each.
 Normal cleanup removes the private observer, restores the driver, and leaves no managed-profile JVM.
 The scene projection removes unfinished controls and mappings, so it does not establish full default-screen or native pixel parity.
+
+
+## Mode-dependent recipe focus evidence
+
+New native controls distinguish direct recipe presses from the mode-`2` focus path.
+Across 288 three-event controls, the original state-`45` entry stores the focused collection and index.
+The following recipe press enters state `25` with a nonempty carried Item.
+Modes `0`, `1`, and `3` retain their direct-press empty-cursor requirement.
+The recipe-selection entry remains a recording boundary, so this evidence does not establish transfer effects.
+
+Seventy-two original getter controls establish that the input mode comes from the active device's map entry.
+They cover missing device IDs and entries, all four tested mode values, and colliding bucket positions.
+Active-device ID acquisition, physical event production, and complete controller construction remain supplied or unverified boundaries.
+The [focus reference](../../../docs/native-cooking-actions.md#mode-dependent-recipe-focus) records functions, typed inputs, and limits.
+
+The current Java action path does not transport this mode or reproduce the initial focus transition.
+Its nonempty-cursor guard remains until that state and its provenance are implemented together.
+This checkpoint records evidence; it does not claim production support for the new path.

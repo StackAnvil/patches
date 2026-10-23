@@ -114,7 +114,7 @@ For valid recipe indices and input-mode field values `0`, `1`, or `3`, the initi
 
 The release transition executes the real base-state reset and returns handled bit `4`.
 The fixtures do not establish physical input-mode mappings or how Java mouse events produce native event phases.
-The mode-`2` path, physical event producers, and complete recipe action pipeline still need verification.
+The mode-`2` focus path has separate controls below. Physical event producers and the complete recipe action pipeline still need verification.
 
 Cooking action and result payloads use version `4` and preserve the numeric event phase alongside the command and snapshot identity.
 Only phases `0`, `1`, and `2` are accepted.
@@ -346,6 +346,49 @@ The combined phase `0`, then phase `1` input moves twelve ingredients once and r
 Native flush serializes each nonempty queue and preserves its request references.
 These controls supply the raw flags from the input-delivery table. They do not establish physical device mappings.
 A primary command alone therefore does not establish a retained selected state.
+
+## Mode-dependent recipe focus
+
+The initial-state cursor rule does not describe every native recipe action path.
+A separate focus path exists when the controller input-mode field is `2`.
+The following controls use numeric field values without assigning physical device names.
+
+Two hundred eighty-eight controls execute three events each through the complete registered native graph.
+They separate the recipe preview Item from the carried Item.
+The controls vary modes `0` through `3`, both Item counts, source permission, two cell indices, and the input-device held flag.
+The tested counts are `0`, `1`, and `64`.
+Zero preview counts are internal negative controls; published recipe previews must remain nonempty.
+
+For mode `2`, primary phase `1` enters state `45` when the preview is nonempty and its source permits selection.
+The actual entry callback `0x144e4d550` returns handled bit `2`.
+It sets the focus flag and copies the source collection name and cell index into the controller.
+This transition does not require an empty carried Item.
+A subsequent primary phase `0` enters recipe-selection state `25`, including carried counts `1` and `64`.
+Primary phase `2` then executes the real base reset and returns handled bit `4`.
+
+Modes `0`, `1`, and `3` do not take that focus transition in these controls.
+Their direct primary press still requires an empty carried Item.
+The initial-state recipe predicate `0x146c9a5b0` and focused-state recipe predicate `0x146c9a6c0` therefore have different cursor rules.
+The focused-state predicate does not repeat the carried-item emptiness check.
+
+The controls execute original dispatcher `0x144637370`, transition `0x144637530`, all visited predicates, focus entry, and base reset.
+All 101 previously captured registrations populate the native graph through original registration and storage functions.
+Typed Items, input fields, provider flags, permissions, collection names, and device accessors remain supplied inputs.
+Recipe-selection entry remains a recording boundary; these controls do not execute its placement or return actions.
+Complete controller construction, physical event production, request serialization, server acceptance, and pixels remain outside this reference.
+
+Seventy-two additional controls execute the actual client mode getter `0x145dce1c0` and model accessor `0x145dcfb00`.
+The original lookup `0x144353910` reads the mode from a map keyed by the active device ID.
+They cover six device IDs, four stored mode values, missing entries, and both positions in a colliding bucket.
+A missing entry or device ID `-1` returns mode `0`.
+The active-device ID accessor is a supplied boundary; device registration and physical device interpretation remain unverified.
+The original base-controller constructor stores this getter result at offset `0xc04`.
+That constructor observation comes from instruction inspection, not complete constructor execution.
+
+The Java action path still lacks this mode-dependent focus state and active-device provenance.
+Its current phase session cannot begin an idle gesture with phase `1`.
+A blanket removal of its cursor guard would also admit presses that the other tested modes reject.
+Production support therefore needs the focus history and mode source together with the carried-item branch.
 
 ## Request payload identities
 
