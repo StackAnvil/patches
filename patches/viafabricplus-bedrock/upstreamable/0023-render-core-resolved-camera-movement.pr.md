@@ -261,7 +261,7 @@ This reception supplies state for native aim execution.
 World queries, selected hits, reticles, and interaction rotation remain incomplete.
 The activation request section below records the camera-preset settings path.
 The shared control policy matches 2,048 native lookup results, but current-camera identifier production remains unverified.
-Fixed-boom rendering and full control-scheme movement mappings remain separate unfinished work.
+The fixed-boom section below records its frame integration. Full control-scheme movement mappings remain unfinished.
 
 An isolated connection to BDS 1.26.51.1 records 39 client-thread observations, including 32 accepted aim views.
 It verifies six setting transitions, all five control bytes, free-camera context and clear, and lifetime-validated actor bindings.
@@ -295,3 +295,26 @@ A non-override camera restores settings from a real `/aimassist` command.
 The runs contain 39 and 38 client-thread observations, reach gameplay, and close normally.
 All owned Java, display, and server identities are gone; artifact checksums match and private fixture changes are restored.
 Local F5 transitions, native target selection, reticles, interaction rotation, and full event scheduling remain unverified.
+
+## Fixed-boom frame integration
+
+The add-on now consumes the version-two attached-camera payload and shared `BOOM` mode.
+Fixed-boom and orbit instances run before the camera blend, shake, projection, culling, and sound-listener extraction.
+The active preset selects the fixed or orbit path.
+Fixed presets ignore orbit deltas and retain their orientation while their actor moves or turns.
+The native actor identity, lifetime, physical bounds, and player-origin inputs remain shared with follow-orbit.
+Clear and disconnect use the existing lifecycle.
+
+Core compares 192 original native fixed-boom frame controls and retains its existing follow-frame and collision comparisons.
+Those controls supply actor pivots and component inputs.
+They do not establish complete native pivot production, input mappings, world geometry, ECS scheduling, or pixels.
+The [core camera notes](../../viabedrock/upstreamable/0089-resolve-and-transport-native-camera-instructions.pr.md#fixed-boom-execution) record the functions and boundaries.
+
+The exact installed combined build completes a fresh BDS 1.26.51.1 run over direct NetherNet.
+All eleven stages pass across 48 read-only observations of the actual Minecraft camera.
+The stages cover fixed defaults, isolated player turning, explicit rotation, player movement, entity attachment, actor turning and movement, detachment, orbit switching, and clear.
+View and entity offsets retain their expected axes.
+Installed checksums match, and all owned client, display, and server processes stop normally.
+The final four-project build passes 2,600 tests, with 167 optional skips and no failures or errors.
+Both packaged core copies match all 1,412 source classes, and the add-on matches all 1,139 production client classes.
+These results retain the native pivot, input, geometry, and visible-parity limits above.
