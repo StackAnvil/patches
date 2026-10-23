@@ -1296,6 +1296,41 @@ Original manager and component destruction restore every declared owner and leav
 Controller queue delivery, binding publication, visuals, radio propagation and settings notification remain observed host interfaces.
 Screen/controller/root fields, four rectangles, an empty observer map and input-mode values are supplied inputs.
 
-The production change covers component flags and keyboard traversal admission.
-Full native navigation, device-origin translation, controller event handling, radio siblings and unchanged authored screen acceptance remain incomplete.
-These controls do not establish arbitrary directional geometry, complete control/screen construction or native pixels.
+The factory controls establish component flags and keyboard traversal admission.
+The directional controls below extend the production port.
+Device-origin translation, controller event handling, radio siblings, complete control/screen construction and unchanged authored screen acceptance remain incomplete.
+
+## Native directional focus and scroll contexts
+
+Shared actions and edit controls now use native directional edge scoring and binary32 geometry.
+Equal scores retain registration order. Direct overrides use focus identifiers and can stop selection or bypass container policies.
+The selector uses the nearest clipping ancestor and preserves viewport wrapping.
+Keyboard arrows first reach the focused editable control.
+
+Scroll views search their named viewport subtree before the global clipped search.
+This first search includes offscreen controls, follows subtree order and disables wrapping.
+An unsuccessful viewport search also disables wrapping for the subsequent global search.
+The screen reveals the selected control through its existing scroll path.
+Layout synchronizes widget visibility immediately, so a revealed edit field accepts input before another render pass.
+
+Focus containers apply separate `stop`, `contained` and `custom` policies for each direction.
+Custom routes use control names through `other_focus_container_name` and `focus_id_inside`.
+Remembered selections propagate through ancestor containers.
+A 50-entry weak history supplies fallback when the preferred control becomes ineligible.
+History follows retained controls across scene refreshes and removes references to deleted containers.
+
+Original native constructors, property parsing, ancestor registration, viewport binding, subtree iteration, selection and destruction execute for these comparisons.
+The geometry corpus contains 186 scenes and 3,976 steps.
+Another 124 scenes add 5,344 context steps, including nested groups, custom routes, overrides, remembered selection and nested scroll views.
+The production selector matches all 9,320 steps. Twelve deliberately wrong selector variants fail behavioral assertions.
+A separate native history control checks 36 results across enabled-state changes and the 50-entry boundary.
+Its candidate also checks retained-node replacement against those results.
+
+These controls supply static rectangles, component IDs, bare controls, parent/child ownership and focus-container boolean fields.
+Original custom-route parsing consumes JsonCpp and PropertyView objects.
+Original viewport callbacks own their weak references. The fixture retires bare parent/child references and caller-owned history results.
+All recorded native allocations complete their cleanup.
+
+Screen regressions check actual arrow delivery, offscreen reveal, group policies, direct overrides and remembered focus after retained scene refresh.
+Complete control/screen construction, non-widget focus controls, magnet state, scroll physics, controller events and physical device translation remain separate requirements.
+These checks do not establish complete authored-screen support, a fresh account-based game join or native pixels.

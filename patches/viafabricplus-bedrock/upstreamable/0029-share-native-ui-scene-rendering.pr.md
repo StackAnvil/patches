@@ -208,7 +208,7 @@ Together, these controls execute 5,040 screen input calls and 193,283 native fre
 The factory and screen controls supply component IDs, control ownership, screen/controller fields, four rectangles and empty observer state.
 Platform interfaces observe event delivery, bindings, visuals, radio/settings notifications, diagnostics and profiling.
 The production port still needs full native navigation and input routing.
-Complete controller receivers, physical device-origin translation, radio siblings, arbitrary geometry and unchanged authored screen acceptance remain open.
+Complete controller receivers, physical device-origin translation, radio siblings and unchanged authored screen acceptance remain open.
 The [factory and input notes](../../../docs/native-cooking-actions.md#native-component-flags-and-factory-created-input) retain the boundaries.
 
 
@@ -216,3 +216,27 @@ The full four-project replay and build pass 2,706 tests with 163 optional skips 
 The packaged add-on also matches all 5,544 native property reads.
 All 1,448 core classes match both embedded copies, and all 1,144 client classes match the add-on.
 These checks do not add a fresh live screen or native pixel comparison.
+
+## Directional focus, containers and scrolling
+
+The shared selector uses native edge scoring, binary32 arithmetic, nearest ancestor clipping, wrapping and explicit focus overrides.
+Original scroll-view viewport searches precede the global clipped search and disable wrapping, including after an unsuccessful search.
+Nested viewport candidates retain subtree order. The screen reveals newly focused controls through its retained scroll state.
+It updates Java widget visibility during reflow, and an interaction regression types into the newly revealed edit field before another render pass.
+
+Focus containers apply directional stop, containment and custom routing, plus remembered selection through ancestor containers.
+Custom routes use control names. Explicit overrides use focus identifiers and bypass container policies.
+The native 50-entry weak history supplies fallback for disabled controls.
+Retained scene refreshes remap history to replacement nodes without replacing the widget identities.
+
+Original native Focus/Input factories, FocusContainer and ScrollView constructors, custom-route property parsing, ancestor registration and viewport binding execute.
+The original manager, subtree iterator, geometry and history helpers run before original component/manager/property-bag destruction.
+The production selector matches 3,976 geometry steps and 5,344 context steps across 310 scenes.
+A separate original history control verifies 36 enabled-state and capacity results, plus retained-node remap checks in the candidate.
+All recorded native allocations and declared owner references balance.
+
+Static rectangles, component IDs, bare controls, focus-container boolean fields and parent/child storage remain supplied inputs.
+The fixture retires bare hierarchy references and caller-owned history results.
+Complete native control/screen construction, non-widget controls, magnet state, scroll physics, complete controller receivers and physical input remain open.
+These controls do not prove native pixels or complete unchanged authored-screen support.
+The [directional focus notes](../../../docs/native-cooking-actions.md#native-directional-focus-and-scroll-contexts) describe the boundaries.
