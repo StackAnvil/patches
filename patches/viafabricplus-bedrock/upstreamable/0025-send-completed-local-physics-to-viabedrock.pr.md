@@ -45,14 +45,16 @@ A current force byte of exactly one and a nonzero position counter defer an inco
 Native category bit two updates body and head rotation even while the positional target remains queued.
 These controls supply the category bit and existing component stores.
 The queue erasure virtual method is an explicit fixture boundary.
-Native category producers, complete component lifetimes, request consumption, and phase ordering remain unverified.
+Native category producers and complete component lifetimes remain unverified.
+Separate consumer and dispatch controls below establish position application and the interpolation sequence.
 
 The complete native tick system body `1431ea880` passes another 1,152 controls.
 It requires `MovementInterpolatorComponent`, `StateVectorComponent`, `ActorRotationComponent`, and `InterpolateMovementNeededComponent`.
 It excludes `ProjectileComponent`.
 Original iteration and version checks execute across all four supplied dense drivers.
 The fixture supplies cached view selection, head admission, registry discovery, CRT remainder, and view cleanup.
-Marker production, normal entry selection, and complete actor lifetimes remain unverified.
+Separate marker controls below establish two native admission routines.
+Their installation and complete actor lifetimes remain unverified.
 
 Original position consumer `14901d080` passes 270 controls without arithmetic or membership substitutions.
 It copies the requested position into StateVector and preserves the remaining StateVector bytes.
@@ -71,8 +73,26 @@ The fresh replay-manager control dispatches all 215 registered replay systems th
 Within interpolation, that sequence runs the tick, position application, and grounded post-tick systems.
 It omits input capture and queued-target handling.
 All system ECS bodies return at explicit boundaries in this dispatch control.
-Native registration vectors for categories zero and one place capture before tick, followed by queued targets, position application, and grounded post-tick.
-Normal entry execution and complete game phases remain separate requirements.
+Original normal entry points `1463b0b00` and `1463b1070` now execute their category selection and native manager traversal.
+They select categories zero and one without changes to the native category globals.
+They dispatch 361 and 358 systems through original per-system entry points `1463cc280` and `1463cc580`.
+Both sequences include capture, tick, queued targets, position application, and grounded post-tick, in that order.
+All normal ECS methods return at explicit boundaries, and the fixture supplies an empty post-system callback view.
+These dispatch controls establish the phase distinction from replay.
+They do not establish complete live scheduling or combined physical trajectories.
+
+Original admission routines `14902bca0` and `14902b360` pass 1,020 controls over 2,040 actor visits.
+Both routines enumerate a supplied source pool of `ActorMovementTickNeededComponent` and add missing `InterpolateMovementNeededComponent` markers.
+The second routine can also remove a destination movement-tick marker while retaining interpolation admission.
+Matching context values at offset `0x160` and a valid source `ShouldBeSimulatedComponent` preserve that destination movement-tick marker.
+Different context values or missing simulation membership permit removal.
+The controls cover existing markers, missing markers, stale generations, missing pages, and empty sparse ranges.
+They observe 1,632 interpolation marker insertions and 360 movement-tick marker removals.
+Registry discovery, generic insertion, and virtual erasure remain explicit fixture boundaries.
+Original iteration, membership, context-value comparison, and admission decisions execute without substitution.
+The semantic type and producers of the context values remain unverified.
+These results require separate production state for movement simulation and interpolation admission.
+Native installation, context lifetimes, mount transitions, and their Java component mapping remain unfinished.
 
 The packet-source prerequisite now lives in the existing core sparse-update owner.
 It retains received coordinates and rotations before local admission, independently of the mutable actor pose.
