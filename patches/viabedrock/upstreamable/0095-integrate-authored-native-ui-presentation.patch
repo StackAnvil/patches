@@ -1,4 +1,4 @@
-From 56d5b0e2d17554e0dd6a228405941c2b0a9dc3ab Mon Sep 17 00:00:00 2001
+From 5d9688a716e66b9bde5b15b65217f395c5c339af Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -424,6 +424,21 @@ a presentation sequence. A packet regression fails before this guard and
 passes after it, then proves the first loaded presentation still uses
 sequence one. This identifies a missing-background failure path, not the
 confirmed cause of the reported WildMC screenshot.
+
+Resolve custom item names through the constructed registry factory class.
+Use the shared unfiltered selector for Java CUSTOM_NAME so an empty or
+wrongly typed display.Name on a native written book falls back to title.
+A present but wrongly typed title selects empty custom text. Component
+replacements keep the base custom-name dispatch even if a later entry
+uses legacy flags. Removed runtime-ID owners do not acquire names.
+
+The original 1.26.51.1 executable predicate143f6d580 and getter143f6d2c0
+confirm title/custom-name precedence in 1,000 typed controls. Existing
+native registry lifecycle controls establish the ordered factory policy.
+Targeted tests compose that policy with book naming across first and
+subsequent Legacy/DataDriven/None updates. This does not implement all
+ordinary key families, secondary labels, native language selection or
+the authored search field.
 ---
  Data Asset Sources.md                         |    9 +
  .../api/model/NativeItemStacking.java         |   85 +
@@ -441,7 +456,7 @@ confirmed cause of the reported WildMC screenshot.
  .../protocol/model/BuiltinItemFactories.java  |   67 +
  .../ComponentItemStackingProperties.java      |   40 +
  .../viabedrock/protocol/model/ItemEntry.java  |   10 +
- .../protocol/model/ItemRegistry.java          |  151 +
+ .../protocol/model/ItemRegistry.java          |  162 +
  .../model/ItemStackingProperties.java         |   36 +
  .../model/LegacyItemStackingProperties.java   |   54 +
  .../protocol/packet/HudPackets.java           |   51 +-
@@ -450,7 +465,7 @@ confirmed cause of the reported WildMC screenshot.
  .../protocol/packet/MultiStatePackets.java    |   38 +
  .../protocol/packet/NpcDialoguePackets.java   |  417 +-
  .../protocol/rewriter/ItemDataRewriter.java   |    1 -
- .../protocol/rewriter/ItemRewriter.java       |   57 +-
+ .../protocol/rewriter/ItemRewriter.java       |   64 +-
  .../protocol/storage/EntityTracker.java       |    4 +-
  .../protocol/storage/InventoryTracker.java    |   25 +-
  .../storage/NativeContainerUiState.java       |  130 +
@@ -463,13 +478,13 @@ confirmed cause of the reported WildMC screenshot.
  .../container/NativeItemStackMatcherTest.java |  179 +
  .../resourcepack/ui/HudActionbarUiTest.java   |  108 +
  .../api/resourcepack/ui/HudTitleUiTest.java   |  176 +
- .../protocol/model/ItemRegistryTest.java      |  305 ++
+ .../protocol/model/ItemRegistryTest.java      |  338 ++
  .../packet/ModalFormTransitionTest.java       |  123 +
  .../NativeContainerOpeningPacketTest.java     |  485 +++
  .../protocol/packet/NativeHudPacketTest.java  |  160 +
  .../packet/NpcDialoguePacketTest.java         |  301 +-
  .../storage/NativeContainerUiStateTest.java   |   85 +
- 44 files changed, 8372 insertions(+), 328 deletions(-)
+ 44 files changed, 8419 insertions(+), 332 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemStacking.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSlots.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerLegacyActions.java
@@ -1340,10 +1355,10 @@ index 319d0e8e8..fb504c391 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
 new file mode 100644
-index 000000000..74ca55fc9
+index 000000000..854d037a6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,162 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1355,6 +1370,7 @@ index 000000000..74ca55fc9
 +import com.google.common.collect.HashBiMap;
 +import com.google.common.collect.ImmutableBiMap;
 +import com.viaversion.nbt.tag.CompoundTag;
++import net.raphimc.viabedrock.api.model.NativeItemNames;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
 +
 +import java.util.HashMap;
@@ -1371,6 +1387,7 @@ index 000000000..74ca55fc9
 +    private final Map<String, ItemEntry> definitions;
 +    private final List<ItemEntry> entries;
 +    private final List<ItemEntry> registrations;
++    private final boolean writtenBookNames;
 +
 +    public ItemRegistry(final ItemEntry[] entries) {
 +        final BiMap<String, Integer> ids = HashBiMap.create(entries.length);
@@ -1392,6 +1409,7 @@ index 000000000..74ca55fc9
 +        this.ids = ImmutableBiMap.copyOf(ids);
 +        this.definitions = Map.copyOf(definitions);
 +        this.entries = List.copyOf(definitions.values());
++        this.writtenBookNames = this.factories().get("minecraft:written_book") == ItemVersion.Legacy;
 +    }
 +
 +    public BiMap<String, Integer> ids() {
@@ -1414,6 +1432,14 @@ index 000000000..74ca55fc9
 +    public ItemEntry definition(final int id) {
 +        final String identifier = this.ids.inverse().get(id);
 +        return identifier != null ? this.definitions.get(identifier) : null;
++    }
++
++    /** The constructed item class owns custom-name dispatch, independently of its final network flags. */
++    public String customName(final String identifier, final CompoundTag data) {
++        if (!this.ids.containsKey(identifier)) {
++            return null;
++        }
++        return NativeItemNames.customName(data, this.writtenBookNames && identifier.equals("minecraft:written_book"));
 +    }
 +
 +    public Set<String> componentItems() {
@@ -3048,7 +3074,7 @@ index f98365142..1baab2219 100644
                      && bedrockTag.get("customColor") instanceof IntTag color) {
                  javaItem.dataContainer().set(StructuredDataKey.DYED_COLOR1_21_5,
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index 353a67ede..0118a75b2 100644
+index 353a67ede..db5406ccc 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -18,7 +18,6 @@
@@ -3122,7 +3148,21 @@ index 353a67ede..0118a75b2 100644
          }
          final Set<String> blockItems = new HashSet<>(BedrockProtocol.MAPPINGS.getBedrockBlockItems());
          blockItems.removeIf(identifier -> !this.items.containsKey(identifier));
-@@ -372,6 +374,43 @@ public class ItemRewriter extends StoredObject {
+@@ -277,10 +279,9 @@ public class ItemRewriter extends StoredObject {
+             if (identifier.equals("minecraft:filled_map") && bedrockTag.get("map_uuid") instanceof NumberTag mapUuid) {
+                 javaItem.dataContainer().set(StructuredDataKey.MAP_ID, this.user().get(MapTracker.class).itemJavaId(mapUuid.asLong()));
+             }
+-            if (bedrockTag.get("display") instanceof CompoundTag display) {
+-                if (display.contains("Name")) { // Bedrock client defaults to empty string if the type is wrong
+-                    javaItem.dataContainer().set(StructuredDataKey.CUSTOM_NAME, TextUtil.stringToNbt(display.getString("Name", "")));
+-                }
++            final String customName = this.registry.customName(identifier, bedrockTag);
++            if (customName != null) {
++                javaItem.dataContainer().set(StructuredDataKey.CUSTOM_NAME, TextUtil.stringToNbt(customName));
+             }
+         }
+ 
+@@ -372,6 +373,43 @@ public class ItemRewriter extends StoredObject {
          return this.componentItems;
      }
  
@@ -8364,10 +8404,10 @@ index 000000000..36633fc97
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemRegistryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemRegistryTest.java
 new file mode 100644
-index 000000000..9cd77aded
+index 000000000..eaf0eb96f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemRegistryTest.java
-@@ -0,0 +1,305 @@
+@@ -0,0 +1,338 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -8391,6 +8431,39 @@ index 000000000..9cd77aded
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class ItemRegistryTest {
++
++    @Test
++    void customNamesFollowTheConstructedBookClassAcrossOrderedUpdates() {
++        final String book = "minecraft:written_book";
++        final List<ItemEntry[]> updates = List.of(
++                new ItemEntry[]{entry(book, 20, false, ItemVersion.Legacy)},
++                new ItemEntry[]{entry(book, 20, true, ItemVersion.None)},
++                new ItemEntry[]{entry(book, 20, false, ItemVersion.Legacy), entry(book, 21, true, ItemVersion.DataDriven)},
++                new ItemEntry[]{entry(book, 20, true, ItemVersion.DataDriven), entry(book, 21, false, ItemVersion.Legacy)},
++                new ItemEntry[]{entry(book, 20, true, ItemVersion.DataDriven), entry(book, 21, false, ItemVersion.None)});
++        for (int index = 0; index < updates.size(); index++) {
++            final var registry = new ItemRegistry(updates.get(index));
++            final boolean nativeBook = index < 3;
++            final var data = new CompoundTag();
++            data.putString("title", "Title");
++            data.putString("filteredTitle", "Filtered");
++            assertEquals(nativeBook ? "Title" : null, registry.customName(book, data));
++            final var display = new CompoundTag();
++            display.putInt("Name", 7);
++            data.put("display", display);
++            assertEquals(nativeBook ? "Title" : "", registry.customName(book, data));
++            display.putString("Name", "Named");
++            assertEquals("Named", registry.customName(book, data));
++        }
++        final var removed = new ItemRegistry(new ItemEntry[]{entry(book, 20, false, ItemVersion.Legacy),
++                entry("test:replacement", 20, false, ItemVersion.Legacy)});
++        final var data = new CompoundTag();
++        data.putString("title", "Title");
++        assertNull(removed.customName(book, data));
++        assertNull(removed.customName("test:replacement", data));
++        data.putInt("title", 7);
++        assertEquals("", new ItemRegistry(updates.getFirst()).customName(book, data));
++    }
 +
 +    @Test
 +    void stackSizeConstructionFinishesBeforeOrderedUpdatesIncludingInvalidIds() {

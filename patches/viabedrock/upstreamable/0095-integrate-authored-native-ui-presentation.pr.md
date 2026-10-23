@@ -348,3 +348,23 @@ The same report includes pearl/wind-charge rollback, repeated eating and a missi
 Those symptoms remain under investigation.
 The capture lab cannot copy a private profile with the currently available disk space.
 No new live client or server was launched for this report.
+
+
+## Registry-owned custom names
+
+Java item conversion now uses the registry's constructed class to select custom names.
+Native written books fall back to `title` when `display.Name` is empty or has the wrong type.
+A wrongly typed, present title selects empty custom text. Filtered fields do not replace the unfiltered name.
+
+Component replacements keep base custom-name dispatch, even after a later legacy update.
+The final network flag does not select this behavior. Removed runtime-ID owners cannot acquire custom names.
+The shared selector and registry tests pass all 19 focused tests without skips, including 2,286 retained native comparisons.
+Ordinary-key production, secondary labels, language selection, search transport, and authored text editing remain unfinished.
+
+
+The current four-project build passes 2,644 tests, with 163 optional skips and no failures or errors.
+All 104 core patches and 38 client patches replay. All three selector tests run without skips.
+All 1,419 core classes match the embedded add-on and proxy copies. All 1,139 client classes match the add-on.
+Four focused packaged checks pass, including the registry's book-class dispatch.
+The packaged selector matches all 2,286 applicable native rows. Production class origins are verified against the current standalone core JAR.
+This checkpoint does not establish full cooking search or native screen and pixel parity.

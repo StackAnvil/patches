@@ -405,3 +405,29 @@ The final packaged normalizer repeats the 1,122,310-input comparison with zero d
 Its class and resource load from the verified JAR. All 1,417 core classes match both packaged copies.
 The generated data and license notices also match across the standalone core, embedded core, and proxy.
 All 1,139 production client classes match the add-on.
+
+
+## Unfiltered primary names
+
+`NativeItemNames` shares custom-name presence, written-book title fallback, and ordinary appended text.
+It preserves typed-byte append admission, group/body precedence, and color argument order.
+The caller still owns the ordinary definition name and language lookup.
+The native primary selector returns unfiltered text. Filtered display names and titles remain separate.
+
+Fresh controls execute the original 1.26.51.1 selector `142489b10`, base custom methods, written-book predicate `143f6d580`, and getter `143f6d2c0`.
+The shared selector matches 2,286 applicable native rows. Three deliberate selector regressions fail by assertion.
+The controls supply typed tag virtuals, locale, component and descriptor interfaces, the allocator, and CRT boundaries.
+They do not establish full registry initialization, final language selection, physical editing, or native pixels.
+
+A separate complete native registry capture records all 1,949 constructor-owned naming dispatch tables.
+All use ordinary-name method `1424ce2a0`. Only `written_book` overrides the custom-name predicate and getter.
+The capture completes all 2,627 static cleanup callbacks without owned allocation or lock leaks.
+Pre-packet constructor facts do not establish later component updates or full ordinary-key and secondary-label production.
+
+
+The current four-project build passes 2,644 tests, with 163 optional skips and no failures or errors.
+All 104 core patches and 38 client patches replay. All three selector tests run without skips.
+All 1,419 core classes match the embedded add-on and proxy copies. All 1,139 client classes match the add-on.
+Four focused packaged checks pass, including the registry's book-class dispatch.
+The packaged selector matches all 2,286 applicable native rows. Production class origins are verified against the current standalone core JAR.
+This checkpoint does not establish full cooking search or native screen and pixel parity.

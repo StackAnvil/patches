@@ -928,7 +928,7 @@ The [NBT scalar notes](../patches/viabedrock/upstreamable/0101-normalize-native-
 
 The separate factory capture now completes with 1,949 unique constructor-owned definitions, 36 key families, and seven secondary-label families.
 Its 2,627 static cleanup callbacks complete, with no remaining owned allocations or locks.
-`written_book` uses a separate primary-name virtual method.
+`written_book` overrides the custom-name presence predicate. A separate getter returns its custom name or title.
 These pre-packet facts do not establish later component overrides, actual language selection, or complete production name dispatch.
 Search names, menu-owned transport, the authored field, and full predicate integration remain unfinished.
 
@@ -943,3 +943,43 @@ The unmodified ordinary BDS 1.26.51.1 route passes furnace, smoker, blast furnac
 Final item counts match all three cases. Installed add-on and running proxy JARs match the current build.
 Normal cleanup stops the private display and leaves no managed-profile JVM or private observer.
 This route does not inject malformed NBT or establish native authored-screen or pixel parity.
+
+
+## Unfiltered item-name selection
+
+The shared `NativeItemNames` API now selects unfiltered custom names or a definition-owned ordinary name.
+A present `display.Name` selects custom text even when its type is wrong or its value is empty.
+Native written books use `title` when that display name is empty.
+A present, wrongly typed title selects empty text. Filtered fields do not replace the unfiltered primary name.
+
+The original executable controls run the complete primary selector, ordinary append path, and both custom-name implementations.
+They retain 1,299 base, component, coal, and append cases, plus 1,000 custom-name and written-book cases.
+The shared selector matches all 2,286 applicable rows. The 13 ordinary-key controls remain separate.
+Three deliberate regressions fail by assertion: removing title fallback, requiring typed custom-name presence, and accepting a non-byte append flag.
+
+The ordinary branch applies appended text only for a nonzero `ByteTag` named `AppendCustomName`.
+A nonempty `GroupName` takes precedence over `BodyID` and `CustomName`.
+The body formatter receives both translated colors only when both source strings are nonempty.
+Otherwise it receives one translated first-color argument, including an empty argument.
+Custom names skip ordinary-name production and all append callbacks. Missing definitions skip every name producer.
+
+The item registry now owns custom-name dispatch in Java item conversion.
+Its constructed factory class selects written-book behavior, independently of later network flags.
+Component replacements retain base custom-name behavior. Removed runtime-ID owners cannot acquire a custom name.
+The focused selector and registry run passes 19 tests without skips.
+This fixes empty-display-name title fallback in production. It does not establish native tooltip layout or complete cooking search.
+
+A fresh factory capture records the actual name methods for all 1,949 definitions.
+It includes description, key, ordinary-name, custom-name, presence, and secondary-label dispatch.
+All definitions share the same ordinary-name method. Only `written_book` overrides custom-name presence and retrieval.
+The observer also records 71 class-owned variants and 90 spawn-egg name triples within verified allocation bounds.
+All 2,627 static cleanup callbacks complete, with no remaining owned allocations or locks.
+These are pre-packet constructor facts. Later component updates, actual language ownership, all ordinary-key providers, and secondary labels remain unfinished.
+
+
+The current four-project build passes 2,644 tests, with 163 optional skips and no failures or errors.
+All 104 core patches and 38 client patches replay. All three selector tests run without skips.
+All 1,419 core classes match the embedded add-on and proxy copies. All 1,139 client classes match the add-on.
+Four focused packaged checks pass, including the registry's book-class dispatch.
+The packaged selector matches all 2,286 applicable native rows. Production class origins are verified against the current standalone core JAR.
+This checkpoint does not establish full cooking search or native screen and pixel parity.
