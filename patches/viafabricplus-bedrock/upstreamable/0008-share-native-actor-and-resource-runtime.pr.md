@@ -2123,3 +2123,16 @@ The world fluid query transitions wet, dry and wet, and each run records two reb
 The original layer is restored before the test ends.
 This verifies the update bridge, not native server inventory actions or native fluid simulation.
 The broader rendering audit still fails on existing unresolved mappings, including the camera texture and unregistered `galaxite:loading_fx` actor.
+
+
+## Share the native basis reset
+
+The actor transform helper exposes its existing basis reset for equipped bone bindings.
+Ordinary composition retains its translation, rotation, and scale order.
+The reset preserves the translated origin and clears the inherited basis.
+Native composition `0x141bc3d20` uses this operation after a binding supplies its copied owner matrix.
+The equipment patch records the native binding controls and their boundaries.
+
+All four builds pass 2,522 tests, with 212 optional skips and no failures or errors.
+The native binding fixture, native slot fixture, and Iris GPU regression run without skips.
+All 1,410 core classes match both packaged copies. All 1,134 production client classes match the add-on.
