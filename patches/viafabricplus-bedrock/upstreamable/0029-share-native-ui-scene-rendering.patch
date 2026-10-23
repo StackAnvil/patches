@@ -1,4 +1,4 @@
-From 652c9b8da265761624884582fc28169dc1ac666f Mon Sep 17 00:00:00 2001
+From 7807a4ce5c8d5f17a92efcb7db401a65116f5d50 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -302,6 +302,13 @@ Twelve original traversal controls bind cumulative layers, child order
 and inherited visibility. Nested-image and installed-screen pointer
 regressions both fail with the previous behavior and pass with this fix.
 This does not establish native GPU batching, pixels or full UI parity.
+
+Use native integer-or-boolean component flag reads, including unsigned
+64-bit values. Real values and strings retain the property default. The
+original FocusComponent factory disables absent focus_enabled, so shared
+actions must not acquire keyboard traversal focus by default. Apply the
+same flag reader during scene visibility admission and runtime queries.
+This does not replace Java navigation with the full native focus manager.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   3 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -349,7 +356,7 @@ This does not establish native GPU batching, pixels or full UI parity.
  .../screen/ui/NativeUiMultilineInput.java     | 267 +++++
  .../screen/ui/NativeUiPresentation.java       | 154 +++
  .../bedrock/screen/ui/NativeUiRenderer.java   | 153 +++
- .../bedrock/screen/ui/NativeUiScene.java      |  93 ++
+ .../bedrock/screen/ui/NativeUiScene.java      | 107 ++
  .../screen/ui/NativeUiSceneScreen.java        | 736 ++++++++++++++
  .../bedrock/screen/ui/NativeUiScreen.java     |  11 +
  .../bedrock/screen/ui/NativeUiScroll.java     |  69 ++
@@ -379,12 +386,13 @@ This does not establish native GPU batching, pixels or full UI parity.
  .../screen/ui/NativeUiMultilineInputTest.java | 210 ++++
  .../screen/ui/NativeUiPresentationTest.java   | 258 +++++
  .../screen/ui/NativeUiRendererTest.java       |  71 ++
- .../NativeUiSceneScreenInteractionTest.java   | 187 ++++
+ .../NativeUiSceneScreenInteractionTest.java   | 211 ++++
+ .../bedrock/screen/ui/NativeUiSceneTest.java  |  40 +
  .../bedrock/screen/ui/NativeUiSliderTest.java | 120 +++
  .../bedrock/screen/ui/NativeUiTextTest.java   |  56 ++
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../screen/ui/NativeUiViewportTest.java       |  55 +
- 81 files changed, 8803 insertions(+), 24 deletions(-)
+ 82 files changed, 8881 insertions(+), 24 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -443,6 +451,7 @@ This does not establish native GPU batching, pixels or full UI parity.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiPresentationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSliderTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiTextTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiTextureAnimationTest.java
@@ -4900,10 +4909,10 @@ index 0000000..d3e9c23
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScene.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScene.java
 new file mode 100644
-index 0000000..fb06056
+index 0000000..e08a044
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScene.java
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,107 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4914,6 +4923,7 @@ index 0000000..fb06056
 +import com.google.gson.JsonElement;
 +import com.google.gson.JsonObject;
 +import com.google.gson.JsonParser;
++import java.math.BigInteger;
 +import java.util.ArrayList;
 +import java.util.List;
 +import java.util.Set;
@@ -4946,10 +4956,7 @@ index 0000000..fb06056
 +                             final Set<String> renderers) {
 +        if (depth > 64 || ++count[0] > 8192) throw new IllegalArgumentException("Native UI scene exceeds layout limits");
 +        final String type = string(value, "type", "panel");
-+        final JsonElement visibility = value.get("visible");
-+        final boolean visible = inheritedVisible && !(visibility != null && visibility.isJsonPrimitive()
-+            && visibility.getAsJsonPrimitive().isBoolean() && !visibility.getAsBoolean()) && !(value.has("ignored") && value.get("ignored").isJsonPrimitive()
-+            && value.get("ignored").getAsJsonPrimitive().isBoolean() && value.get("ignored").getAsBoolean());
++        final boolean visible = inheritedVisible && flag(value, "visible", true) && !flag(value, "ignored", false);
 +        if (visible && (!TYPES.contains(type) || type.equals("custom") && !renderers.contains(string(value, "renderer", ""))))
 +            throw new IllegalArgumentException("Unsupported native UI control: " + type);
 +        final List<Node> children = new ArrayList<>();
@@ -4967,6 +4974,24 @@ index 0000000..fb06056
 +        return value == null || !value.isJsonPrimitive() ? fallback : value.getAsString();
 +    }
 +
++    private static boolean flag(final JsonObject properties, final String key, final boolean fallback) {
++        final JsonElement value = properties.get(key);
++        if (value == null || !value.isJsonPrimitive()) return fallback;
++        final var primitive = value.getAsJsonPrimitive();
++        if (primitive.isBoolean()) return primitive.getAsBoolean();
++        if (!primitive.isNumber()) return fallback;
++        // Native component readers accept JsonCpp signed/unsigned integers, but not real values.
++        final String encoded = primitive.getAsString();
++        if (encoded.indexOf('.') >= 0 || encoded.indexOf('e') >= 0 || encoded.indexOf('E') >= 0) return fallback;
++        try {
++            final BigInteger integer = new BigInteger(encoded);
++            if (integer.bitLength() > (integer.signum() < 0 ? 63 : 64)) return fallback;
++            return integer.signum() != 0;
++        } catch (final NumberFormatException invalid) {
++            return fallback;
++        }
++    }
++
 +    public record Node(String name, String type, JsonObject properties, List<Node> children, int action) {
 +        public String string(final String key, final String fallback) {
 +            return NativeUiScene.string(this.properties, key, fallback);
@@ -4981,9 +5006,7 @@ index 0000000..fb06056
 +        }
 +
 +        public boolean flag(final String key, final boolean fallback) {
-+            final JsonElement value = this.properties.get(key);
-+            return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isBoolean()
-+                ? value.getAsBoolean() : fallback;
++            return NativeUiScene.flag(this.properties, key, fallback);
 +        }
 +
 +        public boolean interactive() {
@@ -4999,7 +5022,7 @@ index 0000000..fb06056
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java
 new file mode 100644
-index 0000000..6ded37d
+index 0000000..6ccf537
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java
 @@ -0,0 +1,736 @@
@@ -5715,7 +5738,7 @@ index 0000000..6ded37d
 +
 +        @Override
 +        public ComponentPath nextFocusPath(final FocusNavigationEvent event) {
-+            return this.node.flag("focus_enabled", true) ? super.nextFocusPath(event) : null;
++            return this.node.flag("focus_enabled", false) ? super.nextFocusPath(event) : null;
 +        }
 +
 +        @Override
@@ -9512,10 +9535,10 @@ index 0000000..8ceca53
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java
 new file mode 100644
-index 0000000..3694481
+index 0000000..a42dbda
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java
-@@ -0,0 +1,187 @@
+@@ -0,0 +1,211 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9524,15 +9547,19 @@ index 0000000..3694481
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.google.gson.JsonArray;
++import com.google.gson.JsonNull;
 +import com.google.gson.JsonObject;
++import com.google.gson.JsonPrimitive;
 +import com.mojang.blaze3d.platform.InputConstants;
 +import java.util.ArrayList;
 +import java.util.List;
++import java.util.Map;
 +import java.util.Set;
 +import net.minecraft.SharedConstants;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.StringSplitter;
 +import net.minecraft.client.gui.Font;
++import net.minecraft.client.gui.navigation.FocusNavigationEvent;
 +import net.minecraft.client.input.MouseButtonEvent;
 +import net.minecraft.client.input.MouseButtonInfo;
 +import net.minecraft.client.sounds.SoundManager;
@@ -9611,6 +9638,26 @@ index 0000000..3694481
 +            assertTrue(controller.responses.isEmpty());
 +            assertEquals(0, controller.cancels);
 +        });
++    }
++
++    @Test
++    void requiresAuthoredFocusWithoutDisablingPointerActions() throws Exception {
++        for (final var entry : List.of(Map.entry(JsonNull.INSTANCE, false), Map.entry(new JsonPrimitive(false), false),
++                Map.entry(new JsonPrimitive(true), true), Map.entry(new JsonPrimitive(0), false),
++                Map.entry(new JsonPrimitive(-1), true), Map.entry(new JsonPrimitive(1), true),
++                Map.entry(new JsonPrimitive(1.0), false), Map.entry(new JsonPrimitive("true"), false))) {
++            final var value = entry.getKey();
++            final var root = root();
++            final var target = root.children().get(1);
++            if (!value.isJsonNull()) target.properties().add("focus_enabled", value);
++            final var controller = new Controller(NativeUiController.Activation.STAY, root);
++            withScreen(controller, (game, screen) -> {
++                final var action = screen.getChildAt(10, 40).orElseThrow();
++                assertEquals(entry.getValue(), action.nextFocusPath(new FocusNavigationEvent.TabNavigation(true)) != null);
++                assertTrue(screen.mouseClicked(event(10, 40), false));
++                assertEquals(List.of(177), controller.responses);
++            });
++        }
 +    }
 +
 +    private static void withScreen(final Controller controller, final Interaction interaction) throws Exception {
@@ -9701,6 +9748,52 @@ index 0000000..3694481
 +
 +    private interface Interaction {
 +        void run(Minecraft game, NativeUiSceneScreen screen) throws Exception;
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneTest.java
+new file mode 100644
+index 0000000..c7b4bc4
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneTest.java
+@@ -0,0 +1,40 @@
++package com.viaversion.viafabricplus.bedrock.screen.ui;
++
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import java.util.List;
++import java.util.Set;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class NativeUiSceneTest {
++    @Test
++    void preservesNativeIntegerTypesAndPropertyDefaults() {
++        for (final String encoded : List.of("true", "-1", "1", "9223372036854775807", "9223372036854775808", "18446744073709551615")) {
++            assertTrue(node(encoded).flag("enabled", false));
++        }
++        for (final String encoded : List.of("false", "0", "-0")) {
++            assertFalse(node(encoded).flag("enabled", true));
++        }
++        for (final String encoded : List.of("null", "\"true\"", "[]", "{}", "1.0", "0.0", "1e0", "-9223372036854775809", "18446744073709551616")) {
++            for (final boolean fallback : new boolean[]{false, true}) assertEquals(fallback, node(encoded).flag("enabled", fallback));
++        }
++    }
++
++    @Test
++    void usesTheSameFlagsForVisibilityAdmissionAndResolvedProperties() {
++        for (final String property : List.of("visible", "ignored")) {
++            final JsonObject scene = JsonParser.parseString("{\"format\":1,\"root\":{\"type\":\"unavailable\"}}").getAsJsonObject();
++            scene.getAsJsonObject("root").addProperty(property, property.equals("visible") ? 0 : 1);
++            final var node = NativeUiScene.parse(scene.toString(), Set.of()).root();
++            assertEquals(property.equals("ignored"), node.flag(property, property.equals("visible")));
++            scene.getAsJsonObject("root").addProperty(property, property.equals("visible") ? 1 : 0);
++            assertThrows(IllegalArgumentException.class, () -> NativeUiScene.parse(scene.toString(), Set.of()));
++        }
++    }
++
++    private static NativeUiScene.Node node(final String encoded) {
++        return new NativeUiScene.Node("", "button", JsonParser.parseString("{\"enabled\":" + encoded + "}").getAsJsonObject(), List.of(), Integer.MIN_VALUE);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSliderTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSliderTest.java

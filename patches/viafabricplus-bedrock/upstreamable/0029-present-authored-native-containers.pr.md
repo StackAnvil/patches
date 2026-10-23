@@ -248,5 +248,15 @@ Strong-owner balance passes. Queued weak-event retirement and complete manager l
 
 A private Java candidate matches all new controls. Six wrong candidates fail behavioral assertions.
 The rejected variants ignore authored focus disabling, inherited eligibility, the zero precedence floor, binary32 ranking, wrapping or delegated hover.
-Production code remains unchanged. Verify the focus-selection listener, implicit hover bindings, radio siblings, device translation and full event propagation before scene admission.
+These earlier controls leave the selection listener and implicit binding construction outside their execution scope.
+The factory and ScreenView controls below extend that evidence.
 The [focus and hover notes](../../../docs/native-cooking-actions.md#native-focus-admission-and-hover-delivery) retain the integration limits.
+
+
+### Factory-created focus and input delivery
+
+The [shared scene change](0029-share-native-ui-scene-rendering.pr.md#native-component-flags-and-focus-defaults) now applies native component flag types and focus defaults.
+Its native controls execute the actual input/focus factories and ScreenView selection-to-hover delivery before button dispatch.
+Factory-created implicit hover bindings and manager history cleanup now execute in that combined route.
+The container mapping admission policy remains unchanged.
+Full native input routing, controller event handling, radio siblings, device-origin translation and unchanged authored screen acceptance remain open.

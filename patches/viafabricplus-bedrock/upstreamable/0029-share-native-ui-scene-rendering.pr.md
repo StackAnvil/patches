@@ -187,3 +187,32 @@ The scene projection removes unfinished controls and mappings, so this does not 
 
 The combined movement and cooking build repeats these client checks and completes normal reconnect and cleanup.
 All 74 shared UI classes match the earlier icon-correction checkpoint.
+
+
+## Native component flags and focus defaults
+
+Shared scenes now use native boolean and signed/unsigned 64-bit integer component flags.
+Real values and strings retain the property's default. Parsing visibility and querying runtime properties use the same reader.
+Keyboard traversal requires authored `focus_enabled`; an absent value defaults to false.
+The interaction regression preserves pointer actions for controls without traversal focus.
+
+The original InputComponent and FocusComponent factories execute in 666 cases through original JsonCpp and PropertyView objects.
+The production reader matches 5,544 resulting property reads. Four deliberate type-conversion regressions fail.
+Factory/property cleanup completes all 25,840 native frees.
+
+Another 432 sequences feed factory-created components through original ScreenView selection, hover, button dispatch and toggle handling.
+The private candidate matches 2,880 sequence steps. Three wrong phase, input-mode and focus variants fail.
+Three history-ring controls add 240 selections per input mode.
+Together, these controls execute 5,040 screen input calls and 193,283 native frees with balanced owners after every case.
+
+The factory and screen controls supply component IDs, control ownership, screen/controller fields, four rectangles and empty observer state.
+Platform interfaces observe event delivery, bindings, visuals, radio/settings notifications, diagnostics and profiling.
+The production port still needs full native navigation and input routing.
+Complete controller receivers, physical device-origin translation, radio siblings, arbitrary geometry and unchanged authored screen acceptance remain open.
+The [factory and input notes](../../../docs/native-cooking-actions.md#native-component-flags-and-factory-created-input) retain the boundaries.
+
+
+The full four-project replay and build pass 2,706 tests with 163 optional skips and no failures or errors.
+The packaged add-on also matches all 5,544 native property reads.
+All 1,448 core classes match both embedded copies, and all 1,144 client classes match the add-on.
+These checks do not add a fresh live screen or native pixel comparison.

@@ -1256,5 +1256,46 @@ They check strong-owner balance but do not retire queued weak events or establis
 
 A private Java candidate matches these admission, default, grid and hover/dispatch controls.
 Six wrong variants fail assertions, including double-precision ranking, missing wrapping and overwritten delegated hover.
-Production input delivery remains unchanged. The focus-selection listener, implicit hover bindings, radio siblings and device translation still require native verification.
+These earlier controls do not execute the selection listener or construct implicit hover bindings.
+The factory and ScreenView controls below extend that evidence.
 These controls do not establish unchanged authored screen acceptance or native pixels.
+
+
+## Native component flags and factory-created input
+
+Shared scenes now read component flags as native boolean or signed/unsigned 64-bit integer values.
+Zero is false. Other integers are true.
+Real values, strings, arrays, objects and null retain each property's default.
+Scene visibility admission uses the same reader as runtime properties.
+Keyboard traversal now defaults `focus_enabled` to false, as the original FocusComponent factory does.
+Pointer action delivery remains available without keyboard traversal focus.
+
+Original JsonCpp constructors and PropertyView getters feed the native InputComponent and FocusComponent factories in 666 cases.
+The production scene reader matches 5,544 property reads from these cases.
+Four deliberately wrong readers fail: boolean-only parsing, real-number coercion, signed-only integers and string coercion.
+All 25,840 recorded native allocations complete their frees after factory and property cleanup.
+These controls supply component IDs, bare control ownership and empty component vectors.
+They observe diagnostic output, profiling and dirty-tree notifications at platform interfaces.
+
+Factory-created mappings start at phase `0`.
+A fresh selected mapping does not activate on an initial touch release.
+An absent or unknown mapping type uses `pressed`.
+A source-less `pressed` mapping creates an implicit hover binding when its target is present.
+Source-less `focused` and `global` mappings do not create that binding.
+These mapping rules remain native evidence for the pending input port.
+
+Another 432 sequences combine those factories with original ScreenView selection, hover and button routes.
+They cover three input modes, four initial selections, wrapping, implicit hover and gamepad conditions.
+Original `144846d40` moves selection. Original `1448357d0` produces hover through `1445069a0` before focused dispatch.
+Original `144843510` delivers physical button values through InputComponent and ToggleComponent.
+A private Java candidate matches all 2,880 sequence steps. Three wrong phase, condition and focus variants fail.
+
+Three additional controls each perform 240 selections and 480 button calls through the native selection-history ring.
+The combined controls execute 5,040 screen input calls and 193,283 native frees.
+Original manager and component destruction restore every declared owner and leave no recorded native allocation after each case.
+Controller queue delivery, binding publication, visuals, radio propagation and settings notification remain observed host interfaces.
+Screen/controller/root fields, four rectangles, an empty observer map and input-mode values are supplied inputs.
+
+The production change covers component flags and keyboard traversal admission.
+Full native navigation, device-origin translation, controller event handling, radio siblings and unchanged authored screen acceptance remain incomplete.
+These controls do not establish arbitrary directional geometry, complete control/screen construction or native pixels.
