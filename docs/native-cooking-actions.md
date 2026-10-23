@@ -1019,3 +1019,46 @@ Tooling, offline tests, and patch metadata checks pass.
 Builtin override controls also distinguish wire runtime IDs from native internal item IDs.
 Passing an authored changed wire ID directly to the native stack constructor can select a different builtin item.
 That result cannot prove the requested definition's class or name. Complete packet identity translation remains an open producer boundary.
+
+
+## Native text for name and label producers
+
+Production resource text now uses the pinned native language parser, lookup, and formatter.
+The parser folds ASCII keys and preserves value bytes, whitespace, escapes, and NUL boundaries.
+An empty duplicate does not erase an earlier value. Parsed tables remain immutable.
+Replacing a content file invalidates its parsed cache. Existing text snapshots retain their own tables and folded lookup caches.
+
+Lookup tries the exact key before the folded-key cache and ASCII fallback.
+Formatting expands native percent tokens, translates arguments, and retains whole-operation fallback.
+Consumed sequential arguments advance later numeric references.
+The accepted English source policy remains in effect. Locale acquisition and selection still need their own production integration.
+Early kick and disconnect text use the same lookup, including camel-case keys after parser folding.
+
+Fresh native controls cover 1,099 parser cases, 6,689 lookup cases, five cache transitions, 752 formatter cases, and 777 fallback cases.
+Another 780 compositions use the real parser, lookup, and formatter on the same table without a supplied translation result.
+The shared parser and formatter use declared allocator, CRT, and single-thread lock boundaries.
+These controls do not establish full native locale, asset-provider, client ownership, or visible parity.
+The old content parser and three deliberate regressions fail behavioral assertions.
+
+The combined four-project build includes ticked actor-motion replay.
+It passes 2,666 tests, with 163 optional skips and no failures or errors.
+All 105 core and 38 client patches replay. All ten new language tests run without skips.
+Eleven packaged checks include the concurrent content-cache test. Eleven production class origins match the current standalone core JAR.
+All 1,427 core classes match both packaged copies. All 1,143 production client classes match the add-on.
+The selected build outputs also match their packaged classes after the standard version-token replacement step.
+The [text patch notes](../patches/viabedrock/upstreamable/0102-match-native-language-parsing-and-formatting.pr.md) retain the evidence and limits.
+
+A fresh ordinary BDS route passes furnace, smoker, blast furnace, and same-world reconnect.
+Each cooking case ends with one player output and no remaining player or furnace input or furnace output.
+Both selected integration-instance copies use the current add-on. Normal cleanup stops the private display.
+This route does not prove native authored-screen acceptance, locale switching, or pixel parity.
+
+Direct native factory observations also confirm the first explicit construction choice.
+A data-driven written book uses base custom-name methods. A legacy-first apple retains its base key after a later data-driven entry.
+The existing builtin warped-fungus item retains its native default component name in the recorded None-entry control.
+Do not infer every builtin update rule from a newly constructed component item.
+
+The refreshed pre-packet catalog records 1,949 effective default descriptions, 103 class variants, and three native potion-mode getter results.
+Only the warped-fungus default description differs from its stored description in this control.
+All 2,627 static cleanup callbacks complete without owned allocation or lock leaks.
+Packet identity translation, all ordinary-key providers, secondary labels, and complete cooking search remain unfinished.
