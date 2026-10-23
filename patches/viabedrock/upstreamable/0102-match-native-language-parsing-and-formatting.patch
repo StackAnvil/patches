@@ -1,0 +1,1036 @@
+From a66a495a44e7edee48fda5417278dd9463c1f54a Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 23 Oct 2026 10:11:46 +0200
+Subject: [PATCH] fix(text): match native language parsing and formatting
+
+Parse Bedrock language bytes before Java text conversion. Preserve native
+ASCII key folding, value whitespace, escapes, NUL boundaries, duplicate
+handling and raw UTF-8 identity. Keep parsed tables immutable and discard
+their cache when the owned file changes.
+
+Resolve exact keys before the native folded-key cache and retain whole
+operation fallback, percent-token expansion and argument substitution.
+Sequential arguments advance subsequent numeric references. Keep the
+existing accepted English source policy; locale acquisition and language
+selection remain separate work.
+
+Use this engine in resource text and early disconnect/kick messages so
+camel-case keys still resolve after native parser folding. Existing text
+snapshots retain their tables when a content file is replaced.
+
+Fresh original 1.26.51.1 execution verifies 1,099 file cases, 6,689 lookup
+cases, five lookup-cache transitions, 752 formatter cases, 777 fallback
+cases and 780 same-table parser/lookup/formatter compositions. The latter
+supplies no translation lookup result. Ten focused checks pass; restoring
+the old parser and three deliberate regressions fail behavioral assertions.
+
+The probes declare their controlled raw inputs, language tables, argument
+vectors, allocator/CRT and single-thread lock boundaries. They do not
+establish full locale, asset-provider, client ownership or visible parity.
+---
+ .../api/resourcepack/content/Content.java     |  16 +-
+ .../resourcepack/definition/LanguageFile.java | 117 +++++++++++++++
+ .../definition/LanguageLookup.java            |  53 +++++++
+ .../definition/LanguageTranslations.java      | 140 ++++++++++++++++++
+ .../definition/TextDefinitions.java           |  34 ++++-
+ .../protocol/packet/JoinPackets.java          |   4 +-
+ .../protocol/packet/MultiStatePackets.java    |  10 +-
+ .../content/ContentLanguageCacheTest.java     |   7 +-
+ .../definition/LanguageFileTest.java          | 126 ++++++++++++++++
+ .../definition/LanguageLookupTest.java        |  82 ++++++++++
+ .../definition/LanguageTranslationsTest.java  | 127 ++++++++++++++++
+ .../definition/TextDefinitionsTest.java       |  76 ++++++++++
+ 12 files changed, 764 insertions(+), 28 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFile.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookup.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslations.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFileTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookupTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslationsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitionsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
+index 642bbdbd2..ad30a6607 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
+@@ -20,6 +20,7 @@ package net.raphimc.viabedrock.api.resourcepack.content;
+ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import com.viaversion.viaversion.util.GsonUtil;
+ import net.raphimc.viabedrock.api.util.JsonUtil;
++import net.raphimc.viabedrock.api.resourcepack.definition.LanguageFile;
+ 
+ import org.apache.commons.io.output.UnsynchronizedByteArrayOutputStream;
+ 
+@@ -33,7 +34,6 @@ import java.io.UncheckedIOException;
+ import java.nio.charset.StandardCharsets;
+ import java.util.*;
+ import java.util.concurrent.ConcurrentHashMap;
+-import java.util.stream.Collectors;
+ 
+ public abstract class Content {
+ 
+@@ -64,6 +64,7 @@ public abstract class Content {
+ 
+     public final boolean put(final String path, final byte[] data) {
+         final boolean replaced = this.putBytes(path, data);
++        this.langCache.remove(path);
+         this.storedZipEntries.remove(path);
+         return replaced;
+     }
+@@ -71,6 +72,7 @@ public abstract class Content {
+     /** Stores an already compressed payload without another deflation pass when exporting the ZIP. */
+     public final boolean putStored(final String path, final byte[] data) {
+         final boolean replaced = this.putBytes(path, data);
++        this.langCache.remove(path);
+         this.storedZipEntries.add(path);
+         return replaced;
+     }
+@@ -108,15 +110,9 @@ public abstract class Content {
+     }
+ 
+     public Map<String, String> getLang(final String path) {
+-        return this.langCache.computeIfAbsent(path, k -> {
+-            final List<String> lines = this.getLines(k);
+-            return Collections.unmodifiableMap(lines.stream()
+-                .filter(line -> !line.startsWith("##"))
+-                .filter(line -> line.contains("="))
+-                .map(line -> line.contains("##") ? line.substring(0, line.indexOf("##")) : line)
+-                .map(String::trim)
+-                .map(line -> line.split("=", 2))
+-                .collect(Collectors.toMap(parts -> parts[0], parts -> parts[1], (o, n) -> n)));
++        return this.langCache.computeIfAbsent(path, key -> {
++            final byte[] input = this.get(key);
++            return input == null ? Map.of() : LanguageFile.parse(input).translations();
+         });
+     }
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFile.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFile.java
+new file mode 100644
+index 000000000..c6e0b7990
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFile.java
+@@ -0,0 +1,117 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import net.raphimc.viabedrock.api.io.NbtUtf8;
++import java.io.ByteArrayOutputStream;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/** Byte-oriented Bedrock language-file parsing, before text display conversion. */
++public final class LanguageFile {
++
++    private LanguageFile() { }
++
++    public static Result parse(final byte[] input) {
++        return parse(input, Set.of(), Set.of(), new byte[0]);
++    }
++
++    public static Result parse(final byte[] input, final Set<String> excluded, final Set<String> included, final byte[] prefix) {
++        final var translations = new HashMap<String, String>();
++        final var missingSeparators = new ArrayList<MissingSeparator>();
++        final var key = new ByteArrayOutputStream();
++        final var value = new ByteArrayOutputStream();
++        State state = State.KEY_START;
++        int line = 1;
++        boolean special = false;
++        final int start = input.length >= 3 && input[0] == (byte) 0xEF && input[1] == (byte) 0xBB && input[2] == (byte) 0xBF ? 3 : 0;
++        int index = start;
++        while (index <= input.length) {
++            final int character = index == input.length ? 0 : Byte.toUnsignedInt(input[index]);
++            index++;
++            if (character == '\r') {
++                continue;
++            }
++            if (character == '\n' || character == 0) {
++                if (state == State.KEY) {
++                    missingSeparators.add(new MissingSeparator(line, character == '\n'));
++                }
++                if (key.size() != 0 && value.size() != 0) {
++                    final byte[] keyBytes = key.toByteArray();
++                    final String keyName = NbtUtf8.decode(keyBytes);
++                    if (!excluded.contains(keyName) && (included.isEmpty() || included.contains(keyName))) {
++                        final byte[] prefixed = new byte[Math.addExact(prefix.length, keyBytes.length)];
++                        System.arraycopy(prefix, 0, prefixed, 0, prefix.length);
++                        System.arraycopy(keyBytes, 0, prefixed, prefix.length, keyBytes.length);
++                        translations.put(NbtUtf8.decode(prefixed), NbtUtf8.decode(value.toByteArray()));
++                    }
++                }
++                key.reset();
++                value.reset();
++                state = State.KEY_START;
++                if (character == '\n') {
++                    line++;
++                }
++                continue;
++            }
++            switch (state) {
++                case KEY_START -> {
++                    if (character == '\t' || character == ' ') {
++                        continue;
++                    }
++                    if (character == '#' && index < input.length && input[index] == '#') {
++                        state = State.COMMENT;
++                        index++;
++                    } else {
++                        key.write(lowercase(character));
++                        state = State.KEY;
++                    }
++                }
++                case KEY -> {
++                    if (character == '=') {
++                        state = State.VALUE;
++                    } else {
++                        key.write(lowercase(character));
++                    }
++                }
++                case VALUE -> {
++                    if (character == '\t' || character == '#' && index < input.length && input[index] == '#') {
++                        state = State.COMMENT;
++                    } else if (character == '\\' && index < input.length) {
++                        final int next = Byte.toUnsignedInt(input[index]);
++                        if (next == 'n' || next == '\\') {
++                            value.write(next == 'n' ? '\n' : '\\');
++                            index++;
++                        } else {
++                            value.write(character);
++                        }
++                    } else {
++                        special |= character == '~';
++                        value.write(character);
++                    }
++                }
++                case COMMENT -> { }
++            }
++        }
++        return new Result(Map.copyOf(translations), special, List.copyOf(missingSeparators));
++    }
++
++    private static int lowercase(final int character) {
++        return character >= 'A' && character <= 'Z' ? character + 'a' - 'A' : character;
++    }
++
++    private enum State {
++        KEY_START, KEY, VALUE, COMMENT
++    }
++
++    public record MissingSeparator(int line, boolean newline) { }
++
++    public record Result(Map<String, String> translations, boolean special, List<MissingSeparator> missingSeparators) { }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookup.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookup.java
+new file mode 100644
+index 000000000..1e340cb67
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookup.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import net.raphimc.viabedrock.api.io.NbtUtf8;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.function.Function;
++
++/** Native exact-key lookup followed by cached or ASCII-folded language lookup. */
++public final class LanguageLookup implements Function<byte[], byte[]> {
++
++    private final Function<byte[], byte[]> primary;
++    private final Map<String, byte[]> folded = new ConcurrentHashMap<>();
++
++    /** Replacing the language table requires a new lookup, discarding its folded-key cache. */
++    public LanguageLookup(final Function<byte[], byte[]> primary) {
++        this.primary = primary;
++    }
++
++    /** Null denotes an absent translation. Empty values still resolve and enter the folded cache. */
++    @Override
++    public byte[] apply(final byte[] key) {
++        if (key.length == 0) {
++            return null;
++        }
++        final byte[] exact = this.primary.apply(key);
++        if (exact != null) {
++            return exact.clone();
++        }
++        final String cacheKey = NbtUtf8.decode(key);
++        final byte[] cached = this.folded.get(cacheKey);
++        if (cached != null) {
++            return cached.clone();
++        }
++        final byte[] lowercase = key.clone();
++        for (int index = 0; index < lowercase.length; index++) {
++            if (lowercase[index] >= 'A' && lowercase[index] <= 'Z') {
++                lowercase[index] += 'a' - 'A';
++            }
++        }
++        final byte[] result = this.primary.apply(lowercase);
++        if (result == null) {
++            return null;
++        }
++        this.folded.putIfAbsent(cacheKey, result.clone());
++        return result.clone();
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslations.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslations.java
+new file mode 100644
+index 000000000..da03a231a
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslations.java
+@@ -0,0 +1,140 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import java.io.ByteArrayOutputStream;
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++import java.util.function.Function;
++
++/** Native language token expansion and argument substitution over UTF-8 bytes. */
++public final class LanguageTranslations {
++
++    private LanguageTranslations() { }
++
++    /** The lookup returns null for an absent key, preserving explicitly empty translations. */
++    public static byte[] translate(final byte[] text, final List<byte[]> arguments, final Function<byte[], byte[]> lookup) {
++        return translate(text, arguments, List.of(lookup));
++    }
++
++    /** Try each language for the entire operation, including argument translation. */
++    public static byte[] translate(final byte[] text, final List<byte[]> arguments, final List<Function<byte[], byte[]>> languages) {
++        for (final Function<byte[], byte[]> language : languages) {
++            final byte[] translated = tryTranslate(text, arguments, language);
++            if (translated != null) {
++                return translated;
++            }
++        }
++        return text.clone();
++    }
++
++    static byte[] tryTranslate(final byte[] text, final List<byte[]> arguments, final Function<byte[], byte[]> lookup) {
++        final byte[] resolved;
++        if (indexOf(text, (byte) '%', 0) >= 0) {
++            final var output = new ByteArrayOutputStream(text.length);
++            int tokenStart = -1;
++            for (int index = 0; index <= text.length; index++) {
++                final int character = index == text.length ? 0 : Byte.toUnsignedInt(text[index]);
++                if (tokenStart >= 0) {
++                    if (isKeyCharacter(character)) {
++                        continue;
++                    }
++                    final byte[] key = Arrays.copyOfRange(text, tokenStart, index);
++                    final byte[] value = resolve(key, lookup);
++                    output.writeBytes(value == null ? key : value);
++                    tokenStart = -1;
++                    if (character != 0) {
++                        output.write(character);
++                    }
++                } else if (character == '%') {
++                    tokenStart = index + 1;
++                } else if (character != 0) {
++                    output.write(character);
++                }
++            }
++            resolved = output.toByteArray();
++        } else {
++            final byte[] value = resolve(text, lookup);
++            if (value == null) {
++                // Retry the next language before evaluating any arguments.
++                return null;
++            }
++            resolved = value.clone();
++        }
++        if (arguments.isEmpty()) {
++            return resolved;
++        }
++        final var translatedArguments = new ArrayList<byte[]>(arguments.size());
++        for (final byte[] argument : arguments) {
++            final byte[] value = argument.length != 0 && argument[0] == '%'
++                    ? resolve(Arrays.copyOfRange(argument, 1, argument.length), lookup) : null;
++            translatedArguments.add(value == null ? argument : value);
++        }
++        return substitute(resolved, translatedArguments);
++    }
++
++    private static byte[] resolve(final byte[] key, final Function<byte[], byte[]> lookup) {
++        return key.length == 0 ? null : lookup.apply(key);
++    }
++
++    private static boolean isKeyCharacter(final int character) {
++        return character >= '0' && character <= '9' || character >= 'A' && character <= 'Z'
++                || character >= 'a' && character <= 'z' || character == '-' || character == '.' || character == '_';
++    }
++
++    private static byte[] substitute(byte[] text, final List<byte[]> arguments) {
++        int position;
++        while ((position = firstMarker(text, (byte) '$')) >= 0) {
++            text = replace(text, position, 2, new byte[0]);
++        }
++        int sequential = 0;
++        while ((position = firstMarker(text, (byte) '%')) >= 0) {
++            final byte[] argument = sequential < arguments.size() ? arguments.get(sequential) : new byte[0];
++            text = replace(text, position, 2, argument);
++            sequential++;
++        }
++        int cursor = 0;
++        while ((position = indexOf(text, (byte) '%', cursor)) >= 0 && position + 1 < text.length) {
++            final int digit = Byte.toUnsignedInt(text[position + 1]);
++            final long argumentIndex = (long) sequential + digit - '1';
++            cursor = position + 1;
++            if (digit >= '0' && digit <= '9' && argumentIndex >= 0 && argumentIndex < arguments.size()) {
++                final byte[] argument = arguments.get((int) argumentIndex);
++                text = replace(text, position, 2, argument);
++                cursor = position + argument.length;
++            }
++        }
++        return text;
++    }
++
++    private static int firstMarker(final byte[] text, final byte prefix) {
++        for (int index = 0; index + 1 < text.length; index++) {
++            if (text[index] == prefix && (text[index + 1] == 's' || text[index + 1] == 'd')) {
++                return index;
++            }
++        }
++        return -1;
++    }
++
++    private static int indexOf(final byte[] text, final byte value, final int start) {
++        for (int index = start; index < text.length; index++) {
++            if (text[index] == value) {
++                return index;
++            }
++        }
++        return -1;
++    }
++
++    private static byte[] replace(final byte[] text, final int position, final int count, final byte[] replacement) {
++        final byte[] result = new byte[Math.addExact(text.length - count, replacement.length)];
++        System.arraycopy(text, 0, result, 0, position);
++        System.arraycopy(replacement, 0, result, position, replacement.length);
++        System.arraycopy(text, position + count, result, position + replacement.length, text.length - position - count);
++        return result;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitions.java
+index 95d2d5b3d..58ec94669 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitions.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitions.java
+@@ -17,34 +17,52 @@
+  */
+ package net.raphimc.viabedrock.api.resourcepack.definition;
+ 
+-import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
++import net.raphimc.viabedrock.api.io.NbtUtf8;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ 
++import java.util.Arrays;
+ import java.util.HashMap;
++import java.util.List;
+ import java.util.Map;
+ import java.util.function.Function;
+ 
+-// https://wiki.bedrock.dev/concepts/text-and-translations.html
+ public class TextDefinitions {
+ 
+-    private final Map<String, String> translations;
++    private final LanguageLookup language;
+ 
+     public TextDefinitions(final ResourcePackStorage resourcePackStorage) {
+-        this.translations = new HashMap<>();
+-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
++        this(resourcePackStorage.getPackStackBottomToTop());
++    }
++
++    /** Uses already accepted layers in their resolved bottom-to-top order. */
++    public TextDefinitions(final Iterable<ResourcePack> packs) {
++        final Map<String, String> translations = new HashMap<>();
++        for (final ResourcePack pack : packs) {
+             if (pack.content().contains("texts/en_US.lang")) {
+-                this.translations.putAll(pack.content().getLang("texts/en_US.lang"));
++                translations.putAll(pack.content().getLang("texts/en_US.lang"));
+             }
+         }
++        final Map<String, String> snapshot = Map.copyOf(translations);
++        this.language = new LanguageLookup(key -> {
++            final String value = snapshot.get(NbtUtf8.decode(key));
++            return value == null ? null : NbtUtf8.encode(value);
++        });
+     }
+ 
+     public String translate(final String text, final Object... args) {
+-        return BedrockTranslator.translate(text, this.lookup(), args);
++        return NbtUtf8.decode(this.translate(NbtUtf8.encode(text), Arrays.stream(args)
++                .map(argument -> NbtUtf8.encode(String.valueOf(argument))).toList()));
++    }
++
++    /** Native bytes from the current English table, before conversion to Java display text. */
++    public byte[] translate(final byte[] text, final List<byte[]> arguments) {
++        return LanguageTranslations.translate(text, arguments, this.language);
+     }
+ 
+     public String get(final String key) {
+-        return this.translations.getOrDefault(key, key);
++        final byte[] value = this.language.apply(NbtUtf8.encode(key));
++        return value == null ? key : NbtUtf8.decode(value);
+     }
+ 
+     public Function<String, String> lookup() {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index d22dde2ac..d365334cb 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -39,6 +39,7 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+ import net.raphimc.viabedrock.api.resourcepack.definition.ItemDefinitions;
++import net.raphimc.viabedrock.api.resourcepack.definition.TextDefinitions;
+ import net.raphimc.viabedrock.api.util.BitSets;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.api.util.StringUtil;
+@@ -501,7 +502,8 @@ public final class JoinPackets {
+     }
+ 
+     private static void writePlayStatusKickMessage(final PacketWrapper wrapper, final PlayStatus status) {
+-        final Map<String, String> translations = BedrockProtocol.MAPPINGS.getBedrockResourcePacks().get(DataValues.VANILLA_RESOURCE_PACK_KEY).content().getLang("texts/en_US.lang");
++        final TextDefinitions translations = new TextDefinitions(List.of(
++                BedrockProtocol.MAPPINGS.getBedrockResourcePacks().get(DataValues.VANILLA_RESOURCE_PACK_KEY)));
+ 
+         switch (status) {
+             case LoginFailed_ClientOld -> PacketFactory.writeJavaDisconnect(wrapper, translations.get("disconnectionScreen.outdatedClient"));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index 1e485d190..b5e6966f9 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -36,7 +36,6 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundConfigu
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
+ import com.viaversion.viaversion.util.Key;
+-import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
+ import net.raphimc.viabedrock.api.model.CameraAimAssistActivation;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.CommandBlockEdit;
+@@ -70,6 +69,7 @@ import net.raphimc.viabedrock.protocol.storage.PlayerWaypointTracker;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
+ import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
++import net.raphimc.viabedrock.api.resourcepack.definition.TextDefinitions;
+ import net.raphimc.viabedrock.protocol.storage.ChunkRadiusNegotiation;
+ import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
+ import net.raphimc.viabedrock.protocol.storage.PlayerInputStorage;
+@@ -82,8 +82,6 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ import java.nio.charset.StandardCharsets;
+ import java.util.Arrays;
+ import java.util.List;
+-import java.util.Map;
+-import java.util.function.Function;
+ import java.util.logging.Level;
+ 
+ public final class MultiStatePackets {
+@@ -92,11 +90,11 @@ public final class MultiStatePackets {
+         final DisconnectFailReason disconnectReason = DisconnectFailReason.getByValue(wrapper.read(BedrockTypes.VAR_INT), DisconnectFailReason.Unknown); // reason
+         final boolean hasMessage = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT) == 0; // has message
+         if (hasMessage) {
+-            final Map<String, String> translations = BedrockProtocol.MAPPINGS.getBedrockResourcePacks().get(DataValues.VANILLA_RESOURCE_PACK_KEY).content().getLang("texts/en_US.lang");
+-            final Function<String, String> translator = k -> translations.getOrDefault(k, k);
++            final TextDefinitions translations = new TextDefinitions(List.of(
++                    BedrockProtocol.MAPPINGS.getBedrockResourcePacks().get(DataValues.VANILLA_RESOURCE_PACK_KEY)));
+             final String rawMessage = wrapper.read(BedrockTypes.STRING); // message
+             wrapper.read(BedrockTypes.STRING); // filtered message
+-            final String translatedMessage = BedrockTranslator.translate(rawMessage, translator, new Object[0]);
++            final String translatedMessage = translations.translate(rawMessage);
+             PacketFactory.writeJavaDisconnect(wrapper, translatedMessage + " §r(Reason: " + disconnectReason + ")");
+         } else {
+             PacketFactory.writeJavaDisconnect(wrapper, null);
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentLanguageCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentLanguageCacheTest.java
+index c0f072f08..8ca795d19 100644
+--- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentLanguageCacheTest.java
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentLanguageCacheTest.java
+@@ -27,7 +27,7 @@ class ContentLanguageCacheTest {
+         final AtomicInteger reads = new AtomicInteger();
+         final InMemoryContent content = new InMemoryContent() {
+             @Override
+-            public List<String> getLines(final String path) {
++            public byte[] get(final String path) {
+                 reads.incrementAndGet();
+                 try {
+                     if (!started.await(5, TimeUnit.SECONDS)) {
+@@ -37,9 +37,10 @@ class ContentLanguageCacheTest {
+                     Thread.currentThread().interrupt();
+                     throw new IllegalStateException(interrupted);
+                 }
+-                return List.of("a=first", "a=last", "b=value ## comment", "## ignored");
++                return super.get(path);
+             }
+         };
++        content.putString("texts/en_US.lang", "a=first\na=last\nb=value ## comment\n## ignored");
+         final var executor = Executors.newFixedThreadPool(connections);
+         try {
+             final List<Future<Map<String, String>>> tables = new ArrayList<>();
+@@ -50,7 +51,7 @@ class ContentLanguageCacheTest {
+                 }));
+             }
+             final Map<String, String> first = tables.get(0).get(5, TimeUnit.SECONDS);
+-            assertEquals(Map.of("a", "last", "b", "value"), first);
++            assertEquals(Map.of("a", "last", "b", "value "), first);
+             for (final var table : tables) {
+                 assertSame(first, table.get(5, TimeUnit.SECONDS));
+             }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFileTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFileTest.java
+new file mode 100644
+index 000000000..4e26c27dd
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFileTest.java
+@@ -0,0 +1,126 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.io.NbtUtf8;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.HexFormat;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.UUID;
++import org.junit.jupiter.api.Assumptions;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class LanguageFileTest {
++
++    @Test
++    void parsingPreservesValueBytesAndAnEmptyDuplicateDoesNotEraseItsPredecessor() {
++        final byte[] input = NbtUtf8.encode("KEY=One\\nTwo\tComment\nkey=\nmissing");
++        final byte[] bom = {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
++        final byte[] document = new byte[bom.length + input.length];
++        System.arraycopy(bom, 0, document, 0, bom.length);
++        System.arraycopy(input, 0, document, bom.length, input.length);
++        final var result = LanguageFile.parse(document);
++        assertEquals(Map.of("key", "One\nTwo"), result.translations());
++        assertEquals(List.of(new LanguageFile.MissingSeparator(3, false)), result.missingSeparators());
++    }
++
++    @Test
++    void byteParsingFiltersPrefixesAndDiagnosticsAgreeWithNativeFiles() throws Exception {
++        final var hex = HexFormat.of();
++        for (final var element : reference().getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            final var result = LanguageFile.parse(hex.parseHex(row.get("raw").getAsString()), keys(row.getAsJsonArray("exclude")),
++                    keys(row.getAsJsonArray("include")), hex.parseHex(row.get("prefix").getAsString()));
++            final var expected = new HashMap<String, String>();
++            for (final var entry : row.getAsJsonArray("translations")) {
++                final var pair = entry.getAsJsonArray();
++                expected.put(NbtUtf8.decode(hex.parseHex(pair.get(0).getAsString())), NbtUtf8.decode(hex.parseHex(pair.get(1).getAsString())));
++            }
++            assertEquals(expected, result.translations(), row::toString);
++            assertEquals(row.get("special").getAsBoolean(), result.special(), row::toString);
++            final var diagnostics = new ArrayList<LanguageFile.MissingSeparator>();
++            for (final var entry : row.getAsJsonArray("diagnostics")) {
++                final var diagnostic = entry.getAsJsonObject();
++                diagnostics.add(new LanguageFile.MissingSeparator(diagnostic.get("line").getAsInt(), diagnostic.get("ending").getAsString().equals("newline")));
++            }
++            assertEquals(diagnostics, result.missingSeparators(), row::toString);
++        }
++    }
++
++    @Test
++    void actualPackNamesAndReloadsUseNativeFileContentsAndLookup() throws Exception {
++        final var document = reference();
++        final var hex = HexFormat.of();
++        int compared = 0;
++        for (final var element : document.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            if (!row.getAsJsonArray("exclude").isEmpty() || !row.getAsJsonArray("include").isEmpty() || !row.get("prefix").getAsString().isEmpty()) {
++                continue;
++            }
++            final var content = content(hex.parseHex(row.get("raw").getAsString()));
++            final var packs = List.of(new ResourcePack(content));
++            final var texts = new ResourcePackStorage(packs).getTexts();
++            final var bootstrapTexts = new TextDefinitions(packs);
++            for (final var query : row.getAsJsonArray("queries")) {
++                final var nativeQuery = query.getAsJsonObject();
++                final byte[] key = hex.parseHex(nativeQuery.get("key").getAsString());
++                final byte[] expected = nativeQuery.get("present").getAsBoolean() ? hex.parseHex(nativeQuery.get("result").getAsString()) : key;
++                assertArrayEquals(expected, NbtUtf8.encode(texts.get(NbtUtf8.decode(key))), row::toString);
++                assertArrayEquals(expected, NbtUtf8.encode(texts.lookup().apply(NbtUtf8.decode(key))), row::toString);
++                assertArrayEquals(expected, NbtUtf8.encode(bootstrapTexts.get(NbtUtf8.decode(key))), row::toString);
++                assertArrayEquals(hex.parseHex(nativeQuery.get("formatted").getAsString()), texts.translate(key, List.of()), row::toString);
++                assertArrayEquals(hex.parseHex(nativeQuery.get("formatted").getAsString()), bootstrapTexts.translate(key, List.of()), row::toString);
++                compared++;
++            }
++        }
++        assertTrue(compared > 1000);
++        final var lifecycle = document.getAsJsonObject("cacheLifecycle");
++        final var content = content(hex.parseHex(lifecycle.get("beforeRaw").getAsString()));
++        final var before = new ResourcePackStorage(List.of(new ResourcePack(content))).getTexts();
++        final var first = lifecycle.getAsJsonObject("before");
++        final byte[] key = hex.parseHex(first.get("key").getAsString());
++        assertArrayEquals(hex.parseHex(first.get("result").getAsString()), NbtUtf8.encode(before.get(NbtUtf8.decode(key))));
++        content.put("texts/en_US.lang", hex.parseHex(lifecycle.get("afterRaw").getAsString()));
++        final var after = new ResourcePackStorage(List.of(new ResourcePack(content))).getTexts();
++        assertArrayEquals(hex.parseHex(lifecycle.getAsJsonObject("after").get("result").getAsString()), NbtUtf8.encode(after.get(NbtUtf8.decode(key))));
++    }
++
++    private static JsonObject reference() throws Exception {
++        final String path = System.getenv("STACKANVIL_LANGUAGE_FILE_REFERENCE");
++        Assumptions.assumeTrue(path != null);
++        return JsonParser.parseString(Files.readString(Path.of(path))).getAsJsonObject();
++    }
++
++    private static Set<String> keys(final JsonArray values) {
++        final var result = new HashSet<String>();
++        values.forEach(value -> result.add(NbtUtf8.decode(HexFormat.of().parseHex(value.getAsString()))));
++        return result;
++    }
++
++    private static InMemoryContent content(final byte[] raw) {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID()
++                + "\",\"version\":[1,0,0],\"name\":\"Language file probe\"}}");
++        content.put("texts/en_US.lang", raw);
++        content.putString("texts/languages.json", "[\"en_US\"]");
++        return content;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookupTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookupTest.java
+new file mode 100644
+index 000000000..fa3a12f24
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookupTest.java
+@@ -0,0 +1,82 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.io.NbtUtf8;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.HashMap;
++import java.util.HexFormat;
++import org.junit.jupiter.api.Assumptions;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class LanguageLookupTest {
++
++    @Test
++    void foldingCachesValuesWithoutSharingMutableResults() {
++        final var table = new HashMap<String, byte[]>();
++        table.put("name", new byte[]{1, 2});
++        final var lookup = new LanguageLookup(key -> table.get(NbtUtf8.decode(key)));
++        final byte[] key = NbtUtf8.encode("NAME");
++        final byte[] first = lookup.apply(key);
++        first[0] = 9;
++        table.put("name", new byte[]{3, 4});
++        assertArrayEquals(new byte[]{1, 2}, lookup.apply(key));
++        final var replacement = new LanguageLookup(raw -> table.get(NbtUtf8.decode(raw)));
++        assertArrayEquals(new byte[]{3, 4}, replacement.apply(key));
++        assertNull(lookup.apply(new byte[0]));
++    }
++
++    @Test
++    void exactLookupAsciiFoldingAndCacheLifecycleAgreeWithNativeLanguageTables() throws Exception {
++        final String path = System.getenv("STACKANVIL_LANGUAGE_LOOKUP_REFERENCE");
++        Assumptions.assumeTrue(path != null);
++        final var hex = HexFormat.of();
++        final var document = JsonParser.parseString(Files.readString(Path.of(path))).getAsJsonObject();
++        for (final String group : new String[]{"cases", "lifecycle"}) {
++            final var translations = new HashMap<String, byte[]>();
++            final var calls = new JsonArray();
++            LanguageLookup lookup = null;
++            int epoch = -1;
++            for (final var element : document.getAsJsonArray(group)) {
++                final var row = element.getAsJsonObject();
++                translations.clear();
++                for (final var translation : row.getAsJsonArray("translations")) {
++                    final var entry = translation.getAsJsonArray();
++                    translations.put(entry.get(0).getAsString(), hex.parseHex(entry.get(1).getAsString()));
++                }
++                if (epoch != row.get("epoch").getAsInt()) {
++                    epoch = row.get("epoch").getAsInt();
++                    lookup = new LanguageLookup(key -> {
++                        final String encoded = hex.formatHex(key);
++                        calls.add(encoded);
++                        return translations.get(encoded);
++                    });
++                }
++                calls.asList().clear();
++                final byte[] result = lookup.apply(hex.parseHex(row.get("key").getAsString()));
++                if (row.get("present").getAsBoolean()) {
++                    assertArrayEquals(hex.parseHex(row.get("result").getAsString()), result, row::toString);
++                } else {
++                    assertNull(result, row::toString);
++                }
++                final var expected = new JsonArray();
++                for (final var call : row.getAsJsonArray("calls")) {
++                    final var entry = call.getAsJsonArray();
++                    if (entry.get(0).getAsString().equals("primary")) {
++                        expected.add(entry.get(1));
++                    }
++                }
++                assertEquals(expected, calls, row::toString);
++            }
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslationsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslationsTest.java
+new file mode 100644
+index 000000000..8916873f5
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslationsTest.java
+@@ -0,0 +1,127 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.io.NbtUtf8;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.HexFormat;
++import java.util.List;
++import java.util.Map;
++import java.util.function.Function;
++import org.junit.jupiter.api.Assumptions;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class LanguageTranslationsTest {
++
++    @Test
++    void indexedArgumentsFollowConsumedSequentialArgumentsAndMissingTextSkipsThem() {
++        final var table = Map.of("format", "%s/%1/%2", "arg", "Arg");
++        final var calls = new ArrayList<String>();
++        final Function<byte[], byte[]> lookup = raw -> {
++            final String key = NbtUtf8.decode(raw);
++            calls.add(key);
++            final String value = table.get(key);
++            return value == null ? null : NbtUtf8.encode(value);
++        };
++        final var arguments = List.of(NbtUtf8.encode("%arg"), NbtUtf8.encode("B"), NbtUtf8.encode("C"));
++        assertEquals("Arg/B/C", NbtUtf8.decode(LanguageTranslations.translate(NbtUtf8.encode("format"), arguments, lookup)));
++        calls.clear();
++        assertEquals("missing", NbtUtf8.decode(LanguageTranslations.translate(NbtUtf8.encode("missing"), arguments, lookup)));
++        assertEquals(List.of("missing"), calls);
++    }
++
++    @Test
++    void wholeOperationRetriesAgreeWithNativeLanguageManager() throws Exception {
++        final String path = System.getenv("STACKANVIL_LANGUAGE_FALLBACK_REFERENCE");
++        Assumptions.assumeTrue(path != null);
++        final var hex = HexFormat.of();
++        final var cases = JsonParser.parseString(Files.readString(Path.of(path))).getAsJsonObject().getAsJsonArray("cases");
++        for (final var element : cases) {
++            final var row = element.getAsJsonObject();
++            final var tables = new ArrayList<Function<byte[], byte[]>>();
++            final var attempts = new JsonArray();
++            for (final var table : row.getAsJsonArray("tables")) {
++                final int index = tables.size();
++                final var translations = new HashMap<String, byte[]>();
++                for (final var entry : table.getAsJsonArray()) {
++                    final var pair = entry.getAsJsonArray();
++                    translations.put(NbtUtf8.decode(hex.parseHex(pair.get(0).getAsString())), hex.parseHex(pair.get(1).getAsString()));
++                }
++                final var lookup = new LanguageLookup(key -> translations.get(NbtUtf8.decode(key)));
++                tables.add(key -> {
++                    if (attempts.isEmpty() || attempts.get(attempts.size() - 1).getAsInt() != index) {
++                        attempts.add(index);
++                    }
++                    return lookup.apply(key);
++                });
++            }
++            final var order = new ArrayList<Integer>();
++            if (!row.get("explicit").isJsonNull()) {
++                order.add(row.get("explicit").getAsInt());
++            }
++            if (!row.get("selected").isJsonNull()) {
++                order.add(row.get("selected").getAsInt());
++                for (final var available : row.getAsJsonArray("order")) {
++                    final int index = available.getAsInt();
++                    if (NbtUtf8.decode(hex.parseHex(row.getAsJsonArray("names").get(index).getAsString())).equals("neutral")) {
++                        order.add(index);
++                    }
++                }
++            }
++            final List<Function<byte[], byte[]>> languages = order.stream().map(tables::get).toList();
++            final var arguments = new ArrayList<byte[]>();
++            row.getAsJsonArray("arguments").forEach(argument -> arguments.add(hex.parseHex(argument.getAsString())));
++            final byte[] key = hex.parseHex(row.get("key").getAsString());
++            assertArrayEquals(hex.parseHex(row.get("result").getAsString()), LanguageTranslations.translate(key, arguments, languages), row::toString);
++            if (key.length != 0) {
++                assertEquals(row.getAsJsonArray("attempts"), attempts, row::toString);
++            }
++        }
++    }
++
++    @Test
++    void rawTokenExpansionAndArgumentEvaluationAgreeWithNativeFormatter() throws Exception {
++        final String path = System.getenv("STACKANVIL_LANGUAGE_FORMAT_REFERENCE");
++        Assumptions.assumeTrue(path != null);
++        final var hex = HexFormat.of();
++        final var document = JsonParser.parseString(Files.readString(Path.of(path))).getAsJsonObject();
++        for (final var element : document.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            final var translations = new HashMap<String, byte[]>();
++            for (final var translation : row.getAsJsonArray("translations")) {
++                final var entry = translation.getAsJsonArray();
++                translations.put(entry.get(0).getAsString(), hex.parseHex(entry.get(1).getAsString()));
++            }
++            final var arguments = new ArrayList<byte[]>();
++            for (final var argument : row.getAsJsonArray("arguments")) {
++                arguments.add(hex.parseHex(argument.getAsString()));
++            }
++            final var calls = new JsonArray();
++            final byte[] result = LanguageTranslations.translate(hex.parseHex(row.get("key").getAsString()), arguments, key -> {
++                final String encoded = hex.formatHex(key);
++                calls.add(encoded);
++                return translations.get(encoded);
++            });
++            // Empty native lookup returns absent without consulting the dictionary.
++            final var expectedCalls = new JsonArray();
++            for (final var call : row.getAsJsonArray("lookups")) {
++                if (!call.getAsString().isEmpty()) {
++                    expectedCalls.add(call);
++                }
++            }
++            assertArrayEquals(hex.parseHex(row.get("result").getAsString()), result, row::toString);
++            assertEquals(expectedCalls, calls, row::toString);
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitionsTest.java
+new file mode 100644
+index 000000000..4e8d5804e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitionsTest.java
+@@ -0,0 +1,76 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.io.NbtUtf8;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.HexFormat;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class TextDefinitionsTest {
++
++    @Test
++    void acceptedLayersAndSourceReplacementKeepIndependentLookupSnapshots() throws Exception {
++        final var lower = pack(NbtUtf8.encode("Key=Lower\nretained=Trailing  \n"));
++        final var upper = pack(NbtUtf8.encode("KEY=Upper\n"));
++        final var before = new ResourcePackStorage(List.of(upper, lower)).getTexts();
++        assertEquals("Upper", before.get("KEY"));
++        assertEquals("Trailing  ", before.get("retained"));
++        final var parsed = upper.content().getLang("texts/en_US.lang");
++        assertThrows(UnsupportedOperationException.class, () -> parsed.put("key", "Changed"));
++        upper.content().put("texts/en_US.lang", NbtUtf8.encode("key=After\n"));
++        final var after = new TextDefinitions(List.of(lower, upper));
++        assertEquals("Upper", before.get("KEY"));
++        assertEquals("After", after.get("KEY"));
++        assertEquals(Map.of("key", "After"), upper.content().getLang("texts/en_US.lang"));
++        upper.content().putStored("texts/en_US.lang", NbtUtf8.encode("key=\n"));
++        assertEquals("Lower", new TextDefinitions(List.of(lower, upper)).get("KEY"));
++        assertEquals("After", after.get("KEY"));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_LANGUAGE_COMPOSITION_REFERENCE", matches = ".+")
++    void acceptedPackParsingLookupAndArgumentFormattingMatchNativeComposition() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_LANGUAGE_COMPOSITION_REFERENCE")))).getAsJsonObject();
++        final var hex = HexFormat.of();
++        int cases = 0;
++        for (final var element : fixture.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            final var texts = new ResourcePackStorage(List.of(pack(hex.parseHex(row.get("raw").getAsString())))).getTexts();
++            final byte[] key = hex.parseHex(row.get("key").getAsString());
++            final List<byte[]> arguments = new ArrayList<>();
++            row.getAsJsonArray("arguments").forEach(argument -> arguments.add(hex.parseHex(argument.getAsString())));
++            final byte[] expected = hex.parseHex(row.get("result").getAsString());
++            assertArrayEquals(expected, texts.translate(key, arguments), "native byte case " + cases);
++            assertArrayEquals(expected, NbtUtf8.encode(texts.translate(NbtUtf8.decode(key), arguments.stream().map(NbtUtf8::decode).toArray())),
++                    "native string case " + cases);
++            cases++;
++        }
++        assertEquals(780, cases);
++    }
++
++    private static ResourcePack pack(final byte[] raw) throws Exception {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID()
++                + "\",\"version\":[1,0,0],\"name\":\"Language producer control\"}}");
++        content.put("texts/en_US.lang", raw);
++        return new ResourcePack(content);
++    }
++
++}
+-- 
+2.56.0
