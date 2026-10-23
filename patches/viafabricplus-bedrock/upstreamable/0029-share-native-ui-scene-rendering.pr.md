@@ -128,3 +128,41 @@ This change does not establish native button pixels or physical device mapping.
 
 Native toggle groups select checked/unchecked hover and locked branches without a form response annotation.
 The presentation regression covers all eight checked, enabled, and pointer combinations. Native pixels and device equivalence remain separate gates.
+
+## Equal-layer draw order
+
+Cooking tab icons and their backgrounds can have the same cumulative layer.
+The layout previously sorted siblings before flattening their descendants.
+That changed the tie order and let tab backgrounds cover their icons.
+
+Layout now preserves authored child order.
+The complete draw list uses a stable sort by cumulative layer.
+Overlapping actions give the later authored control priority when their layers match.
+HUDs, forms, and containers share the draw order.
+
+Twelve controls execute the unchanged traversal from Bedrock 1.26.51.1, build 51061372, protocol 2193.
+They verify additive layers, authored child order, and inherited visibility.
+Nested-image and screen-pointer regressions fail with the previous behavior and pass with the fix.
+The native visitor callback, hierarchy, and visibility flags are supplied test boundaries.
+Native GPU batching, pixel equality, and full default cooking-screen coverage remain unverified.
+
+The combined four-project replay and build pass 2,483 tests, with 213 optional skips and no failures or errors.
+Checkstyle, access-widener validation, Maven POM generation, and offline patch validation pass.
+All 1,404 embedded core classes match the core build.
+The captured furnace scene places both tab icons after their backgrounds at matching cumulative layers.
+
+The private Fabric client projection now visibly renders the food and search tab icons.
+Both icon regions previously contained only one background color.
+The fixture retains the authored textures, dimensions, and cumulative layers.
+This comparison verifies the host rendering correction, with no native reference pixel claim.
+
+The controlled client run passes furnace, smoker, and blast-furnace cooking, then reconnects to the same world.
+Fourteen preference sends receive fourteen newer matching core models; all six recipe press/release replies pass.
+All three captures show the tab icons.
+Each fixture restores ordinary controls before the normal cooking check.
+Two runtime inventories verify 2,520 classes and four data resources each.
+The observer is removed, the temporary driver delay is restored, and normal cleanup leaves no managed-profile JVM.
+The scene projection removes unfinished controls and mappings, so this does not prove complete default-screen support.
+
+The combined movement and cooking build repeats these client checks and completes normal reconnect and cleanup.
+All 74 shared UI classes match the earlier icon-correction checkpoint.

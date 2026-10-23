@@ -1,4 +1,4 @@
-From 131cecb19123bff32554a73386ff1fe8ac16b467 Mon Sep 17 00:00:00 2001
+From 929b54bef1367a83a6ba573b07c63167b0d6381e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -290,6 +290,18 @@ annotations. Their checked/unchecked hover and locked branches must remain
 available to authored inventory groups. The presentation regression covers
 all eight checked, enabled and pointer states without a form input marker.
 Native device and pixel equivalence remain separate verification gates.
+
+Preserve authored child order in layout and sort only the complete draw
+list by cumulative layer. Native 1.26.51.1 traversal1445ba980 visits
+children in vector order and adds each authored layer without a depth
+increment. Sorting siblings first reversed equal-layer draws across
+nested subtrees, hiding the cooking tab icons behind their backgrounds.
+Use reverse authored order to resolve equal-layer action overlap.
+
+Twelve original traversal controls bind cumulative layers, child order
+and inherited visibility. Nested-image and installed-screen pointer
+regressions both fail with the previous behavior and pass with this fix.
+This does not establish native GPU batching, pixels or full UI parity.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   3 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -315,7 +327,7 @@ Native device and pixel equivalence remain separate verification gates.
  .../render/BedrockGuiActorRenderer.java       | 130 +++
  .../render/BedrockPlayerAttachables.java      |  15 +-
  .../bedrock/render/BedrockPlayerSkins.java    |  43 +-
- .../bedrock/screen/ui/BedrockHudOverlays.java | 131 +++
+ .../bedrock/screen/ui/BedrockHudOverlays.java | 129 +++
  .../screen/ui/NativeHudOverlayState.java      |  66 ++
  .../bedrock/screen/ui/NativeHudPayload.java   |  36 +
  .../bedrock/screen/ui/NativeHudResources.java |  21 +
@@ -333,12 +345,12 @@ Native device and pixel equivalence remain separate verification gates.
  .../bedrock/screen/ui/NativeUiImageCache.java | 229 +++++
  .../screen/ui/NativeUiImageRegions.java       | 132 +++
  .../bedrock/screen/ui/NativeUiImages.java     | 171 ++++
- .../bedrock/screen/ui/NativeUiLayout.java     | 525 ++++++++++
+ .../bedrock/screen/ui/NativeUiLayout.java     | 522 ++++++++++
  .../screen/ui/NativeUiMultilineInput.java     | 267 +++++
- .../screen/ui/NativeUiPresentation.java       | 150 +++
+ .../screen/ui/NativeUiPresentation.java       | 154 +++
  .../bedrock/screen/ui/NativeUiRenderer.java   | 153 +++
  .../bedrock/screen/ui/NativeUiScene.java      |  93 ++
- .../screen/ui/NativeUiSceneScreen.java        | 735 ++++++++++++++
+ .../screen/ui/NativeUiSceneScreen.java        | 736 ++++++++++++++
  .../bedrock/screen/ui/NativeUiScreen.java     |  11 +
  .../bedrock/screen/ui/NativeUiScroll.java     |  69 ++
  .../bedrock/screen/ui/NativeUiSlider.java     | 123 +++
@@ -365,14 +377,14 @@ Native device and pixel equivalence remain separate verification gates.
  .../bedrock/screen/ui/NativeUiImagesTest.java | 100 ++
  .../bedrock/screen/ui/NativeUiLayoutTest.java | 942 ++++++++++++++++++
  .../screen/ui/NativeUiMultilineInputTest.java | 210 ++++
- .../screen/ui/NativeUiPresentationTest.java   | 231 +++++
+ .../screen/ui/NativeUiPresentationTest.java   | 258 +++++
  .../screen/ui/NativeUiRendererTest.java       |  71 ++
- .../NativeUiSceneScreenInteractionTest.java   | 153 +++
+ .../NativeUiSceneScreenInteractionTest.java   | 187 ++++
  .../bedrock/screen/ui/NativeUiSliderTest.java | 120 +++
  .../bedrock/screen/ui/NativeUiTextTest.java   |  56 ++
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../screen/ui/NativeUiViewportTest.java       |  55 +
- 81 files changed, 8742 insertions(+), 24 deletions(-)
+ 81 files changed, 8803 insertions(+), 24 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -1701,10 +1713,10 @@ index a10aebc..2991542 100644
                  ? walking.bedrockWalkingAnimation().sample(partialTick) : 0F);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/BedrockHudOverlays.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/BedrockHudOverlays.java
 new file mode 100644
-index 0000000..db19286
+index 0000000..04a8f13
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/BedrockHudOverlays.java
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,129 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1713,7 +1725,6 @@ index 0000000..db19286
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
-+import java.util.Comparator;
 +import java.util.Map;
 +import java.util.EnumMap;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -1803,7 +1814,6 @@ index 0000000..db19286
 +            state.animations().advance(state.scene().root(), now);
 +            final var layout = state.layout(renderer, viewport.width(), viewport.height(), images.revision());
 +            final var draws = NativeUiPresentation.draws(layout, _ -> false, node -> state.animations().opacityAt(node, now));
-+            draws.sort(Comparator.comparingDouble(draw -> draw.box().layer()));
 +            graphics.pose().pushMatrix();
 +            try {
 +                graphics.pose().scale(viewport.renderScale(), viewport.renderScale());
@@ -3770,10 +3780,10 @@ index 0000000..8475ec8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiLayout.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiLayout.java
 new file mode 100644
-index 0000000..02aa2c8
+index 0000000..59e5b0b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiLayout.java
-@@ -0,0 +1,525 @@
+@@ -0,0 +1,522 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3783,7 +3793,6 @@ index 0000000..02aa2c8
 +
 +import com.google.gson.JsonElement;
 +import java.util.ArrayList;
-+import java.util.Comparator;
 +import java.util.HashMap;
 +import java.util.IdentityHashMap;
 +import java.util.List;
@@ -4049,7 +4058,6 @@ index 0000000..02aa2c8
 +                    children.set(i, scrollContent(children.get(i), contentBox.node, horizontal ? -amount : 0, horizontal ? 0 : -amount, contentClip));
 +            }
 +        }
-+        children.sort(Comparator.comparingDouble(Box::layer));
 +        Box result = new Box(node, bounds, clip, content, viewport, layer, List.copyOf(children));
 +        if (node.scroll()) {
 +            final var model = NativeUiScroll.model(result, scroll.getOrDefault(node, 0F));
@@ -4064,7 +4072,6 @@ index 0000000..02aa2c8
 +        final List<Box> children = new ArrayList<>();
 +        for (int i = 0; i < sizes.size(); i++)
 +            children.add(this.place(box.node.children().get(i), bounds, sizes.get(i), box.layer, box.clip, scroll, box.node));
-+        children.sort(Comparator.comparingDouble(Box::layer));
 +        return new Box(box.node, bounds, box.clip, this.content(box.node, sizes, bounds.width, bounds.height),
 +            bounds, box.layer, List.copyOf(children));
 +    }
@@ -4574,10 +4581,10 @@ index 0000000..92a87a7
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiPresentation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiPresentation.java
 new file mode 100644
-index 0000000..4f60c1a
+index 0000000..dcb3a16
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiPresentation.java
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,154 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4587,6 +4594,7 @@ index 0000000..4f60c1a
 +
 +import java.util.ArrayList;
 +import java.util.Collections;
++import java.util.Comparator;
 +import java.util.HashSet;
 +import java.util.IdentityHashMap;
 +import java.util.List;
@@ -4658,6 +4666,9 @@ index 0000000..4f60c1a
 +        final List<Draw> result = new ArrayList<>();
 +        collect(root, new Opacity(1, 1), true, hovered, opacity,
 +            Collections.newSetFromMap(new IdentityHashMap<>()), result);
++        // Native traversal retains authored child order. Sort the complete draw list
++        // so equal cumulative layers keep that order across different subtrees.
++        result.sort(Comparator.comparingDouble(draw -> draw.box().layer()));
 +        return result;
 +    }
 +
@@ -4988,10 +4999,10 @@ index 0000000..fb06056
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java
 new file mode 100644
-index 0000000..7734c0c
+index 0000000..6ded37d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java
-@@ -0,0 +1,735 @@
+@@ -0,0 +1,736 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5002,6 +5013,7 @@ index 0000000..7734c0c
 +import com.mojang.blaze3d.platform.InputConstants;
 +import com.mojang.serialization.JsonOps;
 +import java.util.ArrayList;
++import java.util.Collections;
 +import java.util.Comparator;
 +import java.util.HashMap;
 +import java.util.HashSet;
@@ -5092,6 +5104,7 @@ index 0000000..7734c0c
 +        this.inputs.clear();
 +        final List<ControlBox> boxes = new ArrayList<>();
 +        controls(this.root, "", 0, boxes);
++        Collections.reverse(boxes);
 +        boxes.sort(Comparator.comparingDouble((ControlBox control) -> control.box.layer()).reversed());
 +        final Set<String> retainedActions = new HashSet<>(), retainedInputs = new HashSet<>();
 +        for (final var control : boxes) {
@@ -5195,7 +5208,6 @@ index 0000000..7734c0c
 +                this.layout();
 +            final List<NativeUiPresentation.Draw> draws = this.draws(mouseX, mouseY);
 +            this.synchronize(draws);
-+            draws.sort(Comparator.comparingDouble(draw -> draw.box().layer()));
 +            NativeUiScene.Node tooltip = null;
 +            for (final NativeUiPresentation.Draw draw : draws) {
 +                final var box = draw.box();
@@ -9159,10 +9171,10 @@ index 0000000..88b55e3
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiPresentationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiPresentationTest.java
 new file mode 100644
-index 0000000..2e61c73
+index 0000000..d8bc9ec
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiPresentationTest.java
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,258 @@
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.google.gson.JsonArray;
@@ -9174,6 +9186,33 @@ index 0000000..2e61c73
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class NativeUiPresentationTest {
++    @Test
++    void preservesAuthoredOrderForEqualCumulativeLayersAcrossNestedSubtrees() {
++        final var background = node("background", "image", true);
++        background.properties().addProperty("layer", 2);
++        final var icon = node("icon", "image", true);
++        icon.properties().addProperty("layer", -1);
++        final var content = node("content", "panel", true, icon);
++        content.properties().addProperty("layer", 3);
++        final var sizer = node("sizer", "panel", true, content);
++        for (final boolean reversed : new boolean[]{false, true}) {
++            final var root = node("root", "panel", true, reversed ? sizer : background, reversed ? background : sizer);
++            root.properties().addProperty("layer", 2);
++            final var box = layout(root);
++            assertSame(root.children().getFirst(), box.children().getFirst().node());
++            final var images = NativeUiPresentation.draws(box, _ -> false).stream()
++                    .filter(draw -> draw.box().node().type().equals("image")).toList();
++            assertEquals(4, images.getFirst().box().layer());
++            assertEquals(4, images.getLast().box().layer());
++            assertEquals(reversed ? List.of(icon, background) : List.of(background, icon),
++                    images.stream().map(draw -> draw.box().node()).toList());
++        }
++        icon.properties().addProperty("layer", -2);
++        final var root = node("root", "panel", true, background, sizer);
++        assertEquals(List.of(icon, background), NativeUiPresentation.draws(layout(root), _ -> false).stream()
++                .map(draw -> draw.box().node()).filter(child -> child.type().equals("image")).toList());
++    }
++
 +    @Test
 +    void nativeToggleGroupsSelectCheckedHoverAndLockedStatesWithoutFormAnnotations() {
 +        final var states = List.of("checked", "unchecked", "checked_hover", "unchecked_hover",
@@ -9473,10 +9512,10 @@ index 0000000..8ceca53
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java
 new file mode 100644
-index 0000000..129bb31
+index 0000000..3694481
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,187 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9530,6 +9569,36 @@ index 0000000..129bb31
 +            assertEquals(0, controller.cancels);
 +            assertTrue(controller.validated.stream().anyMatch(node -> node.action() == 177));
 +        });
++    }
++
++    @Test
++    void overlappingActionsFollowTheSameNestedLayerOrderAsTheirDraws() throws Exception {
++        for (final boolean reversed : new boolean[]{false, true}) {
++            final var background = control("button", 100, 20, 0);
++            background.addProperty("layer", 2);
++            background.addProperty("action", 10);
++            final var foreground = control("button", 100, 20, 0);
++            foreground.addProperty("layer", 2);
++            foreground.addProperty("action", 20);
++            final var wrapper = control("panel", 100, 20, 0);
++            final var nested = new JsonArray();
++            nested.add(foreground);
++            wrapper.add("children", nested);
++            final var root = control("panel", 200, 100, 0);
++            final var children = new JsonArray();
++            children.add(reversed ? wrapper : background);
++            children.add(reversed ? background : wrapper);
++            root.add("children", children);
++            final var scene = new JsonObject();
++            scene.addProperty("format", 1);
++            scene.add("root", root);
++            final var controller = new Controller(NativeUiController.Activation.STAY,
++                    NativeUiScene.parse(scene.toString(), Set.of()).root());
++            withScreen(controller, (game, screen) -> {
++                assertTrue(screen.mouseClicked(event(10, 10), false));
++                assertEquals(List.of(reversed ? 10 : 20), controller.responses);
++            });
++        }
 +    }
 +
 +    @Test
@@ -9605,13 +9674,17 @@ index 0000000..129bb31
 +
 +    private static final class Controller implements NativeUiController {
 +        private final Activation activation;
-+        private final NativeUiScene.Node root = NativeUiSceneScreenInteractionTest.root();
++        private final NativeUiScene.Node root;
 +        private final List<Integer> responses = new ArrayList<>();
 +        private List<NativeUiScene.Node> validated = List.of();
 +        private int refreshes, cancels;
 +        private boolean current = true;
 +
-+        private Controller(final Activation activation) { this.activation = activation; }
++        private Controller(final Activation activation) { this(activation, NativeUiSceneScreenInteractionTest.root()); }
++        private Controller(final Activation activation, final NativeUiScene.Node root) {
++            this.activation = activation;
++            this.root = root;
++        }
 +        @Override public String title() { return ""; }
 +        @Override public NativeUiScene.Node root() { return this.root; }
 +        @Override public void validateVisibleControls() { NativeUiScene.validateVisibleControls(this.root, Set.of()); }
