@@ -2284,3 +2284,39 @@ The combined four-project build passes 2,588 tests, with 168 optional skips and 
 The new child-order fixture, child-lifetime comparisons, retained particle fixtures, attachable comparisons, and Iris GPU regression run without skips.
 All 1,411 core classes match both packaged copies, and all 1,137 production client classes match the add-on.
 The newer received actor spatial-state change remains integrated in this build.
+
+## Native particle rate composition
+
+The runtime accepts effects with zero, one, or several rate components.
+An effect without rates still runs its lifetime and event graph.
+Automatic rates add their requests in resource order and share emitter capacity, rate cache, and interval remainder.
+Manual capacity initializes before creation expressions and refreshes for each manual request.
+Manual births also update the shared birth count, so an instant component observes earlier manual emission.
+
+For example, steady emission before an instant burst can add both requests in the first update.
+Reversing those components can leave the steady rate cache at zero after the instant component sets capacity.
+The runtime preserves that order-dependent result.
+
+The reference uses Bedrock 1.26.51.1/build51061372, protocol 2193.
+The binary SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+All 128 controls execute factory `0x14216ba90`, reset `0x142157210`, automatic update `0x142158a40`, and manual emission `0x142160c20`.
+Automatic updates stop after births, before particle aging, and acknowledge the native first-update flag.
+The controls compare 1,152 emission steps across every permutation of zero through three rates, capacity limits, and manual/automatic action order.
+The target-version particle schema lists these components independently.
+
+Parsed resource arrays and literal expressions are supplied inputs.
+Resource, material, and statistics lookups, capacity reservation, allocation, copies, mutex operations, query refresh, actor absence, and birth allocation are supplied boundaries.
+The controls supply `floorf` and `fmodf` and skip random-variable registration during reset.
+They do not establish native JSON admission, expression VM behavior, particle aging, particle motion, or visible rendering parity.
+
+Focused tests cover event-only expiry, ordered request sums, initialization timing, and manual births before instant emission.
+All 128 native scenarios pass through the production emitter implementation.
+Four deliberate variants fail native population comparisons: maximum instead of sum, sorted component order, omitted initial manual capacity, and omitted manual birth counts.
+The existing native lifetime, count, dispatch, and child-ownership comparisons also pass in the focused run.
+
+All four combined builds pass 2,593 tests, with 169 optional skips and no failures or errors.
+The four rate tests, retained particle comparisons, attachable comparisons, and Iris GPU regression run without skips.
+All 1,411 core classes match the embedded add-on and proxy copies.
+All 1,139 production client classes match the packaged add-on byte for byte.
+The full 38-patch add-on stack and 104-patch core stack replay successfully.
+The combined build includes the newer native spawn-angle cache change.
