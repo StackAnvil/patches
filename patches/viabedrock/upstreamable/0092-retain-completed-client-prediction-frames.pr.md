@@ -1751,3 +1751,37 @@ Live targets before the clears are inactive; active-target retirement retains na
 Observers report no errors, runtime package hashes match, and all recorded run-owned identities exit normally.
 The original server configuration, script, and manifest are restored.
 The [client validation](../../viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md#remote-player-reset-validation) records the combined build and delayed movement checks.
+
+## Native player throttling
+
+Further original execution covers the optional throttle installation and its later update transitions.
+This research uses the same Bedrock 1.26.51.1 client image and protocol 2193 as the reset controls.
+It adds no production admission rule.
+
+The `ADD_PLAYER` handler checks a client configuration virtual before installing `UpdateAndRenderThrottleComponent`.
+It creates a missing component with both bytes zero and preserves an existing component.
+Sixteen controls execute the original configuration call, sparse membership checks, and payload initialization.
+Generic storage lookup, insertion, and payload allocation remain supplied boundaries.
+The configuration virtual's producer and update timing remain unverified.
+
+The component has separate selection and interpolation-admission bytes.
+The original signed budget comparison can reject a selection attempt.
+An admitted selection sets both bytes and clears interpolation when the previous admission byte was false.
+It also copies the current native position into the previous position in that case.
+The later throttle callback clears the selection byte.
+If that byte was already false, the callback also disables interpolation admission, clears interpolation, and removes `ActorTickNeededComponent`.
+An admitted update preserves its enabled admission byte across the callback.
+
+The native registration names this callback `ClientDisplayThrottleTick` and supplies category value ten.
+The original callback executes both sparse intersection traversals across 2,560 controls.
+Each control composes the budget branch, callback, normal player packet effect, position request, and collider refresh.
+The earlier 1,280 direct-helper controls remain separate evidence for the same transitions.
+They are not an additional set of independent player scenarios.
+Five deliberate variants fail assertions: ignored budget, retained disabled target, retained first-admission target, ignored configuration, and reinitialized existing component.
+
+These controls supply budget inputs, priority notifications, component stores, registry lookup, and marker erasure.
+They also retain the earlier supplied readiness input, region query, notifications, and float CRT.
+They do not establish complete priority collection, budget production, scheduler ordering, actor factory behavior, or native trajectories.
+Readiness-setter searches yield candidates but do not establish its actual caller or prove it unreachable.
+Normal player source integration still needs those producers and phase boundaries.
+Java actor age, visibility, and smoothing cannot stand in for these native decisions.
