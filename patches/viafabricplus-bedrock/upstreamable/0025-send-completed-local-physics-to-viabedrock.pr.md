@@ -23,8 +23,28 @@ The second motion overload also preserves its supplied byte and distinct constru
 These byte roles remain unnamed here.
 
 The fixture supplies allocation, CRT memory operations, process-exit destructor registration, TLS initialization, and pinned performance-clock interfaces.
-It does not establish real packet receive times, history consumption, trimming, statistics updates, or complete trajectories.
+It does not establish real packet receive times, complete history consumption, statistics updates, or complete trajectories.
 The earlier publisher and intent fixtures still stop at their own history boundaries.
+
+Separate controls now execute complete history consumer `142888de0` with two original movement messages.
+Seventeen cases compare sampled pose publication and deque trimming, including sub-millisecond boundaries.
+The original default delay of two and time factor fifty produce a one-hundred-millisecond lower bound in this fixture.
+The sampling fraction uses signed whole milliseconds and float arithmetic.
+Two early-time cases precede the latest supplied arrival and serve only as internal negative controls.
+
+Another one hundred cases execute the consumer together with actual target publisher `141a0b170`.
+Valid interpolation storage receives the sampled position and body rotation, a zero head target, and position/body counters of three.
+The head counter becomes zero, and the last four component bytes remain unchanged.
+The original registry hash lookup and sparse generation checks execute.
+Missing, stale, missing-page, and empty-range storage instead publish a position request and update live rotation through the original fallback.
+Position-request publication remains an observed boundary.
+The StateVector stays unchanged in these movement-only controls.
+This establishes the history-to-target handoff, rather than direct replacement of current position.
+
+The fixture supplies CRT remainder, allocation, TLS, clock imports, and a separate global statistics object.
+It starts without prior selected samples or runtime arrival statistics.
+Motion sampling, mob/head handling, forced teleport, real receive clocks, actor lifetimes, and complete tick/application trajectories remain unverified.
+The helper `14288a7a0` contains diagnostic string formatting and is not the target publication routine.
 
 Another 1,280 controls execute original vehicle intent writer `14b182f80` against existing intent storage.
 The selected controller must have matching context, passenger membership, and mob membership.
