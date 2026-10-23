@@ -484,7 +484,8 @@ All 557 fixed-name checks and twenty component-description checks also pass agai
 The combined build passes 2,686 tests, with 163 optional skips and no failures or errors.
 All 105 core patches replay. All 1,432 compiled core classes match the standalone package after the four standard token replacements.
 Both embedded core copies match. All 1,143 client classes and the updated factory resource match the final artifacts.
-Block, potion, arrow, and compound providers, primary append composition, secondary labels, cooking query transport, and unchanged authored screens remain unfinished.
+Block providers and primary append composition gain the scoped coverage below.
+Potion, arrow and compound providers, secondary labels, cooking query transport, and unchanged authored-screen acceptance remain unfinished.
 
 A fresh ordinary BDS 1.26.51.1 run passes furnace, smoker, blast furnace, and same-world reconnect with the final add-on.
 Both isolated launchers select that package through the same installed integration instance.
@@ -525,3 +526,34 @@ The four-project build replays the complete stacks. Block, potion, arrow, compou
 A fresh ordinary BDS run passes all three cooking families and same-world reconnect with the final add-on.
 Both selected launcher paths resolve that package through the shared installed integration instance.
 Normal cleanup stops every observed run-owned process and the private display. This run does not inject authored append metadata or establish native screens and pixels.
+
+
+## Compiled block-backed item names
+
+Block-backed builtin items now use their native constructor associations and canonical auxiliary block states to select ordinary name keys.
+Generic block, leaf, wool/carpet and sapling providers preserve their separate native default and empty-name decisions.
+Component reconstruction replaces builtin dispatch, and removed runtime owners cannot retain a name.
+The block source stays lazy for other item methods.
+Potion, arrow and compound providers remain separate work.
+
+The compiled table retains 1,379 native block-definition keys.
+All keys match the completed initialized native definition control.
+All 1,343 item associations, receiver methods and applicable constructor descriptions match the completed native factory control.
+Those two controls finish 2,629 and 2,630 static cleanup callbacks respectively, with no tracked allocations or locks left.
+They use the supplied native version and experiment context, rather than proving later asset or client ownership.
+
+Private block/leaf, wool and sapling controls cover 4,092 original native cases.
+Four deliberately incorrect fallbacks fail assertions.
+The packaged converter passes all 1,337 auxiliary-32767 cases from the native absent/sentinel equivalence control.
+The previous package passes 220 and fails 1,117 under the same registry and language inputs.
+Both runs report no conversion exceptions or missing runtime owners.
+These results cover the declared sentinel inputs, not every auxiliary value or authored-screen pixels.
+The broader 96,696-case native receiver audit continues separately; partial results do not count as completed validation.
+
+The final combined build passes 2,703 repository tests, with 163 optional skips and no failures or errors.
+All 105 core and 38 client patches replay.
+All 1,441 compiled core classes match the standalone package after the four standard replacements for build constants.
+Both embedded core copies match. All 1,144 client classes and both changed data resources match their final artifacts.
+The four block oracle tests remain private and run against the final package.
+A fresh ordinary BDS smoke check covers all three cooking families and same-world reconnect.
+This smoke check does not inject authored block-name controls or establish native screen parity.
