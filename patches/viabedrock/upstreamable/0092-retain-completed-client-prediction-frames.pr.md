@@ -1,5 +1,35 @@
 # Completed player prediction frames
 
+## Queued positional corrections, October 23, 2026
+
+Revision two carries exact position, velocity, optional boat angular velocity, native lifetime, coordinate offsets, and retained input clocks.
+Core pairs each command with a standard Java position packet and preserves its normal acknowledgment.
+The negotiated path leaves current translated position and mount control unchanged until the client reports its final coordinates.
+Connections without a completed frame binding retain the direct correction path.
+
+The client projects the native clock at receipt and intersects both retained history windows.
+The original native receiver supplies 128 passing clock controls for player and vehicle targets.
+These cover unsigned wrap, expired inputs, pending commands, future commands, and capped following-snapshot placement.
+The native comparator uses separate float operations and strict squared-vector tolerance `0.00001F`.
+Optional boat angular state uses absolute tolerance `0.0001F`.
+The original command controls establish current-state replacement and independent float rounding of bounding-box faces.
+Typed stores, actor lookup, captured input methods, and arithmetic fixture physics remain evidence boundaries.
+
+Full core and add-on builds pass after both stacks replay.
+The combined four-project build passes 2,497 tests, with 213 optional skips and no failures or errors.
+All 1,406 core classes match both the add-on and proxy artifacts byte for byte.
+Offline validation passes 271 tooling tests, static checks, and patch metadata checks.
+
+Packet tests cover queued player, boat, and horse corrections without immediate state mutation or lossy velocity packets.
+Additional tests cover delayed receipt, unsigned clocks, native comparison tolerances, and optional angular state.
+
+A private native BDS geyser run reaches 1,233 completed frames and receives 23 correction commands.
+The client applies 22 commands. The last current-clock command awaits a capture after recorder shutdown.
+Three rewinds run four historical physics steps without changing live tick count, food level, or held-item count.
+Four command applications preserve active item use. Eleven apples finish during ordinary live input.
+These controls do not establish delayed historical replay during active consumption or live vehicle correction parity.
+Historical collision inputs, managed interpolation, complete native input phases, and native trajectory parity remain unfinished.
+
 ## Owned state for physical replay
 
 The movement timeline exposes independent effect values for the client adapter's physical snapshots.
@@ -13,9 +43,9 @@ Pending passenger links can resolve before the spawn handler sets the vehicle po
 Prediction remains unavailable during that interval. The normal metadata update then publishes the initialized mount context.
 A regression reproduces the earlier null-position disconnect and verifies subsequent context publication.
 
-Current builds include the incoming cooking controls and pass 2,482 tests, with 212 optional skips and no errors.
+Current builds include the incoming cooking controls and pass 2,497 tests, with 213 optional skips and no errors.
 All 104 core patches and 38 add-on patches replay.
-The add-on contains all 1,404 rebuilt core classes unchanged.
+The add-on contains all 1,406 rebuilt core classes unchanged.
 Offline validation passes 271 tooling tests, static checks, and patch metadata checks.
 
 The add-on now executes historical physics for movement-effect commands.
@@ -123,9 +153,9 @@ Each case exercises both gliding states and zero and nonzero motion through the 
 They verify position, motion, relative flags, grounded state, and complete packet consumption.
 Tick zero consumes the packet without a position update or negotiated correction payload.
 
-**Incomplete:** Core applies accepted nonzero corrections immediately because it has no usable component and input history for replay.
-Corrections inside history still need rewind and input resimulation.
-Vehicle velocity, angular velocity, and movement-related metadata, attributes, and effects need matching reconciliation.
+The queued correction section records the current replay path.
+The direct path remains available when a connection lacks the negotiated frame binding.
+Native trajectory parity and complete historical world inputs remain unverified.
 
 ## Native correction admission, October 22, 2026
 

@@ -1,5 +1,37 @@
 # Send local player prediction to core
 
+## Queued player and mount corrections, October 23, 2026
+
+The adapter now schedules negotiated positional corrections against retained physical frames.
+It compares the retained state with exact native kinematics before it starts historical execution.
+Current-clock commands wait for the upcoming capture. Future commands remain queued without an immediate replay.
+Standard Java handlers retain their acknowledgments, block-prediction bookkeeping, and mining stop.
+Only paired transform and interpolation writes are suppressed.
+Final coordinates precede the completed prediction payload.
+
+Commands require the recorded actor instance, world, UUID, native lifetime, and historical primary control.
+Accepted mount identity transfers retire the continuous control lease, including transfers between two physics frames.
+Same-identity authority revisions preserve that lease.
+Each later replay checks command applicability again.
+Identity regressions cover reused Java IDs, replaced actors, replaced worlds, new lifetimes, removed actors, and lost historical control.
+
+A direct native BDS 1.26.51.1 run reaches 1,233 completed physics frames.
+Read-only observers record 23 real server corrections and 22 command applications.
+The final current-clock command remains pending when recording stops.
+Three rewinds execute four historical physical steps without changing tick count, food level, or held-item count.
+Four command applications preserve active item use and its remaining duration.
+Eleven apples finish during live input. The client, server, and private display stop normally.
+
+The 128 original native clock controls match the used timing code.
+The command tests retain previous transforms, use independently rounded float bounds, and replace only present boat angular state.
+Full builds pass after all 104 core patches and 38 add-on patches replay.
+The combined four-project build passes 2,497 tests, with 213 optional skips and no failures or errors.
+All 1,406 core classes match both the add-on and proxy artifacts byte for byte.
+Offline validation passes 271 tooling tests, static checks, and patch metadata checks.
+
+Historical world and collision inputs, managed interpolation, and complete native input phases remain unfinished.
+Delayed historical replay during active food use, live vehicle corrections, and complete native trajectory parity remain unverified.
+
 ## Owned historical physics
 
 Movement-effect corrections now restore typed actor snapshots and execute recorded client physics.
