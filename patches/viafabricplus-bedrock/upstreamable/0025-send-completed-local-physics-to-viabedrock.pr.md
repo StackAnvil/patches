@@ -1,5 +1,117 @@
 # Send local player prediction to core
 
+## Packet history construction and vehicle intent writers, October 23, 2026
+
+Fresh controls execute the original history enqueue functions instead of stopping at their entry points.
+Function `142888190` constructs movement messages, and `1428883f0` and `142888640` construct motion messages through `142887580`.
+Both a movement-only sequence and a mixed sequence retain forty-eight messages.
+Each sequence compares all retained messages after every insertion, giving 1,176 comparisons per sequence.
+Original deque growth, virtual getters, type decisions, and shared-pointer updates execute.
+
+Stored arrival time cannot fall below the preceding message's stored time.
+The signed millisecond interval still uses the supplied arrival difference, including backward arrivals.
+Equal arrivals preserve insertion order through the native sequence number.
+Movement messages decode packed angle bytes as signed values multiplied by `1/256` and then `360`, with float rounding at each step.
+They retain only the ground bit from the supplied movement flags.
+
+Motion messages copy the latest movement pose when available.
+They accumulate earlier motion only when both message types exist and the latest motion follows the latest movement.
+The original comparison uses stored time, then unsigned sequence number for a tie.
+Motion before the first movement message does not accumulate in these controls.
+Both latest-type pointers and their reference counts match after every insertion.
+The second motion overload also preserves its supplied byte and distinct constructor flag.
+These byte roles remain unnamed here.
+
+The fixture supplies allocation, CRT memory operations, process-exit destructor registration, TLS initialization, and pinned performance-clock interfaces.
+It does not establish real packet receive times, history consumption, trimming, statistics updates, or complete trajectories.
+The earlier publisher and intent fixtures still stop at their own history boundaries.
+
+Another 1,280 controls execute original vehicle intent writer `14b182f80` against existing intent storage.
+The selected controller must have matching context, passenger membership, and mob membership.
+Player and simulation membership determine its controlled-by-player byte.
+Actor flags forty-four and one hundred twenty-two populate the ground-control and free-camera-control bytes.
+The original writer copies the selected entity/context pair and fills intent bytes fifty-six through sixty-three with ones.
+Other bytes remain unchanged.
+Negative and out-of-range selections, context mismatches, stale generations, missing pages, empty ranges, and missing components are included.
+
+Original horse prediction writer `14b17f9a0` passes another 600 controls.
+It requires horse, movement-tick, actor-flags, and vehicle-intent membership.
+It sets the client-predicted byte only when controlled-by-player equals one and both saddled and tamed bits are set.
+Invalid membership preserves the complete intent payload.
+Original view construction, sparse admission, generation checks, and field writes execute.
+Typed registry discovery and startup interfaces remain supplied boundaries.
+Actual storage insertion, selected-controller and flag producers, complete scheduling, component lifetimes, and Java mapping remain unfinished.
+
+The combined four-project build passes 2,570 tests, with 214 optional tests skipped and no failures or errors.
+The full core rerun enables the new focused-recipe transfer reference, and all eighteen furnace request tests run without skips.
+All 1,413 packaged core classes match the add-on and proxy copies.
+Offline validation passes.
+This research changes no production runtime class, and both documented collider mismatches remain unresolved.
+
+## Packet history routing and vehicle intent phases, October 23, 2026
+
+The original packet publisher does not send every admitted spatial update directly to the movement interpolator.
+A fresh fixture executes publisher `14103f580`, global guard `1410400c0`, and target producer and writer `14103fa60` and `142879300`.
+All 5,760 cases retain the complete received cache.
+They select 720 ignored transforms, 616 history updates, and 4,424 interpolation targets.
+These counts describe the fixture inputs, not gameplay frequencies.
+
+With a valid prediction component, a nonzero publisher argument from actor offset `0x354` selects history.
+Otherwise, a zero prediction flag byte and a permissive global guard select history.
+An unavailable global service permits this route.
+A valid service supplies its result through an explicit virtual boundary.
+Other admitted cases select the interpolator in this fixture.
+The target cases compare all forty component bytes after the original writer executes.
+
+The fixture omits the legacy actor reference at offset `0x1d0`.
+It does not establish immediate placement, region admission, or the native distance gate.
+History enqueue remains an observed boundary.
+The original statistics updater executes against empty history.
+Ground-store discovery, generic insertion, virtual erasure, and service lifetime scaffolding remain explicit boundaries.
+Complete history contents, clock integration, actor factories, and live trajectories remain required.
+
+Original prediction constructor `1428888d0` also executes with its statistics, history, and reset callees.
+Its first flag byte and byte `0x80` start at zero, and the qword at `0x88` starts at two.
+Outer memory guards remain unchanged.
+The fixture supplies allocation, CRT memory operations, TLS initialization, and two clock imports.
+The PE import table identifies those imports as `_Query_perf_frequency` and `_Query_perf_counter` from `MSVCP140.dll`.
+The supplied clock values are 10,000,000 and 12,345,000.
+These values establish this constructor control, not real clock synchronization.
+
+The original intent callback `147caecc0` and prediction reset `142888c50` pass another 5,400 controls.
+A valid intent with byte three equal to one sets prediction flag bit zero and resets its internal state.
+It clears interpolation bytes zero through thirty-seven only when that component is valid.
+It can then remove a queued target, subject to the actor byte at `0x269`.
+Otherwise, it copies intent byte two into interpolation byte thirty-seven, or zero without a valid intent.
+A previously set prediction bit zero then clears and seeds history from the current pose.
+The callback always clears prediction bit one.
+A zero remaining flag byte can request history application, again subject to the actor byte at `0x269`.
+
+These controls cover stale generations, missing pages, empty ranges, absent components, and non-boolean byte values.
+They observe 72 interpolation resets, 2,520 history seeds, and 1,680 history application requests.
+Rotation and head components are absent in this fixture.
+History enqueue, history application, queued-store discovery, and queued erasure remain observed boundaries.
+They do not establish complete history consumption or its final physical result.
+
+Pinned generated headers identify the intent fields as `mControlledByPlayer` and `mIsClientPredicted`.
+They identify interpolation byte thirty-seven as `mPlayerControlServerVehicle` and the prediction flag byte as `mDisableConditions`.
+The references are [VehicleInputIntentComponent](https://raw.githubusercontent.com/LiteLDev/LeviLamina/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/deps/vanilla_components/VehicleInputIntentComponent.h), [MovementInterpolatorComponent](https://raw.githubusercontent.com/LiteLDev/LeviLamina/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/components/MovementInterpolatorComponent.h), and [PredictedMovementComponent](https://raw.githubusercontent.com/LiteLDev/LeviLamina/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/components/PredictedMovementComponent.h).
+Those names guide the target layout comparison.
+The target instruction controls establish storage and consumer behavior.
+Producer lifetimes, the two actor-byte roles, and Java field mapping remain unverified.
+
+Fresh manager controls execute the original normal entries and replay entry without changes to native category globals.
+They dispatch 361, 358, and 215 systems for categories zero, one, and three.
+Normal interpolation capture and tick precede queued targets, position application, and grounded adjustment.
+The prediction system follows these interpolation stages.
+Replay omits the prediction system, input capture, queued-target handling, and the vehicle input switch request system.
+All ECS methods return at explicit boundaries in this dispatch fixture.
+This proves manager selection and ordering, not combined physical execution.
+
+The production port still needs separate packet history, interpolation state, input history, and their actual normal and replay phases.
+A Java smoothing flag cannot replace these inputs.
+This research changes no runtime class, and both documented collider mismatches remain unresolved.
+
 ## Actor collision refresh inputs, October 23, 2026
 
 Fresh native controls now distinguish the refresh sources from the current adapter approximation.
