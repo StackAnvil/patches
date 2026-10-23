@@ -1982,3 +1982,23 @@ The snapshot build records 602 live physics frames with populated historical eff
 All 17 observed admissions remain present at completion, alongside 20 effect confirmations and one masked replay entry.
 Normal JVM shutdown hangs again. The isolated run requires manual recovery after private native diagnostics.
 The run establishes snapshot wiring, but successful lifecycle and native trajectory parity remain unproven.
+
+## Live mounted frame pairing
+
+The existing mounted capture already sends paired player and vehicle samples from the same completed frame.
+A delayed BDS trace exposes a core admission error: it rejects the stale tracked rider position before pairing a valid vehicle sample.
+The core prediction owner now validates the vehicle independently and retains the shared input clock.
+The client capture hook stays unchanged.
+
+With the combined core fix, direct NetherNet binds all 158 vehicle samples and applies ten historical vehicle corrections.
+ViaProxy binds all 159 samples and applies twelve historical vehicle corrections.
+The routes replay 103 and 116 physical steps across 17 and 19 replay boundaries.
+Every boundary preserves the live player tick, food level, and held-item count.
+Each route also applies four ticked player impulses live and in their following historical input frames, including a zero reset.
+Both runs complete mounting, release, reacquisition, and dismount, then stop normally.
+Runtime checksums match the combined artifacts, and both read-only observers report no errors.
+
+The complete combined suites pass 2,675 cases, with 163 optional skips.
+All 1,143 client classes match the packaged add-on; all 1,428 core classes match both embedded copies.
+The fixture emits no nonzero-tick vehicle velocity command.
+Native trajectory equality, exact collision/interpolation phases, complete seat ownership, and broader active-use overlap remain unfinished.

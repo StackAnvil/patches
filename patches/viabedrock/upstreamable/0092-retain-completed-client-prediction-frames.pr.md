@@ -1599,5 +1599,33 @@ Frame watermarks still prevent rejected or consumed payloads from binding later 
 The stale-rider regression fails before the change and passes after it.
 Nine focused cases cover valid pairs, missing samples, mismatched frames, stale contexts, different actors, displaced vehicles, unloaded chunks, and unmounted rejection.
 Existing packet tests now exercise valid paired samples when they expect negotiated vehicle correction.
-The full core, client add-on, dependency, and proxy suites pass 2,665 cases, with 163 optional skips.
-Direct and proxy live verification follows separately; these tests alone do not establish native movement parity.
+The combined stack includes the newer native language patch.
+All 105 core patches replay, and all four project builds pass.
+The full suites pass 2,675 cases, with 163 optional skips and no failures or errors.
+All retained native references run, including the five language fixtures.
+All 1,428 core classes match both embedded copies; all 1,143 client classes match the add-on.
+Compiled core classes match after the four expected build-constant replacements.
+
+Two private BDS 1.26.51.1 sessions apply 300 ms inbound delay and complete standing impulses, mounting, boat impulses, release, reacquisition, dismount, and zero velocity.
+
+| Route | Vehicle frames paired and bound | Historical vehicle corrections | Replay boundaries | Replayed physical steps |
+| --- | ---: | ---: | ---: | ---: |
+| Direct NetherNet | 158 | 10 | 17 | 103 |
+| ViaProxy | 159 | 12 | 19 | 116 |
+
+Every replay preserves the live player tick, food level, and held-item count.
+Every historical vehicle correction retains the current mount epoch, controlling passenger, and local authority.
+Each route receives four nonzero-tick player velocity commands with the original native tick and float values.
+Each command applies once live and once in its following historical input frame.
+Both mounted player impulses have tick zero and retain standard delivery.
+The fixture emits no nonzero-tick vehicle velocity packet, so it does not exercise that negotiated command variant.
+
+Both runtime add-on checksums match the combined artifact; the proxy checksum also matches on its route.
+Both clients, recorders, and isolated servers stop normally, and their owned process identities disappear.
+Read-only observers report no errors in these completed runs.
+The original server fixture remains unchanged.
+A separate first attempt ends before the sequence because its reused player drowns.
+The private fixture now resets initial health and disables drowning damage; motion and mount phases remain unchanged.
+
+These checks establish live clock binding and correction execution on both routes.
+Exact native trajectories, collider refresh, retained interpolation, and complete mount lifetime and seat ownership remain unfinished.
