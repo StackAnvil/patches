@@ -306,8 +306,12 @@ The exporter retains language keys and the existing translation lookup.
 The regression compares complete scenes and action scopes for all three cooking families.
 It fails when export omits the controller label and passes with the dependency restored.
 Default smoker captions still carry a Java key; their native fallback source remains unverified.
-The pinned desktop cooking declarations expose category/search tabs without an inline text box.
-Native text callbacks, full input handling, and pixel parity remain open.
+The pinned desktop search tab inherits an inline text field from `common.text_edit_control`.
+Its parent follows `#is_left_tab_search`. A resolved scene from another tab did not establish the field's absence.
+Native text callbacks, full input handling, and pixel parity remain open in production.
+The [cooking action reference](../../../docs/native-cooking-actions.md#search-edit-callbacks) records 38 native edit/tick/clear controls and 304 search predicate controls.
+The original predicate checks normalized custom names, then normalized localized names without formatting codes.
+Actual name production, language selection, physical editing, and the field's enabled binding still need evidence.
 
 The pinned native tab-label getter also distinguishes filtered search captions from the all-recipes caption.
 Its inventory tab uses the shared crafting survival key.

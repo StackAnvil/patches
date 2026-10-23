@@ -145,12 +145,73 @@ It cannot replace a later screen or a reused menu.
 
 Unsupported required controls keep the ordinary screen.
 This includes required help, focus, and carried-item branches.
-The pinned desktop layout exposes category/search tabs without an inline text box.
-Native text callbacks for authored controls remain unfinished.
+The pinned desktop search tab inherits an inline text field from `common.text_edit_control`.
+The field appears inside `search_and_filter_panel`, whose visibility follows `#is_left_tab_search`.
+An earlier resolved scene from another tab did not establish that the field was absent.
+Production text input, search filtering, and the field's enabled binding remain unfinished.
 Layout selection history and its profile/device branches also remain unfinished.
 Tab and filtering controls also retain ordinary screens when their required focus or device mappings remain unsupported.
 The pointer and fallback regressions use constructed authored scenes and genuine Java menus.
 They do not establish native physical input, GPU output, or complete native UI parity.
+
+### Search edit callbacks
+
+The pinned furnace constructor registers edit callback `0x146c991a0` through closure `0x14e9b8a68`.
+The callback reads `#property_field`, then reads the property named by that value.
+The default inherited field names `#item_name`.
+The callback replaces pending text at controller offset `0x12f8` and sets its optional flag at `0x1318`.
+It returns zero and does not apply the query to the recipe model immediately.
+
+Controller tick `0x146c41570` applies pending text after its readiness flag at `0x12e9` becomes true.
+It passes the latest text to model setter `0x14698af40`, then clears the pending value.
+Multiple edits before that tick replace the pending value.
+A second tick without another edit does not apply the query again.
+
+Clear callback `0x146c998a0` has a separate guard.
+If controller flag `0x12f5` equals one and the active input mode equals two, it returns zero without clearing text.
+Otherwise, it applies an empty query, discards pending text, and refreshes the model and settings.
+This callback returns one even when the query was already empty.
+
+Executable controls cover 22 edit/tick cases and 16 clear cases on Bedrock 1.26.51.1, build 51061372, protocol 2193.
+The edit cases include empty text, repeated edits, UTF-8 text, embedded NUL, and strings beyond the inherited field's 30-character limit.
+These long strings test callback behavior, not physical field admission.
+The controls supply property lookup, model setters, settings refresh, base tick, and the active-mode interface.
+The original callbacks, pending string replacement, weak ownership, and complete controller tick execute unchanged.
+Physical editing, field admission, complete controller construction, and visible parity remain unverified.
+
+### Search predicate
+
+The constructor for model `0x146985800` installs closure `0x14e9ab6f0` for search collection `18`.
+That closure invokes predicate `0x1469c96b0`.
+The predicate uses the normalized query at model offset `0x220`.
+Without filtering, a failed eligibility check returns evaluation `3` before any name lookup.
+With filtering, the predicate continues to the name and availability checks.
+
+An empty query does not require a name lookup.
+A nonempty query first matches a normalized custom name as a contiguous substring.
+If that match fails, the predicate obtains the localized Item name and removes its formatting codes.
+It normalizes that name, then repeats the substring match.
+The predicate neither trims spaces nor splits the query into words.
+A failed match returns evaluation `3`, regardless of the supplied availability result.
+A successful match retains the availability result `0..3`.
+
+The 23 controls for normalization helper `0x140323bb0` match compatibility decomposition, default full case folding, and canonical composition.
+Its string wrapper truncates the result at an embedded NUL.
+The retained 23 normalization controls distinguish this behavior from lowercase conversion and the ICU NFKC-casefold shortcut.
+For example, `STRASSE` matches `Straße`, and composed `CAFÉ` matches its decomposed spelling.
+Zero-width spaces remain significant.
+Formatting removal applies to the localized-name branch, not the query.
+Complete equality between the native Unicode tables and a Java library remains unverified.
+
+Executable predicate controls cover 19 text cases across both filtering flags, both eligibility results, and four availability results.
+All 304 captured results match the expected composition.
+The original predicate, normalization helper, formatting removal, and Item empty/air guard execute unchanged.
+The controls supply the custom name, localized name, eligibility, availability, and model filtering interface.
+The earlier runtime and external service boundaries also apply.
+They do not establish actual name production, language selection, physical text input, or visible parity.
+Production search input and filtering remain unfinished.
+
+### Projected client fixtures
 
 A separate private client fixture projects supported controls from real cooking scenes.
 It removes unfinished widgets, unsupported mappings, and unsupported renderer leaves.
