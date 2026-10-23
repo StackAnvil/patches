@@ -1334,3 +1334,42 @@ All recorded native allocations complete their cleanup.
 Screen regressions check actual arrow delivery, offscreen reveal, group policies, direct overrides and remembered focus after retained scene refresh.
 Complete control/screen construction, non-widget focus controls, magnet state, scroll physics, controller events and physical device translation remain separate requirements.
 These checks do not establish complete authored-screen support, a fresh account-based game join or native pixels.
+
+## Native cooking controller event delivery
+
+Original callback registration and controller dispatch now pass 632 cases on Bedrock 1.26.51.1, build 51061372.
+The base controller uses its supported mode without global registration.
+The fixture supplies Furnace fields, model ownership and the original Furnace virtual table.
+Original manager and base-controller destructors retire all native allocations.
+
+The tab callback uses the emitted index and ignores the checked value.
+The filter callback uses the emitted checked value.
+Both callbacks run with either value of the toggle notification flag.
+Default and global scope forward toggle events to these callbacks. View scope discards those events.
+
+The implicit `button.filter_toggle_hovered` event passes collection name `filter_toggle` and cell index zero to the container selection handler.
+The downstream handler stores that name and index. It does not set a hover binding or establish keyboard focus.
+Its registered callback accepts pressed events regardless of their previous phase or transition flag.
+Release events do not invoke that callback.
+
+Another 96 scenes compose original Input/Toggle factories, pointer entry, button routing, capture priority, event delivery and controller callbacks.
+Their 384 button steps cover pointer, touch and gamepad modes, default/view scope, radio state and captured releases.
+Toggle changes enter the controller queue before their originating button events.
+A view-scoped button can therefore produce a default-scoped toggle change even though the controller never receives that button event.
+
+The actual main Java input, toggle, capture and container consumer classes match all 384 steps with a private controller observation model.
+Four incorrect source variants fail behavioral assertions for touch activation, transition handling, checkbox state and repeated radio notification.
+The two native runs complete 19,688 frees and leave no live native allocations.
+
+These fixtures observe downstream selection requests, model setters, collection refresh and settings notifications at their call boundaries.
+Complete Furnace/ScreenView construction, complete downstream selection behavior, application integration, unchanged screen admission, devices and pixels remain unverified.
+The source now connects the shared components to container pointer input and focused keyboard actions.
+Retained controls preserve phases, captures, checked state and focus across scene refreshes.
+Non-consuming events compose their preference changes before the client publishes the final options.
+Blocked components retire input phases without changing checked state.
+All 54 targeted tests pass, including native component state, container geometry and actual screen interaction.
+
+The source parser accepts all 15 unmodified default toggle definitions.
+Complete default cooking screens still fall back because their search, slider and other handlers remain unfinished.
+Screen-owned view/global routing, unresolved collection indices and unsupported modal/controller policies remain explicit admission limits.
+The component consumer remains outside release 0.3.46.

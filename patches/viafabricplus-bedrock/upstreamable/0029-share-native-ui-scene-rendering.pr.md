@@ -240,3 +240,17 @@ The fixture retires bare hierarchy references and caller-owned history results.
 Complete native control/screen construction, non-widget controls, magnet state, scroll physics, complete controller receivers and physical input remain open.
 These controls do not prove native pixels or complete unchanged authored-screen support.
 The [directional focus notes](../../../docs/native-cooking-actions.md#native-directional-focus-and-scroll-contexts) describe the boundaries.
+
+
+## Shared native input components
+
+The shared runtime now parses native input mappings and toggle factory fields.
+It retains mapping phases, double-press history, implicit hover events and source-specific release captures.
+Toggle state separates component initialization from controller bindings.
+Radio propagation clears matching-group siblings with different indices, including ordinary toggles.
+Duplicate indices retain their checked state.
+The container patch consumes these components and owns its domain callbacks and admission limits.
+
+Original factories, component handlers, capture routing and destructors provide the comparison corpus.
+The actual container consumer also matches 384 composed native Input/Toggle/controller steps.
+Complete screen/controller construction, device-origin translation and pixels remain separate requirements.

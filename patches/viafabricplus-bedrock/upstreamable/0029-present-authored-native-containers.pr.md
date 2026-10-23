@@ -196,7 +196,7 @@ This change does not complete carried-item opacity, native device production, de
 
 ## Authored toggle input contract
 
-The current package rejects all 15 toggle controls in fresh default cooking scenes from the packaged core fixtures.
+Published release 0.3.46 rejects all 15 toggle controls in fresh default cooking scenes from the packaged core fixtures.
 The furnace fixture has seven controls; smoker and blast-furnace fixtures each have four because their category contents differ.
 The resolved scenes retain the target's focused `menu_ok` mappings and the filter's implicit hover mapping.
 This confirms the parser rejection seen during the ordinary BDS run. It does not establish unchanged native screen acceptance.
@@ -217,9 +217,9 @@ Mouse and gamepad toggles activate on a new press; touch toggles activate on a n
 Repeated phases do not create another toggle change. Radio controls still notify when already checked.
 A private Java candidate matches every dispatch case and toggle step.
 Four wrong candidates fail behavior assertions: focused input treated as pointer input, touch activation on press, repeated activation and discarded checked-radio notifications.
-The candidate remains private; production input delivery is unchanged.
+Those earlier controls used a private candidate. The current source consumer appears below.
 
-Complete native focus production and lifetime, hover callbacks, radio sibling state, device translation and full event propagation before admitting these mappings.
+Complete focus lifetime, downstream controller behavior, device translation and full event propagation remain requirements for complete scene admission.
 The shared scene already retains focus identifiers, directional overrides and precedence fields; the client must consume their native semantics.
 These controls do not establish controller navigation, unchanged authored screens or native pixels.
 
@@ -260,3 +260,28 @@ Its native controls execute the actual input/focus factories and ScreenView sele
 Factory-created implicit hover bindings and manager history cleanup now execute in that combined route.
 The container mapping admission policy remains unchanged.
 Full native input routing, controller event handling, radio siblings, device-origin translation and unchanged authored screen acceptance remain open.
+
+
+## Container component consumer
+
+Container input now uses the shared native Input/Toggle state and release-capture router.
+Stable controls retain phases, captures, checked state and directional focus across controller binding refreshes.
+Component changes enter the queue before button scope filtering.
+The preference adapter consumes the emitted checked value and composes non-consuming events before publishing the final options.
+Blocked components retire phases without changing checked state.
+Arrow navigation reveals focused controls. Focused keyboard actions retain their release ownership.
+
+The implicit filter-hover event selects collection `filter_toggle`, cell zero.
+It does not set a hover binding or establish keyboard focus.
+Original callback registration and ScreenView/controller delivery cover 632 cases.
+Original Input/Toggle factories compose with those callbacks in 96 scenes and 384 button steps.
+The actual main container consumer and preference adapter match all 384 steps.
+These comparisons supply bare controls, geometry, base callback owners, Furnace fields and downstream model/selection observation boundaries.
+They do not construct the complete Furnace controller or verify native devices and pixels.
+
+All 54 targeted component, geometry, scroll, presentation and screen tests pass.
+Screen tests cover focused keyboard preference updates and non-consuming tab/filter changes without vanilla inventory dispatch.
+The source parser accepts all 15 unchanged default toggle definitions.
+The complete default screens still fall back because search, slider and other handlers remain unfinished.
+Screen-owned view/global routing, unresolved toggle collection indices and unsupported modal/controller policies remain explicit admission limits.
+This change does not establish complete authored-screen support or resolve the original inventory screenshot report.
