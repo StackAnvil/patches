@@ -1,4 +1,4 @@
-From f6141ffb6791861218394b28768426fe3e255e7f Mon Sep 17 00:00:00 2001
+From 9a3e59c242205ad2069382bc95904c5161abc7a2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -587,6 +587,24 @@ traversal and null-source barriers match 64 fresh original instruction
 controls. World, chunk state and block shapes are explicit fixture sources;
 real block shape generation, native border blocks, component readiness and
 complete native collision scheduling remain separate requirements.
+
+Keep ordinary absolute and sparse spatial updates in the received cache,
+then decline their transforms for locally controlled boats and horses.
+The native first passenger controls a boat. Horses additionally require
+both saddle and tame flags. Resolve that passenger through live unique
+and runtime identities rather than reusing prediction eligibility, which
+has separate gameplay and capability gates. Teleport and forced-local
+bits still admit transforms; force completion alone does not.
+
+Original 1.26.51.1 client wrappers 148b5eeb0 and 148b5ef20 plus vehicle
+setter 148b5ebb0 pass 1,152 controls. Original publisher 14103f580 passes
+640 cache/admission controls, including unsigned runtime IDs, stale tags,
+forced flags and ordinary ignored updates. Five registered-handler and
+ownership tests match 256 representable native owner cases and both
+packet forms for all 640 admission cases. Two deliberate production
+regressions fail the corresponding tests. Full native control-system
+installation, custom actor mapping, retained interpolation and native
+vehicle correction trajectories remain unfinished.
 ---
  build.gradle                                  |   29 +
  .../api/model/CollisionContact.java           |   80 ++
@@ -620,13 +638,14 @@ complete native collision scheduling remain separate requirements.
  .../protocol/model/BedrockItem.java           |   19 +
  .../protocol/model/ItemUseModifiers.java      |   50 +
  .../protocol/packet/ClientPlayerPackets.java  |  118 +-
+ .../protocol/packet/EntityPackets.java        |   18 +-
  .../protocol/packet/JoinPackets.java          |    2 +
  .../packet/MovementEffectPackets.java         |   54 +
  .../protocol/packet/MultiStatePackets.java    |   44 +
  .../protocol/packet/WorldPackets.java         |    1 +
  .../protocol/rewriter/ItemDataRewriter.java   |    7 +-
  .../protocol/rewriter/ItemRewriter.java       |   19 +
- .../protocol/storage/EntityTracker.java       |   25 +
+ .../protocol/storage/EntityTracker.java       |   43 +
  .../protocol/storage/PlayerInputStorage.java  |   11 +-
  .../storage/PlayerPredictionStorage.java      |  133 ++
  .../storage/VehiclePredictionStorage.java     |  149 +++
@@ -661,11 +680,12 @@ complete native collision scheduling remain separate requirements.
  .../protocol/model/ItemUseModifiersTest.java  |   55 +
  .../packet/ClientPlayerPacketsTest.java       |   32 +-
  .../packet/CompletedFramePositionTest.java    | 1125 +++++++++++++++++
+ .../packet/ControlledVehicleSpatialTest.java  |  229 ++++
  .../packet/MovementEffectPacketsTest.java     |  116 ++
  .../packet/PlayerCorrectionPacketTest.java    |  254 ++++
  .../packet/PlayerPredictionPacketTest.java    |   87 ++
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 77 files changed, 7224 insertions(+), 60 deletions(-)
+ 79 files changed, 7481 insertions(+), 68 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java
@@ -720,6 +740,7 @@ complete native collision scheduling remain separate requirements.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/BedrockItemEnchantmentTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiersTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ControlledVehicleSpatialTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java
@@ -3761,6 +3782,44 @@ index eb0c16ab4..94422f05a 100644
                      : new Position2f(0F, 0F)); // analog move vector
              wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
              wrapper.write(BedrockTypes.POSITION_2F, playerInput.rawInput().movement()); // raw move vector
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+index 8e0cbe982..cd5663061 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+@@ -250,11 +250,12 @@ public final class EntityPackets {
+ 
+             entity.retainSpatialUpdate(position, new Position3f(pitch, yaw, headYaw), flags, 0);
+ 
++            if (!teleported && !forceMoveLocalEntity
++                    && (entity == entityTracker.getClientPlayer() || entityTracker.isLocallyControlledVehicle(entity))) {
++                wrapper.cancel();
++                return;
++            }
+             if (entity == entityTracker.getClientPlayer()) {
+-                if (!teleported && !forceMoveLocalEntity) {
+-                    wrapper.cancel();
+-                    return;
+-                }
+                 entity.setPosition(position);
+ 
+                 if (teleported) {
+@@ -331,11 +332,12 @@ public final class EntityPackets {
+                     | (forceMoveLocalEntity ? 4 : 0) | (forceCompletion ? 8 : 0));
+             entity.retainSpatialUpdate(position, rotation, flags, interpolationTicks);
+ 
++            if (!teleported && !forceMoveLocalEntity
++                    && (entity == entityTracker.getClientPlayer() || entityTracker.isLocallyControlledVehicle(entity))) {
++                wrapper.cancel();
++                return;
++            }
+             if (entity == entityTracker.getClientPlayer()) {
+-                if (!teleported && !forceMoveLocalEntity) {
+-                    wrapper.cancel();
+-                    return;
+-                }
+                 entity.setPosition(position);
+                 if (teleported) {
+                     wrapper.setPacketType(ClientboundPackets26_3.PLAYER_POSITION);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 index 006d49ff8..4dc2e0ef7 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
@@ -4018,10 +4077,18 @@ index e2fce5701..353a67ede 100644
          javaItem.dataContainer().set(StructuredDataKey.CUSTOM_DATA,
                  ItemDataRewriter.withBedrockItemData(javaItem.dataContainer().get(StructuredDataKey.CUSTOM_DATA),
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-index 136722c73..3486a8645 100644
+index 136722c73..d50c27994 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-@@ -331,6 +331,15 @@ public class EntityTracker extends StoredObject {
+@@ -43,6 +43,7 @@ import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
+ import net.raphimc.viabedrock.api.model.BlockState;
+ import net.raphimc.viabedrock.api.model.entity.*;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorLinkType;
+ import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
+ import net.raphimc.viabedrock.protocol.model.EntityLink;
+@@ -331,6 +332,15 @@ public class EntityTracker extends StoredObject {
      public void markNativeActorsJoined() {
          this.nativeActorsJoined = true;
          this.sendNativeActorSnapshots();
@@ -4037,7 +4104,7 @@ index 136722c73..3486a8645 100644
      }
  
      public List<Entity> getEntities() {
-@@ -341,6 +350,22 @@ public class EntityTracker extends StoredObject {
+@@ -341,6 +351,22 @@ public class EntityTracker extends StoredObject {
          this.entities.values().forEach(entity -> entity.sendNativeActorSnapshot(true));
      }
  
@@ -4060,6 +4127,30 @@ index 136722c73..3486a8645 100644
      public void sendNativeCustomEntitySnapshot() {
          for (Entity entity : this.entities.values()) {
              if (entity instanceof CustomEntity customEntity) {
+@@ -384,6 +410,23 @@ public class EntityTracker extends StoredObject {
+         return this.itemFramesByJavaId.get(javaId);
+     }
+ 
++    /** Native vehicle control follows the first passenger, with saddle and tame gates for horses. */
++    public boolean isLocallyControlledVehicle(final Entity vehicle) {
++        if (!(vehicle instanceof BoatEntity || vehicle instanceof AbstractHorseEntity)
++                || this.getEntityByRid(vehicle.runtimeId()) != vehicle || vehicle.passengers().isEmpty()) {
++            return false;
++        }
++        if (vehicle instanceof AbstractHorseEntity) {
++            final Set<ActorFlags> flags = vehicle.entityFlags();
++            if (!(flags.contains(ActorFlags.SADDLED) && flags.contains(ActorFlags.TAMED))) {
++                return false;
++            }
++        }
++        final Entity controller = this.getEntityByUid(vehicle.passengers().getFirst());
++        return controller != null && controller == this.getClientPlayer()
++                && this.getEntityByRid(controller.runtimeId()) == controller;
++    }
++
+     public ClientPlayerEntity getClientPlayer() {
+         return this.clientPlayerEntity;
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 index 95391851d..f8bf20f85 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
@@ -8619,6 +8710,241 @@ index 000000000..0507faaf7
 +            this.via.close();
 +        }
 +
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ControlledVehicleSpatialTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ControlledVehicleSpatialTest.java
+new file mode 100644
+index 000000000..cfa6189df
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ControlledVehicleSpatialTest.java
+@@ -0,0 +1,229 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.google.gson.JsonParser;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.entity.AbstractHorseEntity;
++import net.raphimc.viabedrock.api.model.entity.BoatEntity;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class ControlledVehicleSpatialTest {
++
++    private static final Position3f LIVE = new Position3f(100, 200, 300);
++    private static final Position3f RECEIVED = new Position3f(10.25F, 20.5F, 30.75F);
++
++    @Test
++    void bothPacketFormsRetainButIgnoreUnforcedLocalVehicleTransforms() throws Exception {
++        try (var packets = mockStatic(PacketFactory.class)) {
++            for (boolean horse : new boolean[]{false, true}) {
++                for (boolean delta : new boolean[]{false, true}) {
++                    for (int flags = 0; flags < 16; flags++) {
++                        final var context = new Context(horse);
++                        context.horseFlags(true, true);
++                        context.vehicle.addPassenger(context.local.uniqueId());
++                        final boolean ignored = context.translate(delta, flags);
++                        assertEquals((flags & 6) == 0, ignored);
++                        assertEquals(RECEIVED, context.vehicle.lastReceivedPosition());
++                        assertEquals((short) (delta ? flags | 0xF0 : flags), context.vehicle.lastReceivedMovementFlags());
++                        assertEquals(delta ? Long.MIN_VALUE : 0, context.vehicle.lastReceivedInterpolationTicks());
++                        assertEquals(ignored ? LIVE : RECEIVED, context.vehicle.position());
++                    }
++                }
++            }
++        }
++    }
++
++    @Test
++    void controlFollowsTheFirstPassengerAndRequiresBothNativeHorseFlags() {
++        for (boolean horse : new boolean[]{false, true}) {
++            for (boolean tamed : new boolean[]{false, true}) {
++                for (boolean saddled : new boolean[]{false, true}) {
++                    final var context = new Context(horse);
++                    context.horseFlags(tamed, saddled);
++                    assertFalse(context.tracker.isLocallyControlledVehicle(context.vehicle));
++                    context.vehicle.addPassenger(context.remote.uniqueId());
++                    context.vehicle.addPassenger(context.local.uniqueId());
++                    assertFalse(context.tracker.isLocallyControlledVehicle(context.vehicle));
++                    context.vehicle.addPrimaryPassenger(context.local.uniqueId());
++                    assertEquals(!horse || tamed && saddled, context.tracker.isLocallyControlledVehicle(context.vehicle));
++                    context.vehicle.removePassenger(context.local.uniqueId());
++                    assertFalse(context.tracker.isLocallyControlledVehicle(context.vehicle));
++                }
++            }
++        }
++    }
++
++    @Test
++    void aStaleControllerRuntimeIdentityCannotSuppressAnIncomingTransform() throws Exception {
++        final var context = new Context(false);
++        context.vehicle.addPassenger(context.local.uniqueId());
++        assertTrue(context.tracker.isLocallyControlledVehicle(context.vehicle));
++        final long controllerRuntimeId = context.local.runtimeId();
++        doReturn(null).when(context.tracker).getEntityByRid(controllerRuntimeId);
++        assertFalse(context.tracker.isLocallyControlledVehicle(context.vehicle));
++        try (var packets = mockStatic(PacketFactory.class)) {
++            assertFalse(context.translate(true, 0));
++            assertEquals(RECEIVED, context.vehicle.position());
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_VEHICLE_CONTROL", matches = ".+")
++    void matchesOriginalNativeVehicleControlForRepresentablePlayerMembership() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_VEHICLE_CONTROL")))).getAsJsonObject();
++        for (var value : reference.getAsJsonArray("rows")) {
++            final var row = value.getAsJsonObject();
++            if (!row.get("player").getAsString().equals("present") || row.get("localPlayer").getAsString().equals("stale")) {
++                continue;
++            }
++            final var context = new Context(row.get("kind").getAsString().equals("horse"));
++            context.horseFlags(row.get("tamed").getAsBoolean(), row.get("saddled").getAsBoolean());
++            final boolean localFirst = row.get("localPlayer").getAsString().equals("present") && row.get("localSeat").getAsInt() == 0;
++            if (row.get("controllerCount").getAsInt() > 0) {
++                context.vehicle.addPassenger(localFirst ? context.local.uniqueId() : context.remote.uniqueId());
++            }
++            if (row.get("controllerCount").getAsInt() > 1) {
++                context.vehicle.addPassenger(localFirst ? context.remote.uniqueId() : context.local.uniqueId());
++            }
++            assertEquals(row.get("controlled").getAsBoolean(), context.tracker.isLocallyControlledVehicle(context.vehicle));
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_SPATIAL_CONTROL", matches = ".+")
++    void registeredPacketsMatchTheOriginalNativeCacheAndControlAdmissionGate() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_SPATIAL_CONTROL")))).getAsJsonObject();
++        try (var packets = mockStatic(PacketFactory.class)) {
++            for (var value : reference.getAsJsonArray("rows")) {
++                final var row = value.getAsJsonObject();
++                for (boolean delta : new boolean[]{false, true}) {
++                    final var context = new Context(false, Long.parseUnsignedLong(row.get("runtimeId").getAsString()));
++                    final String mode = row.get("controlMode").getAsString();
++                    if (!mode.equals("absent")) {
++                        context.vehicle.addPassenger(context.local.uniqueId());
++                    }
++                    if (mode.equals("stale")) {
++                        final long runtimeId = context.local.runtimeId();
++                        doReturn(null).when(context.tracker).getEntityByRid(runtimeId);
++                    } else if (mode.equals("missingPage") || mode.equals("emptyRange")) {
++                        final long uniqueId = context.local.uniqueId();
++                        doReturn(null).when(context.tracker).getEntityByUid(uniqueId);
++                    }
++                    final boolean ignored = context.translate(delta, row.get("flags").getAsInt());
++                    assertEquals(!row.get("acceptedTransform").getAsBoolean(), ignored);
++                    assertEquals(RECEIVED, context.vehicle.lastReceivedPosition());
++                    assertEquals(ignored ? LIVE : RECEIVED, context.vehicle.position());
++                }
++            }
++        }
++    }
++
++    private static final class Context {
++        private final UserConnection user = mock(UserConnection.class);
++        private final EntityTracker tracker = spy(new EntityTracker(this.user));
++        private final ClientPlayerEntity local = mock(ClientPlayerEntity.class);
++        private final PlayerEntity remote = mock(PlayerEntity.class);
++        private final Entity vehicle;
++        private final TestProtocol protocol = new TestProtocol();
++
++        private Context(final boolean horse) {
++            this(horse, 0x100000002L);
++        }
++
++        private Context(final boolean horse, final long runtimeId) {
++            when(this.local.uniqueId()).thenReturn(1L);
++            when(this.local.runtimeId()).thenReturn(101L);
++            when(this.local.javaId()).thenReturn(1);
++            when(this.remote.uniqueId()).thenReturn(2L);
++            when(this.remote.runtimeId()).thenReturn(102L);
++            when(this.remote.javaId()).thenReturn(2);
++            this.vehicle = horse
++                    ? new AbstractHorseEntity(this.user, 21, runtimeId, "minecraft:horse", 301, UUID.randomUUID(), EntityTypes26_3.HORSE)
++                    : new BoatEntity(this.user, 21, runtimeId, "minecraft:boat", 301, UUID.randomUUID(), EntityTypes26_3.OAK_BOAT);
++            this.tracker.addEntity(this.local, false);
++            this.tracker.addEntity(this.remote, false);
++            this.tracker.addEntity(this.vehicle, false);
++            when(this.user.get(EntityTracker.class)).thenReturn(this.tracker);
++            this.vehicle.setPosition(LIVE);
++        }
++
++        private void horseFlags(final boolean tamed, final boolean saddled) {
++            this.vehicle.entityData().put(ActorDataIds.RESERVED_0, new EntityData(0, EntityDataTypesBedrock.LONG,
++                    (tamed ? 1L << 28 : 0) | (saddled ? 1L << 8 : 0)));
++        }
++
++        private boolean translate(final boolean delta, final int flags) throws Exception {
++            final var input = Unpooled.buffer();
++            try {
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, this.vehicle.runtimeId());
++                if (delta) {
++                    for (float coordinate : new float[]{RECEIVED.x(), RECEIVED.y(), RECEIVED.z()}) {
++                        input.writeBoolean(true);
++                        BedrockTypes.FLOAT_LE.write(input, coordinate);
++                    }
++                    for (int angle : new int[]{12, 20, 30}) {
++                        input.writeBoolean(true);
++                        input.writeByte(angle);
++                    }
++                    for (int bit = 0; bit < 4; bit++) {
++                        input.writeBoolean((flags & 1 << bit) != 0);
++                    }
++                    BedrockTypes.UNSIGNED_VAR_LONG.write(input, Long.MIN_VALUE);
++                } else {
++                    input.writeByte(flags);
++                    BedrockTypes.POSITION_3F.write(input, RECEIVED);
++                    input.writeBytes(new byte[]{12, 20, 30});
++                }
++                final var wrapper = new PacketWrapperImpl(delta ? ClientboundBedrockPackets.MOVE_ENTITY_DELTA
++                        : ClientboundBedrockPackets.MOVE_ENTITY_ABSOLUTE, input, this.user);
++                this.protocol.translate(wrapper);
++                assertFalse(input.isReadable());
++                return wrapper.isCancelled();
++            } finally {
++                input.release();
++            }
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private TestProtocol() {
++            EntityPackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
 +    }
 +
 +}

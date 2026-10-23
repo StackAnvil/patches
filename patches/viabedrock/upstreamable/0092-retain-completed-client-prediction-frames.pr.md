@@ -1,5 +1,39 @@
 # Completed player prediction frames
 
+## Locally controlled vehicle spatial updates, October 23, 2026
+
+Ordinary absolute and sparse movement packets now retain their source data without replacing a locally controlled vehicle pose.
+Teleport and forced-local bits still admit the transform.
+Force completion alone does not admit it.
+The existing received cache keeps every packet field before this check.
+The [spatial-update owner](0018-preserve-sparse-actor-spatial-updates.pr.md) supplies that cache and its packet API prerequisite.
+
+Native boat wrapper `148b5eeb0`, horse wrapper `148b5ef20`, and client vehicle setter `148b5ebb0` pass 1,152 controls.
+The first passenger controls a boat only with valid player and local-player membership.
+Horses additionally require both saddle and tame flags, at native bit positions eight and twenty-eight.
+A local player in the second passenger position does not control the vehicle.
+The fixture supplies ordered vehicle membership and registry stores.
+Original passenger selection, flag checks, sparse membership, and marker decisions execute without substitution.
+Registry discovery, generic insertion, and virtual erasure remain explicit boundaries.
+
+Another 640 controls execute received-cache publication and the complete native local-control gate in `14103f580`.
+They cover all four movement flag bits, unsigned runtime IDs, entity generations, stale tags, missing pages, and empty ranges.
+Accepted transforms stop immediately after this gate at an observation boundary.
+Ignored transforms return through the original function epilogue.
+Later prediction routing and interpolation remain outside this fixture.
+
+The production tracker resolves the first passenger through its live unique and runtime identities.
+It uses the existing boat and horse entity classes and their current native flags.
+Prediction eligibility has separate gameplay and capability checks, so it does not supply this ownership predicate.
+All five focused tests run without skips.
+They compare 256 representable native ownership cases and both registered packet handlers against all 640 admission cases.
+Mandatory checks also cover controller changes, saddle and tame changes, unsigned duration retention, forced packets, and stale controller identity.
+Removing the vehicle gate or accepting either horse flag causes the corresponding regressions to fail.
+The restored implementation passes the focused suite and test Checkstyle.
+
+Full native control-system installation, custom actor classification, historical ownership transitions, retained interpolation, and complete vehicle trajectories remain unfinished.
+These results do not establish full movement parity or resolve either documented collider-refresh mismatch.
+
 ## Native world collision traversal, October 23, 2026
 
 The physical adapter now visits loaded blocks in native X/Z/Y order.
