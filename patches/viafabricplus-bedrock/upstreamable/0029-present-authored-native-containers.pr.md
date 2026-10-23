@@ -307,3 +307,26 @@ All 42 targeted screen, presentation, input and geometry tests pass.
 Unchanged default screens still require help, drop, search, input-panel and other controller handlers.
 The full stack build passes 2,740 tests with 163 optional skips.
 Packaged production index and selection consumers match 17,496 native cases across all three cooking families, within the fixture boundaries above.
+
+## Native tab actions
+
+Authored tab increment/decrement buttons and navigation-only input panels now use the existing native category transition model.
+The controller consumes activation events and preserves furnace type, filtering and layout.
+Ordinary survival layout retains the current tab; forced recipe layout still navigates.
+A tab refresh clears cell selection, including a transition that returns the current tab.
+That clear follows the original setter at `0x146c47780`; its held-item branches remain outside this adapter.
+Changes wait for newer matching authoritative options. Tab actions permit a carried stack.
+Zero-size global panels require preference transport before input begins.
+Non-consuming mappings that could mix navigation with ordinary inventory dispatch retain the original screen.
+
+Original callback registration, receiver/dispatcher, both tab callbacks and complete native category/vector operations pass 8,064 cases.
+Selected-tab mutation and settings refresh remain observed downstream boundaries.
+The fixture supplies a base-constructed callback owner, Furnace virtual table, category model and valid weak ownership.
+It does not construct the complete Furnace controller.
+Screen tests cover pointer and keyboard activation, repeated presses, a stale model response, carried items, selection clearing and missing transport.
+
+The current default resolved controls lack screen-host tab mappings.
+Screen-host input preservation, held-selection/reset commands, help, drop, search, remaining input panels and physical gamepad translation still need integration.
+This change does not establish complete native workstation or input parity.
+The full stack build passes 2,743 tests with 163 optional skips.
+The packaged transition adapter matches 48,384 native cases across all three families and both filter states, within the boundaries above.
