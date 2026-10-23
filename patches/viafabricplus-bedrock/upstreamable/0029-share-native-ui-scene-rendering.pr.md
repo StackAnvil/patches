@@ -100,7 +100,8 @@ Tests cover more than 256 icons, frequent cache hits, evicted entries and change
 ## Inventory image failure report
 
 The current release report shows inventory items without their panel background.
-The opening action and active client screen type are unknown.
+The reporter opened the screen with E.
+The original active client screen type remains unknown.
 A verified failure path allowed a native container program before the converted pack loaded.
 The core now keeps its ordinary menu until those resources load, without advancing presentation identity.
 The shared client image loader now reports missing or corrupt pack images through the existing screen failure handler.
@@ -117,8 +118,28 @@ This fixes two asset-failure paths and does not confirm the screenshot's exact c
 It does not establish native pixels or GUI scale parity.
 The same report includes pearl/wind-charge rollback, repeated eating and a missing locator bar.
 Those symptoms remain under investigation.
-The capture lab cannot copy a private profile with the currently available disk space.
-No new live client or server was launched for this report.
+Fresh public WildMC joins completed on October 23, 2026, after the storage cleanup.
+The published 0.3.43 add-on and pinned ViaFabricPlus match their release checksums in the installed private client.
+The release client shows complete backgrounds for its lobby inventory, native server selector, WildFFA inventory, and native `/kits` menu.
+After the Default kit claim, the release inventory closely matches the reported item arrangement and retains its background.
+Screen observations identify E as an ordinary `InventoryScreen` and the two menus as `BedrockNativeContainerScreen`.
+The current build also shows complete lobby, Practice, and WildFFA inventories and native menus.
+The six kit icons and player-inventory layout match the native WildFFA `/kits` menu.
+The reporter used E, but these E controls retain an ordinary inventory screen.
+The server-driven path to that layout remains unverified.
+
+The initial current and release captures show locator markers and receive `LOCATOR_BAR` packets.
+The first current capture records 1,015 packets, and the release capture records 6,909 packets.
+The initial clients use a plain profile, software rendering, an 854 by 480 window, and Java GUI scale two.
+Further release controls use the reported 1920 by 1013 resolution with Java GUI scales two and four.
+The native `/kits` background remains complete in both scale combinations.
+Each capture completes initialization, spawn, gameplay acknowledgments, and normal cleanup of all eight owned process identities.
+The release run includes a private observer that reads screen and menu state on the client thread.
+
+These controls do not reproduce the reported fault or its server-driven screen transition.
+They do not establish the original mod configuration or official native pixel parity.
+The pearl/wind-charge and repeated-eating reports remain open.
+Raw journals, server packs, screenshots, account data, and observer output stay private.
 
 ## Recipe and toggle states
 
