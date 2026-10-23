@@ -1698,7 +1698,7 @@ These limits prevent a claim of complete native collision or trajectory parity.
 
 The [client source validation](../../viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md#combined-source-validation) records the combined build and fresh delayed sessions.
 Both recorded selector counterexamples now pass their registered client regressions.
-The live routes exercise sixteen collider refreshes against independent float calculations and retain valid mounted input bindings.
+The live routes check collider refreshes against independent float calculations and retain valid mounted input bindings.
 Ordinary `MOVE_PLAYER` source production and the remaining native component and simulation phases remain unfinished.
 
 The source publisher waits until its actor snapshot is available before it emits the first source command.
@@ -1706,3 +1706,14 @@ When it publishes native removal, it clears the cached source and dimension publ
 Equal inputs therefore initialize the receiver again after re-publication.
 A packet-codec regression feeds the real actor registry through ordinary metadata publication and removal.
 It fails first for premature source delivery, then for retained publication caches, and passes with both fixes.
+
+## Player movement source boundary
+
+Native `MOVE_PLAYER` uses callback slot `0x708` and handler `0x14133e990` in the pinned target.
+It does not enter the absolute/delta publisher used by the source integration above.
+Original execution covers 2,048 combinations of client gates, packet admission, actor lookup, riding lookup, mode, ground state, and optional fields.
+The accepted cases reach either the player-mode effect or the riding rotation, head, and vehicle effects.
+The ordinary branch also computes motion from the received position and previous native position before its mode effect.
+These checks supply virtual queries, packet admission, actor lookup, diagnostics, and downstream effects.
+They establish callback routing, rather than complete player movement or collider-source behavior.
+Player-mode effects, riding pose ownership, and source integration remain unfinished.

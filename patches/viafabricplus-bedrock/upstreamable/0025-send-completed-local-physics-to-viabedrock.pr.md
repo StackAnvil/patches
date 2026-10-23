@@ -2072,23 +2072,23 @@ The unchanged five-area goal also retains inventory authority, native screens an
 
 ## Combined source validation
 
-All four project builds pass with 45 environment settings, including the new native collider reference.
-The full suites pass 2,694 tests, with 164 optional skips and no failures or errors.
-All 1,433 core classes match the standalone, add-on, and proxy packages.
+All four project builds pass with 49 environment settings, including collider and incoming item-name references.
+The full suites pass 2,702 tests, with 163 optional skips and no failures or errors.
+All 1,437 core classes match the standalone, add-on, and proxy packages.
 All 1,144 client production classes match the packaged add-on.
-A separate two-test run enables the incoming 559-row native factory reference and passes both cases.
-The factory comparison remains separate from the full-build totals.
+The build verifies the four expected core replacements for build constants.
+The native item-name composition comparison runs within these totals.
 
 Fresh delayed direct and proxy sessions add a moving unoccupied boat to the existing impulse and mount fixture.
-Each route exercises eight owned collider refreshes.
+The direct route exercises six owned collider refreshes; the proxy route exercises nine.
 Every result matches an independent calculation of source priority and native float bounds.
-All sixteen boxes differ from both the captured geometry and the current Java box.
-Both observers report no errors, runtime hashes match the tested artifacts, and all owned test processes stop normally.
+All fifteen boxes differ from both the captured geometry and the current Java box.
+Both observers report no errors, runtime hashes match the combined artifacts, and all owned test processes stop normally.
 
 | Route | Vehicle frames paired and bound | Vehicle corrections | Replay boundaries | Replayed steps | Owned collider refreshes |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Direct NetherNet | 159 | 12 | 22 | 142 | 8 |
-| ViaProxy | 154 | 9 | 19 | 122 | 8 |
+| Direct NetherNet | 158 | 11 | 20 | 124 | 6 |
+| ViaProxy | 158 | 12 | 22 | 139 | 9 |
 
 Each route preserves live tick, food level, and held-item count across every replay.
 Each route also applies four ticked player impulses live and in their exact following historical frames.
