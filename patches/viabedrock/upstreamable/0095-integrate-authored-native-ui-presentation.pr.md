@@ -489,3 +489,39 @@ Block, potion, arrow, and compound providers, primary append composition, second
 A fresh ordinary BDS 1.26.51.1 run passes furnace, smoker, blast furnace, and same-world reconnect with the final add-on.
 Both isolated launchers select that package through the same installed integration instance.
 Normal cleanup stops all observed run-owned processes and the private display. This run does not inject descriptor fixtures or establish native screen parity.
+
+## Ordinary name append composition
+
+Production conversion now applies the native userdata append path to modeled ordinary name providers.
+One implementation supplies the lazy primary selector and the underlying Java `ITEM_NAME` component.
+Java `CUSTOM_NAME` keeps its separate override. Custom names still bypass ordinary production in the primary selector.
+The append flag requires a nonzero byte tag. Group names precede body formatting and raw custom suffixes.
+Group and color strings use the current language translator. Body formatting receives the native one-argument or two-argument color vector.
+Unsupported ordinary providers retain their existing conversion path.
+
+The target executable's I18n constructor selects the same vtable used by ordinary names.
+Its two relevant slots execute the original no-argument wrapper and language-manager formatter.
+A fresh control composes those virtual calls with the complete primary selector, ordinary append path, typed NBT lookups, and native dictionary lookup.
+All 2,442 results match the shared implementation through the current language engine.
+These include 2,286 retained selector inputs and 156 additional format, lookup, empty-value, malformed-byte, and custom-precedence cases.
+The control supplies selected English table state, descriptor and tag interfaces, null shared ownership blocks, allocator/CRT calls, and single-thread locks.
+It does not run the complete language constructor, asset loading, locale acquisition, native ownership lifetime, or graphical UI.
+
+Four focused tests pass without skips. Four deliberate mutations fail assertions after successful compilation and test startup.
+They admit numeric append flags, remove group precedence, skip color translation, or omit the second color argument.
+
+Another native control executes the actual coal key method and records 39 primary and underlying ordinary name pairs.
+Its supplied tables use lowercase keys and nonempty values without embedded NUL or malformed bytes, matching the language-file parser's contract.
+The packaged control passes those raw files through the real parser and verifies the parsed table before conversion.
+All 39 ordinary and 39 primary results match. The previous package passes six paired cases and fails 33.
+Five production class origins point to the selected core package. The control uses the protocol-2193 registry and preserves builtin construction.
+This establishes conversion for supplied inputs, not native packet decoding, complete asset precedence, or visible parity.
+
+All 8,282 descriptor, 557 fixed-name, and twenty component-description converter checks remain green.
+The combined build passes 2,687 tests, with 163 optional skips and no failures or errors.
+Both embedded core copies retain all 1,432 classes, and all 1,143 client classes match the add-on.
+The four-project build replays the complete stacks. Block, potion, arrow, compound, secondary labels, query transport, and unchanged authored screens remain open.
+
+A fresh ordinary BDS run passes all three cooking families and same-world reconnect with the final add-on.
+Both selected launcher paths resolve that package through the shared installed integration instance.
+Normal cleanup stops every observed run-owned process and the private display. This run does not inject authored append metadata or establish native screens and pixels.
