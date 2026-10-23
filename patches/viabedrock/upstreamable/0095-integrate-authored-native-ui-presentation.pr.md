@@ -368,3 +368,48 @@ All 1,419 core classes match the embedded add-on and proxy copies. All 1,139 cli
 Four focused packaged checks pass, including the registry's book-class dispatch.
 The packaged selector matches all 2,286 applicable native rows. Production class origins are verified against the current standalone core JAR.
 This checkpoint does not establish full cooking search or native screen and pixel parity.
+## Component description construction and conversion
+
+The connection registry now resolves component description keys from actual construction and ordered metadata updates.
+Explicit construction runs before every component reader. An existing component item accepts valid name strings from later None and Legacy entries.
+Empty strings restore its ordinary description. Omitted and malformed values retain the previous name.
+Unknown None entries receive their fallback class after these readers, so earlier metadata cannot name that new definition.
+
+The builtin catalog records actual component-name dispatch separately from the factory version.
+Its one default component description belongs to the warped-fungus-on-a-stick definition.
+The recorded default retains that complete key. Explicit data-driven reconstruction selects the ordinary mutable component definition.
+First explicit construction and final registered identity stay separate from later entry flags.
+
+Java conversion uses these keys for mapped vanilla items and custom items through the resource text engine.
+This name path uses its own registry snapshot and preserves the existing loaders for other item fields.
+The superseded network-name reader and its three tests are removed. Resource-pack name parsing remains in the item-definition loader.
+Custom-name presence and written-book class selection retain their separate native dispatch.
+
+Original native execution supplies 23 final descriptions across ordered construction, update, type, empty-value, and fallback cases.
+The latest authored admission control records 17 inputs, 16 actual virtual reader calls, and ten final definitions.
+All 2,627 static cleanup callbacks complete without owned allocation or lock leaks.
+The older thirteen-definition control supplies the remaining final descriptions.
+These are authored inputs with actual native construction and getters. They do not establish normal packet identity translation or client asset precedence.
+
+The old packaged Java converter fails twelve of twenty applicable component-name cases.
+Both focused tests pass, including all 23 native results and registry snapshot/identity replacement.
+Five deliberate regressions fail: filtering updates by their entry version, choosing the latest constructor, retaining a name after an empty value, applying metadata before fallback construction, and overwriting the builtin component default.
+
+Another fresh native run executes 1,946 actual factory keys with an explicitly absent descriptor and no userdata.
+Three potion methods remain deferred because they require a language owner.
+All 1,949 factory profiles remain available, and the full native cleanup succeeds.
+An earlier run exhausted its allocator during unrelated named-stack queries after the requested keys had run.
+The verified control supplies an empty query fixture and retains the original allocator and cleanup assertions.
+
+Full ordinary-key providers, appended primary text, secondary labels, asset precedence, cooking query transport, and unchanged authored-screen acceptance remain unfinished.
+
+The final combined build passes 2,665 tests, with 163 optional skips and no failures or errors.
+Both new tests run without skips. The three superseded reader tests are removed; their thirteen native results remain in the registry checks.
+All 105 core and 38 client patches replay. All 1,427 compiled core classes match the standalone JAR after four standard token replacements.
+Both embedded core copies match, and all 1,143 client classes match the add-on.
+The new factory-description resource matches all three packaged copies.
+The final packaged converter passes all twenty component cases, with five verified production class origins.
+
+A fresh ordinary BDS 1.26.51.1 route passes furnace, smoker, blast furnace, and same-world reconnect.
+Both selected client instances use the final add-on, and normal cleanup stops the private display.
+This route does not inject the authored name-update cases or establish native screens and pixels.

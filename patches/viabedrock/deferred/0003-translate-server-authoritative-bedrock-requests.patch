@@ -493,27 +493,16 @@ Submit prepared batches through the request tracker and restore their
 oldest snapshots if packet submission throws. Release pending ownership
 and queued input on that failure so an unsent batch cannot lock inventory.
 
-Ignore an empty display_name override in the ComponentItem description getter,
-matching getter 0x143fd2be0 on Bedrock 1.26.51.1/build 51061372. Pack and
-network definitions retain ordinary naming after clearing an override; a later
-nonempty or whitespace value still replaces it. Fresh original name-producer
-controls cover 1,299 typed NBT/component/append cases. Regression tests cover
-network replacement and upper-pack precedence across primitive/object forms.
+Ignore empty resource-pack display-name overrides when selecting the Java
+fallback label. Retain upper-pack precedence across primitive and object
+forms. Network component descriptions now belong to ItemRegistry, whose
+construction and ordered-reader state also drives mapped Java items. Keep
+this loader focused on its remaining icon, cooldown and use metadata.
 
-Retain the current display-name component across omitted and malformed
-network updates. The native reader replaces it only for a valid StringTag
-value. A valid empty string clears the override and restores the ordinary
-constructor-owned description. Preserve this field when rebuilding the
-network definition instead of erasing it after an unrelated update.
-
-Fresh original 1.26.51.1 execution constructs a populated ItemData vector
-with 29 ordered updates for 13 actual ComponentItem definitions, resolves
-each through native ItemStack construction, and queries the real
-description/key methods. All 2,630 static callbacks complete without
-owned allocation or lock leaks. The six targeted tests match all 13
-definitions; both new checks fail before the fix and three deliberate
-regressions fail. Native pack/client precedence, complete ordinary-key
-providers, language ownership and screen parity remain separate gates.
+The registry-owned name checks cover all 13 prior typed update results and
+the newer construction/admission controls. Remove the superseded network
+name reader and its three tests so two independent state machines cannot
+drift. Native asset precedence and full ordinary names remain open.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   66 +-
@@ -545,7 +534,7 @@ providers, language ownership and screen parity remain separate gates.
  .../container/player/InventoryContainer.java  |   87 +-
  .../player/InventorySubContainer.java         |    6 +
  .../container/player/OffhandContainer.java    |   50 +-
- .../definition/ItemDefinitions.java           |   62 +-
+ .../definition/ItemDefinitions.java           |   57 +-
  .../viabedrock/api/util/PacketFactory.java    |  187 ++-
  .../viabedrock/protocol/BedrockProtocol.java  |  122 +-
  .../protocol/data/BedrockMappingData.java     |  707 +++++---
@@ -563,7 +552,7 @@ providers, language ownership and screen parity remain separate gates.
  .../protocol/packet/JoinPackets.java          |    2 +-
  .../protocol/packet/MultiStatePackets.java    |   13 +-
  .../protocol/packet/WorldPackets.java         |   12 +
- .../protocol/rewriter/ItemRewriter.java       |  280 +++-
+ .../protocol/rewriter/ItemRewriter.java       |  228 ++-
  .../rewriter/item/BundleItemRewriter.java     |   58 +-
  .../storage/CraftedItemSynchronization.java   |  128 ++
  .../protocol/storage/CraftingDataTracker.java |  206 +++
@@ -585,7 +574,7 @@ providers, language ownership and screen parity remain separate gates.
  .../block/EnchantmentContainerTest.java       |  120 ++
  .../container/block/LecternContainerTest.java |   84 +
  .../player/OffhandRequestSlotsTest.java       |   37 +
- .../definition/ItemDefinitionsTest.java       |  171 ++
+ .../definition/ItemDefinitionsTest.java       |   86 +
  .../api/util/ContainerContentPacketTest.java  |   95 ++
  .../ComponentItemStackingPropertiesTest.java  |  173 ++
  .../model/ItemCookingPropertiesTest.java      |  201 +++
@@ -622,7 +611,7 @@ providers, language ownership and screen parity remain separate gates.
  .../item/NetworkItemConstructionTest.java     |  165 ++
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 107 files changed, 15762 insertions(+), 984 deletions(-)
+ 107 files changed, 15628 insertions(+), 976 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionBackend.java
@@ -5382,7 +5371,7 @@ index 22ad60398..c10493db1 100644
              mobEquipment.write(Types.BYTE, (byte) 1); // slot
              mobEquipment.write(Types.BYTE, (byte) 0); // selected slot
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
-index 8a5a49326..d4657f48e 100644
+index f8282f25a..c0b6e4525 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
 @@ -19,6 +19,7 @@ package net.raphimc.viabedrock.api.resourcepack.definition;
@@ -5409,7 +5398,7 @@ index 8a5a49326..d4657f48e 100644
                      final ItemDefinition itemDefinition = new ItemDefinition(identifier);
                      if (item.has("components")) {
                          final JsonObject components = item.getAsJsonObject("components");
-@@ -57,22 +63,65 @@ public class ItemDefinitions {
+@@ -57,20 +63,58 @@ public class ItemDefinitions {
                                      cooldown.get("duration").getAsFloat());
                          }
                          if (components.has("minecraft:icon")) {
@@ -5470,15 +5459,8 @@ index 8a5a49326..d4657f48e 100644
 +
      public void addFromNetworkTag(final String identifier, final CompoundTag tag) {
          final ItemDefinition itemDefinition = new ItemDefinition(identifier);
-+        final ItemDefinition previous = this.items.get(identifier);
-+        if (previous != null) {
-+            // The native display-name reader updates this component only for a StringTag value.
-+            itemDefinition.displayNameComponent = previous.displayNameComponent;
-+        }
          if (tag.get("components") instanceof CompoundTag components) {
-             itemDefinition.cooldown = ItemCooldown.fromNetworkComponents(components);
-             itemDefinition.useModifiers = ItemUseModifiers.fromNetworkComponents(components);
-@@ -123,7 +172,8 @@ public class ItemDefinitions {
+@@ -118,7 +162,8 @@ public class ItemDefinitions {
          }
  
          public String displayNameComponent() {
@@ -7450,7 +7432,7 @@ index a3ac81345..a3b933c2a 100644
 +    public static final String WORKBENCH = "workbench";
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/BuiltinItemFactories.java b/src/main/java/net/raphimc/viabedrock/protocol/model/BuiltinItemFactories.java
-index fc93808ea..4d697a1b7 100644
+index 4d1321eca..85f8b3406 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/BuiltinItemFactories.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/BuiltinItemFactories.java
 @@ -5,6 +5,7 @@
@@ -7471,10 +7453,10 @@ index fc93808ea..4d697a1b7 100644
  
  /** Constructor-owned native factories, independent of advertised runtime-ID assignments. */
  final class BuiltinItemFactories {
-@@ -34,6 +37,11 @@ final class BuiltinItemFactories {
-             if (data.get("format").getAsInt() != 1 || data.get("protocol").getAsInt() != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
+@@ -35,6 +38,11 @@ final class BuiltinItemFactories {
                  throw new IllegalStateException("Native item factories do not match the target protocol");
              }
+             final var componentDescriptions = data.getAsJsonObject("componentDescriptions");
 +            final var cooking = data.getAsJsonObject("cooking");
 +            final Set<String> food = identifiers(cooking.getAsJsonArray("food"));
 +            final Set<String> blocks = identifiers(cooking.getAsJsonArray("blocks"));
@@ -7483,19 +7465,19 @@ index fc93808ea..4d697a1b7 100644
              final Map<String, Definition> factories = new HashMap<>();
              for (final var element : data.getAsJsonArray("factories")) {
                  final var factory = element.getAsJsonObject();
-@@ -49,7 +57,10 @@ final class BuiltinItemFactories {
-                 };
+@@ -51,7 +59,10 @@ final class BuiltinItemFactories {
                  for (final var name : factory.getAsJsonArray("identifiers")) {
                      final String identifier = name.getAsString();
--                    if (factories.putIfAbsent(identifier, new Definition(version, stacking)) != null) {
+                     final String description = componentDescriptions.has(identifier) ? componentDescriptions.get(identifier).getAsString() : null;
+-                    if (factories.putIfAbsent(identifier, new Definition(version, stacking, description)) != null) {
 +                    final String block = blocks.contains(identifier) ? identifier
 +                            : blockAliases.has(identifier) ? blockAliases.get(identifier).getAsString() : null;
 +                    final var traits = new ItemCookingProperties(food.contains(identifier), block, replacements.contains(identifier));
-+                    if (factories.putIfAbsent(identifier, new Definition(version, stacking, traits)) != null) {
++                    if (factories.putIfAbsent(identifier, new Definition(version, stacking, description, traits)) != null) {
                          throw new IllegalStateException("Duplicate native item factory: " + identifier);
                      }
                  }
-@@ -60,8 +71,18 @@ final class BuiltinItemFactories {
+@@ -62,8 +73,18 @@ final class BuiltinItemFactories {
          }
      }
  
@@ -7511,8 +7493,8 @@ index fc93808ea..4d697a1b7 100644
 +
      private BuiltinItemFactories() { }
  
--    record Definition(ItemVersion version, ItemStackingProperties stacking) { }
-+    record Definition(ItemVersion version, ItemStackingProperties stacking, ItemCookingProperties cooking) { }
+-    record Definition(ItemVersion version, ItemStackingProperties stacking, String componentDescription) { }
++    record Definition(ItemVersion version, ItemStackingProperties stacking, String componentDescription, ItemCookingProperties cooking) { }
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemBlockPlacer.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemBlockPlacer.java
@@ -7642,19 +7624,19 @@ index 000000000..19e0148c5
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
-index 854d037a6..eb98dba71 100644
+index a0d906ad5..6bea2b71f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
-@@ -10,6 +10,8 @@ import com.google.common.collect.HashBiMap;
- import com.google.common.collect.ImmutableBiMap;
- import com.viaversion.nbt.tag.CompoundTag;
+@@ -12,6 +12,8 @@ import com.viaversion.nbt.tag.CompoundTag;
+ import com.viaversion.nbt.tag.StringTag;
+ import com.viaversion.viaversion.util.Key;
  import net.raphimc.viabedrock.api.model.NativeItemNames;
 +import net.raphimc.viabedrock.api.chunk.blockstate.BlockItemDescriptor;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeKey;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
  
  import java.util.HashMap;
-@@ -17,6 +19,8 @@ import java.util.LinkedHashMap;
+@@ -20,6 +22,8 @@ import java.util.LinkedHashMap;
  import java.util.List;
  import java.util.Map;
  import java.util.Set;
@@ -7663,7 +7645,7 @@ index 854d037a6..eb98dba71 100644
  import java.util.stream.Collectors;
  
  /** One connection's item IDs and the complete definitions that own those IDs. */
-@@ -73,6 +77,75 @@ public final class ItemRegistry {
+@@ -78,6 +82,75 @@ public final class ItemRegistry {
          return identifier != null ? this.definitions.get(identifier) : null;
      }
  
@@ -9872,7 +9854,7 @@ index 85cdb3dee..a98ad8137 100644
  
                      final BlockEntity javaBlockEntity = BlockEntityRewriter.toJava(wrapper.user(), chunkTracker.getBlockState(bedrockBlockEntity.position()), bedrockBlockEntity);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index db5406ccc..7a3d69201 100644
+index 1b60413df..bb469954d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -36,6 +36,7 @@ import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
@@ -10060,24 +10042,7 @@ index db5406ccc..7a3d69201 100644
                  if (metaItemMappings != null) {
                      if (!metaItemMappings.containsKey(meta)) {
                          if ((metaItemMappings.size() != 1 || meta != 0)
-@@ -231,36 +274,82 @@ public class ItemRewriter extends StoredObject {
-                 ItemDataRewriter.applyJavaOverride(javaItemMapping.overrideTag(), data, BedrockProtocol.MAPPINGS.getJavaRegistries());
-             }
-             if (javaItemMapping.name() != null) {
--                final ResourcePackStorage resourcePackStorage = this.user().get(ResourcePackStorage.class);
--                data.set(StructuredDataKey.ITEM_NAME, TextUtil.stringToNbt(resourcePackStorage.getTexts().get(javaItemMapping.name())));
--                data.set(StructuredDataKey.LORE, new Tag[]{TextUtil.stringToNbt("§7[ViaBedrock] Mapped item: " + identifier)});
-+                final ResourcePackStorage resourcePackStorage =
-+                        this.user().get(ResourcePackStorage.class);
-+                data.set(
-+                        StructuredDataKey.ITEM_NAME,
-+                        TextUtil.stringToNbt(
-+                                resourcePackStorage.getTexts().get(javaItemMapping.name())));
-+                data.set(
-+                        StructuredDataKey.LORE,
-+                        new Tag[] {
-+                            TextUtil.stringToNbt("§7[ViaBedrock] Mapped item: " + identifier)
-+                        });
+@@ -238,8 +281,10 @@ public class ItemRewriter extends StoredObject {
              }
              javaItem = new StructuredItem(javaItemMapping.id(), bedrockItem.amount(), data);
          } else {
@@ -10090,40 +10055,7 @@ index db5406ccc..7a3d69201 100644
              final StructuredDataContainer data = ProtocolConstants.createStructuredDataContainer();
  
              if (itemDefinition != null) {
-                 if (itemDefinition.displayNameComponent() != null) {
--                    data.set(StructuredDataKey.ITEM_NAME, TextUtil.stringToNbt(resourcePackStorage.getTexts().translate(itemDefinition.displayNameComponent())));
-+                    data.set(
-+                            StructuredDataKey.ITEM_NAME,
-+                            TextUtil.stringToNbt(
-+                                    resourcePackStorage
-+                                            .getTexts()
-+                                            .translate(itemDefinition.displayNameComponent())));
-                 } else if (this.componentItems.contains(identifier)) {
--                    data.set(StructuredDataKey.ITEM_NAME, TextUtil.stringToNbt(resourcePackStorage.getTexts().get("item." + Key.stripMinecraftNamespace(identifier))));
-+                    data.set(
-+                            StructuredDataKey.ITEM_NAME,
-+                            TextUtil.stringToNbt(
-+                                    resourcePackStorage
-+                                            .getTexts()
-+                                            .get(
-+                                                    "item."
-+                                                            + Key.stripMinecraftNamespace(
-+                                                                    identifier))));
-                 } else {
--                    data.set(StructuredDataKey.ITEM_NAME, TextUtil.stringToNbt(resourcePackStorage.getTexts().get("item." + Key.stripMinecraftNamespace(identifier) + ".name")));
-+                    data.set(
-+                            StructuredDataKey.ITEM_NAME,
-+                            TextUtil.stringToNbt(
-+                                    resourcePackStorage
-+                                            .getTexts()
-+                                            .get(
-+                                                    "item."
-+                                                            + Key.stripMinecraftNamespace(
-+                                                                    identifier)
-+                                                            + ".name")));
-                 }
- 
-                 if (itemDefinition.iconComponent() != null && resourcePackStorage.isLoadedOnJavaClient()) {
+@@ -257,13 +302,21 @@ public class ItemRewriter extends StoredObject {
                      data.set(StructuredDataKey.ITEM_MODEL, CustomItemTextureResourceRewriter.getItemModel(itemDefinition.iconComponent()));
                      data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomItemTextureResourceRewriter.getCustomModelData("0"));
                  } else {
@@ -10134,17 +10066,9 @@ index db5406ccc..7a3d69201 100644
 +                                TextUtil.stringToNbt("§7[ViaBedrock] Custom item: " + identifier)
 +                            });
                  }
-             } else {
--                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java item mapping for " + identifier);
--                data.set(StructuredDataKey.ITEM_NAME, TextUtil.stringToNbt("§cMissing item: " + identifier));
-+                ViaBedrock.getPlatform()
-+                        .getLogger()
-+                        .log(
-+                                Level.WARNING,
-+                                "Missing bedrock -> java item mapping for " + identifier);
-+                data.set(
-+                        StructuredDataKey.ITEM_NAME,
-+                        TextUtil.stringToNbt("§cMissing item: " + identifier));
+             } else if (componentDescription == null) {
+                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java item mapping for " + identifier);
+                 data.set(StructuredDataKey.ITEM_NAME, TextUtil.stringToNbt("§cMissing item: " + identifier));
              }
 -            javaItem = new StructuredItem(BedrockProtocol.MAPPINGS.getJavaItems().get("minecraft:paper"), bedrockItem.amount(), data);
 +            javaItem =
@@ -10154,8 +10078,8 @@ index db5406ccc..7a3d69201 100644
 +                            data);
          }
  
-         ItemCooldown cooldown = this.cooldowns.get(identifier);
-@@ -276,8 +365,12 @@ public class ItemRewriter extends StoredObject {
+         if (componentDescription != null) {
+@@ -284,8 +337,12 @@ public class ItemRewriter extends StoredObject {
  
          final CompoundTag bedrockTag = bedrockItem.tag();
          if (bedrockTag != null) {
@@ -10170,7 +10094,7 @@ index db5406ccc..7a3d69201 100644
              }
              final String customName = this.registry.customName(identifier, bedrockTag);
              if (customName != null) {
-@@ -292,6 +385,8 @@ public class ItemRewriter extends StoredObject {
+@@ -300,6 +357,8 @@ public class ItemRewriter extends StoredObject {
              ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
          }
  
@@ -10179,7 +10103,7 @@ index db5406ccc..7a3d69201 100644
          javaItem.dataContainer().set(StructuredDataKey.USE_EFFECTS, this.useModifiers(bedrockItem).javaComponent());
  
          CustomAttachableResourceRewriter.applyItemModel(this.user().get(ResourcePackStorage.class), identifier, javaItem);
-@@ -307,7 +402,8 @@ public class ItemRewriter extends StoredObject {
+@@ -315,7 +374,8 @@ public class ItemRewriter extends StoredObject {
              return null;
          }
          final CompoundTag javaTag = new CompoundTag();
@@ -10189,7 +10113,7 @@ index db5406ccc..7a3d69201 100644
          javaTag.put("id", new StringTag(javaId));
          javaTag.put("count", new IntTag(javaItem.amount()));
          if (javaItem.tag() != null) {
-@@ -321,28 +417,31 @@ public class ItemRewriter extends StoredObject {
+@@ -329,28 +389,31 @@ public class ItemRewriter extends StoredObject {
              return null;
          }
  
@@ -10232,7 +10156,7 @@ index db5406ccc..7a3d69201 100644
      }
  
      public Item[] javaItems(final BedrockItem[] bedrockItems) {
-@@ -354,7 +453,33 @@ public class ItemRewriter extends StoredObject {
+@@ -362,7 +425,33 @@ public class ItemRewriter extends StoredObject {
      }
  
      public BedrockItem bedrockItem(final Item javaItem) {
@@ -10267,7 +10191,7 @@ index db5406ccc..7a3d69201 100644
      }
  
      public BedrockItem[] bedrockItems(final Item[] javaItems) {
-@@ -369,8 +494,52 @@ public class ItemRewriter extends StoredObject {
+@@ -377,8 +466,52 @@ public class ItemRewriter extends StoredObject {
          return this.items;
      }
  
@@ -10322,7 +10246,7 @@ index db5406ccc..7a3d69201 100644
      }
  
      /** Match network-loaded stack queries while their connection registry remains current. */
-@@ -410,6 +579,18 @@ public class ItemRewriter extends StoredObject {
+@@ -418,6 +551,18 @@ public class ItemRewriter extends StoredObject {
          return properties == null ? 0 : properties.maximum();
      }
  
@@ -10341,7 +10265,7 @@ index db5406ccc..7a3d69201 100644
      public Type<BedrockItem> itemType() {
          return this.itemType;
      }
-@@ -434,10 +615,13 @@ public class ItemRewriter extends StoredObject {
+@@ -442,10 +587,13 @@ public class ItemRewriter extends StoredObject {
          return this.newItemArrayType;
      }
  
@@ -13640,90 +13564,26 @@ index 000000000..33741180e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitionsTest.java
 new file mode 100644
-index 000000000..a6f32200a
+index 000000000..2230c942d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitionsTest.java
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,86 @@
 +package net.raphimc.viabedrock.api.resourcepack.definition;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import com.viaversion.viaversion.libs.gson.JsonParser;
-+import io.netty.buffer.Unpooled;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
-+import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +import org.junit.jupiter.api.Test;
-+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 +
-+import java.nio.file.Files;
-+import java.nio.file.Path;
-+import java.util.HexFormat;
 +import java.util.List;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.mockito.Mockito.*;
 +
 +class ItemDefinitionsTest {
-+
-+    @Test
-+    void omittedAndMalformedDisplayNameUpdatesRetainTheLastString() {
-+        final ResourcePackStorage packs = mock(ResourcePackStorage.class);
-+        when(packs.getPackStackBottomToTop()).thenReturn(List.of());
-+        final ItemDefinitions definitions = new ItemDefinitions(packs);
-+        final String identifier = "custom:probe";
-+        final var name = new CompoundTag();
-+        name.putString("value", "Initial");
-+        final var components = new CompoundTag();
-+        components.put("minecraft:display_name", name);
-+        final var data = new CompoundTag();
-+        data.put("components", components);
-+        definitions.addFromNetworkTag(identifier, data);
-+        definitions.addFromNetworkTag(identifier, new CompoundTag());
-+        assertEquals("Initial", definitions.get(identifier).displayNameComponent());
-+        name.putInt("value", 7);
-+        definitions.addFromNetworkTag(identifier, data);
-+        assertEquals("Initial", definitions.get(identifier).displayNameComponent());
-+        components.putInt("minecraft:display_name", 7);
-+        definitions.addFromNetworkTag(identifier, data);
-+        assertEquals("Initial", definitions.get(identifier).displayNameComponent());
-+        components.put("minecraft:display_name", name);
-+        name.putString("value", "");
-+        definitions.addFromNetworkTag(identifier, data);
-+        assertNull(definitions.get(identifier).displayNameComponent());
-+        name.putString("value", "Updated");
-+        definitions.addFromNetworkTag(identifier, data);
-+        assertEquals("Updated", definitions.get(identifier).displayNameComponent());
-+    }
-+
-+    @Test
-+    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_ITEM_NAME_UPDATES", matches = ".+")
-+    void nameUpdatesMatchNativeConstructedDefinitions() throws Exception {
-+        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_ITEM_NAME_UPDATES")))).getAsJsonObject();
-+        final ResourcePackStorage packs = mock(ResourcePackStorage.class);
-+        when(packs.getPackStackBottomToTop()).thenReturn(List.of());
-+        int cases = 0;
-+        for (final var element : fixture.getAsJsonArray("rows")) {
-+            final var row = element.getAsJsonObject();
-+            final var definitions = new ItemDefinitions(packs);
-+            final String identifier = row.get("identifier").getAsString();
-+            for (final var update : row.getAsJsonArray("updates")) {
-+                final var buffer = Unpooled.wrappedBuffer(HexFormat.of().parseHex(update.getAsString()));
-+                try {
-+                    final var data = (CompoundTag) BedrockTypes.TAG_LE.read(buffer);
-+                    assertFalse(buffer.isReadable());
-+                    definitions.addFromNetworkTag(identifier, data);
-+                } finally {
-+                    buffer.release();
-+                }
-+            }
-+            final String override = definitions.get(identifier).displayNameComponent();
-+            assertEquals(row.get("key").getAsString(), override == null ? row.get("storedDescription").getAsString() : override, identifier);
-+            cases++;
-+        }
-+        assertEquals(fixture.get("cases").getAsInt(), cases);
-+    }
 +
 +    @Test
 +    void readsPinnedSpearAndLegacyIconShapes() {
@@ -13753,27 +13613,6 @@ index 000000000..a6f32200a
 +        data.put("components", components);
 +        definitions.addFromNetworkTag("geysermc:furnace_minecart", data);
 +        assertEquals("minecart_furnace", definitions.get("geysermc:furnace_minecart").iconComponent());
-+    }
-+
-+    @Test
-+    void emptyNetworkDisplayNameRestoresOrdinaryNameAfterAnOverride() {
-+        final ResourcePackStorage packs = mock(ResourcePackStorage.class);
-+        when(packs.getPackStackBottomToTop()).thenReturn(List.of());
-+        final ItemDefinitions definitions = new ItemDefinitions(packs);
-+        final CompoundTag name = new CompoundTag();
-+        final CompoundTag components = new CompoundTag();
-+        components.put("minecraft:display_name", name);
-+        final CompoundTag data = new CompoundTag();
-+        data.put("components", components);
-+        final String identifier = "custom:probe";
-+        for (final String value : List.of(identifier, "", " ", identifier.repeat(16), "")) {
-+            name.putString("value", value);
-+            definitions.addFromNetworkTag(identifier, data);
-+            assertEquals(value.isEmpty() ? null : value, definitions.get(identifier).displayNameComponent());
-+        }
-+        name.putInt("value", 1);
-+        definitions.addFromNetworkTag(identifier, data);
-+        assertNull(definitions.get(identifier).displayNameComponent());
 +    }
 +
 +    @Test
