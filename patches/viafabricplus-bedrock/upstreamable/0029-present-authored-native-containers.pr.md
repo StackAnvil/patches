@@ -285,3 +285,25 @@ The source parser accepts all 15 unchanged default toggle definitions.
 The complete default screens still fall back because search, slider and other handlers remain unfinished.
 Screen-owned view/global routing, unresolved toggle collection indices and unsupported modal/controller policies remain explicit admission limits.
 This change does not establish complete authored-screen support or resolve the original inventory screenshot report.
+
+## Recipe hover entry and exit
+
+Cooking recipe controls now admit implicit collection-hover events.
+Pointer entry selects the resolved collection cell.
+Pointer exit clears it only if both the collection and index still match.
+An older exit cannot erase a newer selection or change its revision.
+The current selection survives a model refresh with unchanged authoritative selection.
+Collection indices use native integral type checks and signed 32-bit narrowing.
+
+The original native registrations, three hover closures, dispatcher and final exit clear pass 5,832 cases.
+Both exit callbacks execute even when the first returns a handled result.
+The fixture supplies collection resolution and observes the first selection/exit virtual methods.
+It does not execute their Furnace enum, touch-held state or storage-item predicate internals.
+All native-owned allocations are released.
+
+The screen regression covers entry, retained highlighting through a model update, exit and re-entry without inventory or preference requests.
+The presentation regression covers interleaved collection/index exits across all three cooking families.
+All 42 targeted screen, presentation, input and geometry tests pass.
+Unchanged default screens still require help, drop, search, input-panel and other controller handlers.
+The full stack build passes 2,740 tests with 163 optional skips.
+Packaged production index and selection consumers match 17,496 native cases across all three cooking families, within the fixture boundaries above.
