@@ -223,7 +223,7 @@ All 102 core patches replay successfully. Offline tooling and patch metadata val
 
 ## Cooking command phases
 
-Cooking action and result envelopes use version 4 and retain the numeric native event phase independently of the command.
+Cooking action and result envelopes use version 5 and retain the controller mode and native event phase independently of the command.
 Phases `0`, `1`, and `2` remain distinct through serialization and acknowledgement.
 The original state-dispatch fixtures use phase `0` for initial primary selection and phase `2` for selected-state release.
 The payload does not assign physical device meanings or transfer quantities to these phases.
@@ -344,6 +344,23 @@ They cover missing device IDs and entries, all four tested mode values, and coll
 Active-device ID acquisition, physical event production, and complete controller construction remain supplied or unverified boundaries.
 The [focus reference](../../../docs/native-cooking-actions.md#mode-dependent-recipe-focus) records functions, typed inputs, and limits.
 
-The current Java action path does not transport this mode or reproduce the initial focus transition.
-Its nonempty-cursor guard remains until that state and its provenance are implemented together.
-This checkpoint records evidence; it does not claim production support for the new path.
+Version-five actions now transport the verified controller mode separately from command and phase.
+Earlier versions reject instead of receiving an implicit mode or phase.
+The core and client sessions implement initial mode-`2` focus and its owned carried-item selection path.
+The Java mouse adapter supplies mode `1`; physical mode-`2` production and complete active-device integration remain unfinished.
+The [transfer reference](../../../docs/native-cooking-actions.md#focused-carried-item-transfers) records the subsequent original effects and serialized requests.
+Default carried-item screen controls and full native parity remain separate requirements.
+
+The final combined suites pass 2,621 tests, with 163 optional skips and no failures or errors.
+All four projects build, and the final core rerun includes the integrated movement reference fixtures.
+Cooking, camera, retained particle, attachable, and Iris GPU comparisons run without skips.
+All 1,413 core classes match both packaged copies, and all 1,139 production client classes match the add-on.
+The affected core and add-on stacks replay successfully.
+
+A fresh BDS 1.26.51.1 route verifies version-five mouse actions in furnace, smoker, and blast-furnace screens.
+All six press/release replies retain context `1` and their original authority across newer frames.
+Each real ingredient starts cooking, all three ordinary follow-up cases pass, and same-world reconnect passes.
+Both runtime inventories match 2,551 project class resources and four data resources.
+Normal cleanup removes the observer, restores the private driver change, and leaves no managed-profile JVM.
+The controlled scene projection preserves all 39 real slots while it removes unfinished controls and mappings.
+This run does not establish unchanged authored screens, physical mode-`2` input, carried-item screen support, or native pixels.

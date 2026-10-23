@@ -116,9 +116,10 @@ The release transition executes the real base-state reset and returns handled bi
 The fixtures do not establish physical input-mode mappings or how Java mouse events produce native event phases.
 The mode-`2` focus path has separate controls below. Physical event producers and the complete recipe action pipeline still need verification.
 
-Cooking action and result payloads use version `4` and preserve the numeric event phase alongside the command and snapshot identity.
+Cooking action and result payloads use version `5` and preserve the controller input mode, event phase, command, and snapshot identity.
 Only phases `0`, `1`, and `2` are accepted.
-Phase-free version `3` actions reject instead of receiving a default phase.
+Earlier versions `3` and `4` reject instead of receiving a default controller mode or phase.
+Only the four verified controller modes, `0` through `3`, are accepted.
 Replies echo the complete action, including its phase.
 These payloads do not establish physical input mapping or activate authored cooking controls.
 
@@ -385,10 +386,44 @@ The active-device ID accessor is a supplied boundary; device registration and ph
 The original base-controller constructor stores this getter result at offset `0xc04`.
 That constructor observation comes from instruction inspection, not complete constructor execution.
 
-The Java action path still lacks this mode-dependent focus state and active-device provenance.
-Its current phase session cannot begin an idle gesture with phase `1`.
-A blanket removal of its cursor guard would also admit presses that the other tested modes reject.
-Production support therefore needs the focus history and mode source together with the carried-item branch.
+Version-five actions carry the controller mode explicitly.
+The core and client action sessions now admit an initial mode-`2` primary focus before the primary selection.
+The core retains this permission within the current menu and opening.
+Its release requires the original snapshot and controller context, including after newer frames arrive.
+Capability withdrawal and menu replacement retire the permission.
+Direct presses without focus retain their empty-carried-item check.
+
+The Java mouse adapter explicitly supplies mode `1`.
+It does not infer mode `2` from a mouse event.
+Physical mode-`2` input production, complete active-device integration, and carried-item screen controls remain unfinished.
+
+## Focused carried-item transfers
+
+Five fresh controls execute the focused branch through the original recipe effects and request serialization.
+The carried slot has its own real backing and provider binding.
+The actual held-slot getter `0x144dfcf00` resolves that cursor provider independently of the recipe preview.
+
+For mode `2`, carried counts `0`, `1`, and `64` pass focus, press, and release.
+The native graph enters states `45`, `25`, and `1`, with handled results `2`, `1`, and `4`.
+The press places seven hotbar ingredients and five inventory ingredients through two separate Place requests.
+The second request uses the first negative request ID for the already changed destination.
+Each case retains the original carried stack throughout all three events.
+The carried controls in modes `1` and `3` produce no selection or requests.
+
+Original focus entry, selection, placement, return, provider mutation, request allocation, automatic scopes, flush, and serialization execute.
+Typed controller and model fields, recipe/result caches, physical starting contents, and abstract world interfaces remain supplied inputs.
+The client mode getter and no-local-player getter are supplied interfaces; native weak checks and input accessor `0x144923190` execute.
+The earlier external startup, OS/CRT, diagnostic text, and transport-sink boundaries still apply.
+Full controller construction, physical event producers, server acknowledgments, and native pixels remain outside these controls.
+
+The production planner matches all three mode-`2` serialized request references.
+Its prediction snapshots preserve the carried stack for every request.
+The planner rechecks the player-UI contents and server revision after item metadata evaluation.
+A changed cursor rejects the stale plan without restoring over the newer cursor.
+Mandatory action tests cover mode-dependent admission, stale context, focus cancellation, capability loss, and menu reuse.
+Client controls retain the captured context across newer frames, immediate replies, ambiguous transport, and terminal cancellation.
+A late focus rejection cannot erase a newer active selection or strand its release.
+These action changes do not replace the unfinished default carried-item screen controls.
 
 ## Request payload identities
 

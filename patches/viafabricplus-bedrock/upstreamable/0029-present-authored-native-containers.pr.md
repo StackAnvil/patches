@@ -126,3 +126,34 @@ Actor-backed authored storage acceptance and complete native GUI parity remain u
 - [Shared scene and GUI actor rendering](0029-share-native-ui-scene-rendering.pr.md).
 
 See the [native cooking reference](../../../docs/native-cooking-actions.md) for dispatch, request, and native evidence boundaries.
+
+
+## Context-preserving recipe focus
+
+Version-five action sessions carry an explicit native controller mode.
+Mode `2` can begin with a primary focus and continue to a primary press, including before the focus reply arrives.
+The next press still requires its current displayed cell and command scope.
+Follow-up phases and cancellation retain the captured snapshot and controller mode.
+An older focus rejection cannot erase a newer selection and strand its release.
+Terminal cancellation sends at most once after an ambiguous focus send.
+
+The production mouse adapter supplies mode `1` and keeps its carried-item guard.
+It does not infer a native mode-`2` device from pointer input.
+Physical mode-`2` delivery, complete active-device integration, and the default carried-item screen remain unfinished.
+Core compares three cursor-preserving request payloads with original native transfer and serialization execution.
+Client controls cover reentrant replies, pending focus, newer frames, forged contexts, late failure, and cancellation.
+The [focused transfer notes](../../../docs/native-cooking-actions.md#focused-carried-item-transfers) retain the native boundaries.
+
+The final combined suites pass 2,621 tests, with 163 optional skips and no failures or errors.
+All four projects build, and the final core rerun includes the integrated movement reference fixtures.
+Cooking, camera, retained particle, attachable, and Iris GPU comparisons run without skips.
+All 1,413 core classes match both packaged copies, and all 1,139 production client classes match the add-on.
+The affected core and add-on stacks replay successfully.
+
+A fresh BDS 1.26.51.1 route verifies version-five mouse actions in furnace, smoker, and blast-furnace screens.
+All six press/release replies retain context `1` and their original authority across newer frames.
+Each real ingredient starts cooking, all three ordinary follow-up cases pass, and same-world reconnect passes.
+Both runtime inventories match 2,551 project class resources and four data resources.
+Normal cleanup removes the observer, restores the private driver change, and leaves no managed-profile JVM.
+The controlled scene projection preserves all 39 real slots while it removes unfinished controls and mappings.
+This run does not establish unchanged authored screens, physical mode-`2` input, carried-item screen support, or native pixels.

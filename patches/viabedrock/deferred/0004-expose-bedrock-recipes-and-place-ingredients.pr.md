@@ -364,3 +364,41 @@ Furnace, smoker, and blast-furnace cooking and same-world reconnect pass.
 Two runtime inventories match 2,520 classes and four data resources each.
 Normal cleanup removes the private observer, restores the driver, and leaves no managed-profile JVM.
 The scene projection removes unfinished controls and mappings, so it does not establish full default-screen or native pixel parity.
+
+
+## Focused carried-item recipe actions
+
+The backend retains an initial mode-`2` focus before the primary recipe press.
+That focus permits selection with a carried Item while direct unfocused presses keep their empty-cursor check.
+Focus itself transfers nothing and does not manufacture a selection snapshot.
+Terminal release requires its original opening, snapshot, and controller context.
+Capability withdrawal and menu replacement retire the permission.
+
+Five fresh native controls execute the original graph, held-slot getter, focus entry, recipe effects, provider transfers, and owned request serialization.
+Mode-`2` counts `0`, `1`, and `64` retain the cursor while placing twelve ingredients through two requests.
+Carried controls in modes `1` and `3` produce no requests.
+All three production mode-`2` request payloads match the original serialized bytes, including the changed destination's negative request reference.
+Every request prediction retains the carried stack.
+
+The [focused transfer reference](../../../docs/native-cooking-actions.md#focused-carried-item-transfers) lists the original functions and supplied interfaces.
+Mandatory tests cover all three cooking families, mode-specific admission, exact-context release, capability loss, and reused menu identity.
+The Java mouse adapter remains mode `1`.
+Physical mode-`2` events, carried-item screen controls, full controller construction, server acceptance of that carried path, and native pixels remain unfinished.
+
+The planner also rechecks player-UI contents and server revision after item metadata callbacks.
+Changed contents or a revision-only replacement reject before station/player mutation or request submission.
+The newer cursor remains intact, and a fresh retry retains the original selection history.
+
+The final combined suites pass 2,621 tests, with 163 optional skips and no failures or errors.
+All four projects build, and the final core rerun includes the integrated movement reference fixtures.
+Cooking, camera, retained particle, attachable, and Iris GPU comparisons run without skips.
+All 1,413 core classes match both packaged copies, and all 1,139 production client classes match the add-on.
+The affected core and add-on stacks replay successfully.
+
+A fresh BDS 1.26.51.1 route verifies version-five mouse actions in furnace, smoker, and blast-furnace screens.
+All six press/release replies retain context `1` and their original authority across newer frames.
+Each real ingredient starts cooking, all three ordinary follow-up cases pass, and same-world reconnect passes.
+Both runtime inventories match 2,551 project class resources and four data resources.
+Normal cleanup removes the observer, restores the private driver change, and leaves no managed-profile JVM.
+The controlled scene projection preserves all 39 real slots while it removes unfinished controls and mappings.
+This run does not establish unchanged authored screens, physical mode-`2` input, carried-item screen support, or native pixels.
