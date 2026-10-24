@@ -514,50 +514,13 @@ The packaged core matches both new corpora and three focused integration regress
 Nine deliberate changes fail value or lookup-order comparisons. All retained packaged comparisons also pass.
 
 
-## Constructor-owned ItemRegistry aliases
+## Shared registry lookup dependency
 
-Expose exact alias admission and ordered member names through the connection registry.
-Load the native ItemRegistry's 89 redirects and 60 complex aliases with 561 members.
-Apply one redirect before complex lookup. Preserve exact names and member order.
-Require the pinned asset and protocol; unregistered names retain the native empty-vector result.
+Use the [registry foundation](../upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#registry-name-lookup-ownership) for saved-name parsing, exact alias getters and metadata callbacks.
+That patch owns the required protocol asset and its parser and alias tests.
+Deferred descriptors retain wildcard alias selection on the earlier raw-name path, before ordinary lookup.
 
-Complete original ItemRegistry initialization follows native block/state construction under the recorded default version and Experiments.
-The empty parsed network vector establishes pre-packet constructor data, not actual server admission.
-All native input, registry, TLS, static and CRT cleanup completes with no remaining allocations or held locks.
-Item alias registrations differ from block aliases and restriction groups, including wood order, item-only groups and slab redirects.
-The [ItemRegistry alias reference](../../../docs/native-player-inventory.md#constructor-owned-itemregistry-aliases) records the evidence and limits.
-
-Ordered member names do not replace auxiliary callbacks or live definition ownership.
-Ordinary named lookup rewriting, member/representative lookup, block fallback, complete Java registry construction and installed availability remain unfinished.
-
-The packaged connection registry matches all 2,127 original getter controls, including 86 registered results and 767 member-name comparisons.
-The controls query every constructed factory key and both names in each native redirect.
-Three deliberate changes fail value comparisons: ignored redirects, reversed member order and substituted block tables.
-The retained descriptor, counter, source matcher, search, unlock and progressive-model comparisons also pass.
-All four builds pass with 2,860 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
-All 1,495 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
-
-
-## Native legacy names and metadata callbacks
-
-Parse names with native ASCII case folding, colon/C-string suffix rules, tile-prefix removal and auxiliary acceptance.
-Expose registry fallback rewriting separately from component-definition precedence and live Item ownership.
-After one redirect and target parsing, execute the target's metadata callback and clear its auxiliary.
-The pinned data requires all 60 callbacks: 38 member-indexed definitions and 22 explicit mappings with 439 values.
-Preserve signed-short arguments, byte guards, signed remainder behavior and default targets.
-Reject metadata that indexes outside native callback storage; complete caller admission still needs implementation.
-
-Complete original parser and registry rewriter provide 2,501 parser controls and 22,917 rewrites after native block/state and ItemRegistry initialization.
-The harness supplies read-only UTF-8 caller backing, allocation and ordinary Windows CRT imports.
-Native game parsing, conversion dispatch/range checks, redirects, callbacks and owned string retirement execute.
-All original input, registry, TLS, static and CRT cleanup completes with no native allocations or held locks.
-Forty-six out-of-storage input combinations remain outside the normal-result corpus.
-See the [name-resolution reference](../../../docs/native-player-inventory.md#native-name-parsing-and-metadata-rewrites) for exact scope and limits.
-
-Live component/member/representative definitions, underlying definition lookup, Item construction, full registry replacement, recipe admission and installed availability remain unfinished.
-
-The packaged core matches all 2,501 parser controls, 22,917 rewrites and 46 explicit unsupported-index guards.
-Nine deliberate parser or callback changes fail native value comparisons.
-The 2,127 alias getter controls and three retained alias regressions also pass, along with the earlier descriptor, counter, search, unlock and progressive comparisons.
-All four builds pass with 2,862 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
-All 1,498 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
+The [name-resolution reference](../../../docs/native-player-inventory.md#native-name-parsing-and-metadata-rewrites) records parser and callback evidence.
+The [constructor reference](../../../docs/native-player-inventory.md#constructor-staging-and-secondary-names) separates staging keys, secondary maps and later block registration.
+A DataDriven class alone does not establish priority-map lookup.
+Complete live definitions, block fallback, recipe admission and installed availability remain unfinished.

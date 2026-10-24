@@ -760,7 +760,7 @@ Empty input produces no query. Invalid or out-of-range numeric suffixes retain t
 The second-field digit test reads a C string from that field's start, including later colon fields until a NUL.
 A namespaced third field accepts a C-locale numeric prefix. It does not require the complete field to be numeric.
 
-`ItemRegistry.rewriteLegacyName` accepts an already parsed query after the caller checks component definitions.
+`ItemRegistry.rewriteLegacyName` accepts an already parsed query after the caller checks the priority name map.
 It applies one name redirect, or the metadata-qualified redirect when no direct redirect exists.
 It parses the redirect target and then applies that target's complex callback.
 It does not follow another name redirect.
@@ -786,7 +786,7 @@ Input, registry, TLS, static and CRT cleanup finishes with no remaining native a
 A separate primitive parser capture also matches 552 controls.
 
 These APIs do not resolve live Item definitions or replace full recipe admission.
-Component-map precedence, ordinary/block definition lookup, member/representative ownership, actual Item construction and complete registry replacement remain unfinished.
+Priority-map precedence, ordinary/fallback definition lookup, member/representative ownership, actual Item construction and complete registry replacement remain unfinished.
 The rich descriptor Registry still requires those inputs before installed availability can use it.
 All four original reports and all five goal areas remain active.
 
@@ -829,7 +829,7 @@ Invalid network ID `-1` also differs from missing construction.
 The Legacy and DataDriven controls retain auto-assigned definitions at IDs 858 and 857, respectively.
 The None control with that ID constructs no definition.
 The invalid stick update preserves the builtin definition at ID 323.
-Repeated constructor declarations retain the first selected class, independently of later declared versions and runtime IDs.
+Repeated custom constructor declarations retain the first selected class in these controls, independently of later declared versions and runtime IDs.
 Four additional definitions remain in the native spare ownership vector, including replaced planks and wood definitions.
 
 A DataDriven class alone does not select the priority name map.
@@ -856,3 +856,47 @@ It must account for constructor order, retained spare definitions, alias lookup 
 Existing wire-ID consumers need an audit before the registry API changes.
 Exact wire admission, recipe contexts, actor ownership, installed screens, physical actions and pixels remain unfinished.
 All four original reports and all five goal areas remain active.
+
+
+## Constructor staging and secondary names
+
+The shared registry foundation now owns the verified parser, alias getters, metadata callbacks and their tests.
+These APIs precede recipe and active-use consumers in the patch stack.
+They preserve their existing runtime behavior. Complete live definition ownership remains unfinished.
+
+The empty-input reference separates three constructor phases.
+The ordinary map first owns air at ID -158. A separate staging map holds 1,241 definitions.
+After the staging drain, block registration creates another 707 definitions.
+The final registry contains all 1,949 definitions in the factory metadata asset. Its constructor counter remains 850.
+These counts describe the recorded version and experiment configuration, rather than normal server packet contents.
+
+Staging keys and canonical definition names differ in 119 entries.
+For example, the raw key `element_39` refers to a definition named `minecraft:element_39`.
+Constructor selection queries the raw staging key. Normalizing these keys together changes that lookup.
+The later block-registration callback also queries current numeric and named owners before it constructs or associates an Item.
+Its remaining predicates and component branches need populated execution coverage before the registry correction can use this phase.
+
+The populated reference supplies 24 explicit typed ItemData registrations and exercises both secondary lookup maps.
+The priority map at `0xd8` registers `test:marker` for the definition named `tile.test:marker`.
+The fallback map at `0x118` registers `test:fallback` for the definition named `test:tile.fallback`.
+The latter definition comes from input `test:tile.tile.fallback`, because parsing removes one local tile prefix.
+The priority map precedes alias rewriting. The fallback map follows ordinary lookup after rewriting.
+These registrations depend on parsed name fields, independently of the DataDriven class.
+
+Native registration and rehash observations also establish the ordinary map's iteration order.
+The hash uses FNV-1 over UTF-8 bytes. Colliding bucket entries precede earlier entries, and a resize regroups the existing sequence.
+Observed bucket counts progress through 8, 64, 512, 1,024 and 2,048.
+The final numeric ownership pass follows this iteration order.
+An independent ordering model matches all 5,868 insertion steps across three complete captures.
+FNV-1a hashing and reversed bucket insertion each fail concrete native comparisons.
+This ordering model is reference evidence, rather than a production registry implementation.
+
+The empty-input capture completes 126 named and 1,965 numeric ItemStack controls.
+The populated capture completes 192 named and 1,995 numeric controls, including priority and fallback lookup.
+Both captures retain original block/state construction, registry construction, ItemStack construction and complete cleanup.
+Neither capture leaves native allocations or held locks.
+The foundation patch also passes its three parser and alias tests before the recipe patch applies.
+After full replay, all four projects pass 2,862 tests with 163 optional skips and no failures or errors.
+Checkstyle passes, and all eight retained packaged comparison suites pass.
+All 1,498 core classes and both registry assets match their embedded add-on and proxy copies.
+All 1,191 client classes match the tested add-on. The patch move preserves the verified runtime implementation.
