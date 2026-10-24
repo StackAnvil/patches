@@ -448,4 +448,38 @@ These structural checks do not establish screen-controller, device or native pix
 The combined build passes 2,745 tests with 163 optional skips.
 Packaged production classes pass three desktop host checks and two real screen interaction regressions.
 Pocket expansion reaches a self-parent in the original `furnace_screen_pocket.json`.
-Neither acquired vanilla UI archive supplies a lower definition for it. Native resolver behavior remains unproven, and the recursion guard is unchanged.
+Neither acquired vanilla UI archive supplies a lower definition for it.
+The native inheritance evidence below supersedes the earlier recursion rejection.
+
+## Native declaration inheritance
+
+Finalize declarations in load order, then expand their controls.
+Retain local values, including nulls, and copy only absent, non-null fields from ancestors.
+Reuse earlier finalized parents. Stop at a missing or visited declaration, including a self reference.
+Keep nested objects and arrays intact. Apply array modifications to a fresh finalized template.
+Export closures in declaration order so transported programs retain the same behavior.
+The native HUD baseline uses the same finalizer.
+Recursive control expansion keeps its separate limits.
+
+Original Bedrock 1.26.51.1 constructor `1403f3f20`, finalizer `14043efd0`, and lookup `1403f69f0` supply the reference results.
+The pinned executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Typed loader-output records cover 250 three-node parent graphs and the exact pocket declaration.
+The 751 lookups match Java directly and after export, for 1,502 comparisons.
+The cases include cycles, absent parents, shallow replacement, explicit nulls, and completed-parent ordering.
+The capture stops at `140440ed0` after inheritance and registry population, before external scheduling and cleanup.
+It supplies allocator, CRT, stack-probe, profiler, and diagnostic boundaries.
+It does not replace inheritance, sorting, visited-state, or lookup routines.
+Resource-loader ordering, complete screen construction, physical input, pixels, and full lifecycle parity remain unproven.
+
+Four new regression tests cover self references, cyclic precedence, null and missing-parent behavior, export order, and long chains.
+The control-recursion regression still rejects unbounded expansion.
+
+The four-project build passes 2,749 tests, with 163 optional skips and no failures or errors.
+Checkstyle passes after the full stack replay.
+All 1,448 core classes match the embedded add-on and proxy copies. All 1,181 client classes match the add-on.
+The packaged core repeats all 1,502 native comparisons with its class origin checked.
+Three deliberate regressions fail: cycle rejection, ignored finalized parents, and reversed export order.
+All six desktop/pocket Furnace, Blast Furnace, and Smoker hosts resolve without missing templates.
+Each host round-trips exactly and passes the shared client scene parser.
+The existing packaged host interaction regressions remain covered by the full client tests.
+The production cooking controller still selects the desktop profile. The private profile projection does not establish device wiring or full screen admission.
