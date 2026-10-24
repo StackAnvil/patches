@@ -743,3 +743,15 @@ Complete native creative-registry construction, content replacement, group/membe
 Typed descriptor conversion, item copies/destruction, diagnostics and ordinary allocator/CRT calls remain supplied boundaries.
 The packaged core matches these controls, and all four builds pass 2,833 tests with 163 optional skips.
 Raw group and category sources are retained; native collection population, evaluators and player screen/input integration remain open.
+
+Native value identity now permits defined zero-quantity catalog icons while ordinary stack-query admission still rejects an empty quantity.
+Creative groups retain their native icon beside the Java presentation.
+The catalog adapter supplies owned row snapshots, retained first-matching entry references, member-count admission and native icon/count header history to the shared collection model.
+Complete original creative registration, item comparison, source assignment, collection ordering and projection execute together in 300 controls.
+Three retained flows also execute native header toggles and refreshes.
+Availability results, typed item backing, item copies/destruction, change notifications and allocator/CRT remain supplied interfaces.
+Progressive frame delivery, actual availability evaluation and the full player controller/screen remain open.
+
+The final four-project build passes 2,838 tests with 163 optional skips and no failures or errors.
+All 1,468 core classes and the factory table match the embedded add-on and proxy copies; all 1,191 client classes match the tested add-on.
+The final packaged core retains all 11,332 prior comparisons and matches the 309 new catalog/collection case and flow steps.
