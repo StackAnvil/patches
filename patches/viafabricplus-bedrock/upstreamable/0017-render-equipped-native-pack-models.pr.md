@@ -62,8 +62,129 @@ The saved CubeCraft pack retains 107 attachables and 24 equipped models, compare
 
 ## Native held equipment
 
-Supported held attachables now render in both first-person and world views. Evaluate authored bone bindings with the equipment slot and handedness. Bind each model to the owner's complete bone matrix. First-person equipment keeps its own playback lifetime.
+Supported held attachables now render in both first-person and world views. Evaluate authored bone bindings with the equipment slot. Bind each model to the owner's complete bone matrix. First-person equipment keeps its own playback lifetime.
 
 Current equipment supplies parent setup before owner animations on every frame. This also restores native armor visibility on ordinary classic skins. First-person bindings check the selected owner's bones before replacing a Java item draw. Unsupported surfaces, enchanted items and banner-pattern items retain Java rendering.
 
-Focused tests cover handedness, spyglass bindings and owner transforms. These checks do not establish complete native item parity.
+Focused tests cover slot selection, spyglass bindings and owner transforms. These checks do not establish complete native item parity.
+
+## Native item-slot bone lookup
+
+The target callback maps `main_hand` to `rightitem` and `off_hand` to `leftitem`.
+It does not inspect handedness after checking that an associated owner exists.
+Other strings pass through unchanged, including body and custom bone names.
+The callback reads the first argument and returns an empty string for missing or non-string arguments.
+Owner animation state remains separate from this lookup.
+
+The previous Java query swapped hand names for left-handed owners and rejected most other slots.
+Both owner setup and attachable evaluation now use the verified native lookup.
+Remove the handedness parameter instead of retaining a second query implementation.
+
+Evidence uses Bedrock 1.26.51.1, build 51061372, protocol 2193, callback `0x1422265b0`.
+The executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+The [Creator query reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions/query_item_slot_to_bone_name)
+describes the query's purpose. The pinned callback establishes the behavior above.
+
+Validation:
+
+- Execute 104 unchanged native callback controls, including absent owners, empty and multiple arguments, both hands, other strings, and numeric values.
+- Supply typed expression results at the native evaluator boundary. Bound error logging and empty temporary cleanup separately.
+- Compare all 52 owner-present native results with the Java query through the optional `STACKANVIL_NATIVE_ATTACHABLE_SLOTS` fixture.
+- Ten focused tests pass without skips. They cover authored query evaluation, numeric rejection, model admission, full matrices, and repeated slot changes.
+- The model regression resolves both hands and a custom slot, then checks the actual bone and drawing matrices across six selections.
+- Three private negative controls reject other names, swap hand bones, or reject additional arguments. Each fails the native comparison; restored code passes.
+- All four builds pass 2,510 tests, with 212 optional skips and no failures or errors. This includes the existing Iris GPU regression.
+- All 1,407 core classes match the add-on and proxy copies. All 1,134 final production client classes match the built add-on.
+
+These checks verify callback semantics and the Java model path.
+They do not establish full native Molang admission, context producers, or binding variable ownership.
+Nested binding transforms, missing-bone behavior, and visible native parity also remain unverified.
+Those remain part of the attachable work. Raw native controls and diagnostic variants remain private.
+
+
+## Share the equipped item scope
+
+Animation, render-controller selection, and bone bindings now use the same sampled scope for each equipped item.
+Previously, controller selection repeated scripts in a second scope, while the global geometry cache retained binding variables for unrelated items.
+Compiled binding definitions now contain no mutable evaluator.
+Binding variables follow the existing owner, slot, item, and perspective playback lifetime.
+Standalone controller selection also supplies its scope when the raw animation graph is unavailable.
+
+Bindings run in authored bone order and require string results.
+The early held-geometry check inspects declared ancestry without running expressions before item initialization.
+The later drawing check still resolves actual owner bones before replacing Java equipment.
+
+Evidence uses the same pinned Bedrock executable identified in the preceding section.
+Resolver `0x141c38f40` derives the child Molang context from the selected component at offset `0x88`.
+Initialization, pre-animation, animation update, and binding evaluation receive that child context.
+Parent setup receives the separate parent context.
+The gate at `0x141c3a5cc` accepts only string values, represented by kind 1.
+
+Twelve bounded instruction controls cover four supplied components, two parent contexts, and value kinds 0, 1, and 2.
+These controls run unchanged argument setup and result-kind instructions.
+Context setup, script dispatch, animation update, and expression evaluation remain explicit return boundaries.
+Component selection and frame locals are supplied inputs.
+This evidence establishes argument identity and the string gate, rather than complete resolver or Molang execution.
+
+Fifteen focused controls pass, including the existing native slot comparison and actual model matrices.
+Four new tests cover shared phase writes, bone order, owner and perspective isolation, replacement, rewind, standalone selection, declaration inspection, and result types.
+Four private diagnostic variants share the first item scope, reorder bones, coerce numeric results, or separate controller state.
+Each variant fails its relevant regression. Restored code passes.
+
+All four builds pass 2,518 tests, with 212 optional skips and no failures or errors.
+The native slot fixture and Iris GPU regression run without skips.
+All 1,410 core classes match both packaged copies. All 1,134 production client classes match the add-on.
+
+The current launcher completes a plain CubeCraft replay with playable spawn, complete payloads, and resource-pack loading.
+Its verification report matches the earlier plain replay, including the unresolved `cubecraft:empty.entity` mapping and overall rendering failure.
+The client records no equipment-evaluation or runtime errors. Build artifact checksums remain unchanged across the run.
+Normal cleanup removes the mutable runtime files and leaves no owned Java or display process.
+These scene checks do not establish native equipment pixel parity.
+
+Native component lifetime, internal controller evaluation, nested binding transforms, missing-bone behavior, and visible parity remain unverified.
+The native instruction controls and diagnostic variants remain private.
+
+
+## Match explicit binding matrices
+
+Explicit bindings now replace the bone transform with the selected owner matrix.
+Previously, Java multiplied the item's unbound global transform into that matrix.
+Authored pivots, rotations, and animation therefore moved the bound item again.
+Bound descendants now select their own owner independently, including beneath singular parents.
+Entity-relative rotation preserves the owner origin and clears its inherited basis.
+The authored Java pose remains available after binding removal.
+
+The same pinned executable supplies the transform evidence:
+
+- Complete bone constructor `0x141c1b620` establishes pivots, relative coordinates, and zero default render offsets.
+- Original rest setup `0x141c32b7a..0x141c32c0b` preserves the Y sign and rotation conversion.
+- Original pose reset `0x141bce57c..0x141bce5af` restores those rest values before supplied animation samples.
+- Owner lookup and copy `0x141c3a65c..0x141c3a8fe` search hashes, copy all sixteen matrix fields, and reset local channels.
+- Complete hierarchy `0x141c22010` and composition `0x141bc3d20` resolve the final matrices.
+
+Ninety-six controls cover three nested binding arrangements, four owner matrix families, optional root bindings, entity-relative rotation, and animation.
+The controls run 288 complete bone constructors and 144 owner lookups with matrix copies.
+They include authored nonzero pivots, ordinary unbound bones, animated ancestors, reflected scale, shear, and singular matrices.
+Parsed definition lookup and empty CRT copies remain explicit boundaries.
+Animation samples, resolved binding names, and owner matrices are supplied inputs.
+Native JSON and Molang parsing, cube assembly, GPU drawing, and pixels do not run in these controls.
+
+Four Java regressions fail against the previous implementation and pass after the correction.
+The native comparison covers complete bone and locator matrices across all 96 controls.
+Other regressions cover actual emitted cube vertices, nested owners, copied-bone ancestors, matrix ownership, repeated binding, and binding removal.
+Four private variants retain local transforms, retain a relative basis, clear an ordinary basis, or chain an independent owner through its parent.
+Each variant fails the native matrix comparison.
+
+All four builds pass 2,522 tests, with 212 optional skips and no failures or errors.
+The native binding fixture, native slot fixture, and Iris GPU regression run without skips.
+All 1,410 core classes match both packaged copies. All 1,134 production client classes match the add-on.
+
+The current add-on completes a plain CubeCraft replay with playable spawn, complete payloads, and resource-pack loading.
+The installed add-on matches the full-build artifact byte for byte.
+Its verification report matches the previous replay, including the unresolved `cubecraft:empty.entity` mapping and overall rendering failure.
+The client records no equipment-evaluation or runtime errors. Build artifact checksums remain unchanged.
+Normal cleanup leaves no owned Java or display process.
+These scene checks do not establish native equipment pixel parity.
+
+Native missing-name behavior, component lifetime, external render-offset producers, full resource admission, native cube assembly, and visible parity remain unverified.
+The original binary, synthetic native fixtures, and diagnostic variants remain private.

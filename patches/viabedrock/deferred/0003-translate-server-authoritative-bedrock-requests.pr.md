@@ -3,6 +3,25 @@
 This patch follows the inventory work owned by [ViaBedrock #276](https://github.com/ViaVersionAddons/ViaBedrock/pull/276).
 It remains deferred until that prerequisite lands.
 
+## Empty display-name components
+
+An empty `minecraft:display_name` component now retains ordinary naming instead of installing a blank Java label.
+The definition accessor applies this rule to resource-pack definitions.
+Registry-owned component descriptions handle network construction and updates.
+An empty upper-pack definition replaces a lower override. Whitespace and later nonempty values remain valid overrides.
+
+Fresh controls on Bedrock 1.26.51.1/build 51061372 execute 1,299 primary-name cases, including ComponentItem getter `0x143fd2be0`.
+The native getter ignores an empty display-name component and retains its ordinary description.
+Typed NBT lookups, custom-name selection, ordinary naming, and three translation-key families execute unchanged.
+Language translation, component lookup, allocation, and runtime services remain supplied boundaries.
+Full specialized-name, secondary-label, language, search-input, and visual parity remain unfinished.
+
+The initial regressions covered repeated network updates and upper-pack precedence across primitive and object component forms.
+The network cases now run through the registry-owned naming checks. This patch retains the pack-precedence check.
+The full 104-patch core stack replays, and all four projects build.
+Verification passes 2,623 tests, with 163 optional skips and no failures or errors.
+All 1,413 packaged core classes match the copies in the add-on and proxy.
+
 ## Brewing stand addressing
 
 The target BDS 1.26.51.1 inventory exposes ingredient slot 0, bottle slots 1 through 3, and fuel slot 4.
@@ -579,3 +598,51 @@ All 102 core patches and 38 client patches replay cleanly. Tooling checks, 264 r
 A fresh strict-BDS ViaProxy run passes both authored chest transfers, ordinary chest transfer, pickup-all, and all three cooking controls.
 Initial join and same-world reconnect also pass. The runner stops its private display normally.
 These controls verify the existing request paths with the rebuilt artifacts. They do not establish authored cooking control or native visual parity.
+
+## Ordinary transfer batches
+
+The request tracker can retain separately scoped ordinary transfers as one pending batch.
+Each request preserves its intermediate prediction. Responses wait for the complete batch and reconcile in request order.
+Reconciliation restores the oldest snapshots and replays accepted deltas before server acknowledgments.
+A later rejection preserves earlier accepted counts and confirmed stack IDs.
+Newer server revisions and replacement menu generations retain their existing protections.
+Queued clicks remain blocked until the batch completes. A rejection discards them.
+
+Eight regressions cover reversed and duplicate responses, queued input, partial and complete rejection, newer contents, menu replacement, registration guards, and failed submission.
+Each buffered response retains its arrival revision, so newer contents supersede an earlier acknowledgment before batch completion.
+Failed packet submission restores the snapshots and releases pending ownership.
+All 22 selected inventory tests pass, and both Checkstyle tasks pass before stack replay.
+
+A fresh pinned native control confirms the false default for `enable_client_container_simulation` and executes the original disabled cooking initializer.
+The controlled input still emits two owned requests in one packet, with the second destination referencing the first request ID.
+The complete native controller, model owner, and independent frame scopes remain unverified.
+This batch API does not activate authored cooking controls. Their backend remains unfinished.
+
+The full four-project build passes 2,399 tests, with 213 optional skips and no failures or errors.
+All 104 core patches replay. Offline validation passes.
+All 1,392 core classes match the add-on's embedded core byte for byte.
+
+
+## Retain native display-name updates
+
+The registry-owned component description path preserves the last display name across omitted or wrongly typed updates.
+Only a valid `StringTag` value replaces it. A valid empty string restores the ordinary description.
+The superseded network-name reader and its three tests have been removed from this patch.
+The remaining item-definition loader handles icons, cooldowns, use metadata, and resource-pack names.
+
+Fresh native 1.26.51.1 controls construct 29 ordered updates for 13 actual component definitions.
+They execute the populated registry initializer, named stack construction, description getter `143fd2be0`, and key method `143fd6ac0`.
+All 13 results now form part of the registry's 23 native description checks.
+All 2,630 static cleanup callbacks complete without owned allocation or lock leaks.
+The registry checks cover the constructor, reader, and fallback phases. Five deliberate regressions fail by assertion.
+
+The controls supply authored ItemData through the real typed vector and registry lifecycle.
+They do not establish normal packet decoding, full native pack/client precedence, language selection, or screen parity.
+The [component naming notes](../upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#component-description-construction-and-conversion) retain the current production path and limits.
+
+
+The earlier reader build passed 2,646 tests, with 163 optional skips and no failures or errors.
+All 104 core and 38 client patches replayed. Its six item-definition checks ran without skips.
+The packaged reader passes the same six tests, with five production class origins verified against the current core JAR.
+All 1,419 core classes match both packaged copies. All 1,139 production client classes match the add-on.
+Tooling, offline tests, and patch metadata checks pass.

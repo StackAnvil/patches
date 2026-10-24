@@ -1,4 +1,4 @@
-From b35a8e52a80c970400c4f65ce906124f49200dda Mon Sep 17 00:00:00 2001
+From 2e9b38e77f0d2e76d29b80e4be170c655057f8c9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] fix(interaction): signal sustained Bedrock item use
@@ -24,19 +24,110 @@ its event. Apply the same method range to Java translation so malformed
 acknowledgments cannot complete a valid active use. Boundary packet tests
 cover negative values, 16, 17, and signed integer extremes. This does not
 resolve local prediction or late acknowledgments for a new same-item use.
+
+Admit food use with the advertised native food component and current
+hunger limits before emitting a transaction or StartUsingItem input. Java
+sends USE_ITEM before its local food predicate, while BDS accepts those
+transactions even after ordinary food reaches full hunger. A target-build
+fixture consumes an extra apple at full hunger without this client gate.
+
+Retain ordered food component updates by connection registry identity.
+Preserve can_always_eat and creative use; do not infer food behavior from
+the mapped Java item or a fixed whitelist. Leave items without advertised
+food data on their existing route. The captured 1.26.51.1 registry contains
+this property for component and legacy foods, including apple, honey,
+chorus fruit and both golden apple variants.
+
+Targeted model and real packet controls verify full-hunger rejection before
+input flags and inventory writes, changed native hunger maxima, always
+edible food, creative use and omitted/replaced registry definitions.
+The source format is also documented by Microsoft's minecraft:food item
+component reference. Full custom item use-cycle and rejection/prediction
+reconciliation remain separate requirements.
+
+Keep unsupported offhand use on its existing container-resynchronization
+path. The new eligibility check applies to the main-hand use transaction.
+Both raw hand paths have targeted packet controls; neither changes the
+canonical selected stack or queues a rejected use flag.
 ---
- .../protocol/packet/InteractionPackets.java   | 40 +++++++-
+ .../protocol/model/ItemFoodProperties.java    | 27 +++++
+ .../protocol/model/ItemRegistry.java          | 14 +++
+ .../protocol/packet/InteractionPackets.java   | 51 +++++++++-
+ .../protocol/rewriter/ItemRewriter.java       | 11 +++
+ .../model/ItemFoodPropertiesTest.java         | 64 ++++++++++++
  .../packet/CompletedItemUsePacketTest.java    | 98 +++++++++++++++++++
+ .../packet/FoodUseAdmissionPacketTest.java    | 98 +++++++++++++++++++
  .../packet/InteractionPacketsTest.java        | 31 ++++++
- 3 files changed, 166 insertions(+), 3 deletions(-)
+ 8 files changed, 391 insertions(+), 3 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemFoodProperties.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemFoodPropertiesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/FoodUseAdmissionPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemFoodProperties.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemFoodProperties.java
+new file mode 100644
+index 000000000..c4e63834c
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemFoodProperties.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.ByteTag;
++import com.viaversion.nbt.tag.CompoundTag;
++
++/** Advertised native food eligibility, independent of the mapped Java item. */
++public record ItemFoodProperties(boolean food, boolean canAlwaysEat) {
++
++    public static final ItemFoodProperties NONE = new ItemFoodProperties(false, false);
++
++    public ItemFoodProperties withComponentData(final CompoundTag components) {
++        if (!(components.get("minecraft:food") instanceof CompoundTag component)) {
++            return this;
++        }
++        return new ItemFoodProperties(true, component.get("can_always_eat") instanceof ByteTag value && value.asByte() != 0);
++    }
++
++    public boolean allowsUse(final float hunger, final float maximumHunger, final boolean creative) {
++        return !this.food || this.canAlwaysEat || creative || hunger < maximumHunger;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
+index 88f258dbb..33a3cd66c 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
+@@ -223,6 +223,20 @@ public final class ItemRegistry {
+         return "item." + Key.stripMinecraftNamespace(identifier);
+     }
+ 
++    /** Food component updates retain omitted components and resolve through the current registry identity. */
++    public Map<String, ItemFoodProperties> foodProperties() {
++        final Map<String, ItemFoodProperties> properties = new HashMap<>();
++        for (final ItemEntry entry : this.registrations) {
++            final CompoundTag data = entry.componentData();
++            if (data != null && data.get("components") instanceof CompoundTag components) {
++                properties.compute(entry.identifier(), (identifier, previous) ->
++                        (previous == null ? ItemFoodProperties.NONE : previous).withComponentData(components));
++            }
++        }
++        properties.keySet().retainAll(this.ids.keySet());
++        return Map.copyOf(properties);
++    }
++
+     public Set<String> componentItems() {
+         final Map<String, ItemVersion> factories = this.factories();
+         return this.ids.keySet().stream().filter(identifier -> factories.get(identifier) == ItemVersion.DataDriven)
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index 023c7c9e6..44ed87e3a 100644
+index 023c7c9e6..1c86f3205 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-@@ -43,6 +43,7 @@ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+@@ -43,10 +43,12 @@ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.data.enums.Direction;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransaction_Type;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
@@ -44,7 +135,12 @@ index 023c7c9e6..44ed87e3a 100644
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
-@@ -55,10 +56,17 @@ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ItemFoodProperties;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
+ import net.raphimc.viabedrock.protocol.storage.BlockInteractionSoundTracker;
+ import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
+@@ -55,10 +57,17 @@ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  
  import java.util.List;
@@ -62,7 +158,7 @@ index 023c7c9e6..44ed87e3a 100644
      private InteractionPackets() {
      }
  
-@@ -225,7 +233,6 @@ public final class InteractionPackets {
+@@ -225,7 +234,6 @@ public final class InteractionPackets {
              wrapper.read(Types.FLOAT); // yaw
              wrapper.read(Types.FLOAT); // pitch
  
@@ -70,9 +166,15 @@ index 023c7c9e6..44ed87e3a 100644
              if (javaHand < 0 || javaHand >= InteractionHand.values().length) {
                  wrapper.cancel();
                  return;
-@@ -247,7 +254,9 @@ public final class InteractionPackets {
+@@ -246,8 +254,15 @@ public final class InteractionPackets {
+                 openBook.send(BedrockProtocol.class);
                  return;
              }
++            if (hand == InteractionHand.MAIN_HAND && !canStartFoodUse(clientPlayer, itemRewriter.foodProperties(usedItem))) {
++                // Java sends USE_ITEM before its local food check. Native clients admit eating before sending.
++                wrapper.cancel();
++                return;
++            }
              final BedrockInventoryTransaction transaction = beginItemUse(clientPlayer, hand,
 -                    inventoryContainer.getSelectedHotbarSlot(), usedItem, itemIdentifier);
 +                    inventoryContainer.getSelectedHotbarSlot(), usedItem, itemIdentifier,
@@ -81,7 +183,7 @@ index 023c7c9e6..44ed87e3a 100644
              if (transaction == null) {
                  wrapper.cancel();
                  if (hand == InteractionHand.OFF_HAND && !"minecraft:shield".equals(itemIdentifier)) {
-@@ -339,6 +348,24 @@ public final class InteractionPackets {
+@@ -339,6 +354,24 @@ public final class InteractionPackets {
                  }
              }
          });
@@ -106,10 +208,15 @@ index 023c7c9e6..44ed87e3a 100644
          protocol.registerClientbound(ClientboundBedrockPackets.SET_ENTITY_LINK, null, wrapper -> {
              wrapper.cancel();
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-@@ -348,6 +375,10 @@ public final class InteractionPackets {
+@@ -348,6 +381,15 @@ public final class InteractionPackets {
  
      }
  
++    static boolean canStartFoodUse(final ClientPlayerEntity player, final ItemFoodProperties food) {
++        final var hunger = player.attributes().get("minecraft:player.hunger");
++        return hunger == null || food.allowsUse(hunger.computeClampedValue(), hunger.computeMaxValue(), player.javaGameMode() == GameMode.CREATIVE);
++    }
++
 +    static boolean isContinuousUseItem(final String identifier, final Set<String> tags) {
 +        return identifier != null && (tags.contains("minecraft:is_food") || CONTINUOUS_USE_ITEMS.contains(identifier));
 +    }
@@ -117,7 +224,7 @@ index 023c7c9e6..44ed87e3a 100644
      static void sendPassengerUpdates(final PacketWrapper source, final EntityTracker entityTracker) {
          for (Entity vehicle : entityTracker.drainPassengerUpdates()) {
              final PacketWrapper passengersPacket = PacketWrapper.create(ClientboundPackets26_3.SET_PASSENGERS,
-@@ -369,7 +400,7 @@ public final class InteractionPackets {
+@@ -369,7 +411,7 @@ public final class InteractionPackets {
  
      static BedrockInventoryTransaction beginItemUse(final ClientPlayerEntity player,
              final InteractionHand hand, final int hotbarSlot, final BedrockItem item,
@@ -126,7 +233,7 @@ index 023c7c9e6..44ed87e3a 100644
          if (item.isEmpty()) {
              return null;
          }
-@@ -381,6 +412,9 @@ public final class InteractionPackets {
+@@ -381,6 +423,9 @@ public final class InteractionPackets {
              return null;
          }
          player.setShieldBlockingHand(null);
@@ -136,6 +243,119 @@ index 023c7c9e6..44ed87e3a 100644
          return new BedrockInventoryTransaction(
                  0, null, null, ComplexInventoryTransaction_Type.ItemUseTransaction,
                  new InventoryTransactionData.UseItemTransactionData(
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+index 9eb3fb9fe..ef32aca46 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+@@ -59,6 +59,7 @@ import net.raphimc.viabedrock.protocol.model.ItemStackingProperties;
+ import net.raphimc.viabedrock.protocol.model.ItemCookingProperties;
+ import net.raphimc.viabedrock.protocol.model.ItemCooldown;
+ import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
++import net.raphimc.viabedrock.protocol.model.ItemFoodProperties;
+ import net.raphimc.viabedrock.protocol.model.ItemArmorData;
+ import net.raphimc.viabedrock.protocol.model.ItemUseModifiers;
+ import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
+@@ -85,6 +86,7 @@ import java.util.logging.Level;
+ public class ItemRewriter extends StoredObject implements NetworkItemStackContext {
+ 
+     private final ItemRegistry registry;
++    private final Map<String, ItemFoodProperties> foodProperties;
+ 
+     private final Map<String, ItemAnimationData> animationData = new HashMap<>();
+     private final Map<String, ItemArmorData> armorData = new HashMap<>();
+@@ -126,6 +128,14 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+         return this.armorData.getOrDefault(identifier, ItemArmorData.vanilla(identifier));
+     }
+ 
++    public ItemFoodProperties foodProperties(final BedrockItem item) {
++        if (item == null || item.isEmpty()) {
++            return ItemFoodProperties.NONE;
++        }
++        final String identifier = this.items.inverse().get(item.identifier());
++        return identifier == null ? ItemFoodProperties.NONE : this.foodProperties.getOrDefault(identifier, ItemFoodProperties.NONE);
++    }
++
+     public ItemUseModifiers useModifiers(final BedrockItem item) {
+         final String identifier = this.items.inverse().get(item.identifier());
+         if ("minecraft:shield".equals(identifier)) {
+@@ -144,6 +154,7 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+         super(user);
+ 
+         this.registry = new ItemRegistry(itemEntries);
++        this.foodProperties = this.registry.foodProperties();
+         this.items = this.registry.ids();
+         this.componentItems = this.registry.componentItems();
+         this.stackingProperties = this.registry.stackingProperties();
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemFoodPropertiesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemFoodPropertiesTest.java
+new file mode 100644
+index 000000000..cb86b0a5c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemFoodPropertiesTest.java
+@@ -0,0 +1,64 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ItemFoodPropertiesTest {
++
++    @Test
++    void preservesOmittedComponentsAndAppliesCurrentDefinitionUpdates() {
++        final CompoundTag components = new CompoundTag();
++        final CompoundTag food = new CompoundTag();
++        components.put("minecraft:food", food);
++        final var ordinary = ItemFoodProperties.NONE.withComponentData(components);
++        assertTrue(ordinary.food());
++        assertFalse(ordinary.canAlwaysEat());
++        assertSame(ordinary, ordinary.withComponentData(new CompoundTag()));
++        food.putBoolean("can_always_eat", true);
++        final var always = ordinary.withComponentData(components);
++        assertTrue(always.canAlwaysEat());
++        food.remove("can_always_eat");
++        assertFalse(always.withComponentData(components).canAlwaysEat());
++    }
++
++    @Test
++    void comparesNativeHungerLimitsWithoutRestrictingCreativeOrAlwaysEdibleFood() {
++        final var food = new ItemFoodProperties(true, false);
++        assertFalse(food.allowsUse(20F, 20F, false));
++        assertTrue(food.allowsUse(Math.nextDown(20F), 20F, false));
++        assertFalse(food.allowsUse(12F, 12F, false));
++        assertTrue(food.allowsUse(20F, 20F, true));
++        assertTrue(new ItemFoodProperties(true, true).allowsUse(20F, 20F, false));
++        assertTrue(ItemFoodProperties.NONE.allowsUse(20F, 20F, false));
++    }
++
++    @Test
++    void retainsFoodAcrossOmittedUpdatesAndDropsDefinitionsThatLoseTheirRegistryIdentity() {
++        final CompoundTag components = new CompoundTag();
++        final CompoundTag food = new CompoundTag();
++        food.putBoolean("can_always_eat", true);
++        components.put("minecraft:food", food);
++        final CompoundTag data = new CompoundTag();
++        data.put("components", components);
++        final var registry = new ItemRegistry(new ItemEntry[]{
++            new ItemEntry("test:first", 1, true, ItemVersion.DataDriven, data),
++            new ItemEntry("test:first", 2, true, ItemVersion.None, new CompoundTag()),
++            new ItemEntry("test:second", 1, true, ItemVersion.DataDriven, null)
++        });
++        assertEquals(new ItemFoodProperties(true, true), registry.foodProperties().get("test:first"));
++        final var replaced = new ItemRegistry(new ItemEntry[]{
++            new ItemEntry("test:first", 1, true, ItemVersion.DataDriven, data),
++            new ItemEntry("test:second", 1, true, ItemVersion.DataDriven, null)
++        });
++        assertFalse(replaced.foodProperties().containsKey("test:first"));
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java
 new file mode 100644
 index 000000000..45f4a6a31
@@ -234,6 +454,110 @@ index 000000000..45f4a6a31
 +
 +        private void translate(final PacketWrapper packet) throws Exception {
 +            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/FoodUseAdmissionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/FoodUseAdmissionPacketTest.java
+new file mode 100644
+index 000000000..2a897a27c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/FoodUseAdmissionPacketTest.java
+@@ -0,0 +1,98 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.google.common.collect.ImmutableBiMap;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ItemFoodProperties;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import io.netty.buffer.Unpooled;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.EnumSource;
++
++import java.lang.reflect.Proxy;
++import java.util.HashMap;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class FoodUseAdmissionPacketTest {
++
++    @ParameterizedTest
++    @EnumSource(InteractionHand.class)
++    void rejectsFullHungerUseWithoutLosingOffhandResynchronization(final InteractionHand hand) throws Exception {
++        final Map<Class<?>, Object> stores = new HashMap<>();
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> method.getName().equals("get") ? stores.get(args[0]) : null);
++        final EntityTracker entities = new EntityTracker(user);
++        stores.put(EntityTracker.class, entities);
++        final var player = entities.addEntity(new ClientPlayerEntity(user, 1, UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0)), false);
++        stores.put(InventoryRequestTracker.class, new InventoryRequestTracker(user) {
++            @Override
++            public boolean isPredictingClick() {
++                return true;
++            }
++        });
++        final var inventory = new InventoryTracker(user);
++        stores.put(InventoryTracker.class, inventory);
++        final var held = new BedrockItem(1);
++        held.setAmount(8);
++        inventory.getInventoryContainer().setItem(0, held);
++        inventory.getOffhandContainer().setItem(0, held);
++        final var items = mock(ItemRewriter.class);
++        when(items.getItems()).thenReturn(hand == InteractionHand.MAIN_HAND ? ImmutableBiMap.of("test:food", 1) : ImmutableBiMap.of());
++        when(items.foodProperties(held)).thenReturn(new ItemFoodProperties(true, false));
++        stores.put(ItemRewriter.class, items);
++        final var input = Unpooled.buffer();
++        try (var packets = mockStatic(PacketFactory.class)) {
++            Types.VAR_INT.writePrimitive(input, hand.ordinal());
++            Types.VAR_INT.writePrimitive(input, 1);
++            input.writeFloat(0F).writeFloat(0F);
++            final var packet = new PacketWrapperImpl(ServerboundPackets26_3.USE_ITEM, input, user);
++            new TestProtocol().translate(packet);
++            assertTrue(packet.isCancelled());
++            assertFalse(input.isReadable());
++            assertTrue(player.authInputData().isEmpty());
++            assertEquals(8, held.amount());
++            if (hand == InteractionHand.OFF_HAND) {
++                packets.verify(() -> PacketFactory.sendJavaContainerSetContent(user, inventory.getInventoryContainer()));
++            } else {
++                packets.verifyNoInteractions();
++            }
++        } finally {
++            input.release();
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private TestProtocol() {
++            InteractionPackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.serverboundMappings.mappedPacket(State.PLAY, packet.getId());
 +            mapping.applyType(packet);
 +            mapping.handler().handle(packet);
 +        }

@@ -1093,3 +1093,11 @@ Equipment setup runs after the owner's per-frame resets and before its animation
 ## Upstream prerequisites
 
 - [viafabricplus-bedrock patch](../../viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md): Land shared actor and resource playback before account appearance selection.
+
+## Refresh attached player particle inputs
+
+Attached player particles sample current common actor inputs and native properties independently of the next body render.
+The existing locator pose and unrelated graph inputs remain available.
+A changed native lifetime retires the binding before metadata can come from another owner.
+Actor removal with the same retained registry owner keeps its existing path.
+See the [shared runtime evidence](0008-share-native-actor-and-resource-runtime.pr.md#fresh-common-particle-actor-inputs) for tested queries, native boundaries, and remaining limits.

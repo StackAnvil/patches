@@ -46,7 +46,11 @@ import {
 } from "./native-offline.ts";
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
-import { cleanupReplaySession } from "./session-cleanup.ts";
+import {
+  cleanupReplaySession,
+  requestReplayJavaStop,
+  stopReplayJavaProcesses,
+} from "./session-cleanup.ts";
 import { hiveTarget, publicTarget } from "./targets.ts";
 import {
   hasGameplayAcknowledgments,
@@ -243,6 +247,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
         "MixinReplayCamera",
         "MixinPlayerFrame",
         "MixinMovementAudit",
+        "MixinClientShutdown",
       ],
     }),
     { mode: 0o600 },
@@ -574,20 +579,12 @@ async function launchNative(
   return { pid: child.pid, log };
 }
 
-async function stopAll(gamePid?: number): Promise<void> {
+async function stopAll(directory: string, gamePid?: number): Promise<void> {
   if (javaCleanup) {
-    javaCleanup.captureDescendants();
-    if (gamePid) javaCleanup.signal(gamePid, "SIGTERM");
-    for (const identity of javaCleanup.all().toReversed())
-      javaCleanup.signal(identity.pid, "SIGTERM");
-    const until = Date.now() + 15_000;
-    while (
-      Date.now() < until &&
-      javaCleanup.all().some((identity) => javaCleanup!.alive(identity.pid))
-    )
-      await Bun.sleep(100);
-    if (javaCleanup.all().some((identity) => javaCleanup!.alive(identity.pid)))
-      throw new Error("Owned Java processes did not stop normally; forced cleanup refused.");
+    const processes = javaCleanup;
+    await stopReplayJavaProcesses(processes, gamePid, undefined, () =>
+      requestReplayJavaStop(directory, () => processes.signal(gamePid!, "SIGTERM")),
+    );
     return;
   }
   if (nativeClient && alive(nativeClient.pid)) {
@@ -973,7 +970,7 @@ Live add-on recordings accept --allow-transfers to save each connection separate
               { mode: 0o600 },
             );
         },
-        stopProcesses: () => stopAll(gamePid),
+        stopProcesses: () => stopAll(directory, gamePid),
         releaseDependencies: async () => {
           if (javaDataCleanup) {
             await javaDataCleanup();

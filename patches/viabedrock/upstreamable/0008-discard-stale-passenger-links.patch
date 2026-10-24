@@ -1,4 +1,4 @@
-From b3b17a97e3c30fae117181281011619ef91392f4 Mon Sep 17 00:00:00 2001
+From fe7f650a1e0902cd70d80c02045937d26af16af1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:33 +0200
 Subject: [PATCH] fix(entities): resolve and order Bedrock passenger links
@@ -12,17 +12,48 @@ On unlink or vehicle removal, seed the player position from the vehicle and sche
 Retain the resolved mount for remote passengers as well as the local player, and clear it when a mount changes, unlinks or disappears. Expose the optional finite native rider vector at metadata 56 without replacing absent anchors with a zero vector. Sparse metadata already retains this value independently of passenger-link order.
 
 The licensed Bedrock 1.26.51.1 protocol 2193 Hive recording sends player rider anchors [0,1.72,-0.1]. Two separately rotated chairs place the player source eye at vehicle position plus this vector rotated by negative vehicle yaw, with less than 1e-7 position error. The vector is in native actor-origin units; Java adapters must subtract the passenger eye offset once. Core link and metadata retention supports the native client adapter; ordinary Java clients behind ViaProxy still use Java passenger attachments unless an adapter receives these native inputs.
+
+Ignore unknown link roles before changing pending relationships, and skip
+mounting for an already-listed passenger. Both accepted link roles use the
+same native insertion rule: a new player precedes a resolved non-player
+first passenger, while an existing first player or unresolved first
+passenger retains its place. Other passengers append. Reject self-mounts
+before retaining a link. Wire role 1 is not a seat-promotion request.
+
+The pinned 1.26.51.1 client constructs packet 41 at 1416b5540. Dispatcher
+141733530 reaches receiver 1413456e0 and ActorLinkQueueComponent. Native
+consumer 145947f80 checks the real actor unique ID and vehicle component
+before start-riding, angular-velocity and locator updates. Its complete
+instruction fixture covers 160 cases, with world actor lookup and mounting
+or removal side effects supplied at the fixture boundary.
+
+Base Actor insertion 1419fe0f0 and Mob wrapper 14207d700 match 224 complete
+instruction cases. Both PassengerComponent back-references and vehicle
+vector mutations execute natively, including empty, full, spare and aligned
+allocation cases. Actual Actor and Player constructor flag-writing segments
+bind player priority to actor kind. Four complete start-riding controls
+reject self-mounts. Core matches 40 resolved membership cases and both link
+roles across 448 insertion comparisons.
+
+Native executable SHA-256:
+537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7.
+The has_rider getter separately passes 288 native contexts, including
+unresolved members. Java resolved passengers are not a proven replacement
+for that raw component. Typed component stores and storage factories are
+fixture inputs; unrelated position, notification and event effects remain
+boundaries. Queue timing, derived vehicle overrides, full cycle handling,
+removal lifetimes and mounted-camera rendering remain separate work.
 ---
- .../api/model/entity/ClientPlayerEntity.java  |  17 +++
- .../viabedrock/api/model/entity/Entity.java   |  15 ++
+ .../api/model/entity/ClientPlayerEntity.java  |  17 ++
+ .../viabedrock/api/model/entity/Entity.java   |  15 +
  .../protocol/PlayerActionPacketFactory.java   |   9 +-
  .../protocol/packet/EntityPackets.java        |  12 +-
- .../protocol/packet/InteractionPackets.java   |  65 +++------
+ .../protocol/packet/InteractionPackets.java   |  65 ++--
  .../protocol/packet/OtherPlayerPackets.java   |   7 +-
- .../protocol/storage/EntityTracker.java       | 120 +++++++++++++++-
- .../api/model/entity/EntityRiderSeatTest.java |  36 +++++
- .../protocol/storage/EntityTrackerTest.java   | 131 ++++++++++++++++++
- 9 files changed, 363 insertions(+), 49 deletions(-)
+ .../protocol/storage/EntityTracker.java       | 126 +++++++-
+ .../api/model/entity/EntityRiderSeatTest.java |  36 +++
+ .../protocol/storage/EntityTrackerTest.java   | 278 ++++++++++++++++++
+ 9 files changed, 516 insertions(+), 49 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityRiderSeatTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
 
@@ -276,7 +307,7 @@ index a906dcd80..931d0cbbd 100644
          protocol.registerClientbound(ClientboundBedrockPackets.MOVE_PLAYER, ClientboundPackets26_3.ENTITY_POSITION_SYNC, wrapper -> {
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-index aebd19b61..e00b8b176 100644
+index aebd19b61..6b6fb7ffe 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 @@ -43,11 +43,18 @@ import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
@@ -333,7 +364,7 @@ index aebd19b61..e00b8b176 100644
          return entity;
      }
  
-@@ -119,9 +131,112 @@ public class EntityTracker extends StoredObject {
+@@ -119,9 +131,118 @@ public class EntityTracker extends StoredObject {
          this.entities.remove(entity.uniqueId());
          this.runtimeIdToUniqueId.remove(entity.runtimeId());
          this.javaIdToUniqueId.remove(entity.javaId());
@@ -356,6 +387,12 @@ index aebd19b61..e00b8b176 100644
      }
  
 +    public void applyEntityLink(final EntityLink link) {
++        if (link.type() == null) {
++            return;
++        }
++        if (link.type() != ActorLinkType.None && link.fromEntityUniqueId() == link.toEntityUniqueId()) {
++            return;
++        }
 +        final LinkKey key = new LinkKey(link.fromEntityUniqueId(), link.toEntityUniqueId());
 +        this.pendingEntityLinks.remove(key);
 +        if (link.type() == ActorLinkType.None) {
@@ -383,7 +420,7 @@ index aebd19b61..e00b8b176 100644
 +            this.pendingEntityLinks.put(key, link);
 +            return;
 +        }
-+        this.applyResolvedEntityLink(vehicle, passenger, link.type());
++        this.applyResolvedEntityLink(vehicle, passenger);
 +    }
 +
 +    public List<Entity> drainPassengerUpdates() {
@@ -406,27 +443,27 @@ index aebd19b61..e00b8b176 100644
 +            final Entity passenger = this.getEntityByUid(link.toEntityUniqueId());
 +            if (vehicle != null && passenger != null) {
 +                links.remove();
-+                this.applyResolvedEntityLink(vehicle, passenger, link.type());
++                this.applyResolvedEntityLink(vehicle, passenger);
 +            }
 +        }
 +    }
 +
-+    private void applyResolvedEntityLink(final Entity vehicle, final Entity passenger,
-+                                         final ActorLinkType type) {
++    private void applyResolvedEntityLink(final Entity vehicle, final Entity passenger) {
++        if (vehicle.passengers().contains(passenger.uniqueId())) {
++            return;
++        }
 +        final Entity previousVehicle = this.getEntityByRid(passenger.mountEntityRuntimeId());
 +        if (previousVehicle != null && previousVehicle != vehicle) {
 +            previousVehicle.removePassenger(passenger.uniqueId());
 +            this.passengerUpdates.add(previousVehicle.uniqueId());
 +        }
-+        final List<Long> previousPassengers = List.copyOf(vehicle.passengers());
-+        if (type == ActorLinkType.Riding) {
++        final Entity firstPassenger = vehicle.passengers().isEmpty() ? null : this.getEntityByUid(vehicle.passengers().getFirst());
++        if (passenger instanceof PlayerEntity && firstPassenger != null && !(firstPassenger instanceof PlayerEntity)) {
 +            vehicle.addPrimaryPassenger(passenger.uniqueId());
 +        } else {
 +            vehicle.addPassenger(passenger.uniqueId());
 +        }
-+        if (!vehicle.passengers().equals(previousPassengers)) {
-+            this.passengerUpdates.add(vehicle.uniqueId());
-+        }
++        this.passengerUpdates.add(vehicle.uniqueId());
 +        passenger.setMountEntityRuntimeId(vehicle.runtimeId());
 +    }
 +
@@ -446,7 +483,7 @@ index aebd19b61..e00b8b176 100644
      public void spawnItemFrame(final BlockPosition position, final BlockState blockState) {
          this.removeItemFrame(position);
  
-@@ -240,6 +355,9 @@ public class EntityTracker extends StoredObject {
+@@ -240,6 +361,9 @@ public class EntityTracker extends StoredObject {
          return this.idCounter.getAndIncrement();
      }
  
@@ -500,10 +537,10 @@ index 000000000..25f752186
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
 new file mode 100644
-index 000000000..004043a37
+index 000000000..f618cb94a
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,278 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -519,18 +556,24 @@ index 000000000..004043a37
 +import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
 +import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 +import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorLinkType;
 +import net.raphimc.viabedrock.protocol.model.EntityLink;
 +import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
 +import org.junit.jupiter.api.Test;
 +
++import java.io.IOException;
 +import java.lang.reflect.Proxy;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
 +import java.util.List;
 +import java.util.UUID;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +import static org.junit.jupiter.api.Assertions.assertSame;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
 +
 +class EntityTrackerTest {
 +
@@ -582,7 +625,7 @@ index 000000000..004043a37
 +    }
 +
 +    @Test
-+    void riderPrecedesPassengerRegardlessOfLinkArrivalOrder() {
++    void nonPlayerRidersRetainTheirArrivalOrder() {
 +        final EntityTracker tracker = new EntityTracker(user());
 +        final Entity vehicle = tracker.addEntity(10, 100, EntityTypes26_3.OAK_BOAT.identifier(), EntityTypes26_3.OAK_BOAT);
 +        tracker.addEntity(11, 101, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
@@ -592,7 +635,7 @@ index 000000000..004043a37
 +        tracker.applyEntityLink(link(10, 12, ActorLinkType.Riding));
 +        tracker.applyEntityLink(link(10, 12, ActorLinkType.Riding));
 +
-+        assertEquals(List.of(12L, 11L), vehicle.passengers());
++        assertEquals(List.of(11L, 12L), vehicle.passengers());
 +    }
 +
 +    @Test
@@ -623,6 +666,147 @@ index 000000000..004043a37
 +        assertEquals(second.runtimeId(), passenger.mountEntityRuntimeId());
 +        tracker.removeEntity(second);
 +        assertEquals(-1, passenger.mountEntityRuntimeId());
++    }
++
++    @Test
++    void repeatedRiderLinkPreservesExistingSeatOwnership() {
++        final UserConnection user = user();
++        final EntityTracker tracker = new EntityTracker(user);
++        final Entity vehicle = tracker.addEntity(10, 100, EntityTypes26_3.OAK_BOAT.identifier(), EntityTypes26_3.OAK_BOAT);
++        final Entity first = actor(tracker, user, 11, false);
++        final Entity second = actor(tracker, user, 12, true);
++        vehicle.addPassenger(first.uniqueId());
++        vehicle.addPassenger(second.uniqueId());
++        first.setMountEntityRuntimeId(vehicle.runtimeId());
++        second.setMountEntityRuntimeId(vehicle.runtimeId());
++
++        tracker.applyEntityLink(link(10, 12, ActorLinkType.Riding));
++
++        assertEquals(List.of(first.uniqueId(), second.uniqueId()), vehicle.passengers());
++        assertEquals(vehicle.runtimeId(), first.mountEntityRuntimeId());
++        assertEquals(vehicle.runtimeId(), second.mountEntityRuntimeId());
++        assertEquals(List.of(), tracker.drainPassengerUpdates());
++    }
++
++    @Test
++    void unknownRoleCannotCreateOrReplacePendingMembership() {
++        final EntityTracker tracker = new EntityTracker(user());
++        final Entity vehicle = tracker.addEntity(10, 100, EntityTypes26_3.OAK_BOAT.identifier(), EntityTypes26_3.OAK_BOAT);
++        tracker.applyEntityLink(link(10, 11, ActorLinkType.Riding));
++        tracker.applyEntityLink(link(10, 11, null));
++        tracker.applyEntityLink(link(10, 12, null));
++
++        final Entity rider = tracker.addEntity(11, 101, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        final Entity unrelated = tracker.addEntity(12, 102, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        tracker.drainPassengerUpdates();
++        tracker.applyEntityLink(link(10, 12, null));
++
++        assertEquals(List.of(rider.uniqueId()), vehicle.passengers());
++        assertEquals(vehicle.runtimeId(), rider.mountEntityRuntimeId());
++        assertEquals(-1, unrelated.mountEntityRuntimeId());
++        assertEquals(List.of(), tracker.drainPassengerUpdates());
++    }
++
++    @Test
++    void matchesNativeResolvedMembershipDecisions() throws IOException {
++        final String fixture = System.getenv("STACKANVIL_NATIVE_ENTITY_LINKS");
++        assumeTrue(fixture != null);
++        final List<String> cases = Files.readAllLines(Path.of(fixture));
++        int compared = 0;
++        for (final String line : cases.subList(1, cases.size())) {
++            final String[] sample = line.split("\t");
++            final EntityTracker tracker = new EntityTracker(user());
++            final Entity vehicle = tracker.addEntity(101, 1001, EntityTypes26_3.OAK_BOAT.identifier(), EntityTypes26_3.OAK_BOAT);
++            final Entity passenger = tracker.addEntity(202, 2002, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++            final boolean member = Integer.parseInt(sample[0]) != 0;
++            if (member) {
++                vehicle.addPassenger(passenger.uniqueId());
++                passenger.setMountEntityRuntimeId(vehicle.runtimeId());
++            }
++            final boolean added = Integer.parseInt(sample[4]) != 0;
++            final boolean removed = Integer.parseInt(sample[5]) != 0;
++
++            tracker.applyEntityLink(new EntityLink(vehicle.uniqueId(), passenger.uniqueId(),
++                    ActorLinkType.getByValue(Integer.parseInt(sample[1])), Integer.parseInt(sample[2]) != 0,
++                    Integer.parseInt(sample[3]) != 0, 1.25F));
++
++            final boolean retained = added || member && !removed;
++            assertEquals(retained ? List.of(passenger.uniqueId()) : List.of(), vehicle.passengers());
++            assertEquals(retained ? vehicle.runtimeId() : -1, passenger.mountEntityRuntimeId());
++            assertEquals(added || removed ? List.of(vehicle) : List.of(), tracker.drainPassengerUpdates());
++            compared++;
++        }
++        assertEquals(40, compared);
++    }
++
++    @Test
++    void playerPrecedesNonPlayerWithoutReplacingAnExistingPlayer() {
++        final UserConnection user = user();
++        final EntityTracker tracker = new EntityTracker(user);
++        final Entity vehicle = tracker.addEntity(10, 100, EntityTypes26_3.OAK_BOAT.identifier(), EntityTypes26_3.OAK_BOAT);
++        actor(tracker, user, 11, false);
++        actor(tracker, user, 12, true);
++        actor(tracker, user, 13, true);
++        tracker.applyEntityLink(link(10, 11, ActorLinkType.Passenger));
++        tracker.applyEntityLink(link(10, 12, ActorLinkType.Passenger));
++        assertEquals(List.of(12L, 11L), vehicle.passengers());
++
++        tracker.applyEntityLink(link(10, 13, ActorLinkType.Riding));
++
++        assertEquals(List.of(12L, 11L, 13L), vehicle.passengers());
++    }
++
++    @Test
++    void selfMountCannotBecomePendingOrResolvedMembership() {
++        final EntityTracker tracker = new EntityTracker(user());
++        tracker.applyEntityLink(link(10, 10, ActorLinkType.Riding));
++        final Entity actor = tracker.addEntity(10, 100, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        tracker.applyEntityLink(link(10, 10, ActorLinkType.Passenger));
++
++        assertEquals(List.of(), actor.passengers());
++        assertEquals(-1, actor.mountEntityRuntimeId());
++        assertEquals(List.of(), tracker.drainPassengerUpdates());
++    }
++
++    @Test
++    void matchesNativeSeatInsertionsForBothLinkRoles() throws IOException {
++        final String fixture = System.getenv("STACKANVIL_NATIVE_SEAT_INSERTIONS");
++        assumeTrue(fixture != null);
++        final List<String> cases = Files.readAllLines(Path.of(fixture));
++        int compared = 0;
++        for (final String line : cases.subList(1, cases.size())) {
++            final String[] sample = line.split("\t");
++            for (final ActorLinkType role : List.of(ActorLinkType.Riding, ActorLinkType.Passenger)) {
++                final UserConnection user = user();
++                final EntityTracker tracker = new EntityTracker(user);
++                final Entity vehicle = tracker.addEntity(101, 1101, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++                final Entity passenger = actor(tracker, user, 202, Integer.parseInt(sample[0]) != 0);
++                final List<Long> expected = new ArrayList<>();
++                for (int i = 0; i < Integer.parseInt(sample[3]); i++) {
++                    final long id = 203L + i;
++                    expected.add(id);
++                    if (Integer.parseInt(sample[2]) != 0) {
++                        actor(tracker, user, id, i == 0 && Integer.parseInt(sample[1]) != 0);
++                    }
++                    vehicle.addPassenger(id);
++                }
++                expected.add(Integer.parseInt(sample[4]), passenger.uniqueId());
++
++                tracker.applyEntityLink(link(vehicle.uniqueId(), passenger.uniqueId(), role));
++
++                assertEquals(expected, vehicle.passengers());
++                assertEquals(vehicle.runtimeId(), passenger.mountEntityRuntimeId());
++                assertEquals(List.of(vehicle), tracker.drainPassengerUpdates());
++                compared++;
++            }
++        }
++        assertEquals(448, compared);
++    }
++
++    private static Entity actor(final EntityTracker tracker, final UserConnection user, final long id, final boolean player) {
++        return player ? tracker.addEntity(new PlayerEntity(user, id + 1000, tracker.getNextJavaEntityId(), UUID.randomUUID(),
++                new PlayerAbilities(id, (byte) 0, (byte) 0)), false)
++                : tracker.addEntity(id, id + 1000, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
 +    }
 +
 +    private static EntityLink link(final long vehicle, final long passenger, final ActorLinkType type) {

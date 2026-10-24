@@ -87,3 +87,9 @@ The observer sees both sitting and standing flags, with one selected draw per ac
 Sitting observations are brief, so this run does not establish complete sit-down or stand-up timing.
 Both clients and BDS instances exit normally, and the original fixture script is restored.
 Raw recordings, screenshots and native assets remain private.
+
+## Refresh attached world-actor particle inputs
+
+Bound world-actor particles sample current common actor inputs and native metadata independently of another body submission.
+The existing resource and actor lifetime guards, locator pose, and unrelated graph inputs remain available.
+See the [shared runtime evidence](0008-share-native-actor-and-resource-runtime.pr.md#fresh-common-particle-actor-inputs) for tested queries, native boundaries, and remaining limits.

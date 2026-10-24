@@ -1,4 +1,4 @@
-From 3ec10265e21d4608b57adfd56e6744bc70bd603c Mon Sep 17 00:00:00 2001
+From 4f0c277ce5d14b588e0410d37285f15a25c64414 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] fix(entities): preserve Bedrock spatial updates
@@ -16,16 +16,148 @@ Mojang 1.26.51 metadata archive establishes the field order and omission
 of the tick carried by SetActorMotion. Registered-handler tests verify
 the encoded Java packet, unsigned runtime IDs, ground transitions, and
 removed actors without replacing their positions.
+
+Keep the last received movement packet position and rotation separate
+from the mutable actor transform. Native delta handler 14133ef30 merges
+omitted fields from the cached absolute payload, and publisher 14103f580
+writes that cache before its ignored-local-transform guard. Live
+prediction or other actor writes must not become received packet data.
+
+Retain both absolute and sparse updates before local admission. Preserve
+the initial actor placement as the bootstrap, then retain all six spatial
+fields exclusively through these movement packets. A removed actor has
+no cache update; a replacement actor owns separate state.
+
+The matching Bedrock 1.26.51.1 executable/protocol2193 passes 512 fresh
+handler/publisher controls over all six omission bits, ground states,
+distinct live positions and removed actors. Registered Java handler tests
+compare the native outputs and verify independent live state and encoded
+remote positions/rotations. These cases do not establish complete actor
+construction, interpolation ticking, all lifetimes or full trajectories.
+
+Seed received angles with the native spawn bootstrap's wrapped byte
+conversion. Native helper 14103ff60 normalizes each float angle, divides
+by 360 and multiplies by 256 before truncating to a signed byte. Retaining
+the original spawn floats changes omitted angles in the first sparse
+packet. Keep the live spawn rotation independent from this packed cache.
+
+Original inline proxy initializers, spawn bootstrap and sparse handlers
+pass 1024 additional controls, including wrap boundaries and large finite
+angles. Actual registered Java handlers match their position and angle
+outputs. Both deliberate regressions, full-float retention and unwrapped
+byte conversion, fail the mandatory and native-reference comparisons.
+Surrounding spawn flow and allocation, complete interpolation phases and
+native trajectories remain separate verification requirements.
+
+Retain movement flags and every unsigned 64-bit interpolation-duration
+bit with the received packet cache, including updates ignored by local
+transform admission. Native delta handler 14133ef30 creates an absolute
+payload with high flag bits set, explicit ground/teleport/local-force/
+force-completion bits and the complete duration. Absolute packets replace
+that metadata with their wire flags and native zero duration. The spawn
+bootstrap preserves constructor flags and duration. Do not narrow the
+counter source before native target construction consumes it.
+
+Another 192 original handler/publisher controls cover force completion,
+ground state, removed actors and unsigned durations through UINT64_MAX.
+Registered Java handlers match the received metadata and spatial fields.
+Both duration truncation and dropped force completion fail the mandatory
+regression and native comparison. Full interpolation target application,
+normal phases, actor ownership and native trajectories remain unfinished.
 ---
- .../protocol/packet/EntityPackets.java        |  49 +++++----
- .../packet/EntityMovementPacketsTest.java     |  30 +++++
- .../packet/MotionPredictionPacketTest.java    | 104 ++++++++++++++++++
- 3 files changed, 161 insertions(+), 22 deletions(-)
+ .../viabedrock/api/model/entity/Entity.java   |  45 +++
+ .../protocol/packet/EntityPackets.java        |  74 ++--
+ .../packet/EntityMovementPacketsTest.java     |  30 ++
+ .../packet/MotionPredictionPacketTest.java    | 104 ++++++
+ .../packet/SpatialPacketCacheTest.java        | 316 ++++++++++++++++++
+ 5 files changed, 538 insertions(+), 31 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/EntityMovementPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MotionPredictionPacketTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/SpatialPacketCacheTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
+index 5addfdbde..163c52677 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
+@@ -26,6 +26,7 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.util.EnumUtil;
++import net.raphimc.viabedrock.api.util.MathUtil;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
+@@ -56,6 +57,10 @@ public class Entity {
+      * x, y, z
+      */
+     protected Position3f position;
++    private Position3f lastReceivedPosition;
++    private Position3f lastReceivedRotation;
++    private short lastReceivedMovementFlags = 0xFF;
++    private long lastReceivedInterpolationTicks;
+     /**
+      * pitch, yaw, headYaw
+      */
+@@ -183,7 +188,35 @@ public class Entity {
+         return this.position;
+     }
+ 
++    /** Packet state is independent of later prediction and live actor updates. */
++    public Position3f lastReceivedPosition() {
++        return this.lastReceivedPosition;
++    }
++
++    public Position3f lastReceivedRotation() {
++        return this.lastReceivedRotation == null ? Position3f.ZERO : this.lastReceivedRotation;
++    }
++
++    public short lastReceivedMovementFlags() {
++        return this.lastReceivedMovementFlags;
++    }
++
++    /** The native packet carries an unsigned 64-bit duration; preserve its complete bit pattern. */
++    public long lastReceivedInterpolationTicks() {
++        return this.lastReceivedInterpolationTicks;
++    }
++
++    public void retainSpatialUpdate(final Position3f position, final Position3f rotation, final short flags, final long interpolationTicks) {
++        this.lastReceivedPosition = position;
++        this.lastReceivedRotation = rotation;
++        this.lastReceivedMovementFlags = flags;
++        this.lastReceivedInterpolationTicks = interpolationTicks;
++    }
++
+     public void setPosition(final Position3f position) {
++        if (this.lastReceivedPosition == null) {
++            this.lastReceivedPosition = position;
++        }
+         this.position = position;
+     }
+ 
+@@ -192,9 +225,21 @@ public class Entity {
+     }
+ 
+     public void setRotation(final Position3f rotation) {
++        if (this.lastReceivedRotation == null) {
++            this.lastReceivedRotation = new Position3f(receivedAngle(rotation.x()), receivedAngle(rotation.y()), receivedAngle(rotation.z()));
++        }
+         this.rotation = rotation;
+     }
+ 
++    private static float receivedAngle(final float angle) {
++        float wrapped = (angle + 180F) % 360F;
++        if (wrapped < 0F) {
++            wrapped += 360F;
++        }
++        // The native spawn cache packs normalized angles with division before multiplication.
++        return MathUtil.byte2Float((byte) ((wrapped - 180F) / 360F * 256F));
++    }
++
+     public boolean isOnGround() {
+         return this.onGround;
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-index b5d08775d..2958f5566 100644
+index b5d08775d..fbf977223 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 @@ -73,6 +73,11 @@ public final class EntityPackets {
@@ -40,18 +172,54 @@ index b5d08775d..2958f5566 100644
      public static void register(final BedrockProtocol protocol) {
          protocol.registerClientbound(ClientboundBedrockPackets.ADD_ENTITY, ClientboundPackets26_3.ADD_ENTITY, wrapper -> {
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-@@ -278,9 +283,7 @@ public final class EntityPackets {
+@@ -203,6 +208,8 @@ public final class EntityPackets {
+                 return;
+             }
+ 
++            entity.retainSpatialUpdate(position, new Position3f(pitch, yaw, headYaw), flags, 0);
++
+             if (entity == entityTracker.getClientPlayer()) {
+                 if (!teleported && !forceMoveLocalEntity) {
+                     wrapper.cancel();
+@@ -264,8 +271,8 @@ public final class EntityPackets {
+             final boolean onGround = wrapper.read(Types.BOOLEAN);
+             final boolean teleported = wrapper.read(Types.BOOLEAN); // If the position shouldn't be interpolated
+             final boolean forceMoveLocalEntity = wrapper.read(Types.BOOLEAN);
+-            wrapper.read(Types.BOOLEAN); // force completion
+-            wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // ticks
++            final boolean forceCompletion = wrapper.read(Types.BOOLEAN);
++            final long interpolationTicks = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG);
+ 
+             final Entity entity = entityTracker.getEntityByRid(entityRuntimeId);
+             if (entity == null) {
+@@ -273,14 +280,23 @@ public final class EntityPackets {
+                 return;
+             }
+ 
++            final Position3f position = mergePosition(entity.lastReceivedPosition(), hasX, x, hasY, y, hasZ, z);
++            final Position3f previousRotation = entity.lastReceivedRotation();
++            final Position3f rotation = new Position3f(
++                    hasPitch ? MathUtil.byte2Float(pitch) : previousRotation.x(),
++                    hasYaw ? MathUtil.byte2Float(yaw) : previousRotation.y(),
++                    hasHeadYaw ? MathUtil.byte2Float(headYaw) : previousRotation.z());
++            // The native delta handler builds an absolute payload with its reserved flag bits set.
++            final short flags = (short) (0xF0 | (onGround ? 1 : 0) | (teleported ? 2 : 0)
++                    | (forceMoveLocalEntity ? 4 : 0) | (forceCompletion ? 8 : 0));
++            entity.retainSpatialUpdate(position, rotation, flags, interpolationTicks);
++
+             if (entity == entityTracker.getClientPlayer()) {
+                 if (!teleported && !forceMoveLocalEntity) {
                      wrapper.cancel();
                      return;
                  }
 -
 -                entity.setPosition(new Position3f(x, y, z));
 -
-+                entity.setPosition(mergePosition(entity.position(), hasX, x, hasY, y, hasZ, z));
++                entity.setPosition(position);
                  if (teleported) {
                      wrapper.setPacketType(ClientboundPackets26_3.PLAYER_POSITION);
                      entityTracker.getClientPlayer().writePlayerPositionPacketToClient(wrapper, Relative.union(Relative.ROTATION, Relative.VELOCITY), true);
-@@ -299,15 +302,7 @@ public final class EntityPackets {
+@@ -299,23 +315,9 @@ public final class EntityPackets {
                  return;
              }
  
@@ -64,11 +232,20 @@ index b5d08775d..2958f5566 100644
 -            if (hasZ) {
 -                entity.setPosition(new Position3f(entity.position().x(), entity.position().y(), z));
 -            }
-+            entity.setPosition(mergePosition(entity.position(), hasX, x, hasY, y, hasZ, z));
-             if (hasPitch) {
-                 entity.setRotation(new Position3f(MathUtil.byte2Float(pitch), entity.rotation().y(), entity.rotation().z()));
+-            if (hasPitch) {
+-                entity.setRotation(new Position3f(MathUtil.byte2Float(pitch), entity.rotation().y(), entity.rotation().z()));
+-            }
+-            if (hasYaw) {
+-                entity.setRotation(new Position3f(entity.rotation().x(), MathUtil.byte2Float(yaw), entity.rotation().z()));
+-            }
++            entity.setPosition(position);
++            entity.setRotation(rotation);
+             if (hasHeadYaw) {
+-                entity.setRotation(new Position3f(entity.rotation().x(), entity.rotation().y(), MathUtil.byte2Float(headYaw)));
+                 PacketFactory.sendJavaRotateHead(wrapper.user(), entity);
              }
-@@ -332,20 +327,19 @@ public final class EntityPackets {
+             entity.setOnGround(onGround);
+@@ -332,20 +334,19 @@ public final class EntityPackets {
              wrapper.write(Types.BOOLEAN, entity.isOnGround()); // on ground
          });
          protocol.registerClientbound(ClientboundBedrockPackets.SET_ENTITY_MOTION, ClientboundPackets26_3.SET_ENTITY_MOTION, wrapper -> {
@@ -98,7 +275,7 @@ index b5d08775d..2958f5566 100644
          });
          protocol.registerClientbound(ClientboundBedrockPackets.REMOVE_ENTITY, ClientboundPackets26_3.REMOVE_ENTITIES, wrapper -> {
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-@@ -705,6 +699,17 @@ public final class EntityPackets {
+@@ -705,6 +706,17 @@ public final class EntityPackets {
          });
      }
  
@@ -259,6 +436,328 @@ index 000000000..43ed285c9
 +            mapping.handler().handle(packet);
 +        }
 +
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/SpatialPacketCacheTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/SpatialPacketCacheTest.java
+new file mode 100644
+index 000000000..cdfe2c6a0
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/SpatialPacketCacheTest.java
+@@ -0,0 +1,316 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonParser;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.ByteBufUtil;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.api.util.MathUtil;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.UUID;
++import java.util.function.Consumer;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class SpatialPacketCacheTest {
++
++    private static final long RUNTIME_ID = 0x100000002L;
++    private static final Position3f NETWORK_POSITION = new Position3f(10.25F, 20.5F, 30.75F);
++    private static final Position3f NETWORK_ROTATION = rotation(12, 200, 254);
++
++    @Test
++    void ignoredLocalPacketsRetainTheirStreamBeforePredictionChangesLiveCoordinates() throws Exception {
++        final var context = new Context();
++        final var player = context.local(new Position3f(100, 200, 300));
++        assertTrue(context.absolute().cancelled());
++        assertEquals(NETWORK_POSITION, player.lastReceivedPosition());
++        assertEquals(NETWORK_ROTATION, player.lastReceivedRotation());
++        when(player.position()).thenReturn(new Position3f(400, 500, 600));
++        when(player.rotation()).thenReturn(new Position3f(90, 90, 90));
++        assertTrue(context.delta(2 | 32, true).cancelled());
++        assertEquals(new Position3f(10.25F, -2.5F, 30.75F), player.lastReceivedPosition());
++        assertEquals(new Position3f(NETWORK_ROTATION.x(), NETWORK_ROTATION.y(), MathUtil.byte2Float((byte) 45)), player.lastReceivedRotation());
++        assertEquals(new Position3f(400, 500, 600), player.position());
++        assertEquals(new Position3f(90, 90, 90), player.rotation());
++    }
++
++    @Test
++    void remoteSparsePacketsUseReceivedCoordinatesAndAnglesInsteadOfLiveActorWrites() throws Exception {
++        final var context = new Context();
++        final Entity actor = new Entity(context.user, 21, RUNTIME_ID, "minecraft:player", 301,
++                UUID.randomUUID(), EntityTypes26_3.PLAYER);
++        when(context.tracker.getEntityByRid(RUNTIME_ID)).thenReturn(actor);
++        actor.setPosition(new Position3f(1, 2, 3));
++        actor.setRotation(new Position3f(4, 5, 6));
++        try (var packets = mockStatic(PacketFactory.class)) {
++            assertFalse(context.absolute().cancelled());
++            actor.setPosition(new Position3f(100, 200, 300));
++            actor.setRotation(new Position3f(40, 50, 60));
++            final var translated = context.delta(2, true);
++            final var expected = new Position3f(10.25F, -2.5F, 30.75F);
++            assertEquals(expected, actor.position());
++            assertEquals(NETWORK_ROTATION, actor.rotation());
++            final ByteBuf output = Unpooled.wrappedBuffer(translated.bytes());
++            try {
++                assertEquals(ClientboundPackets26_3.ENTITY_POSITION_SYNC.getId(), Types.VAR_INT.read(output));
++                assertEquals(actor.javaId(), Types.VAR_INT.read(output));
++                assertEquals(1, Types.VAR_INT.read(output));
++                assertEquals(1, Types.VAR_INT.read(output));
++                assertEquals(expected.x(), Types.DOUBLE.read(output));
++                assertEquals(expected.y(), Types.DOUBLE.read(output));
++                assertEquals(expected.z(), Types.DOUBLE.read(output));
++                assertEquals(3, Types.VAR_INT.read(output));
++                assertEquals(NETWORK_ROTATION.y(), Types.FLOAT.read(output));
++                assertEquals(NETWORK_ROTATION.x(), Types.FLOAT.read(output));
++                assertTrue(Types.BOOLEAN.read(output));
++                assertEquals(0, output.readableBytes());
++            } finally {
++                output.release();
++            }
++        }
++    }
++
++    @Test
++    void firstSparseUpdateUsesPackedSpawnAnglesWithoutChangingTheSpawnRotation() throws Exception {
++        final var context = new Context();
++        final Entity actor = new Entity(context.user, 21, RUNTIME_ID, "minecraft:player", 301,
++                UUID.randomUUID(), EntityTypes26_3.PLAYER);
++        when(context.tracker.getEntityByRid(RUNTIME_ID)).thenReturn(actor);
++        actor.setPosition(NETWORK_POSITION);
++        final var spawnRotation = new Position3f(170.25F, -181.125F, 540.5F);
++        actor.setRotation(spawnRotation);
++        assertEquals(spawnRotation, actor.rotation());
++        assertEquals((short) 0xFF, actor.lastReceivedMovementFlags());
++        assertEquals(0, actor.lastReceivedInterpolationTicks());
++        actor.setPosition(new Position3f(100, 200, 300));
++        actor.setRotation(new Position3f(40, 50, 60));
++        try (var packets = mockStatic(PacketFactory.class)) {
++            assertFalse(context.delta(2 | 32, true).cancelled());
++            assertEquals(new Position3f(NETWORK_POSITION.x(), -2.5F, NETWORK_POSITION.z()), actor.position());
++            assertEquals(rotation(121, 127, 45), actor.rotation());
++            assertEquals(actor.rotation(), actor.lastReceivedRotation());
++        }
++    }
++
++    @Test
++    void ignoredUpdatesRetainForceCompletionAndUnsignedTicksUntilAnAbsolutePacketReplacesThem() throws Exception {
++        final var context = new Context();
++        final var player = context.local(new Position3f(100, 200, 300));
++        assertTrue(context.absolute((short) 8).cancelled());
++        assertEquals((short) 8, player.lastReceivedMovementFlags());
++        assertEquals(0, player.lastReceivedInterpolationTicks());
++        assertTrue(context.delta(0, false, true, Long.MIN_VALUE).cancelled());
++        assertEquals((short) 0xF8, player.lastReceivedMovementFlags());
++        assertEquals(Long.MIN_VALUE, player.lastReceivedInterpolationTicks());
++        assertTrue(context.absolute().cancelled());
++        assertEquals((short) 0, player.lastReceivedMovementFlags());
++        assertEquals(0, player.lastReceivedInterpolationTicks());
++        assertEquals(NETWORK_POSITION, player.lastReceivedPosition());
++        assertEquals(NETWORK_ROTATION, player.lastReceivedRotation());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_SPATIAL_METADATA", matches = ".+")
++    void matchesNativeCompleteMovementCacheAcrossUnsignedDurationsAndForceCompletion() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_SPATIAL_METADATA")))).getAsJsonObject();
++        for (var value : reference.getAsJsonArray("rows")) {
++            final var row = value.getAsJsonObject();
++            final var context = new Context();
++            final float live = row.get("liveCoordinate").getAsFloat();
++            final var player = context.local(new Position3f(live, live + 1, live + 2));
++            context.absolute();
++            if (row.get("removed").getAsBoolean()) {
++                when(context.tracker.getEntityByRid(RUNTIME_ID)).thenReturn(null);
++            }
++            assertTrue(context.delta(row.get("mask").getAsInt(), row.get("ground").getAsBoolean(),
++                    row.get("forceCompletion").getAsBoolean(), Long.parseUnsignedLong(row.get("incomingTicks").getAsString())).cancelled());
++            assertEquals(row.get("flags").getAsShort(), player.lastReceivedMovementFlags());
++            assertEquals(Long.parseUnsignedLong(row.get("tick").getAsString()), player.lastReceivedInterpolationTicks());
++            assertEquals(vector(row.getAsJsonArray("position")), player.lastReceivedPosition());
++            final var angles = row.getAsJsonArray("rotationBytes");
++            assertEquals(rotation(angles.get(0).getAsInt(), angles.get(1).getAsInt(), angles.get(2).getAsInt()), player.lastReceivedRotation());
++            assertEquals(new Position3f(live, live + 1, live + 2), player.position());
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_SPATIAL_BOOTSTRAP", matches = ".+")
++    void matchesNativeSpawnBootstrapAndFirstSparsePacketAcrossEveryOmittedField() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_SPATIAL_BOOTSTRAP")))).getAsJsonObject();
++        try (var packets = mockStatic(PacketFactory.class)) {
++            for (var value : reference.getAsJsonArray("rows")) {
++                final var row = value.getAsJsonObject();
++                final var context = new Context();
++                final Entity actor = new Entity(context.user, 21, RUNTIME_ID, "minecraft:player", 301,
++                        UUID.randomUUID(), EntityTypes26_3.PLAYER);
++                when(context.tracker.getEntityByRid(RUNTIME_ID)).thenReturn(actor);
++                actor.setPosition(vector(row.getAsJsonArray("spawnPosition")));
++                final var spawnRotation = vector(row.getAsJsonArray("spawnRotation"));
++                actor.setRotation(spawnRotation);
++                assertEquals(spawnRotation, actor.rotation());
++                final float live = row.get("liveCoordinate").getAsFloat();
++                actor.setPosition(new Position3f(live, live + 1, live + 2));
++                actor.setRotation(Position3f.ZERO);
++                assertFalse(context.delta(row.get("mask").getAsInt(), false).cancelled());
++                assertEquals(vector(row.getAsJsonArray("position")), actor.position());
++                assertEquals(actor.position(), actor.lastReceivedPosition());
++                final var angles = row.getAsJsonArray("rotationBytes");
++                assertEquals(rotation(angles.get(0).getAsInt(), angles.get(1).getAsInt(), angles.get(2).getAsInt()), actor.rotation());
++                assertEquals(actor.rotation(), actor.lastReceivedRotation());
++            }
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_SPATIAL_CACHE", matches = ".+")
++    void matchesOriginalNativeSparseMergeAndIgnoredLocalCachePublication() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_SPATIAL_CACHE")))).getAsJsonObject();
++        for (var value : reference.getAsJsonArray("rows")) {
++            final var row = value.getAsJsonObject();
++            final var context = new Context();
++            final float live = row.get("liveCoordinate").getAsFloat();
++            final var player = context.local(new Position3f(live, live + 1, live + 2));
++            context.absolute();
++            if (row.get("removed").getAsBoolean()) {
++                when(context.tracker.getEntityByRid(RUNTIME_ID)).thenReturn(null);
++            }
++            assertTrue(context.delta(row.get("mask").getAsInt(), row.get("ground").getAsBoolean()).cancelled());
++            assertEquals(vector(row.getAsJsonArray("position")), player.lastReceivedPosition());
++            final var angles = row.getAsJsonArray("rotationBytes");
++            assertEquals(rotation(angles.get(0).getAsInt(), angles.get(1).getAsInt(), angles.get(2).getAsInt()), player.lastReceivedRotation());
++            assertEquals(new Position3f(live, live + 1, live + 2), player.position());
++        }
++    }
++
++    private static Position3f vector(final JsonArray values) {
++        return new Position3f(values.get(0).getAsFloat(), values.get(1).getAsFloat(), values.get(2).getAsFloat());
++    }
++
++    private static Position3f rotation(final int pitch, final int yaw, final int headYaw) {
++        return new Position3f(MathUtil.byte2Float((byte) pitch), MathUtil.byte2Float((byte) yaw), MathUtil.byte2Float((byte) headYaw));
++    }
++
++    private static final class Context {
++        private final UserConnection user = mock(UserConnection.class);
++        private final EntityTracker tracker = mock(EntityTracker.class);
++        private final TestProtocol protocol = new TestProtocol();
++
++        private Context() {
++            when(this.user.get(EntityTracker.class)).thenReturn(this.tracker);
++        }
++
++        private ClientPlayerEntity local(final Position3f position) {
++            final var player = mock(ClientPlayerEntity.class, CALLS_REAL_METHODS);
++            when(player.position()).thenReturn(position);
++            when(player.rotation()).thenReturn(Position3f.ZERO);
++            when(this.tracker.getClientPlayer()).thenReturn(player);
++            when(this.tracker.getEntityByRid(RUNTIME_ID)).thenReturn(player);
++            return player;
++        }
++
++        private Translation absolute() throws Exception {
++            return this.absolute((short) 0);
++        }
++
++        private Translation absolute(final short flags) throws Exception {
++            return this.translate(ClientboundBedrockPackets.MOVE_ENTITY_ABSOLUTE, input -> {
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, RUNTIME_ID);
++                Types.UNSIGNED_BYTE.write(input, flags);
++                BedrockTypes.POSITION_3F.write(input, NETWORK_POSITION);
++                for (int angle : new int[]{12, 200, 254}) {
++                    Types.BYTE.write(input, (byte) angle);
++                }
++            });
++        }
++
++        private Translation delta(final int mask, final boolean onGround) throws Exception {
++            return this.delta(mask, onGround, false, 0x100000005L);
++        }
++
++        private Translation delta(final int mask, final boolean onGround, final boolean forceCompletion, final long interpolationTicks) throws Exception {
++            return this.translate(ClientboundBedrockPackets.MOVE_ENTITY_DELTA, input -> {
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, RUNTIME_ID);
++                final float[] positions = {-1.25F, -2.5F, -3.75F};
++                final int[] angles = {240, 30, 45};
++                for (int axis = 0; axis < 3; axis++) {
++                    final boolean supplied = (mask & 1 << axis) != 0;
++                    Types.BOOLEAN.write(input, supplied);
++                    if (supplied) {
++                        BedrockTypes.FLOAT_LE.write(input, positions[axis]);
++                    }
++                }
++                for (int axis = 0; axis < 3; axis++) {
++                    final boolean supplied = (mask & 1 << axis + 3) != 0;
++                    Types.BOOLEAN.write(input, supplied);
++                    if (supplied) {
++                        Types.BYTE.write(input, (byte) angles[axis]);
++                    }
++                }
++                Types.BOOLEAN.write(input, onGround);
++                Types.BOOLEAN.write(input, false);
++                Types.BOOLEAN.write(input, false);
++                Types.BOOLEAN.write(input, forceCompletion);
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, interpolationTicks);
++            });
++        }
++
++        private Translation translate(final ClientboundBedrockPackets type, final Consumer<ByteBuf> encode) throws Exception {
++            final ByteBuf input = Unpooled.buffer();
++            final ByteBuf output = Unpooled.buffer();
++            try {
++                encode.accept(input);
++                final var packet = new PacketWrapperImpl(type, input, this.user);
++                this.protocol.translate(packet);
++                assertEquals(0, input.readableBytes());
++                if (!packet.isCancelled()) {
++                    packet.writeToBuffer(output);
++                }
++                return new Translation(packet.isCancelled(), ByteBufUtil.getBytes(output));
++            } finally {
++                input.release();
++                output.release();
++            }
++        }
++    }
++
++    private record Translation(boolean cancelled, byte[] bytes) {
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private TestProtocol() {
++            EntityPackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
 +    }
 +
 +}

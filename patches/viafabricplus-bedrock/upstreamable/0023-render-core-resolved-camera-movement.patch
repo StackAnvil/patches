@@ -1,4 +1,4 @@
-From 7e0a4dd15d31e5343d9791ed22aabd1c67739fa8 Mon Sep 17 00:00:00 2001
+From 56f6e5d1906d5bd3877d869c79c38bcda2ca13fc Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(camera): render core-resolved server camera movement
@@ -107,14 +107,31 @@ Two actual client recordings verify exact request/reply sequences,
 complete/empty/partial aim objects, native command restoration and normal
 cleanup. Reticle, target/world queries, interaction rotation, local F5
 transitions and full native event scheduling remain open.
+
+Consume the generalized attached-camera rendering mode and negotiated
+camera_follow_v2 state. Fixed-boom and orbit presets use the shared core
+frame runtime before blend, shake, projection, culling and sound-listener
+extraction. Fixed presets retain orientation across actor rotation and
+ignore orbit input. The existing native actor identity, lifetime, bounds
+and origin-offset producers remain shared. Their complete native pivot
+and world geometry semantics still need comparison; this integration does
+not establish full native camera or pixel parity.
+
+Keep native attachment identity separate from render-sample readiness.
+An actor with a native lifetime but pending Java entity or matching native
+bounds remains a known actor with no ready frame sample. Only disappearance
+of the native identity is reported as actor loss. This lets the shared
+runtime retire failed fixed-boom attachments without treating delayed
+render metadata as removal, while preserving existing target-tracker
+behavior until its physical center is available.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |  44 +++++
  .../camera/BedrockCameraAimAssist.java        |  70 +++++++
  .../bedrock/camera/BedrockCameraFade.java     |  40 ++++
  .../bedrock/camera/BedrockCameraFov.java      |  68 +++++++
- .../bedrock/camera/BedrockCameraPosition.java | 176 ++++++++++++++++++
+ .../bedrock/camera/BedrockCameraPosition.java | 180 ++++++++++++++++++
  .../bedrock/camera/BedrockCameraShake.java    |  49 +++++
- .../bedrock/camera/BedrockCameraWorld.java    |  95 ++++++++++
+ .../bedrock/camera/BedrockCameraWorld.java    |  95 +++++++++
  .../camera/CameraAimAssistControlPayload.java |  22 +++
  .../camera/CameraAimAssistPayload.java        |  22 +++
  .../bedrock/camera/CameraFadePayload.java     |  22 +++
@@ -126,15 +143,15 @@ transitions and full native event scheduling remain open.
  .../bedrock/camera/CameraTrackingPayload.java |  22 +++
  .../render/MixinBedrockCameraFade.java        |  23 +++
  .../render/MixinBedrockCameraFov.java         |  23 +++
- .../render/MixinBedrockCameraPerspective.java |  21 +++
- .../render/MixinBedrockCameraShake.java       |  73 ++++++++
+ .../render/MixinBedrockCameraPerspective.java |  21 ++
+ .../render/MixinBedrockCameraShake.java       |  73 +++++++
  .../render/MixinBedrockFollowInput.java       |  23 +++
  .../render/MixinMinecraftHudVisibility.java   |   6 +
  .../sound/MixinBedrockCameraListener.java     |  30 +++
  .../bedrock/settings/BedrockSettings.java     |   4 +
  .../viafabricplus-bedrock/lang/en_us.json     |   1 +
  .../viafabricplus-bedrock.mixins.json         |   8 +-
- 26 files changed, 955 insertions(+), 1 deletion(-)
+ 26 files changed, 959 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraAimAssist.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFade.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java
@@ -417,10 +434,10 @@ index 0000000..49fab8a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
 new file mode 100644
-index 0000000..1b56e6b
+index 0000000..09af5ad
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,180 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -483,7 +500,7 @@ index 0000000..1b56e6b
 +
 +    public static void turn(final float pitchDelta, final float yawDelta) {
 +        final var requested = PENDING.isEmpty() ? state : PENDING.getLast();
-+        if (requested.mode() == Mode.FOLLOW_ORBIT && Float.isFinite(pitchDelta) && Float.isFinite(yawDelta)) {
++        if (requested.mode() == Mode.BOOM && Float.isFinite(pitchDelta) && Float.isFinite(yawDelta)) {
 +            FOLLOW.input(requested.sequence(), pitchDelta, yawDelta);
 +        }
 +    }
@@ -518,14 +535,14 @@ index 0000000..1b56e6b
 +        if (preparingTarget) {
 +            final CameraPositionState requested = PENDING.isEmpty() ? state : PENDING.getLast();
 +            // Detached targets have their own poses. Normal alignment supplies the local blend input.
-+            mode = requested.mode() == Mode.FREE || requested.mode() == Mode.FOLLOW_ORBIT ? Mode.LOCAL : requested.mode();
++            mode = requested.mode() == Mode.FREE || requested.mode() == Mode.BOOM ? Mode.LOCAL : requested.mode();
 +        } else {
 +            mode = state.mode() == Mode.LOCAL || rendered == null ? Mode.LOCAL : Mode.values()[rendered.renderingMode()];
 +        }
 +        return switch (mode) {
 +            case LOCAL -> local;
 +            case FIRST_PERSON -> CameraType.FIRST_PERSON;
-+            case THIRD_PERSON, FREE, FOLLOW_ORBIT -> CameraType.THIRD_PERSON_BACK;
++            case THIRD_PERSON, FREE, BOOM -> CameraType.THIRD_PERSON_BACK;
 +            case THIRD_PERSON_FRONT -> CameraType.THIRD_PERSON_FRONT;
 +        };
 +    }
@@ -555,9 +572,9 @@ index 0000000..1b56e6b
 +            return null;
 +        }
 +        final CameraPose tracked = TRACKING.active(state.sequence(), normal.fov(), Mode.FREE.ordinal());
-+        final CameraPose follow = FOLLOW.active(state.sequence(), normal.fov(), Mode.FOLLOW_ORBIT.ordinal());
++        final CameraPose follow = FOLLOW.active(state.sequence(), normal.fov(), Mode.BOOM.ordinal());
 +        final CameraPose target = switch (state.mode()) {
-+            case FOLLOW_ORBIT -> follow != null ? follow : rendered != null ? rendered : normal;
++            case BOOM -> follow != null ? follow : rendered != null ? rendered : normal;
 +            case FREE -> tracked != null ? tracked : CameraPose.fromDegrees(state.position(), state.pitch(), state.yaw(), normal.fov(), Mode.FREE.ordinal());
 +            default -> new CameraPose(normal.position(), normal.orientation(), normal.fov(), state.mode().ordinal());
 +        };
@@ -567,7 +584,8 @@ index 0000000..1b56e6b
 +
 +    private static CameraTrackingRuntime.Actor targetActor(final long uniqueId) {
 +        final var actor = followActor(uniqueId);
-+        return actor == null ? null : new CameraTrackingRuntime.Actor(actor.lifetime(), new CameraTargetTracker.Sample(actor.center(), actor.yaw()));
++        return actor == null || actor.sample() == null ? null
++                : new CameraTrackingRuntime.Actor(actor.lifetime(), new CameraTargetTracker.Sample(actor.sample().center(), actor.sample().yaw()));
 +    }
 +
 +    private static CameraFollowRuntime.Actor localFollowActor() {
@@ -577,7 +595,7 @@ index 0000000..1b56e6b
 +        if (snapshot == null) return null;
 +        final var position = player.getPosition(partialTick);
 +        final var origin = new CameraPose.Vector((float) position.x, (float) position.y, (float) position.z);
-+        return new CameraFollowRuntime.Actor(snapshot.lifetime(), origin, origin, player.getYRot(partialTick));
++        return new CameraFollowRuntime.Actor(snapshot.lifetime(), new CameraFollowRuntime.Sample(origin, origin, player.getYRot(partialTick)));
 +    }
 +
 +    private static CameraFollowRuntime.Actor followActor(final long uniqueId) {
@@ -585,16 +603,19 @@ index 0000000..1b56e6b
 +        final var uuid = BedrockActorState.uuidByUniqueId(uniqueId);
 +        if (level == null || uuid == null) return null;
 +        final var snapshot = BedrockActorState.state(uuid);
-+        final var bounds = BedrockActorState.bounds(uuid);
++        if (snapshot == null) return null;
 +        final var entity = level.getEntity(uuid);
-+        if (entity == null || snapshot == null || bounds == null || !bounds.lifetime().equals(snapshot.lifetime()) || bounds.height() == null) return null;
++        final var bounds = BedrockActorState.bounds(uuid);
++        if (entity == null || entity.isRemoved() || bounds == null || !bounds.lifetime().equals(snapshot.lifetime()) || bounds.height() == null)
++            return new CameraFollowRuntime.Actor(snapshot.lifetime(), null);
 +        if (!Float.isFinite(bounds.height()) || bounds.height() < 0 || !Float.isFinite(snapshot.scale()) || snapshot.scale() < 0
-+                || !Float.isFinite(bounds.height() * snapshot.scale()) || bounds.height() * snapshot.scale() >= 1E9F) return null;
++                || !Float.isFinite(bounds.height() * snapshot.scale()) || bounds.height() * snapshot.scale() >= 1E9F)
++            return new CameraFollowRuntime.Actor(snapshot.lifetime(), null);
 +        final float height = NativeActorBoundsMessage.scaledDimension(bounds.height(), snapshot.scale());
 +        final var position = entity.getPosition(partialTick);
-+        return new CameraFollowRuntime.Actor(snapshot.lifetime(),
++        return new CameraFollowRuntime.Actor(snapshot.lifetime(), new CameraFollowRuntime.Sample(
 +                new CameraPose.Vector((float) position.x, (float) position.y, (float) position.z),
-+                new CameraPose.Vector((float) position.x, (float) position.y + height * .5F, (float) position.z), entity.getYRot(partialTick));
++                new CameraPose.Vector((float) position.x, (float) position.y + height * .5F, (float) position.z), entity.getYRot(partialTick)));
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraShake.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraShake.java
@@ -1096,7 +1117,7 @@ index 0000000..c36c380
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraShake.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraShake.java
 new file mode 100644
-index 0000000..6c43224
+index 0000000..bce161d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraShake.java
 @@ -0,0 +1,73 @@
@@ -1153,7 +1174,7 @@ index 0000000..6c43224
 +            final var angles = pose.orientation().angles();
 +            this.setRotation(180F - angles.y() / CameraPose.DEGREES, -angles.x() / CameraPose.DEGREES);
 +            this.setPosition(new Vec3(pose.position().x(), pose.position().y(), pose.position().z()));
-+            this.detached = pose.renderingMode() == CameraPositionState.Mode.FOLLOW_ORBIT.ordinal()
++            this.detached = pose.renderingMode() == CameraPositionState.Mode.BOOM.ordinal()
 +                    || pose.renderingMode() == CameraPositionState.Mode.FREE.ordinal()
 +                    || pose.renderingMode() == CameraPositionState.Mode.THIRD_PERSON.ordinal()
 +                    || pose.renderingMode() == CameraPositionState.Mode.THIRD_PERSON_FRONT.ordinal();
@@ -1304,10 +1325,10 @@ index eadb404..b83cf42 100644
    "bedrock_settings.viafabricplus.hide_own_captions": "Hide captions for your sounds",
    "bedrock_settings.viafabricplus.hide_ambient_captions": "Hide ambient and weather captions",
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 8c31f08..f5e1eea 100644
+index faabab7..103a613 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -110,6 +110,10 @@
+@@ -127,6 +127,10 @@
      "features.render.MixinBedrockFirstPersonVisibility",
      "features.render.MixinBedrockFirstPersonBobbing",
      "features.render.MixinBedrockFirstPersonProjection",
@@ -1318,7 +1339,7 @@ index 8c31f08..f5e1eea 100644
      "features.render.MixinBedrockHandItemLifecycle",
      "features.render.MixinBedrockModelPartTransforms",
      "features.render.MixinPlayerSkinWidget",
-@@ -134,11 +138,13 @@
+@@ -151,11 +155,13 @@
      "features.sound.MixinBedrockSoundManager",
      "features.sound.MixinBedrockSoundCaptions",
      "features.sound.MixinBedrockSoundEngine",

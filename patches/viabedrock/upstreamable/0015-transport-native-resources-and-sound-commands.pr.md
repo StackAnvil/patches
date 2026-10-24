@@ -366,7 +366,7 @@ The conversion cache version changes so older cached packs cannot omit the marke
 
 ## Native world inputs for aim assistance
 
-The negotiated `block_identifiers_v2` channel carries both block layers, native runtime IDs and immutable state properties.
+The negotiated `block_identifiers_v3` channel carries both block layers, native runtime IDs and immutable state properties.
 Snapshots include the dimension's native air ID and both palettes.
 Updates retain their layer, and dimension resets and chunk removal clear both layers.
 This preserves distinctions that Java block mappings can lose.
@@ -391,3 +391,56 @@ All four projects build, with 2,104 passing Java tests, 152 optional skips and n
 ## Upstream prerequisites
 
 - [viabedrock patch](../../viabedrock/upstreamable/0015-decode-native-sound-packet-layouts.pr.md): Land the sound wire models before native playback transport.
+
+
+## Native fluid queries
+
+The version-three block dictionary also carries each liquid's forward Java state.
+Known nonfluid blocks carry `-1`; unknown native definitions remain distinct.
+Water and lava retain their mapped level and falling properties.
+The client no longer needs a Java waterlogged variant to identify the secondary fluid.
+This includes the solid bedrock state found in the recorded Galaxite lobby.
+
+The native 1.26.51.1 selector at `142d80600` chooses any non-air secondary block before the primary block.
+A fresh probe passed 180 cases against the pinned binary, SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+It executes the selector and both real layer getters, with supplied chunk-provider and palette-cell boundaries.
+The cases cover six block identities, negative coordinates, vertical bounds and unavailable chunks.
+The probe excludes registration, material classification, meshing and movement.
+
+The mirror publishes immutable replacement section arrays through a concurrent world snapshot.
+Each fluid query captures one world snapshot, including its dimension bounds and dictionaries.
+Render workers can query it without invoking client lifecycle changes or taking the writer lock.
+Targeted tests cover layer selection, air aliases, unknown definitions, lifecycle changes and the revised wire format.
+
+The earlier query-only validation passed 2,360 tests, with 152 optional skips and no failures.
+This verifies the shared data and client query integration, not complete native water rendering or fluid simulation.
+The Java waterlogging warning remains because ordinary Java clients still cannot represent that solid block's extra fluid layer.
+
+
+Two fresh 40-second Galaxite replays validate the getters against recorded native fluid layers.
+Each run retains 7,174 secondary-fluid cells and samples 256 of them.
+The plain client reports zero mismatches through the client world and vanilla render-region getters.
+The Iris client also checks Sodium 0.9.2's `LevelSlice`, with zero mismatches across all three query surfaces.
+The region and Sodium getter probes construct query objects for the current client level; they do not test generated fluid meshes.
+Transport verification passes; the broader rendering check still fails on unresolved mappings, including the camera texture.
+
+
+## Sections with only secondary fluid
+
+A liquid over native air now translates to its forward Java fluid block in full chunks and individual block lookups.
+No primary geometry is lost in this case.
+The resulting non-air and fluid counts prevent render-section empty checks from discarding the section before meshing.
+The native mirror still retains the exact primary air and secondary liquid identities.
+Ordinary Java clients also receive this translation.
+
+The regression test covers all four water/lava identifiers across 16 forward depth mappings.
+It checks full secondary-only sections, their 4,096-cell counts, individual removals and adjacent cells.
+Known nonfluid and unknown identities do not become fluids.
+The test framework dependency now lives in this first consumer; later patches reuse it.
+These tests verify translation and section metadata, not native fluid face occlusion or physical simulation.
+
+
+Current validation totals 2,364 passing project tests, 152 optional skips and no failures.
+The final plain and Iris/Sodium Galaxite replays pass transport checks and retain secondary-fluid meshes.
+A synthetic client-side wet/dry/wet control also verifies two native-fluid rebuild requests over an unchanged Java bedrock block in each run.
+The shared runtime sidecar records mesh counts, the control scope and remaining rendering audit failures.

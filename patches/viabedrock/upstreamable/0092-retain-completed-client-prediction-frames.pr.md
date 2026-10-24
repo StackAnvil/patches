@@ -1,5 +1,216 @@
 # Completed player prediction frames
 
+## Ticked velocity commands, October 23, 2026
+
+`SET_ENTITY_MOTION` now preserves its server tick for clients with the negotiated physical replay channel.
+The previous handler discarded that tick and translated every velocity into an immediate Java packet.
+The new payload carries full float motion, the input clock binding, and the actor identity.
+Tick zero and clients without this channel retain the existing standard packet path.
+
+Native constructor `144359a80`, receiver `142890810`, and application `144376520` establish two effects.
+The receiver applies motion to the live actor immediately and retains the same command for historical input.
+Old motion ticks clamp to the oldest retained input.
+A past tick queues the command before the following input and can mark that input dirty.
+The current tick enters the next input.
+Future ticks retain the command without forcing replay.
+Position corrections keep their separate expired-tick rejection rule.
+
+The client applies live motion without also recording an untimed external impulse.
+It retains motion and position commands in packet receipt order.
+Replay reapplies each motion command at its historical input before physical execution.
+Actor UUID, native lifetime, world, connection, and vehicle epoch and control lease constrain admission.
+Mounted player motion remains eligible.
+
+Fresh controls execute forty-eight original command constructions, receiver calls, applications, and replay decisions.
+They cover old, current, future, and unsigned maximum ticks, three velocities, and both supplied controller outcomes.
+Registered Java packet tests cover negotiation, full float transport, tick zero, remote actors, and stale vehicle identity fields.
+Optional Java timing comparisons cover all forty-eight cases.
+Optional client journal comparisons cover the twenty-four accepted-controller cases and compare final position and velocity.
+Additional journal tests retain the impulse through a later correction and reject historical application after authority changes.
+
+The native fixture supplies component stores, allocation interfaces, snapshots, and simple physical inputs.
+It does not execute the complete network handler, actor factory, or native world physics.
+Live delayed knockback and mounted trajectories still require verification.
+Remote history sampling, exact collider source selection, and all five goal areas remain unfinished.
+
+All four project builds pass.
+The final suites pass 2,656 tests, with 163 optional skips and no failures or errors.
+The complete retained reference set remains enabled, including the new motion controls.
+All 1,421 core classes match the standalone, add-on, and proxy packages.
+The compiled core also matches its packaged build-constant replacements.
+All 1,143 production client classes match the add-on.
+The source trees and package hashes remain unchanged after the reference-enabled test runs.
+Offline validation passes 271 tooling tests, static checks, and patch metadata checks.
+
+## Locally controlled vehicle spatial updates, October 23, 2026
+
+Ordinary absolute and sparse movement packets now retain their source data without replacing a locally controlled vehicle pose.
+Teleport and forced-local bits still admit the transform.
+Force completion alone does not admit it.
+The existing received cache keeps every packet field before this check.
+The [spatial-update owner](0018-preserve-sparse-actor-spatial-updates.pr.md) supplies that cache and its packet API prerequisite.
+
+Native boat wrapper `148b5eeb0`, horse wrapper `148b5ef20`, and client vehicle setter `148b5ebb0` pass 1,152 controls.
+The first passenger controls a boat only with valid player and local-player membership.
+Horses additionally require both saddle and tame flags, at native bit positions eight and twenty-eight.
+A local player in the second passenger position does not control the vehicle.
+The fixture supplies ordered vehicle membership and registry stores.
+Original passenger selection, flag checks, sparse membership, and marker decisions execute without substitution.
+Registry discovery, generic insertion, and virtual erasure remain explicit boundaries.
+
+Another 640 controls execute received-cache publication and the complete native local-control gate in `14103f580`.
+They cover all four movement flag bits, unsigned runtime IDs, entity generations, stale tags, missing pages, and empty ranges.
+Accepted transforms stop immediately after this gate at an observation boundary.
+Ignored transforms return through the original function epilogue.
+Later prediction routing and interpolation remain outside this fixture.
+
+The production tracker resolves the first passenger through its live unique and runtime identities.
+It uses the existing boat and horse entity classes and their current native flags.
+Prediction eligibility has separate gameplay and capability checks, so it does not supply this ownership predicate.
+All five focused tests run without skips.
+They compare 256 representable native ownership cases and both registered packet handlers against all 640 admission cases.
+Mandatory checks also cover controller changes, saddle and tame changes, unsigned duration retention, forced packets, and stale controller identity.
+Removing the vehicle gate or accepting either horse flag causes the corresponding regressions to fail.
+The restored implementation passes the focused suite and test Checkstyle.
+
+Full native control-system installation, custom actor classification, historical ownership transitions, retained interpolation, and complete vehicle trajectories remain unfinished.
+These results do not establish full movement parity or resolve either documented collider-refresh mismatch.
+
+## Native world collision traversal, October 23, 2026
+
+The physical adapter now visits loaded blocks in native X/Z/Y order.
+The visitor uses float-rounded padding and clamps the vertical interval to the world height.
+It scans unavailable chunks in X-first order with eight blocks of horizontal padding.
+Those chunks supply solid barriers from Y -100000 to Y 100000.
+A separate native floor sits forty blocks below the minimum world height.
+
+Each frame retains this geometry with its existing collision inputs.
+A chunk arrival does not replace a retained barrier during a contained replay query.
+At the strict reuse boundary, replay queries current chunk availability.
+The adapter never creates chunks during collision queries.
+
+The shared production code matches 64 fresh executions of native visitor `142d883c0` from Bedrock 1.26.51.1, protocol 2193.
+The fixture supplies chunk states, loaded columns, and block shapes.
+The comparison covers traversal, chunk scans, and null-source barrier geometry.
+Native border callbacks execute in the fixture but remain outside the Java comparison.
+
+Client tests use voxel collision clipping to verify unavailable boundaries, later chunk arrival, fresh queries, and the below-world floor.
+Removing only unavailable-chunk barrier emission changes the expected clipped displacement from 0.4 to 1.0 and fails the regression.
+The restored implementation passes the focused suite.
+
+The combined build passes 2,511 tests, with 215 optional skips and no failures or errors.
+All 1,410 core classes match the add-on and proxy distributions byte for byte.
+Offline tooling, static, and patch metadata checks pass.
+
+The installed world-traversal candidate completes a direct native BDS run with a private 300 ms inbound delay.
+Sixteen correction replays execute 171 historical physical steps.
+Observers record 87 historical collision caches, including 34 with retained nonempty geometry.
+Eighteen ordinary collision gathers contain the native unavailable-chunk barrier geometry during loading.
+Every replay boundary preserves tick count, food level, and held-item count.
+The live chunk-arrival clipping case remains unverified; its targeted unit control passes.
+Eight inbound events remain delayed at normal shutdown, and the final command awaits the next capture.
+
+The input hold finishes, but these observers record no active item use at replay boundaries.
+This run does not establish correct feeding or delayed replay during active food use.
+The client and server exit normally, and the original private fixtures return to their prior state.
+
+The live run precedes the preserved attachable-slot update.
+All 126 movement/input classes and the complete mixin configuration match the final combined build byte for byte.
+The core source tree also remains unchanged.
+This establishes the tested movement code in the combined package, not a fresh runtime check of the whole package.
+
+Native block-shape generation and source references, border-block permissions, all chunk readiness stages, and near-unloaded flag consumers remain unfinished.
+Exact actor refresh, native input phases, both connection routes, and complete trajectory parity also remain open.
+
+## Retained collision queries, October 23, 2026
+
+The shared query code now reproduces native collision-cache admission and query extension.
+The native build is Bedrock 1.26.51.1, protocol 2193.
+Its executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+
+The copy callback at `148b73aa0` requires squared displacement below four.
+The gather kernel at `1431c2f50` caps motion at sixteen blocks and queries uncovered regions.
+It appends new geometry and replaces the query bounds with the current request bounds.
+The shared code preserves native float operations, plane order, small advances, and volume-based merging.
+
+Fresh controls compare the production Java code with 192 original native instruction results.
+They cover 128 gather cases and 64 reuse cases, including nonempty retained geometry and strict boundary rejection.
+The fixture supplies world queries, allocation, and typed stores.
+These controls establish cache arithmetic, not native world traversal or complete movement parity.
+
+The add-on retains immutable collision inputs in each physical frame.
+Managed interpolation, unloaded-region state, native block traversal, and complete input phases remain unfinished.
+The combined four-project build passes 2,505 tests, with 214 optional skips and no failures or errors.
+All 1,407 core classes match the add-on and proxy artifacts byte for byte.
+Offline validation passes the tooling, static, and patch metadata checks.
+
+The exact installed artifact also passes a direct BDS 1.26.51.1 run with a private 300 ms inbound delay.
+The delay applies only to the owned client channel and preserves packet contents and event order.
+Fifteen correction replays execute 180 retained physical steps.
+Read-only observers record 90 historical collision caches, including 12 with retained nonempty geometry.
+They record 180 historical collision gathers and 95 additional region fetches.
+Every replay boundary preserves the live tick count, food level, and held-item count.
+Both clients and servers exit normally, and the private fixtures return to their original state.
+
+The input driver completes both requested holds, but these runs record no active item use at replay boundaries.
+Delayed replay during active food use remains unverified.
+The changed-world geometry case remains a unit control; no live wall-removal result is claimed.
+
+The earlier sections describe their respective artifacts and verification limits.
+
+## Queued positional corrections, October 23, 2026
+
+Revision two carries exact position, velocity, optional boat angular velocity, native lifetime, coordinate offsets, and retained input clocks.
+Core pairs each command with a standard Java position packet and preserves its normal acknowledgment.
+The negotiated path leaves current translated position and mount control unchanged until the client reports its final coordinates.
+Connections without a completed frame binding retain the direct correction path.
+
+The client projects the native clock at receipt and intersects both retained history windows.
+The original native receiver supplies 128 passing clock controls for player and vehicle targets.
+These cover unsigned wrap, expired inputs, pending commands, future commands, and capped following-snapshot placement.
+The native comparator uses separate float operations and strict squared-vector tolerance `0.00001F`.
+Optional boat angular state uses absolute tolerance `0.0001F`.
+The original command controls establish current-state replacement and independent float rounding of bounding-box faces.
+Typed stores, actor lookup, captured input methods, and arithmetic fixture physics remain evidence boundaries.
+
+Full core and add-on builds pass after both stacks replay.
+The combined four-project build passes 2,497 tests, with 213 optional skips and no failures or errors.
+All 1,406 core classes match both the add-on and proxy artifacts byte for byte.
+Offline validation passes 271 tooling tests, static checks, and patch metadata checks.
+
+Packet tests cover queued player, boat, and horse corrections without immediate state mutation or lossy velocity packets.
+Additional tests cover delayed receipt, unsigned clocks, native comparison tolerances, and optional angular state.
+
+A private native BDS geyser run reaches 1,233 completed frames and receives 23 correction commands.
+The client applies 22 commands. The last current-clock command awaits a capture after recorder shutdown.
+Three rewinds run four historical physics steps without changing live tick count, food level, or held-item count.
+Four command applications preserve active item use. Eleven apples finish during ordinary live input.
+These controls do not establish delayed historical replay during active consumption or live vehicle correction parity.
+Historical collision inputs, managed interpolation, complete native input phases, and native trajectory parity remain unfinished.
+
+## Owned state for physical replay
+
+The movement timeline exposes independent effect values for the client adapter's physical snapshots.
+Historical effect queries and local admissions use the replayed frame's clock.
+Queued commands run before the recorded physical input.
+Fluid-current and sneaking state expose owned values for restoration.
+A replacement play listener clears actor history while preserving its connection's completed frame watermark.
+
+Vehicle prediction requires initialized positions for both the player and mount.
+Pending passenger links can resolve before the spawn handler sets the vehicle position.
+Prediction remains unavailable during that interval. The normal metadata update then publishes the initialized mount context.
+A regression reproduces the earlier null-position disconnect and verifies subsequent context publication.
+
+Current builds include the incoming cooking controls and pass 2,497 tests, with 213 optional skips and no errors.
+All 104 core patches and 38 add-on patches replay.
+The add-on contains all 1,406 rebuilt core classes unchanged.
+Offline validation passes 271 tooling tests, static checks, and patch metadata checks.
+
+The add-on now executes historical physics for movement-effect commands.
+Player and vehicle position corrections still use their existing snap path.
+Their command transport, exact native phase alignment, and full native trajectory parity remain incomplete.
+Earlier sections retain the evidence and limits of their respective artifacts.
+
 ## Advancing frame identities
 
 Completed client frame IDs increase throughout each connection, including stationary and mounted samples.
@@ -87,20 +298,208 @@ The rest of the movement matrix remains unverified by these cases.
 `CORRECT_PLAYER_MOVE_PREDICTION` carries position, motion, grounded state, and a simulation tick.
 The [nearby packet reference](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/packets/correct-player-move-prediction-packet/) describes this layout for protocol 2192.
 Native protocol 2193 captures confirm the layout and zero-velocity corrections around fixture teleports.
-The movement guide requires immediate application when the correction tick lies outside available history.
+The movement guide describes immediate application outside available history.
+The pinned correction receiver has the more specific admission gates below.
 
-Core previously discarded motion outside gliding and canceled corrections outside its tick window.
-It now applies absolute motion for every player pose, including zero-velocity resets.
+Core previously discarded motion outside gliding and used an age-based tick window.
+It now applies absolute motion for accepted corrections in every player pose, including zero-velocity resets.
 Unknown rewind types cancel the Java output before logging the unsupported value.
 The gliding-only implementation moves out of the deferred rocket patch into this general correction handler.
 
-Four parameterized test cases cover zero, past, current, and future ticks.
+Ten parameterized cases cover zero, expired, retained, current, future, and unsigned boundary ticks.
 Each case exercises both gliding states and zero and nonzero motion through the actual packet mapping.
 They verify position, motion, relative flags, grounded state, and complete packet consumption.
+Tick zero consumes the packet without a position update or negotiated correction payload.
 
-**Incomplete:** Core applies corrections immediately because it has no usable movement history for replay.
-Corrections inside history still need rewind and input resimulation.
-Vehicle velocity, angular velocity, and movement-related metadata, attributes, and effects need matching reconciliation.
+The queued correction section records the current replay path.
+The direct path remains available when a connection lacks the negotiated frame binding.
+Native trajectory parity and complete historical world inputs remain unverified.
+
+## Native correction admission, October 22, 2026
+
+The pinned 1.26.51.1 receiver rejects tick zero before command allocation.
+An 864-case instruction probe verifies the original correction entry, target selector, replay lookup, and command payload copy.
+The cases cover player and vehicle targets, unknown rewind types, grounded state, unsigned tick boundaries, and retained history bounds.
+
+Packet getter `143901ab0` returns ID 161 for vtable `14e897660`.
+Dispatcher `1417342f0` selects recipient slot `0x230`, which calls `14131ab90` and then `144359100`.
+Selector `144358dd0` requires the matching player or vehicle replay component.
+Lookup `144358cd0` rejects zero and compares the correction tick with the oldest retained clock as unsigned values.
+
+Core now consumes tick-zero packets without moving the player or emitting a correction payload.
+The shared correction payload also preserves the upper half of the unsigned tick range.
+Negative Java longs retain those wire bits instead of failing validation.
+Packet regressions failed before both changes.
+
+The probe supplies ECS storage, relation resolution, allocation, and the command dispatch boundary.
+It does not execute command application, retained snapshot restoration, input replay, or world physics.
+The original generic replay probes remain useful evidence for those separate paths.
+Current core implements the clock admission rule described below.
+Historical component restoration and physics resimulation remain incomplete.
+The component journal described below resolves the 28 recorded effect activity mismatches.
+Position and velocity resimulation remain incomplete.
+
+## Retained correction clocks, October 22, 2026
+
+Core now configures clock retention from the `START_GAME` history size, bounded to 1 through 1,000 entries.
+Every emitted input retains its clock, including inputs without a completed prediction payload.
+Such inputs evict old bindings without assigning an unrelated client frame.
+Clock gaps, duplicates, and backward changes start a new history.
+Contiguous unsigned wrap preserves the history.
+The connection frame watermark survives history changes.
+
+The correction handler requires a retained input.
+It rejects zero and unsigned clocks older than the oldest retained input before any player or vehicle mutation.
+Rejected packets emit neither motion nor a negotiated correction payload.
+Future clocks remain eligible because the native receiver has no corresponding upper-bound rejection.
+These clocks describe emitted inputs. They do not provide historical component snapshots or replay physics.
+
+Twelve controls execute the original native installer block and history constructor.
+They verify the capacity bound across the native ushort range.
+They do not establish conversion from malformed signed wire sizes into that native field.
+The earlier 344 capture controls establish clock continuity, null-input capture, eviction, and unsigned wrap.
+
+A new 512-case probe joins the original receiver, target selector, unsigned lookup, queue insertion, comparator, client/server policy, and replay loop.
+Historical position commands compare against the next retained snapshot and enter its command queue when a difference requires replay.
+The original client policy marks that frame dirty, then replay applies the correction before its captured input.
+The probe completes 84 historical replays and observes no immediate position-command application at receipt.
+Current-clock commands enter the pending queue. Future commands enter the current frame queue without an immediate dirty mark in these controls.
+
+The probe supplies ECS stores, snapshot storage, captured input methods, allocation, metrics, and grounded-tag insertion.
+Its physics step uses explicit float32 position addition as an ordering witness.
+It does not execute native world physics or prove client trajectories.
+The cached snapshot-blob descriptor path also remains outside this probe.
+
+A separate 16-control probe continues current-tick corrections through the original pending-command transfer block.
+Fourteen changed controls transfer their commands, set the movement mask, and mark the next captured frame dirty.
+Replay then applies each correction before that frame's input. Two unchanged controls queue no command.
+Frame construction, snapshot storage, input methods, and arithmetic physics remain explicit fixture boundaries.
+This probe does not execute the complete capture function or native world physics.
+
+Regression tests fail against the previous missing-frame retention and stale correction handling.
+The new tests cover server capacity, clock discontinuities, unsigned boundaries, missing frames, and stale player, boat, and horse corrections.
+Production clock admission also matches 1,500 checks derived from 300 native capture and wrap controls.
+After integration with the newer cooking controls, the four-project build passes 2,382 tests, with 212 optional skips and no failures or errors.
+All 104 core patches replay, and all 1,386 embedded core classes match the rebuilt core.
+Offline validation passes.
+Full historical replay, component reconciliation, and the reported pearl/wind-charge rollback remain unfinished.
+
+A fresh 30-second BDS recording reaches gameplay and produces a structurally complete journal.
+It records 90 player corrections and two vehicle corrections, so movement mismatches remain visible.
+Each correction matches the last emitted input tick or trails it by one tick, which makes current-tick command transfer a required next step.
+The client does not stop after the recorder sends SIGTERM. The recorder correctly refuses to release its runtime dependencies.
+After private thread diagnostics, only the birth-verified recording JVM requires forced termination.
+The remaining owned launcher, server, and display stop, then the runtime copies release.
+This capture remains incomplete because normal teardown fails. It does not establish movement parity or resolve the shutdown cause.
+
+## Captured movement-effect inputs, October 22, 2026
+
+The effect timeline now retains ordered local admissions and server commands in a bounded frame journal.
+The client opens each record before simulation, reconciles effects before local player physics, and completes the existing frame clock after movement.
+Server commands precede captured inputs. Completed replay frames then run the effect countdown.
+The current open frame consumes its duration during physics before its normal countdown.
+
+Native effect snapshots copy timestamps, durations, and kinds into an owned vector.
+The journal restores the first dirty frame before commands, admissions, and countdowns.
+It refreshes later snapshots before their commands so repeated corrections retain the corrected history.
+This prevents unrelated effects from consuming their past countdowns twice.
+Captured geyser admissions can restore a 100-tick effect after a server removal.
+Other effect kinds also receive each replayed countdown.
+Commands with zero movement masks remain queued until a later command requests replay.
+Zero-duration marker presence remains separate from active duration for command masks.
+
+Movement-effect payload revision 3 carries the exact oldest retained unsigned input clock.
+Core derives this clock from emitted inputs, including inputs without completed predictions.
+The client clamps command dispatch against this clock and discards expired input records.
+A fixed window cannot represent short histories or clock discontinuities.
+Revision 2 does not provide this context and rejects without a compatibility alias.
+The add-on patch records its shared-core prerequisite in the series metadata.
+
+The original receiver, complete capture caller, full capture function, cached-input fill, and replay now execute together in 128 native controls.
+The original capture function allocates and inserts the actual new frame.
+Its ECS snapshot store, allocator, clock, input methods, and arithmetic physics remain explicit fixture boundaries.
+Four additional controls verify that clock discontinuities remove old frames but preserve pending commands and movement masks.
+These controls do not execute native world physics or prove client trajectories.
+
+The generated-input controls match all 336 immediate cases and all 84 first replay cases under their supplied snapshot boundary.
+Those controls establish input and command order, not packed snapshot semantics.
+The targeted regressions also cover pending transfer, ordinary countdown, clamped clocks, zero-mask command retention, actor removal, and strict context transport.
+The shared input fixture uses `STACKANVIL_MOVEMENT_INPUT_REPLAY_REFERENCE` and remains optional when the private evidence is absent.
+
+The earlier presence-only snapshot probe used cached table slot 76, whose component hash is `fa93038f`.
+MovementEffectsComponent `5c92321d` uses slot 72, snapshot bit 70, and vector offset `0x5e0`.
+The earlier claim about effect snapshot semantics was incorrect.
+Eighteen fresh native controls capture and restore complete timestamps, durations, and kinds into independent owned vectors.
+The source vector changes after capture, and the destination differs before restore.
+Original packed capture `143276a40` and restore `14327b6f0`/`14327b7c0` recover the captured values.
+Typed-store discovery, allocation, generic CRT memory copy, and the extra restore-copy list remain fixture boundaries.
+
+Two regressions fail with the previous journal and pass with independent snapshots.
+They cover an unrelated effect countdown and a later correction after an earlier rewind.
+
+Sixty-four additional controls execute original packed history comparison, frame capture, packed capture, snapshot restore, packed restore, and replay together.
+Twenty-four cases replay, with no mismatches against the explicit arithmetic witness.
+All six initial history blobs also use original packed capture.
+The copied components include StateVector (36 bytes), AABBShape (32), actor rotation (16), angular state (20), and Offsets (68).
+Typed-store and cache construction, the extra restore-copy list, presence transitions, input methods, and world physics remain boundaries.
+These controls keep grounded tags absent.
+
+Ten native VehicleComponent controls preserve independent membership vectors after the live vector changes.
+They cover empty, single, multiple, and aligned large vectors, with empty and allocated destinations.
+Captured and restored vectors preserve member order and do not alias the live vector.
+Actor lifetime, mount graph changes, seat ownership, and client vehicle physics remain unverified.
+
+**Incomplete:** This replays effect components without restoring historical player or vehicle positions and velocities.
+Full physics steps, mutable attributes, posture and collision state, zero-duration impulses, and complete trajectory comparisons still need integration.
+A later 30-second BDS probe reaches gameplay and completes normal cleanup.
+Read-only hooks observe all 16 local admissions in open records and retain each admission through completion.
+The probe also observes 18 effect confirmations and one replay entry with a pending movement mask.
+This establishes the producer and frame lifecycle, not complete native physics or trajectories.
+The cause of the earlier shutdown failure remains unproven.
+
+
+The integrated four-project build preserves the incoming cooking fixes and passes 2,402 tests, with 212 optional skips and no failures.
+All 104 core patches and 38 add-on patches replay without conflicts.
+All 1,393 embedded core classes match the rebuilt core.
+Checkstyle and offline patch validation pass.
+The separate cooking regression suite also passes all 13 cases with the private native wire reference enabled.
+
+The later client build records 602 live physics frames with populated historical effect snapshots and no observer errors.
+All 17 observed local admissions remain present at completion. The observer records 20 effect confirmations and one masked replay entry.
+Normal JVM shutdown hangs again, so this recording remains incomplete.
+Resolved native diagnostics place the VM thread in a mutex wait inside the mapped datachannel library while Java threads wait at a safepoint.
+The precise cause and packaged native binary identity remain unproven.
+After diagnostics, the birth-verified recording JVM terminates, owned descendants exit, and the private server and display stop.
+The original server fixture returns, and recording runtime copies release.
+This establishes snapshot and admission wiring. It does not establish a successful lifecycle or native trajectories.
+
+## Vehicle correction motion, October 22, 2026
+
+Core now sends authoritative vehicle motion before the Java vehicle position update.
+Both nonzero corrections and zero resets preserve the chosen boat or horse identity.
+The Java position packet carries no motion field.
+Java 26.3 bytecode confirms that entity motion updates delta movement and that vehicle position updates preserve this value.
+
+A separate 48-case probe executes the complete native correction command `144373f30`.
+It verifies position and velocity writes in the original `StateVectorComponent` path.
+It also verifies conditional vehicle rotation and optional angular writes.
+The fixture supplies typed storage providers and the grounded-tag setter boundary.
+No hooks replace the position, velocity, rotation, angular, or bounding-box writes.
+
+The packet regression failed before motion delivery existed.
+It covers a nonzero correction followed by a zero reset for both a boat and a horse.
+Full historical replay, paired client ground state, angular state, and native trajectory comparisons remain open.
+
+Final integrated validation passes 1,500 core tests and 843 add-on tests, with 212 optional skips and no failures or errors.
+All 104 core patches reproduce the tested source tree.
+All 1,386 core classes match the core embedded in the rebuilt add-on.
+The full four-project build passes.
+
+A fresh 45-second NetherNet recording against BDS 1.26.51.1 completes with gameplay acknowledgments and normal cleanup.
+It records 873 mounted inputs, including 40 moving inputs, and 43 actual vehicle corrections.
+The client stays mounted and connected, but repeated corrections demonstrate a remaining movement mismatch.
+This recording does not establish native boat trajectories or historical replay parity.
+
 
 ## Authoritative grounded state
 
@@ -1091,7 +1490,8 @@ The runtime candidate remains private; no installation or gameplay launch occurs
 Original instructions pass 560 vehicle-view checks, 22 sender cases, six sender transitions, 192 controlling-seat writer cases and 24 prediction callbacks.
 Thirty cleanup controls establish generation-valid erase dispatch for supplied movement-tick markers.
 Actual storage erasure and cleanup execution order remain unresolved.
-Native corrected vehicle velocity application, complete prediction replay, collision and strict-BDS/native trajectories also remain unresolved.
+Full historical vehicle correction, client ground and angular state, collision, and strict-BDS/native trajectories remain unresolved.
+The later vehicle correction section records standard motion delivery.
 Add-on0025 must provide the negotiated completed local mount sample before this optional core path can activate in a real client.
 
 ### Keep the sparse metadata hook with its consumer
@@ -1139,3 +1539,333 @@ All 1,032 outgoing auth-input packets retain native Y `71.62001037597656`.
 The first sample precedes the teleport and retains the recording's separate StartGame position.
 Every owned process completes normal cleanup.
 The general rendering audit reports unresolved mappings, so this run establishes movement conversion only.
+
+## Empty history and physical snapshot ownership
+
+The correction handler now rejects packets before the first emitted input and after history configuration clears retained inputs.
+It consumes the complete packet before rejection and leaves player, vehicle, motion, and correction payload state unchanged.
+The first emitted input enables correction admission, including inputs without a completed physics sample.
+
+An additional 128 controls execute the original correction receiver and command insertion for player and vehicle targets.
+All 36 empty-history controls retain unchanged live state and queue no correction.
+The remaining controls cover one-frame and six-frame histories, unsigned boundaries, pending commands, and retained command placement.
+Future commands remain eligible for retention without an immediate dirty mark.
+The fixture supplies typed stores, snapshots, input objects, actor lookup, allocation, and scalar state.
+These controls do not execute world physics.
+
+Three regressions fail before the change.
+They pass after the change, with all 30 focused prediction and correction packet tests.
+The packet controls reject both rewind targets before reading actor state.
+They also cover history configuration after a previous input.
+
+Separate packed snapshot controls establish copied bytes for 56 scalar component types across 168 patterns.
+The live source changes after capture, and the restore target starts with different bytes.
+The controls retain the captured values and preserve untouched padding.
+The copied fields include jump state, rotation, seat offsets, passenger identity, boat movement, movement attributes, and move input.
+Move input restores 95 bytes, while boat movement restores 20 bytes and movement attributes restore 72 bytes.
+These are copied-byte counts, not complete C++ object sizes or verified producer layouts.
+Breathable, jump control, and depenetration need constructed fixtures.
+Managed containers and component creation or removal also need separate ownership checks.
+
+Sixteen controls also execute the native correction command after packed snapshot restoration and before captured input.
+The position command preserves the restored previous position and replaces current position and velocity.
+It rebuilds the bounding box from the restored shape and position offset.
+It changes the current rotation values and preserves the previous rotation values.
+When angular velocity is present, it replaces the third float in `BoatMovementComponent`.
+Otherwise, that field retains its captured value.
+The other boat movement fields remain unchanged in these controls.
+Input callbacks, arithmetic physics, constructed stores, and actor lookup remain fixture boundaries.
+
+The Java simulation phases still need separation before physical replay can use these snapshots.
+`LocalPlayer.aiStep` polls current input and sends actions.
+`Player.aiStep` advances inventory and pickups.
+`LivingEntity.aiStep` advances equipment, applies block effects, and pushes other entities.
+Full historical player and vehicle restoration, safe physical replay, and seat ownership remain unfinished.
+
+## Mounted input clock pairing
+
+A private delayed BDS trace supplies 95 completed boat samples with matching vehicle positions, frame identities, and mount contexts.
+Every paired rider position differs from the tracked player position.
+The previous player-position check discards all 95 shared frame identities before vehicle admission.
+Consequently, none of those inputs can admit a negotiated vehicle correction into replay.
+
+The packet handler now consumes the completed frame before actor-specific position checks.
+Unmounted inputs still require a matching player position.
+Mounted inputs require an admitted vehicle sample with the same frame identity and current mount context.
+Vehicle actor identity, position, and loaded-chunk checks remain in the vehicle storage.
+A rejected vehicle sample cannot bind the input clock through a matching rider position.
+Frame watermarks still prevent rejected or consumed payloads from binding later inputs.
+
+The stale-rider regression fails before the change and passes after it.
+Nine focused cases cover valid pairs, missing samples, mismatched frames, stale contexts, different actors, displaced vehicles, unloaded chunks, and unmounted rejection.
+Existing packet tests now exercise valid paired samples when they expect negotiated vehicle correction.
+The combined stack includes the newer native language patch.
+All 105 core patches replay, and all four project builds pass.
+The full suites pass 2,675 cases, with 163 optional skips and no failures or errors.
+All retained native references run, including the five language fixtures.
+All 1,428 core classes match both embedded copies; all 1,143 client classes match the add-on.
+Compiled core classes match after the four expected build-constant replacements.
+
+Two private BDS 1.26.51.1 sessions apply 300 ms inbound delay and complete standing impulses, mounting, boat impulses, release, reacquisition, dismount, and zero velocity.
+
+| Route | Vehicle frames paired and bound | Historical vehicle corrections | Replay boundaries | Replayed physical steps |
+| --- | ---: | ---: | ---: | ---: |
+| Direct NetherNet | 158 | 10 | 17 | 103 |
+| ViaProxy | 159 | 12 | 19 | 116 |
+
+Every replay preserves the live player tick, food level, and held-item count.
+Every historical vehicle correction retains the current mount epoch, controlling passenger, and local authority.
+Each route receives four nonzero-tick player velocity commands with the original native tick and float values.
+Each command applies once live and once in its following historical input frame.
+Both mounted player impulses have tick zero and retain standard delivery.
+The fixture emits no nonzero-tick vehicle velocity packet, so it does not exercise that negotiated command variant.
+
+Both runtime add-on checksums match the combined artifact; the proxy checksum also matches on its route.
+Both clients, recorders, and isolated servers stop normally, and their owned process identities disappear.
+Read-only observers report no errors in these completed runs.
+The original server fixture remains unchanged.
+A separate first attempt ends before the sequence because its reused player drowns.
+The private fixture now resets initial health and disables drowning damage; motion and mount phases remain unchanged.
+
+These checks establish live clock binding and correction execution on both routes.
+Exact native trajectories, collider refresh, retained interpolation, and complete mount lifetime and seat ownership remain unfinished.
+
+## Native packet source for collider refresh
+
+The collider source is the newest network-history message position.
+It is independent of the completed Java physics frame and the current Java transform.
+The native movement getter at `1401c5610` returns the position at message offset `0x28`.
+The motion getter at `142887770` returns the retained movement position at offset `0x44`.
+It does not return the raw or accumulated velocity.
+
+A combined check executes the original prediction constructor, all three packet enqueue functions, both position getters, and collider refresh.
+All 192 cases pass, including motion before the first movement and consecutive motion messages.
+A second check executes the original packet publisher, admission gate, history insertion, statistics update, target writer, and collider refresh together.
+All 768 cases pass across movement flags, local control, prediction disablement, actor predictability, provider state, and seeded histories.
+These checks target Bedrock 1.26.51.1, build 51061372, protocol 2193.
+The executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+
+The receive cache updates before the local-control gate.
+An ignored ordinary update therefore changes the receive cache without changing the admitted history or interpolation target.
+A predictable actor can enqueue a message while prediction is disabled.
+Collider refresh still rejects that history source until the prediction component permits it.
+A missing global provider permits history use through the original `1410400c0` guard.
+A configured provider supplies its own boolean through the native virtual callback.
+
+Collider refresh first selects enabled, nonempty prediction history.
+Otherwise, any nonzero interpolation counter selects the retained interpolation target, including negative counters.
+Without either source, the retained collider stays unchanged.
+This source lookup does not compare packet receive clocks.
+The separate interpolation sampler still requires receive timing and native scheduling.
+
+Three negative controls fail after replacement of the motion getter, bypass of local-control admission, or bypass of prediction disablement.
+The fixtures supply allocation, CRT, TLS, clock interfaces, component membership, shape inputs, and selected registry callbacks.
+They exclude actor factory classification, intent producers, history sampling, scheduler integration, and complete live trajectories.
+The client adapter now integrates these source inputs. The next section records the implementation and its remaining limits.
+
+## Retained sources in the client bridge
+
+The core now retains admitted movement separately from the raw receive cache.
+Only accepted absolute or delta updates advance the admitted revision.
+Ignored local-control updates still populate the receive cache for later sparse updates.
+Local predicted transforms cannot overwrite the admitted position.
+The negotiated `viabedrock:actor_spatial` channel publishes the position, flags, unsigned duration, actor identity, revision, and bridge component profile.
+Capability replay publishes the retained source after the actor snapshot.
+
+The client registry rejects stale lifetimes and retires sources with their actor.
+Duplicate revisions can update control inputs without restarting interpolation.
+The source model retains forced and queued targets, signed counters, and the native rotation override.
+The normal client phase advances counters and handles prediction reset or resume before local physics.
+Historical replay does not advance the live source model.
+Each cached collider captures immutable interpolation inputs while eligible network history remains live.
+
+The supported bridge profiles use player exclusion from base prediction and the verified local horse control predicate.
+Twenty additional instruction controls execute the original vehicle-intent initialization stores.
+All twenty initialize the client-prediction byte to zero, preserve surrounding guards, and match the complete 72-byte payload.
+Sparse insertion and slot lookup remain supplied boundaries.
+The existing horse writer controls establish the later saddle, tame, and controller gates.
+
+The registered Java comparison matches all 256 original source-selector and float-box cases.
+The packet regressions also verify that rejected vehicle updates preserve their previous admitted position and revision.
+Focused source, codec, registry, and packet checks pass.
+The native constructor and source controls use the executable identity recorded in the previous section.
+
+History use currently follows the native guard's absent-provider default.
+The configured provider and its Java setting remain unmapped.
+Complete custom actor/component admission, optional head-component behavior, remote sampling, and native pose phases remain unfinished.
+Fresh collider membership still uses the existing Java world adapter.
+These limits prevent a claim of complete native collision or trajectory parity.
+
+The [client source validation](../../viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md#combined-source-validation) records the combined build and fresh delayed sessions.
+Both recorded selector counterexamples now pass their registered client regressions.
+The live routes check collider refreshes against independent float calculations and retain valid mounted input bindings.
+Normal `MOVE_PLAYER` source production and the remaining native component and simulation phases remain unfinished.
+
+The source publisher waits until its actor snapshot is available before it emits the first source command.
+When it publishes native removal, it clears the cached source and dimension publications.
+Equal inputs therefore initialize the receiver again after re-publication.
+A packet-codec regression feeds the real actor registry through ordinary metadata publication and removal.
+It fails first for premature source delivery, then for retained publication caches, and passes with both fixes.
+
+## Player movement source boundary
+
+Native `MOVE_PLAYER` uses callback slot `0x708` and handler `0x14133e990` in the pinned target.
+It does not enter the absolute/delta publisher used by the source integration above.
+Original execution covers 2,048 combinations of client gates, packet admission, actor lookup, riding lookup, mode, ground state, and optional fields.
+The accepted cases reach either the player-mode effect or the riding rotation, head, and vehicle effects.
+The ordinary branch also computes motion from the received position and previous native position before its mode effect.
+These checks supply virtual queries, packet admission, actor lookup, diagnostics, and downstream effects.
+They establish callback routing, rather than complete player movement or collider-source behavior.
+The composed controls below execute the reset effects. Normal source admission and riding pose ownership remain unfinished.
+
+## Remote player reset sources
+
+Remote player respawn and teleport packets now publish an explicit interpolation clear.
+A resolved riding actor selects the separate native riding branch and suppresses this clear.
+Normal movement and head-only packets retain their existing source state.
+The clear retires live interpolation without changing the absolute/delta receive cache or a historical capture.
+Later admitted movement can establish a new source.
+The second revision of the unreleased spatial codec distinguishes movement from clearing.
+
+The original player mode helper composes with the real remote-player virtual, target writers, reset paths, position-request stores, and collider refresh.
+All 3,456 controls pass across four modes, ready/throttle inputs, region results, missing interpolators, signed counters, forced state, and three positions.
+The positions include negative coordinates and chunk boundaries.
+The respawn and teleport paths execute their original interpolation clearing.
+Four deliberate variants fail: ignored readiness, omitted target publication, all modes treated as normal, and omitted teleport clearing.
+
+A serialized packet-to-registry regression covers all four modes, riding references, and present or missing vehicles.
+It also preserves the prior historical target and receive cache, then admits later movement.
+The consumer without clear handling fails; restored production passes.
+All sixteen focused core checks pass with their native references enabled.
+
+These native controls supply actor/component stores, ready/throttle inputs, region results, float CRT, and downstream reset/event boundaries.
+The original ready-field setter executes with a supplied input in this earlier corpus.
+The readiness controls below extend that evidence through its native producer and tick-system callback.
+Normal remote-player source admission, complete region lookup, local-player virtuals, riding pose effects, and native scheduling remain unfinished.
+The full five-area goal remains active.
+
+A fresh target BDS fixture uses a simulated player in a separate test-world copy with Beta APIs enabled.
+Each direct and proxy capture contains two remote-player teleport packets and receives two matching clear commands for that UUID.
+Both preserve the admitted position and actor lifetime, with inactive interpolation after each clear.
+The fixture also respawns the simulated player, but the recorded packets contain no respawn mode.
+Live targets before the clears are inactive; active-target retirement retains native and serialized regression coverage.
+Observers report no errors, runtime package hashes match, and all recorded run-owned identities exit normally.
+The original server configuration, script, and manifest are restored.
+The [client validation](../../viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md#remote-player-reset-validation) records the combined build and delayed movement checks.
+
+## Native player throttling
+
+Further original execution covers the optional throttle installation and its later update transitions.
+This research uses the same Bedrock 1.26.51.1 client image and protocol 2193 as the reset controls.
+It adds no production admission rule.
+
+The `ADD_PLAYER` handler checks a client configuration virtual before installing `UpdateAndRenderThrottleComponent`.
+It creates a missing component with both bytes zero and preserves an existing component.
+Sixteen controls execute the original configuration call, sparse membership checks, and payload initialization.
+Generic storage lookup, insertion, and payload allocation remain supplied boundaries.
+Another 640 controls replace that supplied boolean with the original configuration setter, enabled predicate, and value accessors.
+The setter stores its enabled flag, integer threshold, and float scalar without changing neighboring fields.
+The enabled predicate requires a stored flag of exactly one.
+It then compares an option integer against the stored threshold with signed less-than-or-equal admission.
+Threshold equality, both signed extrema, and the float scalar's negative zero bits retain original execution.
+The option object and integer remain supplied.
+The packet controls below cover the setter's network caller; runtime update timing remains unverified.
+
+The component has separate selection and interpolation-admission bytes.
+The original signed budget comparison can reject a selection attempt.
+An admitted selection sets both bytes and clears interpolation when the previous admission byte was false.
+It also copies the current native position into the previous position in that case.
+The throttle callback clears the selection byte.
+If that byte was already false, the callback also disables interpolation admission, clears interpolation, and removes `ActorTickNeededComponent`.
+An admitted update preserves its enabled admission byte across the callback.
+
+The native registration names this callback `ClientDisplayThrottleTick` and supplies category value ten.
+The original callback executes both sparse intersection traversals across 2,560 controls.
+Each control composes the budget branch, callback, normal player packet effect, position request, and collider refresh.
+The earlier 1,280 direct-helper controls remain separate evidence for the same transitions.
+They are not an additional set of independent player scenarios.
+Six deliberate variants fail assertions: ignored budget, retained disabled target, retained first-admission target, ignored configuration, ignored threshold, and reinitialized existing component.
+
+These controls supply budget inputs, priority notifications, component stores, registry lookup, and marker erasure.
+They also retain the earlier supplied readiness input, region query, notifications, and float CRT.
+They do not establish complete priority collection, budget production, scheduler ordering, actor factory behavior, or native trajectories.
+The readiness controls below verify the setter caller and tick-system selection.
+Normal player source integration still needs complete membership producers, the option implementation, priority membership, and full phase effects and timing.
+Java actor age, visibility, and smoothing cannot stand in for these native decisions.
+
+## Native network throttle producer
+
+The native `NETWORK_SETTINGS` dispatcher reaches handler `0x141330030` through the client callback table.
+The handler supplies the configuration setter's enabled flag, unsigned-byte threshold, and float scalar.
+An enabled packet preserves its threshold and scalar bits.
+A disabled packet clears the stored threshold and scalar, including stale values from an earlier configuration.
+The current translator discards these fields; complete player-source integration must retain their behavior.
+
+Another 3,584 controls compose the original handler prefix, configuration accessors, player-component installation, and budget calculation.
+The budget reads the option integer and scalar, multiplies as native floats, then truncates to a signed integer.
+NaN, infinity, and out-of-range products produce the native invalid-conversion result.
+Retaining disabled configuration values fails its control.
+Rounding a budget instead of truncating it also fails; one native case requires 63 rather than 64.
+The earlier 512 packet-prefix controls are a subset of this composed coverage.
+
+These controls supply decoded packet objects, an empty compression connection table, option values, and ECS storage boundaries.
+They stop before the handler's authentication continuation.
+The empty-range sort is an asserted boundary; the controls do not establish priority collection or entity selection order.
+Packet decoding, complete scheduler timing and membership producers, and the actual option implementation remain unfinished.
+
+## Native player readiness
+
+Readiness comes from the result of `Actor::tick`, published through the remote-player virtual setter.
+`ActorLegacyTickSystem` selects `ActorOwnerComponent` and `ActorTickNeededComponent`, then invokes the tick wrapper.
+It handles entities with and without `PlayerComponent` in separate passes.
+Only actors with `RemotePlayerComponent` receive the readiness publication.
+The wrapper removes the tick-needed marker after a tick attempt, including a failed attempt.
+A nonzero skip flag leaves readiness and the marker unchanged.
+
+The original wrapper, actor tick gates, setter, following normal movement, and collider refresh pass 4,608 controls.
+They cover region results, global-actor and actor-type gates, remote-player membership, prior readiness, and absent, live, or expired weak region references.
+Another 1,728 controls execute the original tick-system callback and both passes.
+Instruction observations confirm all three player traversals and both non-player traversals.
+Missing required membership or a stale tick-needed generation prevents dispatch.
+The following movement and collider paths also execute, with their input combinations sampled by case index.
+Eight deliberately incorrect executions fail assertions across the two corpora.
+
+The native type metadata identifies the required early-return state as `DimensionStateComponent`.
+These controls set its first 32-bit value nonzero.
+The original remote-player normal tick therefore returns before its full player physics and inventory body.
+They supply actor/world state, sparse stores, initialized compiler TLS state, generic storage discovery and erasure, region results, notifications, and float CRT.
+The system is called directly; registration order does not establish scheduler execution order.
+These earlier controls exclude membership production, full normal-tick effects, riding behavior, actual region implementation, and phase timing.
+The lifecycle controls below extend producer, region, and dispatch-order coverage.
+This evidence introduces no production runtime change and does not establish normal player source parity.
+
+
+## Native remote-player tick lifecycle
+
+The original `FlagRemotePlayersForTickingSystem` selects `BlockSourceComponent`, `ActorComponent`, and `RemotePlayerComponent`.
+Its marker producer locks the weak region reference and adds `ActorTickNeededComponent` only when absent.
+The original `BlockSource::getWeakRef` initializes the marker payload; existing payloads remain unchanged.
+
+A separate control executes complete native client system registration and the ordinary `EntitySystems::tick` dispatcher.
+It observes 473 dispatches from 487 registrations under the supplied client options.
+Remote-player flagging runs before `ClientDisplayThrottleTick`, followed later by `ActorLegacyTickSystem`.
+The order control observes all system bodies and custom controllers through return boundaries.
+It proves that entry's dispatch order, not the effects of every intervening system or packet interleaving.
+
+Another 23,040 controls compose the original remote-player flagging callback, marker constructor, throttle callback, legacy tick, readiness setter, and following normal movement.
+All three flagging traversals execute with valid cached component views.
+The throttle callback can retire a newly created marker before the legacy tick, leaving prior readiness unchanged.
+These controls also execute the concrete `BlockSource::hasBlock`, chunk lookup, and weak-cache paths.
+Fresh lookups require native chunk stage 2 or 11 according to the source flag, and reject the raw chunk availability flag.
+Two four-step sequences verify live-cache reuse after a stage drop, immediate flag rejection, and a fresh lookup after weak expiry.
+Five deliberately incorrect variants fail assertions: dropped marker production, existing-marker reinitialization, ignored availability flag, lowered stage threshold, and ignored live cache.
+
+The original startup initializer supplies the invalid-chunk sentinel used by the source constructor and availability check.
+This includes chunk `(0, 0)` in the verified input set; the zero-filled PE image alone does not represent initialized process state.
+The [pinned SDK layout](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/chunk/LevelChunk.h) names byte `0x82` as `mReadOnly`; this remains naming evidence, separate from the executed target behavior.
+
+These controls supply cached component views, generic sparse insertion and erasure/destruction, chunk records, load stages, source flags, and retained reference owners.
+They retain the nonzero `DimensionStateComponent` early return and the earlier notification, CRT, and optional-component boundaries.
+The native source factory and constructor execute with supplied allocator, level/listener, and thread-ID boundaries.
+Complete phase effects, chunk-state producers, other membership producers, priority collection, options, riding, packet timing, and normal player source integration remain unfinished.
+No production runtime code changes in this milestone.

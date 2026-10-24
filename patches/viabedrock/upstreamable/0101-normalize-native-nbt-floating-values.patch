@@ -1,0 +1,621 @@
+From 905b6970e079475ca6ad7b824cfddca0ce9074bd Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 17:53:48 +0200
+Subject: [PATCH] fix(nbt): preserve native scalar values
+
+NBT stores byte strings even when their contents are not valid UTF-8.
+Replacing malformed bytes during Java decoding can collapse distinct keys
+and make distinct item names compare equal. Retain those bytes through
+isolated low surrogates in the internal Java representation, preserve
+valid surrogate pairs, and restore the original bytes on output.
+
+Use the lossless codec for little-endian and network-NBT string IO. Keep
+their framing and numeric representations intact. Ordinary packet text
+continues to use its existing Unicode decoder. Copies and the Java NBT
+envelope preserve the retained bytes without a synthetic tag field.
+
+Binary NBT loads float NaNs and non-finite doubles as positive zero, while
+preserving float infinities, signed zero and finite bits. Apply those
+numeric rules at the binary-NBT stream boundary without mutating source
+tags. Generic little-endian and network-NBT numbers keep their behavior.
+
+Evidence targets Bedrock 1.26.51.1, protocol 2193, executable SHA-256
+537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7.
+Complete parsed ItemStack construction142484090/1424a3e70, binary userdata
+loader1424d06e0, NBT parser142555580 and comparator14254a410 retain raw keys,
+display names and string lists in 340 inputs and 680 directional checks.
+Typed registries, virtual interfaces and runtime/allocator hosting remain
+supplied boundaries; this is not full packet decoding or native pixels.
+
+The numeric loader and writer slices14254b9f0/14254b2e0 agree on all 28
+scalar bit patterns. The writer probe stops before abstract output
+dispatch and does not establish full native packet serialization.
+
+Tests cover distinct malformed keys/names, nested lists, Java NBT transit,
+every byte pair, every Unicode scalar and mixed malformed inputs. Each
+restored old stream, or broken surrogate-pair handling, fails its relevant
+behavioral regression. Native comparisons remain separate from complete
+live malformed-NBT inventory acceptance and the unfinished search UI.
+---
+ .../io/LittleEndianByteBufInputStream.java    |   5 +-
+ .../io/LittleEndianByteBufOutputStream.java   |   7 +-
+ .../raphimc/viabedrock/api/io/NbtUtf8.java    |  65 ++++++++
+ .../api/io/NetworkByteBufInputStream.java     |   2 +-
+ .../api/io/NetworkByteBufOutputStream.java    |   2 +-
+ .../protocol/types/primitive/TagLeType.java   |  44 ++++-
+ .../viabedrock/api/io/NbtUtf8Test.java        |  42 +++++
+ .../types/primitive/NativeNbtStringsTest.java | 152 ++++++++++++++++++
+ .../types/primitive/TagLeTypeTest.java        | 141 ++++++++++++++++
+ 9 files changed, 450 insertions(+), 10 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/io/NbtUtf8.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/io/NbtUtf8Test.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/primitive/NativeNbtStringsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeTypeTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/io/LittleEndianByteBufInputStream.java b/src/main/java/net/raphimc/viabedrock/api/io/LittleEndianByteBufInputStream.java
+index e795d35bd..6c35b470d 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/io/LittleEndianByteBufInputStream.java
++++ b/src/main/java/net/raphimc/viabedrock/api/io/LittleEndianByteBufInputStream.java
+@@ -21,7 +21,6 @@ import io.netty.buffer.ByteBuf;
+ import io.netty.buffer.ByteBufInputStream;
+ 
+ import java.io.IOException;
+-import java.nio.charset.StandardCharsets;
+ 
+ public class LittleEndianByteBufInputStream extends ByteBufInputStream {
+ 
+@@ -70,7 +69,9 @@ public class LittleEndianByteBufInputStream extends ByteBufInputStream {
+ 
+     @Override
+     public String readUTF() throws IOException {
+-        return (String) this.buffer.readCharSequence(this.readUnsignedShort(), StandardCharsets.UTF_8);
++        final byte[] bytes = new byte[this.readUnsignedShort()];
++        this.buffer.readBytes(bytes);
++        return NbtUtf8.decode(bytes);
+     }
+ 
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/io/LittleEndianByteBufOutputStream.java b/src/main/java/net/raphimc/viabedrock/api/io/LittleEndianByteBufOutputStream.java
+index cc5c89891..f6f45b0bd 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/io/LittleEndianByteBufOutputStream.java
++++ b/src/main/java/net/raphimc/viabedrock/api/io/LittleEndianByteBufOutputStream.java
+@@ -19,10 +19,8 @@ package net.raphimc.viabedrock.api.io;
+ 
+ import io.netty.buffer.ByteBuf;
+ import io.netty.buffer.ByteBufOutputStream;
+-import io.netty.buffer.ByteBufUtil;
+ 
+ import java.io.IOException;
+-import java.nio.charset.StandardCharsets;
+ 
+ public class LittleEndianByteBufOutputStream extends ByteBufOutputStream {
+ 
+@@ -66,8 +64,9 @@ public class LittleEndianByteBufOutputStream extends ByteBufOutputStream {
+ 
+     @Override
+     public void writeUTF(final String v) throws IOException {
+-        this.writeShort(ByteBufUtil.utf8Bytes(v));
+-        this.buffer.writeCharSequence(v, StandardCharsets.UTF_8);
++        final byte[] bytes = NbtUtf8.encode(v);
++        this.writeShort(bytes.length);
++        this.buffer.writeBytes(bytes);
+     }
+ 
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/io/NbtUtf8.java b/src/main/java/net/raphimc/viabedrock/api/io/NbtUtf8.java
+new file mode 100644
+index 000000000..7ea26f5a7
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/io/NbtUtf8.java
+@@ -0,0 +1,65 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.io;
++
++import java.io.ByteArrayOutputStream;
++import java.nio.ByteBuffer;
++import java.nio.CharBuffer;
++import java.nio.charset.StandardCharsets;
++
++/** NBT byte strings in Java. Malformed UTF-8 bytes use isolated low surrogates. */
++public final class NbtUtf8 {
++
++    private NbtUtf8() { }
++
++    public static String decode(final byte[] bytes) {
++        final var input = ByteBuffer.wrap(bytes);
++        final var output = CharBuffer.allocate(bytes.length);
++        final var decoder = StandardCharsets.UTF_8.newDecoder();
++        while (true) {
++            final var result = decoder.decode(input, output, true);
++            if (result.isUnderflow()) {
++                decoder.flush(output);
++                output.flip();
++                return output.toString();
++            }
++            if (!result.isMalformed()) {
++                throw new IllegalStateException("Unexpected UTF-8 decoder result: " + result);
++            }
++            for (int index = 0; index < result.length(); index++) {
++                output.put((char) (0xDC00 | (input.get() & 0xFF)));
++            }
++        }
++    }
++
++    public static byte[] encode(final String value) {
++        ByteArrayOutputStream output = null;
++        int start = 0;
++        int index = 0;
++        while (index < value.length()) {
++            final char character = value.charAt(index);
++            if (Character.isHighSurrogate(character) && index + 1 < value.length() && Character.isLowSurrogate(value.charAt(index + 1))) {
++                index += 2;
++            } else if (character >= 0xDC80 && character <= 0xDCFF) {
++                if (output == null) {
++                    output = new ByteArrayOutputStream(value.length());
++                }
++                output.writeBytes(value.substring(start, index).getBytes(StandardCharsets.UTF_8));
++                output.write(character & 0xFF);
++                start = index + 1;
++                index++;
++            } else {
++                index++;
++            }
++        }
++        if (output == null) {
++            return value.getBytes(StandardCharsets.UTF_8);
++        }
++        output.writeBytes(value.substring(start).getBytes(StandardCharsets.UTF_8));
++        return output.toByteArray();
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/io/NetworkByteBufInputStream.java b/src/main/java/net/raphimc/viabedrock/api/io/NetworkByteBufInputStream.java
+index c6fb2fa92..35a2c293c 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/io/NetworkByteBufInputStream.java
++++ b/src/main/java/net/raphimc/viabedrock/api/io/NetworkByteBufInputStream.java
+@@ -53,7 +53,7 @@ public class NetworkByteBufInputStream extends LittleEndianByteBufInputStream {
+     @Override
+     public String readUTF() throws IOException {
+         try {
+-            return BedrockTypes.STRING.read(this.buffer);
++            return NbtUtf8.decode(BedrockTypes.BYTE_ARRAY.read(this.buffer));
+         } catch (final Exception e) {
+             throw new IOException(e);
+         }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/io/NetworkByteBufOutputStream.java b/src/main/java/net/raphimc/viabedrock/api/io/NetworkByteBufOutputStream.java
+index f1e0c2c3e..82940324a 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/io/NetworkByteBufOutputStream.java
++++ b/src/main/java/net/raphimc/viabedrock/api/io/NetworkByteBufOutputStream.java
+@@ -53,7 +53,7 @@ public class NetworkByteBufOutputStream extends LittleEndianByteBufOutputStream
+     @Override
+     public void writeUTF(final String s) throws IOException {
+         try {
+-            BedrockTypes.STRING.write(this.buffer, s);
++            BedrockTypes.BYTE_ARRAY.write(this.buffer, NbtUtf8.encode(s));
+         } catch (final Exception e) {
+             throw new IOException(e);
+         }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeType.java
+index a3762f984..1c15a8214 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeType.java
+@@ -44,7 +44,7 @@ public class TagLeType extends Type<Tag> {
+ 
+         try {
+             BedrockTypes.UTF8_STRING.read(buffer);
+-            return TagRegistry.read(id, new LittleEndianByteBufInputStream(buffer), TagLimiter.noop(), 0);
++            return TagRegistry.read(id, new TagInput(buffer), TagLimiter.noop(), 0);
+         } catch (final IOException e) {
+             throw new UncheckedIOException(e);
+         }
+@@ -60,10 +60,50 @@ public class TagLeType extends Type<Tag> {
+         buffer.writeByte(value.getTagId());
+         BedrockTypes.UTF8_STRING.write(buffer, "");
+         try {
+-            value.write(new LittleEndianByteBufOutputStream(buffer));
++            value.write(new TagOutput(buffer));
+         } catch (final IOException e) {
+             throw new UncheckedIOException(e);
+         }
+     }
+ 
++    // Binary NBT preserves float infinities, but replaces float NaNs and all
++    // non-finite doubles with positive zero. Keep this out of generic LE IO.
++    private static final class TagInput extends LittleEndianByteBufInputStream {
++
++        private TagInput(final ByteBuf buffer) {
++            super(buffer);
++        }
++
++        @Override
++        public float readFloat() {
++            final float value = super.readFloat();
++            return Float.isNaN(value) ? 0F : value;
++        }
++
++        @Override
++        public double readDouble() {
++            final double value = super.readDouble();
++            return Double.isFinite(value) ? value : 0D;
++        }
++
++    }
++
++    private static final class TagOutput extends LittleEndianByteBufOutputStream {
++
++        private TagOutput(final ByteBuf buffer) {
++            super(buffer);
++        }
++
++        @Override
++        public void writeFloat(final float value) {
++            super.writeFloat(Float.isNaN(value) ? 0F : value);
++        }
++
++        @Override
++        public void writeDouble(final double value) {
++            super.writeDouble(Double.isFinite(value) ? value : 0D);
++        }
++
++    }
++
+ }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/io/NbtUtf8Test.java b/src/test/java/net/raphimc/viabedrock/api/io/NbtUtf8Test.java
+new file mode 100644
+index 000000000..949a9985f
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/io/NbtUtf8Test.java
+@@ -0,0 +1,42 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.io;
++
++import java.nio.charset.StandardCharsets;
++import java.util.Random;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class NbtUtf8Test {
++
++    @Test
++    void retainsEveryBytePairAndMixedMalformedSequences() {
++        for (int value = 0; value <= 0xFFFF; value++) {
++            final byte[] bytes = {(byte) (value >> 8), (byte) value};
++            assertArrayEquals(bytes, NbtUtf8.encode(NbtUtf8.decode(bytes)), Integer.toHexString(value));
++        }
++        final var random = new Random(2193);
++        for (int index = 0; index < 1024; index++) {
++            final byte[] bytes = new byte[random.nextInt(512)];
++            random.nextBytes(bytes);
++            assertArrayEquals(bytes, NbtUtf8.encode(NbtUtf8.decode(bytes)));
++        }
++    }
++
++    @Test
++    void preservesAllUnicodeScalarsIncludingSurrogateEscapeRangeInPairs() {
++        for (int point = 0; point <= Character.MAX_CODE_POINT; point++) {
++            if (point >= Character.MIN_SURROGATE && point <= Character.MAX_SURROGATE) {
++                continue;
++            }
++            final String text = new String(Character.toChars(point));
++            final byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
++            assertEquals(text, NbtUtf8.decode(bytes));
++            assertArrayEquals(bytes, NbtUtf8.encode(text));
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/primitive/NativeNbtStringsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/primitive/NativeNbtStringsTest.java
+new file mode 100644
+index 000000000..c0ae20888
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/primitive/NativeNbtStringsTest.java
+@@ -0,0 +1,152 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.types.primitive;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.StringTag;
++import com.viaversion.nbt.tag.Tag;
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.HexFormat;
++import java.util.List;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeNbtStringsTest {
++
++    @Test
++    void distinctMalformedNamesRemainUnequalAfterDecodingAndCopying() throws Exception {
++        for (final var type : List.of(BedrockTypes.TAG_LE, BedrockTypes.NETWORK_TAG)) {
++            final var first = compound(type, new byte[]{'n'}, new byte[]{(byte) 0xFF});
++            final var second = compound(type, new byte[]{'n'}, new byte[]{(byte) 0x80});
++            try {
++                final var a = (CompoundTag) type.read(first);
++                final var b = (CompoundTag) type.read(second);
++                assertNotEquals(a, b);
++                assertNotEquals(a.copy(), b.copy());
++                assertNotEquals(a.getString("n"), b.getString("n"));
++            } finally {
++                first.release();
++                second.release();
++            }
++        }
++    }
++
++    @Test
++    void nestedKeysAndStringListsRoundTripWithoutCollapsingOrReplacingBytes() throws Exception {
++        for (final var type : List.of(BedrockTypes.TAG_LE, BedrockTypes.NETWORK_TAG)) {
++            final var input = Unpooled.buffer();
++            final var encoded = Unpooled.buffer();
++            final var envelope = Unpooled.buffer();
++            try {
++                input.writeByte(CompoundTag.ID);
++                text(input, type, new byte[0]);
++                for (final byte[] key : new byte[][]{{(byte) 0xC0, (byte) 0xAF}, {(byte) 0xC1, (byte) 0xAF}}) {
++                    input.writeByte(ListTag.ID);
++                    text(input, type, key);
++                    input.writeByte(StringTag.ID);
++                    if (type == BedrockTypes.TAG_LE) {
++                        input.writeIntLE(2);
++                    } else {
++                        BedrockTypes.VAR_INT.writePrimitive(input, 2);
++                    }
++                    text(input, type, new byte[]{'a', 0, (byte) 0xFF, 'b'});
++                    text(input, type, new byte[]{(byte) 0xF0, (byte) 0x90, (byte) 0x82, (byte) 0x80});
++                }
++                input.writeByte(0);
++                final byte[] original = bytes(input);
++                final var value = (CompoundTag) type.read(input);
++                assertFalse(input.isReadable());
++                assertEquals(2, value.size());
++                final var copy = value.copy();
++                assertNotSame(value, copy);
++                assertEquals(value, copy);
++                Types.NAMED_COMPOUND_TAG.write(envelope, copy);
++                final var restored = Types.NAMED_COMPOUND_TAG.read(envelope);
++                assertEquals(copy, restored);
++                assertFalse(envelope.isReadable());
++                type.write(encoded, restored);
++                assertArrayEquals(original, bytes(encoded));
++            } finally {
++                input.release();
++                encoded.release();
++                envelope.release();
++            }
++        }
++    }
++
++    @Test
++    void ordinaryPacketTextStillUsesItsExistingUnicodeDecoder() throws Exception {
++        final var input = Unpooled.buffer();
++        try {
++            BedrockTypes.BYTE_ARRAY.write(input, new byte[]{(byte) 0xFF});
++            assertEquals(0xFFFD, BedrockTypes.STRING.read(input).codePointAt(0));
++            assertFalse(input.isReadable());
++        } finally {
++            input.release();
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NBT_UTF8_REFERENCE", matches = ".+")
++    void preservesTheNativeLoadedBinaryTagTrees() throws Exception {
++        final var data = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NBT_UTF8_REFERENCE")))).getAsJsonObject();
++        final var hex = HexFormat.of();
++        int count = 0;
++        for (final var element : data.getAsJsonArray("rows")) {
++            final byte[] packet = hex.parseHex(element.getAsJsonObject().get("packet").getAsString());
++            final var input = Unpooled.wrappedBuffer(packet, 3, packet.length - 11);
++            final var encoded = Unpooled.buffer();
++            try {
++                final var value = (CompoundTag) BedrockTypes.TAG_LE.read(input);
++                assertFalse(input.isReadable());
++                BedrockTypes.TAG_LE.write(encoded, value.copy());
++                assertArrayEquals(java.util.Arrays.copyOfRange(packet, 3, packet.length - 8), bytes(encoded));
++                assertEquals(4, value.size());
++                count++;
++            } finally {
++                input.release();
++                encoded.release();
++            }
++        }
++        assertEquals(340, count);
++    }
++
++    private static ByteBuf compound(final Type<Tag> type, final byte[] key, final byte[] value) throws Exception {
++        final var buffer = Unpooled.buffer();
++        buffer.writeByte(CompoundTag.ID);
++        text(buffer, type, new byte[0]);
++        buffer.writeByte(StringTag.ID);
++        text(buffer, type, key);
++        text(buffer, type, value);
++        buffer.writeByte(0);
++        return buffer;
++    }
++
++    private static void text(final ByteBuf buffer, final Type<Tag> type, final byte[] value) throws Exception {
++        if (type == BedrockTypes.TAG_LE) {
++            buffer.writeShortLE(value.length);
++        } else {
++            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, value.length);
++        }
++        buffer.writeBytes(value);
++    }
++
++    private static byte[] bytes(final ByteBuf buffer) {
++        final byte[] bytes = new byte[buffer.readableBytes()];
++        buffer.getBytes(buffer.readerIndex(), bytes);
++        return bytes;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeTypeTest.java
+new file mode 100644
+index 000000000..238db0566
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/primitive/TagLeTypeTest.java
+@@ -0,0 +1,141 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.types.primitive;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.DoubleTag;
++import com.viaversion.nbt.tag.FloatTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.Tag;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.io.LittleEndianByteBufInputStream;
++import net.raphimc.viabedrock.api.io.LittleEndianByteBufOutputStream;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.Arguments;
++import org.junit.jupiter.params.provider.MethodSource;
++
++import java.util.List;
++import java.util.stream.Stream;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class TagLeTypeTest {
++
++    @ParameterizedTest
++    @MethodSource("nativeNumbers")
++    void matchesNativeBinaryNbtWithoutMutatingSourceTags(final int kind, final long input, final long expected) {
++        for (final boolean nested : new boolean[]{false, true}) {
++            final ByteBuf buffer = Unpooled.buffer();
++            final ByteBuf encoded = Unpooled.buffer();
++            try {
++                writeHeader(buffer, kind, nested);
++                if (kind == 5) {
++                    buffer.writeIntLE((int) input);
++                } else {
++                    buffer.writeLongLE(input);
++                }
++                if (nested) {
++                    buffer.writeByte(0);
++                }
++                final Tag decoded = BedrockTypes.TAG_LE.read(buffer);
++                assertEquals(expected, bits(scalar(decoded, nested)));
++                assertFalse(buffer.isReadable());
++
++                final Tag original = kind == 5 ? new FloatTag(Float.intBitsToFloat((int) input)) : new DoubleTag(Double.longBitsToDouble(input));
++                final Tag source;
++                if (nested) {
++                    final CompoundTag compound = new CompoundTag();
++                    compound.put("n", new ListTag<>(List.of(original)));
++                    source = compound;
++                } else {
++                    source = original;
++                }
++                BedrockTypes.TAG_LE.write(encoded, source);
++                buffer.clear();
++                writeHeader(buffer, kind, nested);
++                assertEquals(buffer, encoded.readSlice(buffer.readableBytes()));
++                assertEquals(expected, kind == 5 ? encoded.readUnsignedIntLE() : encoded.readLongLE());
++                if (nested) {
++                    assertEquals(0, encoded.readByte());
++                }
++                assertFalse(encoded.isReadable());
++                assertEquals(input, bits(original));
++            } finally {
++                buffer.release();
++                encoded.release();
++            }
++        }
++    }
++
++    @Test
++    void keepsGenericLittleEndianIoUnchanged() {
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            final var output = new LittleEndianByteBufOutputStream(buffer);
++            output.writeFloat(Float.intBitsToFloat(0xFFC00001));
++            output.writeDouble(Double.NEGATIVE_INFINITY);
++            final var input = new LittleEndianByteBufInputStream(buffer);
++            assertEquals(0xFFC00001, Float.floatToRawIntBits(input.readFloat()));
++            assertEquals(Double.NEGATIVE_INFINITY, input.readDouble());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    private static void writeHeader(final ByteBuf buffer, final int kind, final boolean nested) {
++        buffer.writeByte(nested ? 10 : kind).writeShortLE(0);
++        if (nested) {
++            buffer.writeByte(9).writeShortLE(1).writeByte('n').writeByte(kind).writeIntLE(1);
++        }
++    }
++
++    private static Tag scalar(final Tag root, final boolean nested) {
++        return nested ? ((CompoundTag) root).getListTag("n").getValue().getFirst() : root;
++    }
++
++    private static long bits(final Tag tag) {
++        return tag instanceof FloatTag value ? Integer.toUnsignedLong(Float.floatToRawIntBits(value.asFloat())) : Double.doubleToRawLongBits(((DoubleTag) tag).asDouble());
++    }
++
++    // Bedrock 1.26.51.1, protocol 2193: complete binary userdata loader
++    // 0x1424D06E0 and scalar writer normalization at 0x14254B9F0/0x14254B2E0.
++    private static Stream<Arguments> nativeNumbers() {
++        return Stream.of(
++                Arguments.of(5, 0x0L, 0x0L),
++                Arguments.of(5, 0x80000000L, 0x80000000L),
++                Arguments.of(5, 0x1L, 0x1L),
++                Arguments.of(5, 0x80000001L, 0x80000001L),
++                Arguments.of(5, 0x7FFFFFL, 0x7FFFFFL),
++                Arguments.of(5, 0x800000L, 0x800000L),
++                Arguments.of(5, 0x3F800000L, 0x3F800000L),
++                Arguments.of(5, 0x7F7FFFFFL, 0x7F7FFFFFL),
++                Arguments.of(5, 0x7F800000L, 0x7F800000L),
++                Arguments.of(5, 0xFF800000L, 0xFF800000L),
++                Arguments.of(5, 0x7FC00000L, 0x0L),
++                Arguments.of(5, 0xFFC00000L, 0x0L),
++                Arguments.of(5, 0x7F800001L, 0x0L),
++                Arguments.of(5, 0xFF800001L, 0x0L),
++                Arguments.of(6, 0x0L, 0x0L),
++                Arguments.of(6, 0x8000000000000000L, 0x8000000000000000L),
++                Arguments.of(6, 0x1L, 0x1L),
++                Arguments.of(6, 0x8000000000000001L, 0x8000000000000001L),
++                Arguments.of(6, 0xFFFFFFFFFFFFFL, 0xFFFFFFFFFFFFFL),
++                Arguments.of(6, 0x10000000000000L, 0x10000000000000L),
++                Arguments.of(6, 0x3FF0000000000000L, 0x3FF0000000000000L),
++                Arguments.of(6, 0x7FEFFFFFFFFFFFFFL, 0x7FEFFFFFFFFFFFFFL),
++                Arguments.of(6, 0x7FF0000000000000L, 0x0L),
++                Arguments.of(6, 0xFFF0000000000000L, 0x0L),
++                Arguments.of(6, 0x7FF8000000000000L, 0x0L),
++                Arguments.of(6, 0xFFF8000000000000L, 0x0L),
++                Arguments.of(6, 0x7FF0000000000001L, 0x0L),
++                Arguments.of(6, 0xFFF0000000000001L, 0x0L)
++        );
++    }
++
++}
+-- 
+2.56.0

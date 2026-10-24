@@ -333,3 +333,74 @@ tooling tests pass. The fresh 130-second client replay installs all 273 skins an
 geometry records, with no geometry-parse warnings. Transport verification passes, and all
 seven owned Java/display processes stop normally. Rendering verification still fails on
 unresolved mappings. These checks do not establish native visual parity.
+
+
+## Native alpha references with Iris
+
+Ordinary native actors and supplied player bodies now retain their 0.5 alpha reference when Iris replaces the shader.
+The target Bedrock 1.26.51.1/protocol 2193 Actor AlphaTest shader keeps texture alpha strictly above 0.5.
+The native shader evidence is recorded above.
+Iris 1.11.7 for Minecraft 26.3 uses 0.1 for its entity cutout family.
+
+Keep the reference on the compiled GPU pipeline, since Iris shares programs between native and Java draws.
+A binding scope supplies the reference during Iris shader setup and restores its previous value even after failure.
+The generated fallback shader also restores its original uniform on each Java bind.
+Native emissive passes retain their existing material behavior.
+
+Validation:
+
+- All 38 add-on patches replay successfully.
+- Converter, core, and add-on builds pass 2,352 tests, with 152 optional tests skipped and no failures or errors.
+- Scope tests cover nested native and Java binds, exceptions, and separate threads.
+- A complete 40-second replay without Iris passes transport checks and has no mixin failures.
+- A Galaxite replay with Iris 1.11.7 and Complementary Reimagined r5.9.3 reaches gameplay without mixin failures.
+- GL uniform readbacks verify native 0.5 and Java 0.1 within two shared ExtendedShader programs.
+- A private shader pack that omits entity programs exercises Iris fallback shaders.
+- GL readbacks verify native 0.5 and Java 0.1 within one shared FallbackShader program.
+
+Those Iris validation runs report unresolved marker geometry and a missing camera item texture.
+The CubeConverter patch addresses the marker declaration with omitted fields.
+Those Iris runs also reject the font atlas in `galaxite:gem_bag_particle`; the owning particle patch addresses that separate loader failure.
+The fallback diagnostic also intentionally differs from the locked shader pack and fails that profile check.
+This change carries the alpha reference through Iris.
+It does not establish parity for shader-pack comparison overrides, post-shader alpha, source-texture sampling, or native image output.
+Raw recordings, the diagnostic shader pack, observer code, and uniform logs remain private.
+
+## Iris source alpha coverage
+
+Ordinary native materials now test their original texture alpha before the shader pack changes color or texture coordinates.
+The native branch keeps alpha strictly above 0.5 and skips Iris's generated output-alpha comparison.
+Java draws retain that comparison, including the pack's chosen function.
+Shader-pack authored discard statements remain intact.
+
+The vertex transform retains the original UV attribute in a separate varying.
+A separate external sampler reads texture unit zero, even when the pack replaces `gtexture`.
+Each program caches its uniform locations.
+Each bind selects native or Java behavior after Iris updates its own uniforms and samplers.
+The synthesized fallback shaders use the same coverage contract.
+Iris and its GLSL parser remain optional compile-only dependencies and are absent from the packaged add-on and published POM.
+
+Validation:
+
+- All 38 add-on patches replay. All four builds pass 2,499 tests, with 212 optional skips and no failures or errors.
+- A Mesa EGL test checks 1,600 rendered pixels across ordinary and fallback transforms, all eight comparison functions, and shared-program binds.
+- Source alpha includes exact 0.5 and values on either side. Output alpha varies independently of coverage.
+- A different texture on the shader-pack sampler and altered pack UVs cannot change native coverage.
+- Four private negative controls restore the pack comparison, sample the pack texture, use altered UVs, or retain native mode on Java draws.
+  Each control fails the pixel regression. The unchanged implementation passes.
+- A fresh CubeCraft recording completes gameplay with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+- Actual ExtendedShader GL readbacks verify native selection, reference 0.5, and source unit zero.
+  Four programs also serve Java draws, where native selection resets correctly.
+- A private final-pass-only shader pack exercises FallbackShader programs.
+  GL readbacks verify the same native state and Java reset in shared fallback programs.
+  This diagnostic intentionally differs from the locked production shader profile.
+- A complete plain-client replay without Iris passes transport checks with no class-loading or mixin failures.
+- All seven client sessions stop normally. Birth-identity checks find no remaining owned Java or display processes.
+- Offline validation passes all 271 tooling tests, static checks, and patch metadata checks.
+
+The fresh Galaxite join disconnects with End of stream before its capture completes.
+The CubeCraft replay passes transport checks but still reports unresolved mappings.
+These results do not establish complete native image parity.
+Geometry and tessellation programs retain the earlier reference bridge until their UV transport is implemented and verified.
+Emissive material integration and arbitrary shader-pack output behavior remain separate work.
+Raw recordings, shader diagnostics, observer code, and pixel-control logs remain private.

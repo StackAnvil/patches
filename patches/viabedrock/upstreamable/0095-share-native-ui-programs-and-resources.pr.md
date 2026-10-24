@@ -19,6 +19,12 @@ The full stack replays and all four projects build.
 Java verification passes 2,204 tests, with 152 optional skips and no failures or errors.
 The focused cooking, transport and container suite passes all 61 tests.
 
+The cooking controller now supplies its seven native tab and layout constants.
+The pinned publisher at `0x146c44040` assigns food/items/blocks/search/inventory indices `1..5` and survival/recipe-book layouts `1/2`.
+Without these globals, grouped toggles lose their forced indices during scene resolution.
+The bundled-scene regression checks resolved navigation and layout groups across export/import in all three cooking families.
+It fails before this change. This restores control identity; complete pointer, keyboard, controller, and visual behavior require separate evidence.
+
 ## Brewing program and counters
 
 The pinned Bedrock 1.26.51.1 assets supply the brewing screen, three indexed bottle cells, and fixed ingredient and fuel collections.
@@ -214,3 +220,283 @@ This contract does not establish native quantity or cursor behavior.
 The complete four-project build passes 2,344 tests, with 152 optional skips.
 Core Checkstyle and the mode-preserving request/result codec tests pass.
 All 102 core patches replay successfully. Offline tooling and patch metadata validation pass.
+
+## Cooking command phases
+
+Cooking action and result envelopes use version 5 and retain the controller mode and native event phase independently of the command.
+Phases `0`, `1`, and `2` remain distinct through serialization and acknowledgement.
+The original state-dispatch fixtures use phase `0` for initial primary selection and phase `2` for selected-state release.
+The payload does not assign physical device meanings or transfer quantities to these phases.
+Phase-free version 3 actions and unsupported phase values reject instead of acquiring a default phase.
+
+Six targeted codec tests pass, including all command/phase combinations, identity bounds, incomplete envelopes, strict reply flags, and unsupported phases.
+The old codec fails the added phase-free-envelope regression because it accepts that action.
+All 104 core patches replay to the identical tested tree.
+The four-project build passes 2,362 tests with 212 optional skips and no failures or errors.
+Core passes 1,496 tests; the add-on passes 843.
+Main/test Checkstyle and offline validation pass.
+All 1,386 embedded core class entries match the newly built core.
+These transport prerequisites do not advertise cooking actions or complete their input and transaction backend.
+
+## Registered recipe input evidence
+
+A fresh private fixture runs the original service registry and scheduler startup before the base input and router constructors.
+Eight native worker entries initialize their own readiness fields and reach condition waits with separate stacks and TLS.
+The original scheduler publishes the queue lifetime handle; the fixture does not supply game readiness or lifetime flags.
+Ordinary OS, CRT, allocation, and authored source/focus access remain explicit external boundaries.
+
+Original recipe registration, callback cloning, callback maps, event dispatch, and phase callbacks pass 48 raw-event controls.
+Another 576 controls parse typed payloads through the original JsonCpp reader and parser.
+Integer collection indices survive. Real `7.0`, strings, Boolean values, and other tested non-integer types yield index `-1`.
+Phase `1` retains the index, command, source, and supplied screen coordinates; phase `2` clears the retained index.
+
+The 288 uniform-result and 96 independent-result controls preserve phase order and combine callback results with bitwise OR.
+The router remains a recording boundary in these fixtures.
+These checks do not establish physical input mapping, recipe-provider index validity, native selection effects, transactions, or live acceptance.
+The [cooking reference](../../../docs/native-cooking-actions.md#input-event-delivery) records the raw fields and remaining boundaries.
+
+## Bind recipe authority to the displayed cell
+
+The scope validator previously accepted any visible recipe ID, independently of the control's collection index.
+A control could name another visible recipe or omit its native index and still receive action authority.
+The validator now compares both fields with the exact sorted and filtered visible collection.
+It rejects missing, real-valued, negative, out-of-range, and mismatched indices.
+Recipe previews retain their separate identity and cannot become inventory slot actions.
+
+Two behavioral regressions fail against the previous implementation.
+They cover cross-cell identity changes, compacted visible indices, missing fields, JSON types, and integer bounds.
+The focused cooking scene, message, and action suite passes 37 tests before the final stack replay.
+
+A fresh native fixture separately passes 240 source-resolution controls and six installed selection/release steps.
+The original cooking manager, registered input graph, ingredient matcher, selected Item/name update, and release reset execute.
+Matching ingredients select the output without item transfers; release clears the input state while retaining that selected output.
+The fixture supplies recipe data and external game interfaces. It does not establish placement, repeated selection, full controller ownership, or live acceptance.
+The [cooking reference](../../../docs/native-cooking-actions.md#resolve-recipe-event-sources) records the source map and evidence limits.
+
+All 104 core patches replay successfully after the change.
+The full build passes 2,368 tests, with 212 optional skips and no failures or errors.
+Main and test Checkstyle pass, as does offline stack validation.
+All 1,386 core classes match the core JAR embedded in the Fabric add-on.
+
+A separate fresh first-placement fixture also reaches native request action assembly.
+A single raw recipe click moves seven hotbar items, then five inventory items, into the empty ingredient slot.
+The second Place action retains the first source's positive stack ID as its destination ID.
+This result covers controlled native action objects, not complete request serialization or live acceptance.
+The [first-placement reference](../../../docs/native-cooking-actions.md#controlled-first-placement) records the fixture boundaries.
+
+## Verify repeated native placement
+
+A fresh native process passes thirty input steps and physical snapshots across five quantity cases.
+Primary selection fills the ingredient slot up to the supplied Item's capacity of 64.
+Selecting the same recipe again returns its ingredients to combined player provider 12 and clears the selected output.
+A third selection places the returned items again. Release preserves inventory while resetting the input state.
+The fixture verifies conservation and the shared player-provider views. Cursor provider 59 remains empty.
+
+Each six-event sequence shares one open native request. Request submission and server acknowledgments do not occur.
+The full controller/model-owner, other recipe types, complete serialization, live acceptance, and visual parity remain unverified.
+The [repeated-placement reference](../../../docs/native-cooking-actions.md#repeat-placement-and-return) records the quantities and implementation implications.
+
+## Controller text in cooking programs
+
+Cooking exports now use the same menu snapshot as the published model.
+Translation discovery includes the current tab label and authoritative title.
+Computed search captions can therefore use the accepted language pack after export and import.
+The exporter retains language keys and the existing translation lookup.
+
+The regression compares complete scenes and action scopes for all three cooking families.
+It fails when export omits the controller label and passes with the dependency restored.
+Default smoker captions still carry a Java key; their native fallback source remains unverified.
+The pinned desktop search tab inherits an inline text field from `common.text_edit_control`.
+Its parent follows `#is_left_tab_search`. A resolved scene from another tab did not establish the field's absence.
+Native text callbacks, full input handling, and pixel parity remain open in production.
+The [cooking action reference](../../../docs/native-cooking-actions.md#search-edit-callbacks) records 38 native edit/tick/clear controls and 304 search predicate controls.
+The original predicate checks normalized primary names, then normalized secondary labels without formatting codes.
+The primary helper selects custom or ordinary names. The ordinary secondary label includes enchantment text.
+Complete name and label production, language selection, physical editing, and the field's enabled binding still need evidence.
+
+The pinned native tab-label getter also distinguishes filtered search captions from the all-recipes caption.
+Its inventory tab uses the shared crafting survival key.
+The shared navigation model now retains these exact keys.
+Sixty unchanged native getter controls cover all families, both filter states, valid tabs, and signed invalid tabs.
+The fixture verifies ingredient descriptors against the generated target enum.
+Restoring either earlier label rule fails the native comparison; the corrected model passes.
+Allocation and CRT copies are bounded test boundaries.
+Field producers, final translation, and pixels remain separate checks.
+
+The final four-project build passes 2,487 tests, with 212 optional skips and no failures or errors.
+The native navigation and caption suite runs without skips.
+All 104 core and 38 add-on patches replay, and all 1,404 embedded core classes match.
+
+A controlled BDS 1.26.51.1 client fixture exercises fourteen preference changes and six recipe press/release replies.
+All fourteen model caption keys match the native getter cases and the shipped English table.
+Eleven visible caption draws match their exported translations.
+Furnace, smoker, and blast-furnace cooking and same-world reconnect pass.
+Two runtime inventories match 2,520 classes and four data resources each.
+Normal cleanup removes the private observer, restores the driver, and leaves no managed-profile JVM.
+The scene projection removes unfinished controls and mappings, so it does not establish full default-screen or native pixel parity.
+
+
+## Mode-dependent recipe focus evidence
+
+New native controls distinguish direct recipe presses from the mode-`2` focus path.
+Across 288 three-event controls, the original state-`45` entry stores the focused collection and index.
+The following recipe press enters state `25` with a nonempty carried Item.
+Modes `0`, `1`, and `3` retain their direct-press empty-cursor requirement.
+The recipe-selection entry remains a recording boundary, so this evidence does not establish transfer effects.
+
+Seventy-two original getter controls establish that the input mode comes from the active device's map entry.
+They cover missing device IDs and entries, all four tested mode values, and colliding bucket positions.
+Active-device ID acquisition, physical event production, and complete controller construction remain supplied or unverified boundaries.
+The [focus reference](../../../docs/native-cooking-actions.md#mode-dependent-recipe-focus) records functions, typed inputs, and limits.
+
+Version-five actions now transport the verified controller mode separately from command and phase.
+Earlier versions reject instead of receiving an implicit mode or phase.
+The core and client sessions implement initial mode-`2` focus and its owned carried-item selection path.
+The Java mouse adapter supplies mode `1`; physical mode-`2` production and complete active-device integration remain unfinished.
+The [transfer reference](../../../docs/native-cooking-actions.md#focused-carried-item-transfers) records the subsequent original effects and serialized requests.
+Default carried-item screen controls and full native parity remain separate requirements.
+
+The final combined suites pass 2,621 tests, with 163 optional skips and no failures or errors.
+All four projects build, and the final core rerun includes the integrated movement reference fixtures.
+Cooking, camera, retained particle, attachable, and Iris GPU comparisons run without skips.
+All 1,413 core classes match both packaged copies, and all 1,139 production client classes match the add-on.
+The affected core and add-on stacks replay successfully.
+
+A fresh BDS 1.26.51.1 route verifies version-five mouse actions in furnace, smoker, and blast-furnace screens.
+All six press/release replies retain context `1` and their original authority across newer frames.
+Each real ingredient starts cooking, all three ordinary follow-up cases pass, and same-world reconnect passes.
+Both runtime inventories match 2,551 project class resources and four data resources.
+Normal cleanup removes the observer, restores the private driver change, and leaves no managed-profile JVM.
+The controlled scene projection preserves all 39 real slots while it removes unfinished controls and mappings.
+This run does not establish unchanged authored screens, physical mode-`2` input, carried-item screen support, or native pixels.
+
+## Shared cooking search APIs
+
+The shared UI patch now exports the query matcher, target normalizer, and raw edit-coalescing state.
+These APIs do not register a channel or replace the default cooking screen.
+The production menu still publishes an empty query until name producers, transport, and widget integration are complete.
+
+`CookingRecipeSearch` normalizes the query once and requests primary names lazily.
+A primary match skips the secondary-label producer. An empty query skips both producers.
+The secondary branch removes native formatting codes before normalization.
+The matcher does not trim spaces, split words, or substitute Java preview names.
+
+`CookingSearchText` retains the latest pending raw string until a ready tick.
+Equal edits still apply. An empty string remains a pending edit until that tick.
+A guarded mode-two clear preserves applied and pending text. Other clear events discard pending text and apply an empty value.
+The caller remains responsible for model-clear effects, settings refresh, physical field admission, and exact menu ownership.
+Repeated native eligibility checks and full recipe-predicate state remain outside these APIs.
+
+The target uses utf8proc 1.1.5 tables for Unicode 5.0.
+All 4,352 first-stage entries, 23,296 second-stage entries, 5,618 property records, and 22,500 composition entries match the immutable target data.
+The data generator uses the checksum-pinned public source and retains its MIT and Unicode notices.
+Its 45,618-byte compressed resource reproduces exactly. An altered public source fails before an existing output changes.
+
+Fresh comparisons cover 17,987 executions of the original native normalizer and 1,122,310 production Java inputs against the licensed public algorithm.
+Both comparisons report zero differences. The Java cases include every code point, invalid encodings, NUL handling, and mixed composition sequences.
+Eight focused tests pass without skips. Retained native controls cover 304 matching compositions, 22 edit/tick cases, and 16 clear cases.
+Those fixtures supply names, labels, model interfaces, and caller effects. They do not establish production name acquisition or physical editing.
+Four deliberate regressions fail: unnormalized queries, query formatting removal, early edits, and pending-text loss after a guarded clear.
+
+All four projects build with 2,634 passing tests, 163 optional skips, and no failures or errors.
+The core and client stacks replay all 104 and 38 patches.
+All eight search tests run without skips in this build.
+The final packaged normalizer repeats the 1,122,310-input comparison with zero differences.
+Its class and resource load from the verified JAR. All 1,417 core classes match both packaged copies.
+The generated data and license notices also match across the standalone core, embedded core, and proxy.
+All 1,139 production client classes match the add-on.
+
+
+## Unfiltered primary names
+
+`NativeItemNames` shares custom-name presence, written-book title fallback, and ordinary appended text.
+It preserves typed-byte append admission, group/body precedence, and color argument order.
+The caller still owns the ordinary definition name and language lookup.
+The native primary selector returns unfiltered text. Filtered display names and titles remain separate.
+
+Fresh controls execute the original 1.26.51.1 selector `142489b10`, base custom methods, written-book predicate `143f6d580`, and getter `143f6d2c0`.
+The shared selector matches 2,286 applicable native rows. Three deliberate selector regressions fail by assertion.
+The controls supply typed tag virtuals, locale, component and descriptor interfaces, the allocator, and CRT boundaries.
+They do not establish full registry initialization, final language selection, physical editing, or native pixels.
+
+A separate complete native registry capture records all 1,949 constructor-owned naming dispatch tables.
+All use ordinary-name method `1424ce2a0`. Only `written_book` overrides the custom-name predicate and getter.
+The capture completes all 2,627 static cleanup callbacks without owned allocation or lock leaks.
+Pre-packet constructor facts do not establish later component updates or full ordinary-key and secondary-label production.
+
+
+The current four-project build passes 2,644 tests, with 163 optional skips and no failures or errors.
+All 104 core patches and 38 client patches replay. All three selector tests run without skips.
+All 1,419 core classes match the embedded add-on and proxy copies. All 1,139 client classes match the add-on.
+Four focused packaged checks pass, including the registry's book-class dispatch.
+The packaged selector matches all 2,286 applicable native rows. Production class origins are verified against the current standalone core JAR.
+This checkpoint does not establish full cooking search or native screen and pixel parity.
+
+## Complete cooking screen hosts
+
+Cooking resolution now expands the authored screen host through the shared control expander.
+It retains host input mappings, policies, variables, overlays and inherited hierarchy.
+Independent cooking programs declare a screen root and their own content graph.
+The resolver no longer invents a fallback content panel for an empty authored screen.
+Other domain consumers retain their existing resolution APIs.
+
+The pinned desktop Furnace, Blast Furnace and Smoker hosts resolve without missing templates.
+Each complete host round-trips exactly through program export and is accepted by the shared client scene parser.
+The scenes remain within the existing payload and node limits.
+All 23 targeted cooking program tests pass with title authority, layering, recipe/slot identity, selection and action scopes preserved.
+These structural checks do not establish screen-controller, device or native pixel parity.
+The combined build passes 2,745 tests with 163 optional skips.
+Packaged production classes pass three desktop host checks and two real screen interaction regressions.
+Pocket expansion reaches a self-parent in the original `furnace_screen_pocket.json`.
+Neither acquired vanilla UI archive supplies a lower definition for it.
+The native inheritance evidence below supersedes the earlier recursion rejection.
+
+## Native declaration inheritance
+
+Finalize declarations in load order, then expand their controls.
+Retain local values, including nulls, and copy only absent, non-null fields from ancestors.
+Reuse earlier finalized parents. Stop at a missing or visited declaration, including a self reference.
+Keep nested objects and arrays intact. Apply array modifications to a fresh finalized template.
+Export closures in declaration order so transported programs retain the same behavior.
+The native HUD baseline uses the same finalizer.
+Recursive control expansion keeps its separate limits.
+
+Original Bedrock 1.26.51.1 constructor `1403f3f20`, finalizer `14043efd0`, and lookup `1403f69f0` supply the reference results.
+The pinned executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Typed loader-output records cover 250 three-node parent graphs and the exact pocket declaration.
+The 751 lookups match Java directly and after export, for 1,502 comparisons.
+The cases include cycles, absent parents, shallow replacement, explicit nulls, and completed-parent ordering.
+The capture stops at `140440ed0` after inheritance and registry population, before external scheduling and cleanup.
+It supplies allocator, CRT, stack-probe, profiler, and diagnostic boundaries.
+It does not replace inheritance, sorting, visited-state, or lookup routines.
+Resource-loader ordering, complete screen construction, physical input, pixels, and full lifecycle parity remain unproven.
+
+Four new regression tests cover self references, cyclic precedence, null and missing-parent behavior, export order, and long chains.
+The control-recursion regression still rejects unbounded expansion.
+
+The four-project build passes 2,749 tests, with 163 optional skips and no failures or errors.
+Checkstyle passes after the full stack replay.
+All 1,448 core classes match the embedded add-on and proxy copies. All 1,181 client classes match the add-on.
+The packaged core repeats all 1,502 native comparisons with its class origin checked.
+Three deliberate regressions fail: cycle rejection, ignored finalized parents, and reversed export order.
+All six desktop/pocket Furnace, Blast Furnace, and Smoker hosts resolve without missing templates.
+Each host round-trips exactly and passes the shared client scene parser.
+The existing packaged host interaction regressions remain covered by the full client tests.
+The production cooking controller still selects the desktop profile. The private profile projection does not establish device wiring or full screen admission.
+
+## Shared native recipe collections
+
+Use one partitioner for cooking's flat prefix and grouped recipe collections.
+Preserve contiguous catalog identity, evaluator precedence, first-member representatives and header expansion history.
+Header history compares icon plus count independently of catalog identity.
+Grouped refreshes without filtering skip evaluation; flat refreshes retain the existing cooking behavior.
+
+Original Bedrock 1.26.51.1 routines `143445150`, `143446b90`, `143447710` and `143447ab0` supply 4,128 cases and sixteen retained-state steps.
+The Java implementation matches their ordering, visible rows, evaluator calls and expansion notifications.
+Six regressions cover the shared behavior and the existing cooking tests remain applicable.
+Native vector allocation and cleanup execute; item ownership operations, icon equality, availability evaluation and external callbacks use supplied boundaries.
+The complete player catalog producer, unlocks, craftability, action admission, full controller, physical input and screen parity remain unfinished.
+
+The final four-project build passes 2,823 tests with 163 optional skips and no failures or errors.
+Checkstyle passes after replay. All 1,465 core classes match both embedded copies, and all 1,191 client classes match the tested add-on.
+The packaged core repeats all 4,144 collection comparisons with its production class origin verified.

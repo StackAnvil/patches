@@ -1,0 +1,99 @@
+From 1cb05c336bac5ef4cdff3567f234a891fe7d13a8 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 17:57:52 +0200
+Subject: [PATCH] fix(inventory): snapshot transaction action items
+
+Take separate deep copies of each before and after stack when constructing
+an inventory action. Inventory predictions and server updates can mutate
+the original stack before packet serialization; retaining its reference
+can then rewrite an already planned debit or credit. Separate snapshots
+also prevent a shared input stack from aliasing both sides of the action.
+
+Pinned Bedrock 1.26.51.1, build 51061372, protocol 2193 constructs cached
+before/after stacks by value in InventoryAction constructor 1401d4ad0,
+including independent ItemStack copies through 142481ef0. The inspected
+executable SHA-256 is
+537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7.
+This changes Java ownership only, without changing item comparison rules,
+transaction sources or wire layout. The regression fails without the
+copies and covers counts, auxiliary data, nested NBT, restriction arrays,
+blocking state, runtime identity and network IDs.
+---
+ .../model/inventory/InventoryActionData.java  |  6 +++
+ .../inventory/InventoryActionDataTest.java    | 50 +++++++++++++++++++
+ 2 files changed, 56 insertions(+)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/inventory/InventoryActionDataTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/InventoryActionData.java b/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/InventoryActionData.java
+index 5f3b0581d..913fd228b 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/InventoryActionData.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/InventoryActionData.java
+@@ -20,4 +20,10 @@ package net.raphimc.viabedrock.protocol.model.inventory;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ 
+ public record InventoryActionData(InventorySource source, int slot, BedrockItem fromItem, BedrockItem toItem) {
++
++    public InventoryActionData {
++        fromItem = fromItem.copy();
++        toItem = toItem.copy();
++    }
++
+ }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/inventory/InventoryActionDataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/inventory/InventoryActionDataTest.java
+new file mode 100644
+index 000000000..167f4dc12
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/inventory/InventoryActionDataTest.java
+@@ -0,0 +1,50 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model.inventory;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceFlags;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class InventoryActionDataTest {
++
++    @Test
++    void retainsIndependentBeforeAndAfterSnapshotsAcrossItemMutation() {
++        final var nested = new CompoundTag();
++        nested.putInt("value", 4);
++        final var tag = new CompoundTag();
++        tag.put("nested", nested);
++        final var item = new BedrockItem(257, (short) 2, (byte) 4, tag,
++                new String[] {"minecraft:stone"}, new String[] {"minecraft:dirt"}, 8, 9, 10);
++        final var expected = item.copy();
++        final var action = new InventoryActionData(new InventorySource(InventorySourceType.Container_Inventory,
++                (byte) 6, InventorySourceFlags.No_Flag), 9, item, item);
++
++        item.setAmount(7);
++        item.setData(3);
++        item.setNetId(11);
++        item.setBlockRuntimeId(12);
++        item.setBlockingTicks(13);
++        nested.putInt("value", 14);
++        item.canPlace()[0] = "minecraft:gravel";
++        item.canBreak()[0] = "minecraft:sand";
++
++        assertEquals(expected, action.fromItem());
++        assertEquals(expected, action.toItem());
++        assertNotSame(item, action.fromItem());
++        assertNotSame(action.fromItem(), action.toItem());
++
++        action.toItem().setAmount(1);
++        action.toItem().tag().getCompoundTag("nested").putInt("value", 15);
++        action.toItem().canPlace()[0] = "minecraft:sand";
++        assertEquals(expected, action.fromItem());
++    }
++
++}
+-- 
+2.56.0

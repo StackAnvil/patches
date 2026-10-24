@@ -3,8 +3,10 @@ export function clientSessionFailed(log: string, allowTransfers = false): boolea
   const observed = allowTransfers
     ? log.replace(/^.*Client disconnected with reason: Transferred to another server\r?$/gm, "")
     : log;
-  return /Client disconnected with reason:|Failed to handle packet|ReadTimeoutException|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment|Mixin transformation .* failed|handlerAdded\(\) has thrown/.test(
-    observed,
+  return (
+    /Client disconnected with reason:|Failed to handle packet|ReadTimeoutException|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment|Mixin transformation .* failed|handlerAdded\(\) has thrown/.test(
+      observed,
+    ) || /^.*\[Server Connector #\d+\/ERROR\]: Couldn't connect to server\r?$/m.test(observed)
   );
 }
 

@@ -242,3 +242,198 @@ All three cooking controls and same-world reconnect pass.
 The run exits normally, stops its private display and removes the private observer mod.
 These observations verify publication and CPU resolution, not authored screen rendering or native action parity.
 Offline tooling checks, all 264 regressions and patch metadata validation pass.
+
+## Track native prediction identities in cooking requests
+
+Cooking requests use the negative request ID for any slot that an earlier action changed.
+The native identity callback applies this rule to both transfer endpoints, including a source that becomes empty.
+The planner tracks physical slots across hotbar, inventory, and combined player providers.
+Cooking sources use providers 28 and 29. Returns use provider 12.
+
+The earlier serialization fixture used the base manager and omitted the native identity callback.
+Its positive IDs describe unpredicted wrappers and do not establish production prediction behavior.
+The replacement fixture constructs the native predicted containers and the original ClientScreenData component.
+It executes the original client identity callback, transfer mutation, payload conversion, and serialization.
+Five complete payloads cover cooking placement and partial or complete moves into empty or occupied slots.
+
+The manager takes its normal null-Level constructor branch before the controlled world attaches.
+Client subclass fields, the one-entity registry, screen bindings, packet view, and stream fields remain controlled fixture data.
+The open-request controls do not establish full Player or screen construction, finalization, transport, or live acceptance.
+The [request reference](../../../docs/native-cooking-actions.md#request-payload-identities) records these boundaries.
+The optional byte comparison now reads `STACKANVIL_NATIVE_FINALIZED_REQUEST_WIRE` from the stronger fixture below.
+
+## Finalize and flush owned native cooking requests
+
+A fresh fixture uses the registry owned by the original native request manager and creates its entity through the original helper.
+Native weak-reference construction retains ownership, and native detach releases that ownership after the cooking input.
+The original request finish queues both Place actions without changing their IDs.
+The original enabled flush converts them, constructs the packet, clears and destroys the queue, and invokes the transport interface.
+The transport sink calls the original serializer on that actual packet.
+Native payload cleanup completes, and a second empty flush emits nothing.
+The Java planner and codec match the finalized native payload byte for byte.
+
+Typed storage and client subclass fields still follow controlled inline layouts.
+Screen container bindings, the transport sink, and BinaryStream fields remain supplied boundaries.
+Full Player/screen construction, component signals, negotiated mode provenance, outer input/frame ownership, and live acceptance remain unverified.
+This evidence does not activate or complete authored cooking actions.
+
+A separate fresh control installs the native screen lease and delivers input through the inherited wrapper without an explicit request scope.
+Its two transfers create two queued requests, and the second destination references the first request ID.
+Native flush serializes both requests and preserves registry reference counts.
+The input-child vector remains empty, and full screen registration does not execute.
+Outer frame ownership and deferred recipe execution can change batching, so this control does not establish full application grouping.
+
+Validation: all 104 core patches replay. The four-project build passes 2,384 tests with 212 optional skips and no failures or errors.
+The 19 focused planner/request tests include the finalized native byte comparison.
+Checkstyle and offline validation pass. Authored cooking controls remain unfinished.
+
+## Native primary action backend
+
+The core now consumes negotiated version-`4` cooking actions against the exact current presentation and authored recipe cell.
+Primary selection follows the native selected-output entry before the ingredient predicate.
+It toggles an existing selection, collects ingredient sources from fuel and player providers, and returns ingredient and output items through native history.
+Selection-only admission leaves history unchanged. The constructor starts with an empty history. Output return captures the post-placement player history.
+Java recipe-book increment and maximum-quantity behavior remain separate.
+
+Each transfer uses its own request and intermediate prediction, with negative references for earlier slot changes and physical player aliases.
+The production primary action matches the native auto-scoped two-source packet byte for byte.
+Follow-up phases retain their original gesture identity and do not repeat transfers.
+Sequences, item snapshots, channel negotiation, menu ownership, and current authored commands protect action admission.
+Intermediate publication waits until action completion. Highlights follow the visible recipe order after preference changes.
+
+A fresh native prediction fixture executes six press/release steps with automatic scopes, owned finalization, and a flush after each input.
+It confirms selection clearing, combined-provider return, refill references, and post-placement history through the original entry and transfer code.
+Native constructor and entry evidence identifies the initially empty history and the output comparison that precedes ingredient matching.
+
+The Fabric presentation remains passive. Physical input bindings, nonempty-cursor branches, cross-input prediction, authoritative model watchers, and live route acceptance remain unfinished.
+Full native controller/model construction and independent frame scopes also remain unverified.
+
+The combined four-project build passes 2,413 tests, with 213 optional skips and no failures or errors.
+All 104 core patches replay with the incoming movement changes preserved.
+The 43 focused cooking, UI-state, planner, and batch tests pass with both native wire comparisons enabled.
+Checkstyle and offline validation pass. All 1,401 core classes match the add-on's embedded core byte for byte.
+
+## Directional action negotiation
+
+Cooking action negotiation now follows the payload direction.
+The client registers its model, progress, and action-result receivers. The core advertises the separate action channel that it receives.
+The core requires play state and server-authoritative inventory before it advertises or consumes actions.
+Duplicate receiver registration does not repeat the advertisement.
+
+Receiver withdrawal removes the advertisement and retires held input without transferring items again.
+Re-registering receivers cannot resume the retired gesture. Loss of server authority also withdraws the capability and clears presentation ownership.
+Packet regressions use real registration and action handlers without registering the action channel as a client receiver.
+The original direction check rejects that valid action. The corrected handler executes it once.
+Fabric screen bindings, complete authored controls, and live route acceptance remain unfinished.
+
+The four-project build passes 2,418 tests, with 213 optional skips and no failures or errors.
+All 45 focused cooking and request tests pass with both native wire comparisons enabled.
+The 104 core and 38 add-on patches replay. Checkstyle and offline validation pass.
+All 1,401 embedded core classes match the rebuilt core byte for byte.
+
+A private Fabric observer verifies the channel lifecycle against BDS 1.26.51.1.
+It observes action sending become unavailable after result-receiver withdrawal, then available after re-registration.
+The production receiver retains all 39 slots across 187 frames from furnace, smoker, and blast-furnace menus, with no observer errors.
+Both client sessions match all 1,401 core classes and four resources.
+
+The three Java cooking cases and same-world reconnect pass. Cleanup leaves no owned client, server, or display processes, and the private observer is removed.
+The observer sends no inventory actions. These observations establish channel lifecycle, while authored action execution and native screen parity remain unverified.
+
+## Native cooking captions
+
+The publisher now uses the shared native tab-label rules.
+Disabling filtering selects the all-recipes caption; enabling it selects the furnace or smoker caption.
+The inventory tab uses the shared survival key.
+Program export preserves the current controller label's translation along with the authoritative title.
+
+A publisher regression covers all three families, both filter states, and search/inventory tabs.
+Preference changes advance the model update while opening and item authority remain stable.
+Complete program round trips match the core-resolved scene.
+The previous publisher fails this regression; the corrected publisher passes.
+Sixty original getter controls establish the shared rules with supplied controller fields and bounded allocation/CRT seams.
+Native fallback titles, complete input handling, and full screen parity remain open.
+
+The final four-project build passes 2,487 tests, with 212 optional skips and no failures or errors.
+The native navigation and caption suite runs without skips.
+All 104 core and 38 add-on patches replay, and all 1,404 embedded core classes match.
+
+A controlled BDS 1.26.51.1 client fixture exercises fourteen preference changes and six recipe press/release replies.
+All fourteen model caption keys match the native getter cases and the shipped English table.
+Eleven visible caption draws match their exported translations.
+Furnace, smoker, and blast-furnace cooking and same-world reconnect pass.
+Two runtime inventories match 2,520 classes and four data resources each.
+Normal cleanup removes the private observer, restores the driver, and leaves no managed-profile JVM.
+The scene projection removes unfinished controls and mappings, so it does not establish full default-screen or native pixel parity.
+
+
+## Focused carried-item recipe actions
+
+The backend retains an initial mode-`2` focus before the primary recipe press.
+That focus permits selection with a carried Item while direct unfocused presses keep their empty-cursor check.
+Focus itself transfers nothing and does not manufacture a selection snapshot.
+Terminal release requires its original opening, snapshot, and controller context.
+Capability withdrawal and menu replacement retire the permission.
+
+Five fresh native controls execute the original graph, held-slot getter, focus entry, recipe effects, provider transfers, and owned request serialization.
+Mode-`2` counts `0`, `1`, and `64` retain the cursor while placing twelve ingredients through two requests.
+Carried controls in modes `1` and `3` produce no requests.
+All three production mode-`2` request payloads match the original serialized bytes, including the changed destination's negative request reference.
+Every request prediction retains the carried stack.
+
+The [focused transfer reference](../../../docs/native-cooking-actions.md#focused-carried-item-transfers) lists the original functions and supplied interfaces.
+Mandatory tests cover all three cooking families, mode-specific admission, exact-context release, capability loss, and reused menu identity.
+The Java mouse adapter remains mode `1`.
+Physical mode-`2` events, carried-item screen controls, full controller construction, server acceptance of that carried path, and native pixels remain unfinished.
+
+The planner also rechecks player-UI contents and server revision after item metadata callbacks.
+Changed contents or a revision-only replacement reject before station/player mutation or request submission.
+The newer cursor remains intact, and a fresh retry retains the original selection history.
+
+The final combined suites pass 2,621 tests, with 163 optional skips and no failures or errors.
+All four projects build, and the final core rerun includes the integrated movement reference fixtures.
+Cooking, camera, retained particle, attachable, and Iris GPU comparisons run without skips.
+All 1,413 core classes match both packaged copies, and all 1,139 production client classes match the add-on.
+The affected core and add-on stacks replay successfully.
+
+A fresh BDS 1.26.51.1 route verifies version-five mouse actions in furnace, smoker, and blast-furnace screens.
+All six press/release replies retain context `1` and their original authority across newer frames.
+Each real ingredient starts cooking, all three ordinary follow-up cases pass, and same-world reconnect passes.
+Both runtime inventories match 2,551 project class resources and four data resources.
+Normal cleanup removes the observer, restores the private driver change, and leaves no managed-profile JVM.
+The controlled scene projection preserves all 39 real slots while it removes unfinished controls and mappings.
+This run does not establish unchanged authored screens, physical mode-`2` input, carried-item screen support, or native pixels.
+
+## Player inventory options
+
+Crafting-book changes now reach Bedrock player-inventory preferences instead of the furnace-only handler.
+The native snapshot retains both tabs, filtering, and independent inventory and workbench layouts.
+Menu ownership changes select the corresponding layout for Java's shared crafting book.
+Pending close and recovery restore the inventory projection.
+
+Java can change open and filter states. It cannot express native tab selection or every native layout.
+Filter-only changes retain the exact native layout, including recipe-book-only and unknown values.
+The other screen's layout and both tabs remain intact.
+An unseen snapshot uses native None sentinels for fields that Java cannot supply.
+
+`InventoryOptionsStorage` replaces the furnace-specific storage and owns all four Java book settings.
+Player updates retain the three furnace books, and furnace updates retain the player book.
+The existing native furnace channel keeps its wire format and negotiation behavior.
+
+The [1.26.50-beta.26 schema](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/packets/set-player-inventory-options-packet/) describes the signed VarInt fields and boolean.
+The target 1.26.51.1/protocol 2193 original packet reports ID 307.
+Its complete descriptor confirms field order and raw signed values across four samples, including integer extremes.
+The capture supplies a typed output sink. It does not execute compressed native wire writers.
+Committed tests verify Java wire bytes, packet routing, independent layouts, unknown values, furnace retention, and menu transitions.
+
+This completes the options transport and Java projection needed by player inventory.
+Authored player-inventory presentation, the live player renderer, native tabs/search, controller input, and visible native parity remain unfinished.
+The full stack passes 2,798 tests, with 163 optional skips and no failures or errors.
+All 1,450 core classes match both packaged copies, and all 1,185 client classes match the add-on.
+Eleven options regressions execute the packaged core and reject four deliberately incorrect variants.
+The rebuilt add-on passes 35 screen regressions and matches the existing 1,940 native UI cases across 14 corpora.
+The bundle contains the exact two client JARs.
+A fresh BDS 1.26.51.1 route passes the crafting-book sticks and furnace-book cooking scenarios.
+These live checks verify the Java workflow; they do not establish native screen or pixel parity.
+
+All five goal areas and the four original reports remain open.
+These changes target release 0.3.53.

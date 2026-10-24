@@ -764,3 +764,91 @@ All four projects build.
 The final core suite has 1,274 passing tests and 32 optional skips; the add-on has 816 passes and 120 optional skips.
 Both Checkstyle suites, offline validation and stack health pass.
 The additional surface test changes no production classes in the built artifact.
+
+## Fixed-boom execution
+
+Fixed-boom presets now execute through the shared attached-camera runtime.
+The position controller accepts the native base and retains independent defaults, rotation overrides, view offsets, entity offsets, and attachment generations.
+The shared `BOOM` rendering mode keeps its existing wire ordinal.
+The changed follow payload negotiates `viabedrock:camera_follow_v2` and version two before core sends an attached position command.
+A peer with only the earlier follow channel does not receive the changed format.
+
+Fixed-boom orientation stays independent of actor yaw and orbit input.
+Pitch clamps at the native boundaries of ±89.9°.
+The upper boundary uses the native stored polar constant, while the lower boundary retains its separate float calculation.
+Entity offsets rotate in fixed-camera space.
+Avoidance receives measured boom distance instead of an orbit target radius.
+The pinned fixed-boom and follow-orbit definitions share a zero relaxation spring and minimum distance of 0.25 blocks.
+
+The reference uses Bedrock 1.26.51.1/build51061372, protocol 2193.
+Its binary SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+All 192 controls execute default/starting callbacks `0x1466f7e90`/`0x1466f7f30`, default/explicit attachment `0x14677ec00`/`0x14677ecb0`, and matrix `0x14677e5a0`.
+They also execute fixed transform `0x14677eed0`, offset composition `0x1466f73f0`, and look-at `0x14677b300`.
+Parsed components, actor origin, radius, offsets, starting rotation, and attachment points are supplied inputs.
+Empty ECS registration, optional point-provider results, and float CRT math remain supplied boundaries.
+These controls exclude actual pivot producers, constructor and packet flow, complete ECS scheduling, avoidance/world lookup, and GPU rendering.
+
+Mandatory tests cover command defaults and overrides, camera replacement, actor movement and rotation, input rejection, payload negotiation, and attachment lifetime retention.
+The production runtime matches all 192 fixed frames and the existing 256 follow frames and 768 follow collision frames.
+Three deliberate variants fail: actor-yaw attachment space, missing pitch boundaries, and rejection of fixed-boom commands.
+Actual native player pivots, complete control-scheme mappings, native geometry providers, and visible parity remain open.
+
+The final combined four-project build passes 2,600 tests, with 167 optional skips and no failures or errors.
+Native fixed-boom, follow-frame, follow-collision, and avoidance comparisons run without skips.
+Retained particle, attachable, and Iris GPU comparisons also run without skips.
+All 1,412 core classes match the add-on and proxy copies, and all 1,139 production client classes match the add-on.
+The 104-patch core stack and 38-patch add-on stack replay successfully.
+This build includes the newer native interpolation packet metadata.
+
+A fresh BDS 1.26.51.1 session exercises the exact installed artifact over direct NetherNet.
+Read-only observations verify 48 camera samples across eleven stages.
+The default fixed view keeps its position while the player turns without moving.
+Explicit rotation and player translation preserve the expected offsets.
+An armor-stand attachment keeps fixed orientation through actor rotation, follows actor translation, and detaches to the player.
+The run also verifies view/entity offsets, the orbit switch, and clear.
+Installed artifact checksums match, and all owned client, display, and server processes stop normally.
+This run verifies the stated Java route, while native pivot height, control schemes, full lifecycle coverage, and native pixels remain unverified.
+
+
+## Fixed attachment retirement
+
+Fixed-boom now retires an attachment after its observed native actor lifetime disappears or changes.
+It resumes the default player attachment, including later player movement.
+A normal camera snapshot or preset reselection cannot restore the retired attachment.
+A new attachment command permits a new actor lifetime.
+Orbit retains its separate component behavior.
+
+The add-on keeps native identity available while the Java entity or physical bounds remain pending.
+These pending samples retain the previous frame without false retirement.
+If the local player is unavailable after retirement, the runtime waits without reacquiring the old attachment.
+
+The pinned binary and version match the fixed-boom reference above.
+Thirty-two native controls cover fixed and orbit callbacks, both attachment point enums, and eight actor lookup states.
+They execute callbacks `0x14677e970`/`0x14677ecb0`, point provider `0x14672dbf0`, weak lookup `0x14672dd10`, center `0x1419f8180`, and matrix `0x14677e5a0`.
+The controls cover valid actors, removed actors, stale generations, missing sparse/type/data storage, expired worlds, and absent client levels.
+Failed fixed lookup clears the weak handle, releases its reference, and requests attachment component erasure.
+Orbit retains its handle in the same controls.
+The original default attachment, fixed transform, offset, and look-at functions then use a supplied player origin.
+The default fixed view excludes the attachment component, and the attachment system orders its default pass after the explicit pass.
+
+Typed registries, actor positions, bounds, generations, weak controls, and parsed components remain supplied inputs.
+Client-level and weak-world resolution, attachment pool lookup and erasure, and float CRT calls remain supplied boundaries.
+These controls do not execute the full ECS scheduler or actual player pivot producers.
+Retained orbit controls supply an unchanged origin; they do not prove native post-loss orbit origin lookup or complete frozen-pose behavior.
+
+Mandatory tests cover retirement, identity reuse, ordinary snapshots, new attachment commands, mixed presets, and pending samples.
+Four deliberate variants fail: missing fixed retirement, orbit retirement, retirement reset on ordinary snapshots, and pending samples treated as removal.
+The production runtime matches all 32 native frames and retains the earlier fixed, follow, collision, and avoidance comparisons.
+
+A fresh BDS 1.26.51.1 session over direct NetherNet verifies 42 actual camera observations across nine stages.
+The exact installed build covers attachment, actor removal, player movement, preset reselection, replacement presence, explicit reattachment, detach, and clear.
+The live replacement has a new actor ID; native and unit controls cover reused identity.
+Installed artifact checksums match, and all nine owned client, display, and server process identities are gone after normal shutdown.
+
+Initial command-time identity ownership before the first observed lifetime remains open.
+Native player pivots, complete ECS scheduling, post-loss orbit origin lookup, and native pixels also remain unverified.
+
+The combined four-project build passes 2,604 tests, with 167 optional skips and no failures or errors.
+Native camera, particle, attachable, and Iris GPU comparisons run without skips.
+All 1,413 core classes match both packaged copies, and all 1,139 production client classes match the add-on.
+The core and add-on stacks replay successfully.

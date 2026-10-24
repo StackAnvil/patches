@@ -1872,7 +1872,7 @@ This move preserves the payload format and does not change native dimension calc
 
 ## Native world inputs
 
-The block mirror now consumes the core's negotiated `block_identifiers_v2` channel.
+The block mirror now consumes the core's negotiated `block_identifiers_v3` channel.
 It retains both native layers, runtime IDs and state properties for client world queries.
 Particle expiration continues to read only the primary layer.
 Its integration test verifies that changing the extra layer cannot change a primary-layer filter result.
@@ -2020,3 +2020,303 @@ Terrain and scoreboards appear in each destination. A verified ray hit on the co
 The player graph resolves 200 animations and 12 controllers and produces changing sampled poses without graph-loading errors.
 All 191 skins and supplied geometry records install, with 4,993 remote-player render frames and 107,666 custom-actor render frames.
 The six owned processes close normally. Native visual parity, including cosmetic-preview facing direction, remains open.
+
+
+## Particle atlas paths outside the textures folder
+
+Particle definitions now accept validated paths relative to the resource pack root.
+They no longer require the `textures/` prefix in either the emitter parser or the image lookup.
+This fixes Galaxite's `galaxite:gem_bag_particle`, which selects the existing `font/glyph_E1.png` atlas.
+The shared native actor archive already retains PNG and TGA images outside the textures folder.
+Existing archive path validation and image limits remain in place.
+
+Native evidence comes from Bedrock 1.26.51.1, protocol 2193, executable SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Function `142152f40` reads the texture field and copies its string without adding or checking a folder prefix.
+A private probe executes instructions `142153906..142153a4b` with the original native JSON and string helpers.
+Nine string cases retain their values, including font, custom-folder, root-level, long, and Unicode paths.
+Three non-string cases fail the native type check.
+The probe enters after material dispatch and excludes complete schema loading, later resource lookup, and rendering.
+CRT byte/string operations, allocation, frees, and diagnostic backends use declared host boundaries.
+Field admission alone does not prove that a later native resource lookup succeeds.
+
+Validation:
+
+- All 38 add-on patches replay successfully.
+- Converter, core, and add-on builds pass 2,353 tests, with 152 optional skips and no failures or errors.
+- A targeted test carries generated PNGs through the native actor archive, pack reconstruction, image decoding, and emitter output.
+- That test covers font, custom-folder, and root-level paths, retained alpha, and rejected traversal paths.
+- A content-hash audit checks 1,516 particle documents across 82 exported pack archives from 29 recorded connections.
+- Outside the textures folder, it finds the Galaxite atlas and five invisible underscore placeholders.
+- The complete plain Galaxite replay passes transport checks and extracts 4,112 gem-bag particle quads across 384 native particle frames.
+- The matching Iris replay passes transport checks and extracts 1,614 gem-bag quads across 73 native particle frames.
+- Both routes have no particle-load or observer errors.
+
+Those particle validation runs also report unresolved marker geometry and the camera item texture.
+The CubeConverter patch now retains the marker declaration when optional fields are absent.
+A missing waterlogged block-state warning also remains in the client log.
+This change does not establish native pixel parity or complete particle material behavior under arbitrary shader packs.
+Raw packs, native exports, observer code, and recordings remain private.
+
+
+## Authoritative fluid queries
+
+Client-world and direct chunk queries now select fluid from the native block mirror.
+Vanilla render regions and the optional Sodium 0.9.2 `LevelSlice` getter use the same source.
+The adapter preserves all mapped water and lava levels, including falling states.
+It retains vanilla queries for ordinary Java worlds, unknown native definitions and unavailable native world data.
+It also rejects nonliquid Java states in fluid dictionary entries.
+
+The target-native layer selector passed 180 pinned-binary cases, as recorded in the core transport sidecar.
+The client decoder tests every Java water and lava block state.
+The earlier query-only validation passed 2,360 tests, with 152 optional skips and no failures.
+
+The mesh integration below now replaces direct block-state fluid reads in both supported mesh builders.
+Native fluid face occlusion, vertex-height parity, complete current simulation and native visual parity remain open.
+
+
+Two fresh 40-second Galaxite replays validate the getters against recorded native fluid layers.
+Each run retains 7,174 secondary-fluid cells and samples 256 of them.
+The plain client reports zero mismatches through the client world and vanilla render-region getters.
+The Iris client also checks Sodium 0.9.2's `LevelSlice`, with zero mismatches across all three query surfaces.
+The region and Sodium getter probes construct query objects for the current client level; they do not test generated fluid meshes.
+Transport verification passes; the broader rendering check still fails on unresolved mappings, including the camera texture.
+
+
+## Secondary fluids in chunk meshes
+
+The core represents fluid over native air as a Java fluid block so section-level empty checks retain it.
+Both vanilla and Sodium 0.9.2 chunk compilers retain the native fluid beside each primary block.
+A cell is skipped only when its primary block is air and its selected fluid is empty.
+The fluid renderer receives the selected fluid while the primary block still supplies geometry and occlusion shapes.
+This includes secondary fluids whose Java carrier has no waterlogged state, and fluids with an air primary block.
+
+Neighbor fluid reads now use the corresponding native positions for face selection and height sampling.
+Sodium's hidden-fluid exposure walk also reads the native current and upper cells.
+The lookup uses primitive coordinates in the mesh loop and neighbor paths to avoid extra position allocations.
+Unknown native definitions and ordinary Java worlds retain the original Java fluid result.
+A known dry native cell can override a fluid-bearing Java carrier.
+
+Current project test results total 2,364 passing tests, 152 optional skips and no failures.
+Targeted tests distinguish known dry states from unavailable native data and keep adjacent fluid selections independent.
+The native selector evidence remains the 180-case pinned-binary probe in the core transport sidecar.
+This change does not replace the existing face-occlusion or vertex-height algorithms with a proven native equivalent.
+
+
+Native fluid updates now invalidate their affected render sections even when the Java carrier state stays unchanged.
+The invalidation range covers two horizontal blocks and one vertical block, including Sodium 0.9.2's five-by-five hidden-fluid exposure walk.
+Equivalent fluid selections do not schedule another rebuild.
+Section replacements and chunk removal also invalidate their dependent regions.
+The update tracker follows dimension resets and connection/level clears; dirty coordinates stay within the integer block-coordinate section range.
+Targeted tests cover wet/dry changes, equivalent runtime aliases, near-boundary samples, resets, ignored dimensions, chunk removal and integer limits.
+
+
+Two final 40-second Galaxite replays pass transport verification without mixin or observer failures.
+The plain renderer emits 80 vertices for fluids whose native primary layer is air; Sodium emits 72.
+These counters include repeated chunk builds and do not measure distinct blocks or pixel equivalence.
+Java now represents those cells as fluid blocks, so whole sections also survive empty-section checks.
+The plain renderer also emits 4604 vertices for fluids absent from the primary Java block state.
+Sodium culls the sampled solid-bedrock fluids with its existing occlusion rules; that difference does not establish native parity.
+
+Each replay includes a synthetic client-side control on the recorded wet bedrock state.
+It removes and restores the native secondary liquid without changing Java block state 88.
+The world fluid query transitions wet, dry and wet, and each run records two rebuild invalidations attributed to those exact control messages.
+The original layer is restored before the test ends.
+This verifies the update bridge, not native server inventory actions or native fluid simulation.
+The broader rendering audit still fails on existing unresolved mappings, including the camera texture and unregistered `galaxite:loading_fx` actor.
+
+
+## Share the native basis reset
+
+The actor transform helper exposes its existing basis reset for equipped bone bindings.
+Ordinary composition retains its translation, rotation, and scale order.
+The reset preserves the translated origin and clears the inherited basis.
+Native composition `0x141bc3d20` uses this operation after a binding supplies its copied owner matrix.
+The equipment patch records the native binding controls and their boundaries.
+
+All four builds pass 2,522 tests, with 212 optional skips and no failures or errors.
+The native binding fixture, native slot fixture, and Iris GPU regression run without skips.
+All 1,410 core classes match both packaged copies. All 1,134 production client classes match the add-on.
+
+## Particle creation query context
+
+A new emitter now starts with an unbound query context before lifetime configuration and its first creation expression.
+Animation pre-effect variables survive. Captured actor queries and animation clocks do not.
+Previously, animation roots retained actor queries until their first context refresh, while event children started with fresh queries.
+Missing-query tracking now belongs to the new emitter, so unbound creation cannot invalidate its animation owner's query coverage.
+Later context refreshes, child initialization, loop restarts, and reused emitters keep their existing query and variable behavior.
+
+The pinned Bedrock 1.26.51.1 executable initializes the actor and count-owner pointers to zero before first creation.
+The probe runs original factory `0x14216ba90` through first creation dispatch in `0x142157210`, starting with an allocation filled with `0xa5`.
+The supplied transform has translation `(3, 4, 12)`, and the manager camera is `(-1, 8, 10)`.
+Eleven original scalar and count callbacks return zero against that captured context.
+They cover actor speed and water state, generic animation clocks, camera distance, and all four particle counts.
+The binary SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Allocation, bounded CRT copies, mutex operations, resource lookup, and the component callback are supplied boundaries.
+Random-variable registration is explicitly skipped.
+This verifies the constructor query boundary. It does not execute native JSON/Molang evaluation, actor admission, or visible rendering.
+
+Two regressions cover unbound construction, lifetime expressions, pre-effect variables, owner query coverage, refreshed initialization, and loop restarts.
+Existing schedule controls install their synthetic tracing queries after construction.
+Their callbacks observe scheduling and dispatch rather than testing actor-query inheritance.
+Private licensed asset comparisons use files from the checksum-verified versioned archive, with unchanged decoded particle expectations and native receipts.
+
+Both new regressions fail against the previous implementation and pass after the correction.
+Two deliberate variants retain shared missing-query tracking or reset refreshed queries on every loop restart.
+Each fails its corresponding regression. The restored implementation passes.
+
+The combined four-project build passes 2,574 tests, with 167 optional skips and no failures or errors.
+The retained native particle fixtures, native attachable comparisons, and Iris GPU regression run without skips.
+Licensed asset comparisons cover 115 base particle definitions, 108 versioned overlays, and real drip sound resolution and decoding.
+All 1,411 core classes match both packaged copies, and all 1,134 production client classes match the add-on.
+This checkpoint verifies CPU context boundaries and existing Java integration tests.
+Fresh live particle rendering, actor admission and query producers, complete child lifetimes, and native visible parity remain open.
+
+## Fresh common particle actor inputs
+
+Particle attachment sampling now refreshes common actor inputs from the current Java actor and transported native snapshot.
+The refreshed queries are `is_alive`, `is_on_ground`, `is_in_water`, `ground_speed`, `variant`, `mark_variant`, `property`, `has_property`, and `spellcolor`.
+Packet-driven particles receive native metadata that their previous eight-query map omitted.
+Player, custom-actor, and world-actor animation attachments use the same sampler.
+They preserve unrelated graph inputs and the existing locator pose without advancing the actor animation again.
+Each returned map retains its own immutable values, including typed native properties.
+An absent native snapshot clears retained properties, variants, and spell color.
+Server bindings reject changes to a captured native lifetime.
+Player bindings also reject a changed lifetime before actor removal, while preserving their existing retained-registry path.
+
+Eight controls execute the pinned native initialization gate `0x1421603e0` and context refresh `0x142159bd0` once.
+They then change motion and water components in place on the same bound actor.
+Original callbacks `0x14220ecd0` and `0x14220f040` read every changed value without another context refresh, actor animation, or render pass.
+The target and binary checksum are the same as the constructor controls above.
+Actor resolution, level and physical-component getters, variable access, and expression dispatch are supplied boundaries.
+Native property evaluation, live server behavior, and GPU drawing do not run in these controls.
+
+Eight query tests pass, including the new native comparison and two producer regressions.
+Existing particles change size and tint after new actor samples without another actor render in the Java fixture.
+The tests retain particle variables, graph inputs, earlier snapshots, immutable maps, and typed properties.
+They also remove stale metadata when no current native snapshot exists.
+
+Remaining render-derived queries still use their existing inputs.
+This change does not establish fresh locator animation, every native query producer, complete actor or child lifetimes, or native visible parity.
+
+Three private variants keep stale actor inputs, retain missing metadata, or discard unrelated graph inputs.
+Each fails its corresponding particle regression. The corrected sampler passes.
+All four builds pass 2,577 tests, with 167 optional skips and no failures or errors.
+The new native live-query comparison, retained particle fixtures, attachable comparisons, and Iris GPU regression run without skips.
+All 1,411 core classes match both packaged copies, and all 1,134 production client classes match the add-on.
+
+## Manual child ownership and retirement
+
+Manual child handles now belong to their parent emitter until that parent retires.
+A registered child still receives initialization after its emission lifetime ends.
+A retired child leaves an initialized handle, so later requests cannot create a replacement or adopt another emitter in its registry slot.
+Failed initial creation remains retryable.
+Weak references keep those cached handles from retaining retired child runtimes.
+
+Parent retirement expires its valid manual children and preserves their existing particles until natural death.
+Grandchildren expire when their own parent retires, rather than when an ancestor first expires.
+Registry removal and count updates precede retirement callbacks.
+The manager retains its single traversal, so an earlier child that expires during later retirement can remain until the next batch.
+Expiry callbacks retain the native ordering before emission closes.
+Full-manager shutdown keeps its separate clear path and does not dispatch these retirement events.
+
+Child construction also accepts automatic rate targets.
+Their native manual-capacity slot returns zero, while the emitter remains available for ordinary updates.
+The previous admission check rejected those targets before construction.
+
+Forty-six controls use the pinned Bedrock 1.26.51.1 executable and checksum recorded above.
+They cover two manual request kinds, repeated requests, initial factory failure, registered expiry, stale generations, invalid slots, absent arrays, null children, and shutdown.
+Original leaf dispatcher `0x142164cb0`, weak resource lookup `0x142158740`, force expiry `0x14215cc60`/`0x142158940`, and manual emission `0x142160c20` execute.
+The controls also execute original capacity getters `0x1462a4d10` with literal four and `0x140076c20` with zero.
+Native instant and steady rate tables use the zero manual-capacity getter.
+
+Parent destructor `0x142170320` executes through its child retirement loop, stopping before cache/resource cleanup at `0x1421703c2`.
+Cache entries, generational handles, components, and emitter memory are supplied inputs.
+Factory returns, initialization callbacks, context refresh, birth allocation, and source expressions are supplied boundaries.
+The controlled expiry callback observes the native flag and tail-calls original manual emission.
+The existing manager instructions decrement the effect count and retire the slot before invoking destruction.
+These controls do not execute the native JSON/Molang VM, actual particle allocation, complete destruction, live server behavior, or pixels.
+
+Nineteen focused tests pass, including the retained manager/count/dispatch schedules and all 46 new native comparisons.
+The production ownership and emitter tests cover stale handles, independent owners, failed creation, rollback identity, automatic targets, particle draining, and grandchild retirement.
+Four private variants recreate stale handles, omit child expiry, close emission before callbacks, or update counts after callbacks.
+Each fails the relevant regressions. The restored implementation passes.
+
+Complete native registry producers, actor removal lifetimes, graph/resource limits, and live particle rendering remain open.
+The broader five-area production goal remains active.
+
+All four builds pass 2,583 tests, with 167 optional skips and no failures or errors.
+The child lifetime comparisons, retained particle fixtures, attachable comparisons, and Iris GPU regression run without skips.
+All 1,411 core classes match both packaged copies, and all 1,136 production client classes match the add-on.
+Reentrant emitter allocation during native destruction remains unverified.
+
+## Native manual-child retirement order
+
+Manual children now retire in the native cache traversal order.
+The cache uses each validated effect name's FNV-1 hash, eight initial buckets, and the target collision and growth rules.
+Bucket growth rebuilds traversal before inserting the next key.
+Java map iteration previously changed the order of expiry callbacks.
+
+Failed creation reserves an uninitialized slot before the factory runs.
+Retries and rollback retain that slot, including its effect on bucket growth and later traversal.
+Unavailable definitions now reach the same cache path.
+Successful and retired handles keep their existing weak-reference and ownership behavior.
+
+Thirty-two controls execute original leaf dispatcher `0x142164cb0` from an empty native cache.
+They record 2,870 insertion/retry observations across forward, reverse, and shuffled names, full-hash collisions, masked-bucket collisions, and growth through 513 entries.
+The parent destructor then traverses the resulting native cache through `0x1421703c2`.
+Production Java retirement matches every native traversal.
+The pinned executable version and checksum remain the same as the lifetime controls above.
+
+Parsed names and hashes, the empty cache layout, manager handles, and child records are supplied inputs.
+Allocator calls, exact bounded CRT copies/comparisons, integer `ceilf`, deallocation, failed factory returns, and expiry callbacks are supplied boundaries.
+These controls do not execute native name parsing, resource construction, complete destruction, reentrant manager allocation, live server behavior, or GPU drawing.
+Artificial hash collisions are explicit test inputs.
+
+Mandatory tests cover failed-slot growth and actual emitter expiry callbacks in bucket order.
+The native fixture also checks successful retries in a different order from their original failed attempts.
+Four private variants use Java map order, preserve insertion order, discard failed entries, or skip native rehashing.
+Each fails its native order comparison. The restored implementation passes.
+
+Reentrant manager allocation during expiry remains unverified.
+Complete registry producers, actor removal lifetimes, resource admission, and native visible parity also remain open.
+
+The combined four-project build passes 2,588 tests, with 168 optional skips and no failures or errors.
+The new child-order fixture, child-lifetime comparisons, retained particle fixtures, attachable comparisons, and Iris GPU regression run without skips.
+All 1,411 core classes match both packaged copies, and all 1,137 production client classes match the add-on.
+The newer received actor spatial-state change remains integrated in this build.
+
+## Native particle rate composition
+
+The runtime accepts effects with zero, one, or several rate components.
+An effect without rates still runs its lifetime and event graph.
+Automatic rates add their requests in resource order and share emitter capacity, rate cache, and interval remainder.
+Manual capacity initializes before creation expressions and refreshes for each manual request.
+Manual births also update the shared birth count, so an instant component observes earlier manual emission.
+
+For example, steady emission before an instant burst can add both requests in the first update.
+Reversing those components can leave the steady rate cache at zero after the instant component sets capacity.
+The runtime preserves that order-dependent result.
+
+The reference uses Bedrock 1.26.51.1/build51061372, protocol 2193.
+The binary SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+All 128 controls execute factory `0x14216ba90`, reset `0x142157210`, automatic update `0x142158a40`, and manual emission `0x142160c20`.
+Automatic updates stop after births, before particle aging, and acknowledge the native first-update flag.
+The controls compare 1,152 emission steps across every permutation of zero through three rates, capacity limits, and manual/automatic action order.
+The target-version particle schema lists these components independently.
+
+Parsed resource arrays and literal expressions are supplied inputs.
+Resource, material, and statistics lookups, capacity reservation, allocation, copies, mutex operations, query refresh, actor absence, and birth allocation are supplied boundaries.
+The controls supply `floorf` and `fmodf` and skip random-variable registration during reset.
+They do not establish native JSON admission, expression VM behavior, particle aging, particle motion, or visible rendering parity.
+
+Focused tests cover event-only expiry, ordered request sums, initialization timing, and manual births before instant emission.
+All 128 native scenarios pass through the production emitter implementation.
+Four deliberate variants fail native population comparisons: maximum instead of sum, sorted component order, omitted initial manual capacity, and omitted manual birth counts.
+The existing native lifetime, count, dispatch, and child-ownership comparisons also pass in the focused run.
+
+All four combined builds pass 2,593 tests, with 169 optional skips and no failures or errors.
+The four rate tests, retained particle comparisons, attachable comparisons, and Iris GPU regression run without skips.
+All 1,411 core classes match the embedded add-on and proxy copies.
+All 1,139 production client classes match the packaged add-on byte for byte.
+The full 38-patch add-on stack and 104-patch core stack replay successfully.
+The combined build includes the newer native spawn-angle cache change.
