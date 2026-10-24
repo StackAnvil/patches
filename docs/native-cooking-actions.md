@@ -884,10 +884,12 @@ The shared UI patch now exports the query matcher, target normalizer, and raw ed
 These APIs do not register a channel or replace the default cooking screen.
 The production menu still publishes an empty query until name producers, transport, and widget integration are complete.
 
-`CookingRecipeSearch` normalizes the query once and requests primary names lazily.
+`NativeRecipeSearch` in `COOKING` mode normalizes the query once and requests primary names lazily.
 A primary match skips the secondary-label producer. An empty query skips both producers.
 The secondary branch removes native formatting codes before normalization.
-The matcher does not trim spaces, split words, or substitute Java preview names.
+This mode does not trim spaces, split words, or substitute Java preview names.
+The same API now provides explicit player substring and word-prefix policies.
+See [the player search reference](native-player-inventory.md#player-search-policies) for their rules and evidence.
 
 `CookingSearchText` retains the latest pending raw string until a ready tick.
 Equal edits still apply. An empty string remains a pending edit until that tick.

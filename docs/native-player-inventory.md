@@ -449,3 +449,45 @@ The installed-screen bridge has sixteen packaged lifecycle and codec regressions
 The full player-inventory controller and physical input delivery remain unfinished.
 Direct joins, creative item actions, reconfiguration and recovery under packet delay still need live verification.
 All five implementation areas and the four original bug reports remain open.
+
+## Player search policies
+
+`NativeRecipeSearch` shares normalized query bytes between cooking and player search.
+Callers select an explicit mode. Cooking preserves primary-name formatting.
+Both player modes remove native formatting from primary names and secondary display labels.
+A primary match skips the secondary producer. An empty normalized query skips both producers.
+Search does not remove query formatting, trim spaces or substitute Java preview names.
+
+`PLAYER_SUBSTRING` requires the complete normalized query to occur in either normalized name.
+`PLAYER_WORD_PREFIX` requires that literal match plus a prefix match between any query token and any name token.
+It does not require every query token to match. Only ASCII space separates tokens.
+Leading and repeated spaces produce empty tokens. A trailing space does not produce a final empty token.
+Tabs, newlines and Unicode spaces remain inside tokens after target normalization.
+
+For example, `on` matches `stone` only in substring mode.
+It matches `stone onyx` in both player modes.
+The query `en sto` matches `wooden stone bricks` in word-prefix mode because `sto` prefixes `stone`.
+The complete query still occurs literally in that name. The query `wood brick` fails that literal check.
+
+The pinned client is Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Complete original functions `0x143438780` and `0x143438da0` supply 1,136 player-search cases and 1,220 normalized word controls.
+Comparisons include malformed UTF-8, embedded NULs, formatting, Unicode normalization, repeated spaces and lazy name acquisition.
+Native formatting, normalization, empty-item checks, matching, vector allocation and cleanup execute.
+The harness supplies name and unlock providers, raw/fallback game types, stable item definitions and standard byte/stream interfaces.
+Thirty invalid-stack controls confirm that an empty query returns state one before native validity checks.
+Eighteen secondary-label controls confirm the raw/fallback creative flag delivered to the name provider.
+These additional controls describe native dependencies; the shared matcher does not own item admission or game mode.
+
+The shared API returns a text match. The full player availability evaluator remains unfinished.
+Native function `0x14341c4c0` installs separate search and category evaluators after collection construction.
+Search combines text matching, recipe unlocking and craftability. Category views also depend on filtering and an actor ability predicate.
+The ability predicate is not established as creative mode.
+The player screen still needs authoritative name producers, unlock/query inputs, native ingredient counting and installed-screen callbacks.
+The four original reports and all five goal areas remain unresolved.
+
+The packaged core matches all 2,660 search comparisons, including 304 retained cooking compositions.
+Four deliberate regressions fail: omitting the literal check, accepting trailing empty tokens, preserving player-name formatting and requiring every query token.
+The retained progressive player model still matches 508 controls across 9,438 frames.
+All four projects build with 2,842 passing tests, 163 optional skips and no failures or errors.
+Checkstyle passes after full replay. All 1,472 core classes match the embedded add-on and proxy copies.
+All 1,191 client classes match the tested add-on. Captures and verifiers remain private.
