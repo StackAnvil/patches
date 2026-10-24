@@ -1,5 +1,21 @@
 Register form, NPC, HUD and inventory presentation channels over the [shared UI program](0095-share-native-ui-programs-and-resources.pr.md). Preserve packet ordering and authoritative inventory behavior.
 
+## Registry name lookup ownership
+
+The shared ItemRegistry foundation owns saved-name parsing, exact alias getters and metadata fallback callbacks.
+Recipe consumers use these APIs after this patch applies. The recipe patch retains descriptor resolution and ingredient counting.
+The move preserves the verified implementation and its required protocol asset.
+
+Original target 1.26.51.1 controls cover 2,501 parses, 22,917 metadata rewrites and 2,127 alias getters.
+The foundation passes all three tests with those references before the recipe patch applies. Main and test Checkstyle checks pass.
+Full replay passes all four builds with 2,862 tests, 163 optional skips and no failures or errors.
+All eight retained packaged comparison suites pass. Registry assets and all 1,498 core classes match both embedded copies.
+Unsupported callback indices retain their explicit Java preconditions. These guards do not establish normal native rejection or complete wire admission.
+
+Populated captures distinguish the priority name map from a DataDriven constructor class.
+Both secondary name maps, raw staging keys, definition lifetimes and numeric owners remain separate model requirements.
+Complete populated factory ownership, the later block producer and installed recipe evaluation remain unfinished.
+
 ## Purpose
 
 Resolve server form layouts from the accepted Bedrock resource-pack stack. Keep templates, variables, bindings, textures and response indices together in ViaBedrock core.

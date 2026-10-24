@@ -760,7 +760,7 @@ Empty input produces no query. Invalid or out-of-range numeric suffixes retain t
 The second-field digit test reads a C string from that field's start, including later colon fields until a NUL.
 A namespaced third field accepts a C-locale numeric prefix. It does not require the complete field to be numeric.
 
-`ItemRegistry.rewriteLegacyName` accepts an already parsed query after the caller checks component definitions.
+`ItemRegistry.rewriteLegacyName` accepts an already parsed query after the caller checks the priority name map.
 It applies one name redirect, or the metadata-qualified redirect when no direct redirect exists.
 It parses the redirect target and then applies that target's complex callback.
 It does not follow another name redirect.
@@ -786,7 +786,7 @@ Input, registry, TLS, static and CRT cleanup finishes with no remaining native a
 A separate primitive parser capture also matches 552 controls.
 
 These APIs do not resolve live Item definitions or replace full recipe admission.
-Component-map precedence, ordinary/block definition lookup, member/representative ownership, actual Item construction and complete registry replacement remain unfinished.
+Priority-map precedence, ordinary/fallback definition lookup, member/representative ownership, actual Item construction and complete registry replacement remain unfinished.
 The rich descriptor Registry still requires those inputs before installed availability can use it.
 All four original reports and all five goal areas remain active.
 
@@ -795,3 +795,120 @@ Nine deliberate parser or callback changes fail native value comparisons.
 The 2,127 alias getter controls and three retained alias regressions also pass, along with the earlier descriptor, counter, search, unlock and progressive comparisons.
 All four builds pass with 2,862 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
 All 1,498 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
+
+
+## Live definitions and runtime-ID ownership
+
+Native named definitions and numeric lookup owners have separate lifetimes.
+A runtime-ID collision does not remove either named definition.
+The current Java registry removes the earlier named definition through its bidirectional ID map.
+The packaged reproduction confirms this mismatch. The runtime correction remains unfinished.
+
+The reference uses 20 explicit typed ItemData registrations under the same pinned target, version and experiment configuration.
+These synthetic controls cover repeated names, colliding IDs, constructor classes, invalid IDs and metadata aliases.
+They do not establish a normal server packet baseline.
+Original block/state construction, complete ItemRegistry initialization, named/numeric ItemStack construction and all destructors execute.
+Read-only observations record named maps, numeric maps, strong ownership vectors and the definition selected before stack initialization.
+The harness supplies typed input backing and ordinary allocator, CRT, TLS and OS interfaces.
+
+| Control | Retained named definitions | Final numeric owner |
+| --- | --- | --- |
+| Two custom names use ID 30010 | Both names remain | `test:second_id` |
+| A custom name uses apple ID 257 | Both names remain | `minecraft:apple` |
+| A component item uses coal ID 304 | Both names remain | `minecraft:coal` |
+| Bucket receives IDs 30026, then 30027 | The bucket definition remains | ID 30026 has no owner, ID 30027 owns bucket |
+
+A named stack can retain a different definition from the initial named lookup result.
+For `test:first_id`, lookup selects its own definition, then numeric initialization selects `test:second_id`.
+The stack retains quantity one and auxiliary three in this control.
+The apple and coal collisions follow the same sequence.
+These observations rule out a single bidirectional map as the complete definition model.
+They do not establish a general last-registration policy for numeric ownership.
+
+Invalid network ID `-1` also differs from missing construction.
+The Legacy and DataDriven controls retain auto-assigned definitions at IDs 858 and 857, respectively.
+The None control with that ID constructs no definition.
+The invalid stick update preserves the builtin definition at ID 323.
+Repeated custom constructor declarations retain the first selected class in these controls, independently of later declared versions and runtime IDs.
+Four additional definitions remain in the native spare ownership vector, including replaced planks and wood definitions.
+
+A DataDriven class alone does not select the priority name map.
+All component controls occupy the ordinary map at registry offset `0x98`.
+The priority map at `0xd8` and the fallback map at `0x118` remain empty in this capture.
+The DataDriven `minecraft:planks` definition therefore does not bypass its ordinary metadata alias.
+Named stack construction with auxiliary three still produces `minecraft:jungle_planks` with auxiliary zero.
+Nonempty priority-map registration and complete lookup precedence still need execution coverage.
+
+The observation at the return from `0x143ee0830` contains only air.
+It does not establish a complete builtin snapshot.
+The later observation, before runtime-ID reassignment, contains 1,954 ordinary definitions and four spare definitions.
+Final state contains 1,958 ordinary definitions and 1,967 numeric map nodes, including 12 nodes with no owner.
+Only 1,955 distinct definitions own a numeric lookup entry after the three collisions.
+Map node counts therefore do not measure live definition counts.
+
+The reference completes 150 named and 1,987 numeric ItemStack controls.
+Native input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+Stack auxiliary and quantity observations use offsets `0x20` and `0x22`, respectively.
+These controls establish native ownership behavior and a packaged Java mismatch. They do not establish a production fix.
+
+The next implementation must preserve definition identity separately from advertised IDs and numeric lookup ownership.
+It must account for constructor order, retained spare definitions, alias lookup and block construction before exposing a complete recipe Registry.
+Existing wire-ID consumers need an audit before the registry API changes.
+Exact wire admission, recipe contexts, actor ownership, installed screens, physical actions and pixels remain unfinished.
+All four original reports and all five goal areas remain active.
+
+
+## Constructor staging and secondary names
+
+The shared registry foundation now owns the verified parser, alias getters, metadata callbacks and their tests.
+These APIs precede recipe and active-use consumers in the patch stack.
+They preserve their existing runtime behavior. Complete live definition ownership remains unfinished.
+
+The empty-input reference separates three constructor phases.
+The ordinary map first owns air at ID -158. A separate staging map holds 1,241 definitions.
+After the staging drain, block registration creates another 707 definitions.
+The final registry contains all 1,949 definitions in the factory metadata asset. Its constructor counter remains 850.
+These counts describe the recorded version and experiment configuration, rather than normal server packet contents.
+
+Staging keys and canonical definition names differ in 119 entries.
+For example, the raw key `element_39` refers to a definition named `minecraft:element_39`.
+Constructor selection queries the raw staging key. Normalizing these keys together changes that lookup.
+The later block-registration callback also queries current numeric and named owners before it constructs or associates an Item.
+Its remaining predicates and component branches need populated execution coverage before the registry correction can use this phase.
+
+A further 31-entry control distinguishes raw staging selection from ordinary name replacement.
+Input `element_39` removes its raw staged key and retains the component definition under `minecraft:element_39`.
+Input `minecraft:element_40` leaves its raw staged key present. The staging drain later replaces that component definition with the builtin.
+The replaced component definition remains in the main ownership vector, despite losing its named lookup entry.
+A DataDriven air registration also retains the original ordinary air definition and places the new component definition in the spare vector.
+The constructor model therefore needs more than a first-version map.
+
+Explicit component and Legacy definitions for `minecraft:birch_standing_sign` and `minecraft:polished_basalt` survive the later block phase in these controls.
+A None declaration for `minecraft:nether_gold_ore` receives its builtin block definition before runtime-ID assignment, despite its component flag.
+The capture completes 234 named and 2,006 numeric ItemStack controls and releases all native allocations and locks.
+These controls use empty component data. Full component predicates and wire admission remain unfinished.
+
+The populated reference supplies 24 explicit typed ItemData registrations and exercises both secondary lookup maps.
+The priority map at `0xd8` registers `test:marker` for the definition named `tile.test:marker`.
+The fallback map at `0x118` registers `test:fallback` for the definition named `test:tile.fallback`.
+The latter definition comes from input `test:tile.tile.fallback`, because parsing removes one local tile prefix.
+The priority map precedes alias rewriting. The fallback map follows ordinary lookup after rewriting.
+These registrations depend on parsed name fields, independently of the DataDriven class.
+
+Native registration and rehash observations also establish the ordinary map's iteration order.
+The hash uses FNV-1 over UTF-8 bytes. Colliding bucket entries precede earlier entries, and a resize regroups the existing sequence.
+Observed bucket counts progress through 8, 64, 512, 1,024 and 2,048.
+The final numeric ownership pass follows this iteration order.
+An independent ordering model matches all 7,833 insertion steps across four complete captures.
+FNV-1a hashing and reversed bucket insertion each fail concrete native comparisons.
+This ordering model is reference evidence, rather than a production registry implementation.
+
+The empty-input capture completes 126 named and 1,965 numeric ItemStack controls.
+The populated capture completes 192 named and 1,995 numeric controls, including priority and fallback lookup.
+Both captures retain original block/state construction, registry construction, ItemStack construction and complete cleanup.
+Neither capture leaves native allocations or held locks.
+The foundation patch also passes its three parser and alias tests before the recipe patch applies.
+After full replay, all four projects pass 2,862 tests with 163 optional skips and no failures or errors.
+Checkstyle passes, and all eight retained packaged comparison suites pass.
+All 1,498 core classes and both registry assets match their embedded add-on and proxy copies.
+All 1,191 client classes match the tested add-on. The patch move preserves the verified runtime implementation.
