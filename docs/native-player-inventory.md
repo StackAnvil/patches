@@ -795,3 +795,64 @@ Nine deliberate parser or callback changes fail native value comparisons.
 The 2,127 alias getter controls and three retained alias regressions also pass, along with the earlier descriptor, counter, search, unlock and progressive comparisons.
 All four builds pass with 2,862 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
 All 1,498 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
+
+
+## Live definitions and runtime-ID ownership
+
+Native named definitions and numeric lookup owners have separate lifetimes.
+A runtime-ID collision does not remove either named definition.
+The current Java registry removes the earlier named definition through its bidirectional ID map.
+The packaged reproduction confirms this mismatch. The runtime correction remains unfinished.
+
+The reference uses 20 explicit typed ItemData registrations under the same pinned target, version and experiment configuration.
+These synthetic controls cover repeated names, colliding IDs, constructor classes, invalid IDs and metadata aliases.
+They do not establish a normal server packet baseline.
+Original block/state construction, complete ItemRegistry initialization, named/numeric ItemStack construction and all destructors execute.
+Read-only observations record named maps, numeric maps, strong ownership vectors and the definition selected before stack initialization.
+The harness supplies typed input backing and ordinary allocator, CRT, TLS and OS interfaces.
+
+| Control | Retained named definitions | Final numeric owner |
+| --- | --- | --- |
+| Two custom names use ID 30010 | Both names remain | `test:second_id` |
+| A custom name uses apple ID 257 | Both names remain | `minecraft:apple` |
+| A component item uses coal ID 304 | Both names remain | `minecraft:coal` |
+| Bucket receives IDs 30026, then 30027 | The bucket definition remains | ID 30026 has no owner, ID 30027 owns bucket |
+
+A named stack can retain a different definition from the initial named lookup result.
+For `test:first_id`, lookup selects its own definition, then numeric initialization selects `test:second_id`.
+The stack retains quantity one and auxiliary three in this control.
+The apple and coal collisions follow the same sequence.
+These observations rule out a single bidirectional map as the complete definition model.
+They do not establish a general last-registration policy for numeric ownership.
+
+Invalid network ID `-1` also differs from missing construction.
+The Legacy and DataDriven controls retain auto-assigned definitions at IDs 858 and 857, respectively.
+The None control with that ID constructs no definition.
+The invalid stick update preserves the builtin definition at ID 323.
+Repeated constructor declarations retain the first selected class, independently of later declared versions and runtime IDs.
+Four additional definitions remain in the native spare ownership vector, including replaced planks and wood definitions.
+
+A DataDriven class alone does not select the priority name map.
+All component controls occupy the ordinary map at registry offset `0x98`.
+The priority map at `0xd8` and the fallback map at `0x118` remain empty in this capture.
+The DataDriven `minecraft:planks` definition therefore does not bypass its ordinary metadata alias.
+Named stack construction with auxiliary three still produces `minecraft:jungle_planks` with auxiliary zero.
+Nonempty priority-map registration and complete lookup precedence still need execution coverage.
+
+The observation at the return from `0x143ee0830` contains only air.
+It does not establish a complete builtin snapshot.
+The later observation, before runtime-ID reassignment, contains 1,954 ordinary definitions and four spare definitions.
+Final state contains 1,958 ordinary definitions and 1,967 numeric map nodes, including 12 nodes with no owner.
+Only 1,955 distinct definitions own a numeric lookup entry after the three collisions.
+Map node counts therefore do not measure live definition counts.
+
+The reference completes 150 named and 1,987 numeric ItemStack controls.
+Native input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+Stack auxiliary and quantity observations use offsets `0x20` and `0x22`, respectively.
+These controls establish native ownership behavior and a packaged Java mismatch. They do not establish a production fix.
+
+The next implementation must preserve definition identity separately from advertised IDs and numeric lookup ownership.
+It must account for constructor order, retained spare definitions, alias lookup and block construction before exposing a complete recipe Registry.
+Existing wire-ID consumers need an audit before the registry API changes.
+Exact wire admission, recipe contexts, actor ownership, installed screens, physical actions and pixels remain unfinished.
+All four original reports and all five goal areas remain active.
