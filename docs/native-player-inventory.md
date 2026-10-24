@@ -737,10 +737,10 @@ It does not establish normal server packet contents or wire admission.
 All 60 aliases also have constructed native factory definitions at that point.
 Input, registry, TLS, static and CRT cleanup finish with no remaining native allocations or held locks.
 
-These APIs expose names, not resolved Item definitions or metadata callbacks.
+The alias predicates and member getters expose names. The model below supplies metadata callback rewrites separately.
 Ordinary named lookup can use a redirect with metadata, then a complex-alias callback, and reset the auxiliary after that callback.
 Each alias's ordered members do not define that callback's metadata mapping.
-Live member and representative ownership, ordinary lookup rewriting, block fallback and complete Java registry construction remain unfinished.
+Live member and representative ownership, full ordinary definition lookup, block fallback and complete Java registry construction remain unfinished.
 The rich descriptor model still requires that complete registry context before installed recipe evaluation can use it.
 All four original reports and all five goal areas remain active.
 
@@ -750,3 +750,48 @@ Three deliberate changes fail value comparisons: ignored redirects, reversed mem
 The retained descriptor, counter, source matcher, search, unlock and progressive-model comparisons also pass.
 All four builds pass with 2,860 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
 All 1,495 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
+
+
+## Native name parsing and metadata rewrites
+
+`NativeItemName.parse` produces a name and auxiliary value before definition lookup.
+It preserves ASCII case folding, native colon fields, tile-prefix removal and numeric suffix rules.
+Empty input produces no query. Invalid or out-of-range numeric suffixes retain the incoming auxiliary.
+The second-field digit test reads a C string from that field's start, including later colon fields until a NUL.
+A namespaced third field accepts a C-locale numeric prefix. It does not require the complete field to be numeric.
+
+`ItemRegistry.rewriteLegacyName` accepts an already parsed query after the caller checks component definitions.
+It applies one name redirect, or the metadata-qualified redirect when no direct redirect exists.
+It parses the redirect target and then applies that target's complex callback.
+It does not follow another name redirect.
+For example, `minecraft:double_stone_slab` with auxiliary 3 becomes `minecraft:cobblestone_slab` with auxiliary 0.
+Stopping at `minecraft:stone_block_slab` would omit the callback.
+Each callback clears the auxiliary after selecting its target, even when the selected name remains equal.
+Keep deferred wildcard alias selection on its earlier raw-name path.
+
+The pinned asset now requires all 60 callback definitions.
+Thirty-eight callbacks index their registered members. The other 22 use 439 explicit metadata values and native default targets.
+Preserve signed-short callback arguments, the low-byte guards and the signed remainder rules.
+Missing callback data fails instead of selecting an inferred member rule.
+Some high-word metadata combinations pass a native byte guard but index outside its vectors.
+The Java fallback rejects those unsupported inputs explicitly. Complete caller admission remains unfinished.
+These guards do not establish a normal native result for the excluded inputs.
+
+The reference executes complete parser `0x140ad1110` and name/auxiliary rewriter `0x1434735e0` after actual block/state and ItemRegistry construction.
+It supplies read-only UTF-8 caller backing, allocation services and ordinary C-runtime imports.
+The supplied numeric import follows the [Windows C-runtime conversion contract](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/strtol-wcstol-strtol-l-wcstol-l?view=msvc-170).
+Native conversion dispatch, range checks, name parsing, redirects, alias callbacks and owned string retirement still execute.
+The capture covers 2,501 parser controls and 22,917 rewrites. It records 46 unsupported callback input combinations separately.
+Input, registry, TLS, static and CRT cleanup finishes with no remaining native allocations or held locks.
+A separate primitive parser capture also matches 552 controls.
+
+These APIs do not resolve live Item definitions or replace full recipe admission.
+Component-map precedence, ordinary/block definition lookup, member/representative ownership, actual Item construction and complete registry replacement remain unfinished.
+The rich descriptor Registry still requires those inputs before installed availability can use it.
+All four original reports and all five goal areas remain active.
+
+The packaged core matches all 2,501 parser controls, 22,917 rewrites and 46 explicit unsupported-index guards.
+Nine deliberate parser or callback changes fail native value comparisons.
+The 2,127 alias getter controls and three retained alias regressions also pass, along with the earlier descriptor, counter, search, unlock and progressive comparisons.
+All four builds pass with 2,862 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
+All 1,498 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.

@@ -536,3 +536,28 @@ Three deliberate changes fail value comparisons: ignored redirects, reversed mem
 The retained descriptor, counter, source matcher, search, unlock and progressive-model comparisons also pass.
 All four builds pass with 2,860 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
 All 1,495 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
+
+
+## Native legacy names and metadata callbacks
+
+Parse names with native ASCII case folding, colon/C-string suffix rules, tile-prefix removal and auxiliary acceptance.
+Expose registry fallback rewriting separately from component-definition precedence and live Item ownership.
+After one redirect and target parsing, execute the target's metadata callback and clear its auxiliary.
+The pinned data requires all 60 callbacks: 38 member-indexed definitions and 22 explicit mappings with 439 values.
+Preserve signed-short arguments, byte guards, signed remainder behavior and default targets.
+Reject metadata that indexes outside native callback storage; complete caller admission still needs implementation.
+
+Complete original parser and registry rewriter provide 2,501 parser controls and 22,917 rewrites after native block/state and ItemRegistry initialization.
+The harness supplies read-only UTF-8 caller backing, allocation and ordinary Windows CRT imports.
+Native game parsing, conversion dispatch/range checks, redirects, callbacks and owned string retirement execute.
+All original input, registry, TLS, static and CRT cleanup completes with no native allocations or held locks.
+Forty-six out-of-storage input combinations remain outside the normal-result corpus.
+See the [name-resolution reference](../../../docs/native-player-inventory.md#native-name-parsing-and-metadata-rewrites) for exact scope and limits.
+
+Live component/member/representative definitions, underlying definition lookup, Item construction, full registry replacement, recipe admission and installed availability remain unfinished.
+
+The packaged core matches all 2,501 parser controls, 22,917 rewrites and 46 explicit unsupported-index guards.
+Nine deliberate parser or callback changes fail native value comparisons.
+The 2,127 alias getter controls and three retained alias regressions also pass, along with the earlier descriptor, counter, search, unlock and progressive comparisons.
+All four builds pass with 2,862 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
+All 1,498 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
