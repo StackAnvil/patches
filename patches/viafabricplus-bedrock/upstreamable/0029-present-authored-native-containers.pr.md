@@ -593,3 +593,21 @@ All 33 packaged regressions and the earlier focus, tab, arrow, and GLOBAL compar
 All four builds pass 2,793 tests with 163 optional skips and no failures or errors.
 All 1,448 core classes match both embedded copies. All 1,184 client classes match the final add-on.
 The modpack contains the exact verified client JARs. These changes are the candidate for release 0.3.51.
+
+## Native mode-change reference
+
+The original ScreenComponent factory branch now executes allocation, inline construction, registration, and its complete property parser.
+Its `gamepad_cursor` flag belongs to the component, separate from UIControl flags at a similar offset.
+Seventeen property cases match the published Java reader, including integer coercion and rejection of real values.
+
+The complete original mode-change producer now runs with the real tree context and its notification methods.
+All 768 activation combinations preserve Input phases during sibling callbacks, then invalidate them during the queued root update.
+Captured control identity survives. Another 36 sequences cover 360 steps, repeated notifications, three mapping kinds, and independent consumption and capture policies.
+The kind-7 controller event retains its mode payload. All 171,588 native frees across these three captures balance.
+The earlier bare-context probe omitted queue effects and therefore did not establish the complete mode lifecycle.
+
+The wrapper constructor receives cursor policy from the native hide-cursor option and cursor sensitivity.
+The reference still supplies those option values, raw transition and selection fields, root attachment, geometry, clocks, and manager state.
+It executes a bounded factory branch rather than the entire control or screen constructor.
+Physical notification admission, initial screen-install ordering, derived Furnace controller population, settings ownership, devices, and pixels remain unverified.
+Production mode delivery and all five implementation areas remain open. These reference cases do not expand the production parity claim for release 0.3.51.

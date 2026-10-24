@@ -335,3 +335,16 @@ All 33 packaged regressions and the earlier focus, tab, arrow, and GLOBAL compar
 All four builds pass 2,793 tests with 163 optional skips and no failures or errors.
 All 1,448 core classes match both embedded copies. All 1,184 client classes match the final add-on.
 The modpack contains the exact verified client JARs. These changes are the candidate for release 0.3.51.
+
+## Mode notifications and queued invalidation
+
+Original mode notifications reset Button appearance before the sender resumes normal routing.
+The sibling callback alone preserves Input mapping phases.
+The complete producer also queues the root component update and drains the original tree context twice.
+That update invalidates the mapping phases to `2` while captured control identity survives.
+A reset-only implementation therefore misses part of the native lifecycle.
+
+The reference covers 768 activation combinations and 36 press/release sequences across three mapping kinds.
+Repeated notifications still run the lifecycle when the mode value remains unchanged.
+The native controller receives the kind-7 event with its original mode payload.
+These are native reference captures. The production mode-notification route remains unimplemented.
