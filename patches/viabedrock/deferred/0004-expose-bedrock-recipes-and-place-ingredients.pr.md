@@ -512,3 +512,27 @@ The full four-project build passes 2,859 tests, with 163 optional skips and no f
 All 1,493 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
 The packaged core matches both new corpora and three focused integration regressions.
 Nine deliberate changes fail value or lookup-order comparisons. All retained packaged comparisons also pass.
+
+
+## Constructor-owned ItemRegistry aliases
+
+Expose exact alias admission and ordered member names through the connection registry.
+Load the native ItemRegistry's 89 redirects and 60 complex aliases with 561 members.
+Apply one redirect before complex lookup. Preserve exact names and member order.
+Require the pinned asset and protocol; unregistered names retain the native empty-vector result.
+
+Complete original ItemRegistry initialization follows native block/state construction under the recorded default version and Experiments.
+The empty parsed network vector establishes pre-packet constructor data, not actual server admission.
+All native input, registry, TLS, static and CRT cleanup completes with no remaining allocations or held locks.
+Item alias registrations differ from block aliases and restriction groups, including wood order, item-only groups and slab redirects.
+The [ItemRegistry alias reference](../../../docs/native-player-inventory.md#constructor-owned-itemregistry-aliases) records the evidence and limits.
+
+Ordered member names do not replace auxiliary callbacks or live definition ownership.
+Ordinary named lookup rewriting, member/representative lookup, block fallback, complete Java registry construction and installed availability remain unfinished.
+
+The packaged connection registry matches all 2,127 original getter controls, including 86 registered results and 767 member-name comparisons.
+The controls query every constructed factory key and both names in each native redirect.
+Three deliberate changes fail value comparisons: ignored redirects, reversed member order and substituted block tables.
+The retained descriptor, counter, source matcher, search, unlock and progressive-model comparisons also pass.
+All four builds pass with 2,860 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
+All 1,495 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.

@@ -710,6 +710,43 @@ All four builds pass with 2,859 tests, 163 optional skips and no failures or err
 All 1,493 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
 
 The registry interface has no default empty tables or replacement data.
-Production must supply actual alias registration, ordered members, auxiliary rewriting and block fallback from the same native context.
+The ItemRegistry section below supplies built-in alias registrations and ordered member names.
+Production must still supply auxiliary rewriting, live definition ownership and block fallback from the same native context.
 Tag/Molang resolution, recipe contexts, installed evaluators, screen lifecycle, physical input, actions and native pixels remain unfinished.
 The four original reports and all five goal areas remain active.
+
+
+## Constructor-owned ItemRegistry aliases
+
+The connection ItemRegistry now exposes native alias admission and ordered member names.
+It loads 89 name redirects and 60 complex aliases with 561 member names from the pinned target.
+Each getter applies one exact redirect before reading the complex table.
+It does not qualify names, parse legacy metadata or follow redirect chains.
+An unregistered name returns the native empty member list. Missing or mismatched asset data fails immediately.
+
+ItemRegistry aliases have their own registrations and member order.
+For example, the ItemRegistry `wood` group places all ordinary woods before stripped woods.
+It also includes item groups such as boats, buckets, dyes and spawn eggs.
+Its `double_stone_slab` redirect selects `stone_block_slab`.
+The block registry and restriction tables cannot supply these ItemRegistry queries.
+
+The reference executes complete original ItemRegistry initialization `0x143480dc0` after native vanilla block and state construction.
+It uses target 1.26.51.1, build 51061372, protocol 2193, the original 1.26.50 BaseGameVersion and owned default Experiments.
+The empty parsed network vector establishes constructor-owned data before packet updates.
+It does not establish normal server packet contents or wire admission.
+All 60 aliases also have constructed native factory definitions at that point.
+Input, registry, TLS, static and CRT cleanup finish with no remaining native allocations or held locks.
+
+These APIs expose names, not resolved Item definitions or metadata callbacks.
+Ordinary named lookup can use a redirect with metadata, then a complex-alias callback, and reset the auxiliary after that callback.
+Each alias's ordered members do not define that callback's metadata mapping.
+Live member and representative ownership, ordinary lookup rewriting, block fallback and complete Java registry construction remain unfinished.
+The rich descriptor model still requires that complete registry context before installed recipe evaluation can use it.
+All four original reports and all five goal areas remain active.
+
+The packaged connection registry matches all 2,127 original getter controls, including 86 registered results and 767 member-name comparisons.
+The controls query every constructed factory key and both names in each native redirect.
+Three deliberate changes fail value comparisons: ignored redirects, reversed member order and substituted block tables.
+The retained descriptor, counter, source matcher, search, unlock and progressive-model comparisons also pass.
+All four builds pass with 2,860 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
+All 1,495 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
