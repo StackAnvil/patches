@@ -402,3 +402,38 @@ Both runtime inventories match 2,551 project class resources and four data resou
 Normal cleanup removes the observer, restores the private driver change, and leaves no managed-profile JVM.
 The controlled scene projection preserves all 39 real slots while it removes unfinished controls and mappings.
 This run does not establish unchanged authored screens, physical mode-`2` input, carried-item screen support, or native pixels.
+
+## Player inventory options
+
+Crafting-book changes now reach Bedrock player-inventory preferences instead of the furnace-only handler.
+The native snapshot retains both tabs, filtering, and independent inventory and workbench layouts.
+Menu ownership changes select the corresponding layout for Java's shared crafting book.
+Pending close and recovery restore the inventory projection.
+
+Java can change open and filter states. It cannot express native tab selection or every native layout.
+Filter-only changes retain the exact native layout, including recipe-book-only and unknown values.
+The other screen's layout and both tabs remain intact.
+An unseen snapshot uses native None sentinels for fields that Java cannot supply.
+
+`InventoryOptionsStorage` replaces the furnace-specific storage and owns all four Java book settings.
+Player updates retain the three furnace books, and furnace updates retain the player book.
+The existing native furnace channel keeps its wire format and negotiation behavior.
+
+The [1.26.50-beta.26 schema](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/packets/set-player-inventory-options-packet/) describes the signed VarInt fields and boolean.
+The target 1.26.51.1/protocol 2193 original packet reports ID 307.
+Its complete descriptor confirms field order and raw signed values across four samples, including integer extremes.
+The capture supplies a typed output sink. It does not execute compressed native wire writers.
+Committed tests verify Java wire bytes, packet routing, independent layouts, unknown values, furnace retention, and menu transitions.
+
+This completes the options transport and Java projection needed by player inventory.
+Authored player-inventory presentation, the live player renderer, native tabs/search, controller input, and visible native parity remain unfinished.
+The full stack passes 2,798 tests, with 163 optional skips and no failures or errors.
+All 1,450 core classes match both packaged copies, and all 1,185 client classes match the add-on.
+Eleven options regressions execute the packaged core and reject four deliberately incorrect variants.
+The rebuilt add-on passes 35 screen regressions and matches the existing 1,940 native UI cases across 14 corpora.
+The bundle contains the exact two client JARs.
+A fresh BDS 1.26.51.1 route passes the crafting-book sticks and furnace-book cooking scenarios.
+These live checks verify the Java workflow; they do not establish native screen or pixel parity.
+
+All five goal areas and the four original reports remain open.
+These changes target release 0.3.53.
