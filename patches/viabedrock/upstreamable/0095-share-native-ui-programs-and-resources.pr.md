@@ -483,3 +483,20 @@ All six desktop/pocket Furnace, Blast Furnace, and Smoker hosts resolve without 
 Each host round-trips exactly and passes the shared client scene parser.
 The existing packaged host interaction regressions remain covered by the full client tests.
 The production cooking controller still selects the desktop profile. The private profile projection does not establish device wiring or full screen admission.
+
+## Shared native recipe collections
+
+Use one partitioner for cooking's flat prefix and grouped recipe collections.
+Preserve contiguous catalog identity, evaluator precedence, first-member representatives and header expansion history.
+Header history compares icon plus count independently of catalog identity.
+Grouped refreshes without filtering skip evaluation; flat refreshes retain the existing cooking behavior.
+
+Original Bedrock 1.26.51.1 routines `143445150`, `143446b90`, `143447710` and `143447ab0` supply 4,128 cases and sixteen retained-state steps.
+The Java implementation matches their ordering, visible rows, evaluator calls and expansion notifications.
+Six regressions cover the shared behavior and the existing cooking tests remain applicable.
+Native vector allocation and cleanup execute; item ownership operations, icon equality, availability evaluation and external callbacks use supplied boundaries.
+The complete player catalog producer, unlocks, craftability, action admission, full controller, physical input and screen parity remain unfinished.
+
+The final four-project build passes 2,823 tests with 163 optional skips and no failures or errors.
+Checkstyle passes after replay. All 1,465 core classes match both embedded copies, and all 1,191 client classes match the tested add-on.
+The packaged core repeats all 4,144 collection comparisons with its production class origin verified.

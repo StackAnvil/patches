@@ -115,9 +115,38 @@ The player model requires these distinct collections:
 Model builder `0x1434360d0` creates the item collections and four category recipe collections through `0x143438210`.
 It also creates a separate search collection. These recipe collections share constructor `0x143443e50`.
 The category counts use the source category's group references; search uses the complete source list.
-This model construction evidence comes from disassembly. Recipe ordering, grouping, evaluation and mutation still need executed references and a production implementation.
+This model construction evidence comes from disassembly. Production recipe acquisition, category assignment, availability evaluation and mutation remain unfinished.
 The player screen must retain the complete catalog and recipes that need a crafting table.
 A fabricated empty recipe catalog cannot establish support for the default inventory asset.
+
+## Shared recipe collections
+
+The shared `RecipeCollection` model implements the target collection ordering and retained header expansion.
+Cooking uses the same partitioner for its flat visible recipe prefix.
+The player controller still needs a complete catalog producer before it can use grouped collections.
+
+Entries retain four stable evaluator buckets.
+A contiguous catalog group moves as one run: state zero wins, then state one; otherwise the first member selects state two or three.
+Unfiltered grouped refreshes skip availability evaluation.
+Flat refreshes still evaluate entries and merge states one and two when filtering is disabled.
+Invalid entries do not split a pending group or invoke the evaluator.
+Grouped projection includes valid groups beyond the flat eligible prefix.
+
+Grouping uses catalog object identity. Expansion history instead matches the header icon and count.
+Refresh retains expanded headers across ordering and filtering changes, including an intervening flat refresh.
+An explicit reset clears that history. Header expansion reports its visible position and member count.
+The caller must validate the selected header before invoking this operation.
+Native action admission and arbitrary item activation remain separate controller work.
+
+The original routines are `0x143445150`, `0x143446b90`, `0x143447710` and `0x143447ab0`.
+The shared Java implementation matches 4,128 original collection cases and sixteen retained-state steps.
+The steps cover expansion history and groups with equal icons but different identities or counts.
+Native vector allocation and cleanup execute. Item copy/destruction, icon equality, availability evaluation and external callbacks use supplied boundaries.
+These checks do not establish recipe acquisition, unlocks, craftability, full controller ownership, physical input or visible screen parity.
+Six focused regressions cover ordering, representative identity, filtering, invalid entries, expansion history and immutable snapshots.
+The complete build passes 2,823 tests, with 163 optional skips and no failures or errors.
+All 1,465 core classes match the embedded add-on and proxy copies; all 1,191 client classes match the tested add-on.
+The packaged core repeats all 4,144 recipe comparisons with its class origin verified.
 
 ## Target and original functions
 
