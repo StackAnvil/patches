@@ -876,6 +876,18 @@ Constructor selection queries the raw staging key. Normalizing these keys togeth
 The later block-registration callback also queries current numeric and named owners before it constructs or associates an Item.
 Its remaining predicates and component branches need populated execution coverage before the registry correction can use this phase.
 
+A further 31-entry control distinguishes raw staging selection from ordinary name replacement.
+Input `element_39` removes its raw staged key and retains the component definition under `minecraft:element_39`.
+Input `minecraft:element_40` leaves its raw staged key present. The staging drain later replaces that component definition with the builtin.
+The replaced component definition remains in the main ownership vector, despite losing its named lookup entry.
+A DataDriven air registration also retains the original ordinary air definition and places the new component definition in the spare vector.
+The constructor model therefore needs more than a first-version map.
+
+Explicit component and Legacy definitions for `minecraft:birch_standing_sign` and `minecraft:polished_basalt` survive the later block phase in these controls.
+A None declaration for `minecraft:nether_gold_ore` receives its builtin block definition before runtime-ID assignment, despite its component flag.
+The capture completes 234 named and 2,006 numeric ItemStack controls and releases all native allocations and locks.
+These controls use empty component data. Full component predicates and wire admission remain unfinished.
+
 The populated reference supplies 24 explicit typed ItemData registrations and exercises both secondary lookup maps.
 The priority map at `0xd8` registers `test:marker` for the definition named `tile.test:marker`.
 The fallback map at `0x118` registers `test:fallback` for the definition named `test:tile.fallback`.
@@ -887,7 +899,7 @@ Native registration and rehash observations also establish the ordinary map's it
 The hash uses FNV-1 over UTF-8 bytes. Colliding bucket entries precede earlier entries, and a resize regroups the existing sequence.
 Observed bucket counts progress through 8, 64, 512, 1,024 and 2,048.
 The final numeric ownership pass follows this iteration order.
-An independent ordering model matches all 5,868 insertion steps across three complete captures.
+An independent ordering model matches all 7,833 insertion steps across four complete captures.
 FNV-1a hashing and reversed bucket insertion each fail concrete native comparisons.
 This ordering model is reference evidence, rather than a production registry implementation.
 
