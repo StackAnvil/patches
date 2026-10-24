@@ -1,4 +1,4 @@
-From 20a660a54320ce20e9acddb38aff1d92e96f0f55 Mon Sep 17 00:00:00 2001
+From d124d013ee52f75e8e436c2045fa9615c17eeb4e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -414,6 +414,20 @@ scheduling, Button audio and devices remain open.
 
 Restore cached Button visuals onto matching scene copies without replaying
 intermediate aliased visibility callbacks or retiring held child mappings.
+
+Initialize supported cooking Input mappings once after the first accepted
+scene is prepared. The complete original View wrapper starts its mappings
+at zero, then the initial mode notification queues the root update that
+invalidates them to two before activation and controller delivery.
+Repeated Java refreshes and resize preparation must preserve held input.
+
+The original complete wrapper constructor/destructor, resize, mode entry
+and activation/frame paths cover 144 initial-input fixtures and 864 raw
+steps with 34,020 balanced frees. The actual screen regression fails on
+the published implementation before this correction. Bare control trees,
+empty external layout work queues and client/CRT services remain supplied;
+outer installation, physical notifications, derived cooking controllers
+and nonempty authored layout/binding construction remain separate gates.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../access/IBedrockGuiItemOpacity.java        |   12 +
@@ -424,7 +438,7 @@ intermediate aliased visibility callbacks or retiring held child mappings.
  .../render/MixinNativeGuiItemState.java       |   19 +
  .../render/MixinNativeGuiOversizedItem.java   |   31 +
  .../container/BedrockFurnacePreferences.java  |   60 +
- .../BedrockNativeContainerScreen.java         |  947 ++++++++++++
+ .../BedrockNativeContainerScreen.java         |  948 ++++++++++++
  .../container/BedrockNativeContainers.java    |  262 ++++
  .../container/BedrockNativeCooking.java       |  145 ++
  .../NativeContainerActionPayload.java         |   30 +
@@ -432,7 +446,7 @@ intermediate aliased visibility callbacks or retiring held child mappings.
  .../container/NativeContainerDataPayload.java |   30 +
  .../NativeContainerFamiliesPayload.java       |   30 +
  .../container/NativeContainerGeometry.java    |  228 +++
- .../container/NativeContainerInput.java       |  493 ++++++
+ .../container/NativeContainerInput.java       |  501 ++++++
  .../container/NativeContainerPayload.java     |   22 +
  .../container/NativeContainerPending.java     |   65 +
  .../NativeContainerPresentation.java          |   45 +
@@ -468,14 +482,14 @@ intermediate aliased visibility callbacks or retiring held child mappings.
  .../container/NativeCookingActionsTest.java   |  346 +++++
  ...tiveCookingPresentationControllerTest.java |  216 +++
  .../NativeCookingPresentationTest.java        |  144 ++
- .../container/NativeCookingScreenTest.java    | 1338 +++++++++++++++++
+ .../container/NativeCookingScreenTest.java    | 1358 +++++++++++++++++
  .../NativeFurnacePreferenceStateTest.java     |   45 +
  .../container/NativeInventoryFlightsTest.java |   70 +
  .../NativeInventoryItemOpacityTest.java       |   65 +
  .../NativeInventoryItemPresentationTest.java  |   67 +
  .../NativeInventoryProgressTest.java          |   83 +
  .../bedrock/screen/ui/NativeUiFontTest.java   |  133 ++
- 60 files changed, 8417 insertions(+)
+ 60 files changed, 8446 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemOpacity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerPresentation.java
@@ -860,10 +874,10 @@ index 00000000..1583ce03
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 00000000..9a2f4114
+index 00000000..b2082d49
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
-@@ -0,0 +1,947 @@
+@@ -0,0 +1,948 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1110,6 +1124,7 @@ index 00000000..9a2f4114
 +        this.imageRevision = this.images.revision();
 +        if (this.activated && !this.actionScope.subset())
 +            throw new IllegalArgumentException("Native inventory action scope changed");
++        if (this.presentation instanceof NativeCookingPresentation) this.nativeInput.initialize();
 +    }
 +
 +    private long animationTime() { return this.clock.getAsLong() - this.animationStarted; }
@@ -2610,10 +2625,10 @@ index 00000000..2e924829
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerInput.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerInput.java
 new file mode 100644
-index 00000000..a405010c
+index 00000000..96ca210b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerInput.java
-@@ -0,0 +1,493 @@
+@@ -0,0 +1,501 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2656,9 +2671,17 @@ index 00000000..a405010c
 +    private float pointerX = -1, pointerY = -1;
 +    private float inputX = -1, inputY = -1;
 +    private float viewportWidth, viewportHeight;
++    private boolean initialized;
 +
 +    NativeContainerInput(final Consumer<NativeUiScene.Node> revealFocus) {
 +        this.revealFocus = java.util.Objects.requireNonNull(revealFocus);
++    }
++
++    /** The installed native View retires its mappings before the first controller input. */
++    void initialize() {
++        if (this.initialized) return;
++        for (final var entry : this.entries.values()) entry.input.invalidateMappings();
++        this.initialized = true;
 +    }
 +
 +    void prepare(final NativeUiScene.Node root) {
@@ -7495,10 +7518,10 @@ index 00000000..0d86d83a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingScreenTest.java
 new file mode 100644
-index 00000000..2fb554a4
+index 00000000..64163467
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingScreenTest.java
-@@ -0,0 +1,1338 @@
+@@ -0,0 +1,1358 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7558,6 +7581,26 @@ index 00000000..2fb554a4
 +    @BeforeAll
 +    static void bootstrap() throws Exception {
 +        NativeCookingPresentationTest.bootstrap();
++    }
++
++    @Test
++    void initialInputAdmissionRetiresMappingsOnceAndPreservesHeldInputOnResize() throws Exception {
++        try (final var f = new Fixture()) {
++            final var field = BedrockNativeContainerScreen.class.getDeclaredField("nativeInput");
++            field.setAccessible(true);
++            final var input = (NativeContainerInput) field.get(f.screen);
++            f.screen.mouseMoved(f.recipeX, f.recipeY);
++            final var first = input.button("button.menu_select", true, 1, f.clock.get(), true);
++            assertFalse(first.events().isEmpty());
++            assertEquals(2, first.events().getFirst().button().previous());
++
++            f.screen.prepare(mock(Font.class), 640, 320);
++            f.screen.mouseMoved(f.recipeX, f.recipeY);
++            final var repeated = input.button("button.menu_select", true, 1, f.clock.get(), true);
++            assertFalse(repeated.events().isEmpty());
++            assertEquals(1, repeated.events().getFirst().button().previous());
++            assertFalse(repeated.events().getFirst().button().transition());
++        }
 +    }
 +
 +    @Test

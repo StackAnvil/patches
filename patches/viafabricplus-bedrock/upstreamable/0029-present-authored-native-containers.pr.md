@@ -611,3 +611,23 @@ The reference still supplies those option values, raw transition and selection f
 It executes a bounded factory branch rather than the entire control or screen constructor.
 Physical notification admission, initial screen-install ordering, derived Furnace controller population, settings ownership, devices, and pixels remain unverified.
 Production mode delivery and all five implementation areas remain open. These reference cases do not expand the production parity claim for release 0.3.51.
+
+## Initial cooking input admission
+
+Supported cooking screens initialize their input mappings once after the first accepted scene.
+The initial phase is two, matching the original View before controller delivery.
+Refreshes and resize preparation preserve held input instead of repeating initialization.
+
+The reference executes the complete original wrapper constructor and destructor, resize, mode notification, activation, and frame paths.
+All 144 initial-input cases cover 864 raw steps and 258 controller buttons, with 34,020 balanced native frees.
+Bare control trees, geometry, empty layout queues, and external client services remain supplied.
+The outer installer, physical notifications, authored layout construction, and derived cooking controllers remain outside this comparison.
+
+The actual screen regression fails against published release 0.3.51 before this correction.
+The four original reports and all five implementation areas remain unfinished.
+
+All 1,844 cases across thirteen Button, visibility, and initialization corpora match the final JAR.
+Three incorrect initialization variants fail behavioral assertions after both baselines pass.
+All 34 packaged regressions and the earlier focus, tab, arrow, and GLOBAL comparisons pass.
+All four builds pass 2,794 tests with 163 optional skips and no failures or errors.
+The embedded core classes, compiled client classes, and exact bundled client JARs match.
