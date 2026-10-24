@@ -849,11 +849,11 @@ Map node counts therefore do not measure live definition counts.
 The reference completes 150 named and 1,987 numeric ItemStack controls.
 Native input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
 Stack auxiliary and quantity observations use offsets `0x20` and `0x22`, respectively.
-These controls establish native ownership behavior and a packaged Java mismatch. They do not establish a production fix.
+At that checkpoint, these controls established native ownership behavior and a packaged Java mismatch. The production correction appears below.
 
-The next implementation must preserve definition identity separately from advertised IDs and numeric lookup ownership.
+The implementation requirements at that checkpoint included separate definition identity, advertised IDs and numeric lookup ownership.
 It must account for constructor order, retained spare definitions, alias lookup and block construction before exposing a complete recipe Registry.
-Existing wire-ID consumers need an audit before the registry API changes.
+The registry API change requires an audit of existing wire-ID consumers.
 Exact wire admission, recipe contexts, actor ownership, installed screens, physical actions and pixels remain unfinished.
 All four original reports and all five goal areas remain active.
 
@@ -912,3 +912,35 @@ After full replay, all four projects pass 2,862 tests with 163 optional skips an
 Checkstyle passes, and all eight retained packaged comparison suites pass.
 All 1,498 core classes and both registry assets match their embedded add-on and proxy copies.
 All 1,191 client classes match the tested add-on. The patch move preserves the verified runtime implementation.
+
+## Constructed registry ownership
+
+The runtime now constructs definitions before it assigns network IDs.
+It retains raw staging keys, definition identities, spare allocations and the constructor counter.
+Ordered component readers update the actual receiver after the staging drain.
+Late block registration uses current numeric and named owners before it creates a block item.
+
+Names and numeric IDs have separate owners.
+Two names can retain the same ID. The final native map traversal selects the numeric owner.
+Consumers now request that owner explicitly instead of inverting a one-to-one map.
+The registry retains builtins absent from the packet, so packet receipt uses a separate session flag.
+Network declarations remain immutable packet snapshots, separate from constructed definitions.
+
+Pinned target 1.26.51.1, build 51061372, protocol 2193 controls provide 36,310 comparisons.
+The production engine matches construction order, receiver identity, retained allocations, counters, lookup results and numeric ownership.
+All three controls also match the production bootstrap names, IDs and numeric owners.
+The block producer uses 1,379 original block inputs and executed slab predicates.
+Expected post-registration results do not supply its registration decisions.
+
+The controls cover the recorded builtin context and empty component data.
+They do not establish complete custom-block, experiment or version-dependent construction.
+Nonempty component branches, class-specific ItemStack construction and complete caller admission still need coupled native coverage.
+The recipe registry interfaces, installed player screen and physical input remain unfinished.
+All four original reports and all five goal areas remain active.
+
+The complete four-project build passes 2,851 tests with 163 optional skips and no failures or errors.
+Checkstyle passes. All nine packaged comparison suites pass, including the new construction checks.
+Native comparisons reject both FNV-1a hashing and named-definition eviction after a numeric collision.
+All 1,513 core classes and three registry resources match their embedded add-on and proxy copies.
+All 1,191 client classes match the tested add-on.
+The test worker uses a 1 GB heap for the complete construction fixtures.

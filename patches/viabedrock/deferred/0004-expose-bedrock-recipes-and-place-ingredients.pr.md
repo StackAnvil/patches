@@ -524,3 +524,8 @@ The [name-resolution reference](../../../docs/native-player-inventory.md#native-
 The [constructor reference](../../../docs/native-player-inventory.md#constructor-staging-and-secondary-names) separates staging keys, secondary maps and later block registration.
 A DataDriven class alone does not establish priority-map lookup.
 Complete live definitions, block fallback, recipe admission and installed availability remain unfinished.
+
+Recipe consumers now use the shared registry's constructed definitions and independent numeric owners.
+Numeric collisions retain both names. Generic Legacy definitions do not inherit builtin traits from a matching name.
+Cooking and recipe tests use explicit numeric ownership instead of treating low builtin IDs as absent.
+The complete recipe Registry interface and installed native availability remain unfinished.
