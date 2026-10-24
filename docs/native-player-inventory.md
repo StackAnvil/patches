@@ -9,7 +9,33 @@ The E-key path still opens Java's inventory screen.
 The native inventory asset requires `live_player_renderer`, armor and crafting collections, recipe controls, tabs and search.
 The shared Java renderer now supports `live_player_renderer` through the actual local player.
 It preserves separate actor, body and head rotations and applies the native model transform after Java's portrait translation.
-Form, NPC and container adapters admit the new renderer. The portrait changes remain outside release 0.3.53.
+Form, NPC and container adapters admit the new renderer. Release 0.3.54 includes these portrait changes.
+
+## Installed-screen lifecycle
+
+The new lifecycle bridge remains outside release 0.3.54.
+The client sends an opening request after `Gui.setScreen` installs the actual inventory screen.
+Constructing an unused screen does not open the Bedrock inventory.
+The bridge supports direct translation and ViaProxy through the same negotiated payload.
+Java creative inventory also opens the native player inventory, while its item picker retains its existing presentation.
+
+Each installed opening receives a monotonic token for its connection.
+An ordinary reopen receives a new token, even though Java retains the same player menu object.
+A genuine native presentation swap retains the token.
+Tokens remain monotonic across play-listener replacements and physical reconnects.
+A late capability announcement does not replace an existing legacy opening or send a duplicate native request.
+
+The Bedrock open acknowledgment does not carry this token.
+The core therefore serializes openings and retains retired requests until their acknowledgments arrive.
+A new screen waits for the previous native close acknowledgment.
+Old screen clicks cannot replay into that new opening.
+Independent global inventory actions can use a retired acknowledgment before the temporary inventory closes.
+Timeout closes the matching client screen and retains the unresolved native request.
+
+Server closes identify the owning client token through a separate payload.
+A stale close cannot close a newer screen or another connection.
+The bridge replaces the constructor trigger and preserves the legacy installed-screen fallback for older direct translators.
+The full authored inventory layout, recipes, tabs, search and physical controller input remain unfinished.
 
 ## Target and original functions
 
@@ -71,7 +97,7 @@ The reference does not establish GPU output, clipping, physical input delivery o
 
 ## Java implementation checks
 
-The full stack passes 2,801 tests, with 163 optional skips.
+The full stack passes 2,817 tests, with 163 optional skips.
 Three packaged camera regressions pass and reject four deliberately incorrect implementations.
 The native comparison covers framing, actor rotation and body yaw in all 672 cases.
 Head-yaw comparisons cover the 336 cases with that component present.
@@ -87,5 +113,14 @@ Private screenshots show the local player at both viewport sizes.
 These client checks supply the scene and native pose flags. They do not reproduce genuine world gliding or the authored inventory controller.
 Native visible comparisons, successful native renderer variables, converted skins, equipment, emotes, GUI effects and Iris comparisons remain incomplete.
 Actual mounted preview queries and seat ownership also need verification.
-The full player-inventory controller, screen lifecycle and input delivery remain unfinished.
+An isolated Java 26.3 client completes four real E-key openings through ViaProxy and Bedrock 1.26.51.1.
+Two openings use survival inventory, then two use the creative picker after a server mode change.
+Each receives a matching native open and close acknowledgment without an inventory click.
+All four retain the same persistent player-menu object and use distinct opening tokens.
+Constructing an unused inventory screen sends no native request.
+Private screenshots confirm that these remain Java's ordinary survival and creative screens.
+
+The installed-screen bridge has sixteen packaged lifecycle and codec regressions.
+The full player-inventory controller and physical input delivery remain unfinished.
+Direct joins, creative item actions, reconfiguration and recovery under packet delay still need live verification.
 All five implementation areas and the four original bug reports remain open.

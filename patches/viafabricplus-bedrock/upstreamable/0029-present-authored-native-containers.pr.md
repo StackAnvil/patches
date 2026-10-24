@@ -673,3 +673,34 @@ A passive bytecode observer verifies that placement in the actual transformed Gu
 This runtime check establishes hook application and order. The screen regression supplies external Minecraft and network services.
 The 1,448 core classes match both embedded copies, and all 1,185 compiled client classes match the add-on.
 The rebuilt modpack contains the exact verified client JARs.
+
+## Player inventory opening ownership
+
+The installed-screen hook now opens the native player inventory through a negotiated bridge.
+Direct translation and ViaProxy share the same route.
+Java reuses menu zero, so the client gives each real opening a separate token.
+A presentation swap retains that token, while an ordinary reopen receives a new one.
+The old constructor mixin is removed.
+
+The core retains retired native opens until acknowledgment and waits for their close acknowledgment before a newer opening.
+Retired screen clicks cannot replay into that newer opening.
+Independent global actions can finish before the temporary inventory closes.
+Server closes, form replacement and timeout target the owning client token.
+Tokens stay monotonic across play-listener replacements, including reconfiguration.
+An outstanding native open also prevents duplicate recovery requests.
+
+Sixteen packaged regressions cover lifecycle races, capability changes, connection replacement and bounded codecs.
+They require production classes from the final JARs.
+All four builds pass 2,817 tests with 163 optional skips.
+The full authored player inventory, recipes, tabs, search and physical controller input remain unfinished.
+The bridge depends on the deferred core inventory-request work.
+Standalone upstream compatibility remains unverified.
+The bridge remains outside release 0.3.54.
+
+The final isolated client completes four physical E-key open/close cycles through ViaProxy and Bedrock 1.26.51.1.
+Two use survival inventory and two use the creative picker after a server command changes mode.
+Both JVM observers confirm the four matching native acknowledgments without inventory clicks.
+The persistent player-menu object stays the same, while opening tokens advance from one through four.
+Constructing an unused inventory screen sends no native request.
+Private screenshots show the ordinary Java screens.
+Direct joins, real reconfiguration, packet-delay recovery and physical controller delivery remain separate gates.
