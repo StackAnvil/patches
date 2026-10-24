@@ -278,3 +278,24 @@ Phase two preserves a completed double press until phase zero releases it.
 The original factory, dispatch and cleanup corpus matches 3,216 steps and 1,032 exact button events.
 The API carries raw phases through the router; physical callers convert their boolean state at the boundary.
 The container patch owns GLOBAL reinjection and its controller capability checks.
+
+
+## Retained Button appearance and component delivery
+
+The shared runtime now models Button appearance separately from edit-box selection and input activation.
+The press byte and applied visibility can differ after a suppressed mapping transition.
+Raw phase `2` preserves the press byte. Own visibility and enabled callbacks retain their native reset behavior.
+Inherited enabled updates use general event `17` without clearing the press byte.
+
+Named setters use breadth-first ownership and native alias order. Only a missing locked control uses the default fallback.
+A matching scene replacement restores the applied visibility before layout.
+The same scene instance does not replay its setters. A visibility revision tells the consumer when layout needs another pass.
+The retained presentation path preserves those setters during draw collection.
+
+Input routing runs component effects before the next control reads its current context.
+Container consumers keep implicit hover buttons on their separate controller route.
+Original component and property comparisons match 248 cases and 7,168 steps.
+Button/Input and hover composition match another 732 cases and 8,004 steps.
+The container consumer also matches 336 ScreenView and overlap cases, including capture-priority releases.
+Eight incorrect variants fail the native comparisons or lifecycle regressions.
+Full screen construction, property-update timing, controller pointer receivers, Button audio, devices and pixels remain separate gates.

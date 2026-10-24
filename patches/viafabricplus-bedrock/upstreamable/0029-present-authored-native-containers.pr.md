@@ -466,32 +466,55 @@ The final JAR matches both focused-input corpora and repeats the 208 plain-tab, 
 Thirteen packaged screen and input regressions pass, including focus transfer, reveal relayout and the false-latch regression.
 
 
-## Button state evidence and remaining consumer gaps
+## Native Button consumption and appearance
 
-The original type registry identifies type `0` as Button and type `4` as edit box.
-The original factory dispatch confirms their separate components.
-The edit-box component owns selection flag `0x80`. The earlier description of that flag as a Button latch was incorrect.
-Focus ownership must not create that flag. The existing focus correction remains supported by the original captures.
+Supported cooking controls now retain the native Button press byte independently of their applied visual state.
+The control-level `consume_event` result reaches raw input and pointer dispatch.
+The edit-box component owns selection flag `0x80`. Button appearance does not create that flag or derive it from focus.
 
-The Button appearance component owns a separate press byte and the control-level `consume_event` setting.
 Raw phases `0` and `1` change the press byte. Phase `2` preserves it.
-The mapping selection flags determine whether that change immediately updates the visible state.
-Hover exit, hiding the Button, and disabling the Button clear the press byte.
-An ancestor enabled change preserves it and broadcasts general event `17`, which updates the visible state.
+Selection flags determine whether a transition updates visibility immediately.
+Matching scene replacements retain the applied visibility, including a suppressed press that differs from the visible state.
+Named setters run before layout, so the selected branch also determines content dimensions and hit bounds.
+The renderer preserves those setters instead of choosing another branch during draw collection.
+
+Named controls use the first breadth-first match. Setter order remains significant for shared state names.
 Press and hover do not use a default fallback for missing state children. Disabled state uses the default child without a locked child.
+Hover exit, hiding the Button, and disabling the Button clear the press byte.
+An ancestor enabled change preserves it and broadcasts general event `17`, which updates visibility.
+Attaching the same scene instance does not replay the setters or create a layout loop.
 
-Original execution covers 184 state cases, 720 Button/Input cases and 64 property-producer cases, totaling 15,088 steps.
-The factories, deferred name resolver, callbacks, visibility setters and destructors execute.
-The producer cases also execute parent attachment, enabled propagation and general-event delivery.
-All 128,802 native frees finish with no native allocations. Each fixture verifies all declared owner counts.
+Raw component callbacks execute before later controls sample their context.
+Implicit hover buttons enter the controller queue without another sibling Button callback.
+This distinction preserves appearance when hover mappings and ordinary presses share a control.
+Capture-priority release routing retains duplicate requests and skipped mapping phases.
 
-The published 0.3.49 JAR reproduces two production gaps with mandatory class origins.
-For `consume_event: false`, production consumes the hover and press that native leaves unconsumed.
-Production shows the hover child after the press. Native shows the pressed child.
-The supplied Java scene action enables presentation input. This comparison uses the original native Button/Input case and the actual published classes.
-These results establish gaps, not a production fix.
+Original 1.26.51.1/protocol 2193 execution supplies these comparisons:
 
-The fixtures supply the tree, geometry, properties, clocks and external UIContext notifications.
-Notification sinks retire their shared arguments through the original destructor. They do not replace state or visibility outputs.
-Complete ScreenView delivery, screen construction, button audio, controller pointer receivers, devices and pixels remain outside these captures.
-The original reports and all five goal areas remain open.
+| Native path | Cases | Steps |
+| --- | ---: | ---: |
+| Button state and named visibility | 184 | 5,888 |
+| Own and ancestor property producers | 64 | 1,280 |
+| Button/Input composition | 720 | 7,920 |
+| Implicit hover composition | 12 | 84 |
+| ScreenView and controller delivery | 288 | 1,728 |
+| Overlapping Button propagation | 48 | 288 |
+| Total | 1,316 | 17,188 |
+
+All 201,090 native frees finish with no native allocations. Each fixture verifies all declared owner counts.
+The factories, deferred name resolver, callbacks, property setters, ScreenView routing and destructors execute in their declared captures.
+The ScreenView entry returns `void`. Its leftover return register is excluded from consumption comparisons.
+The original Input component supplies consumption results. Eight incorrect variants fail the comparisons and lifecycle regressions.
+
+The published 0.3.49 JAR reproduces the old consumption and pressed-child gaps.
+The rebuilt JAR matches all six new corpora with mandatory production class origins.
+Twenty-one packaged regressions cover the new Button consumers and earlier screen, focus, tab and GLOBAL behavior.
+All four builds pass 2,781 tests with 163 optional skips and no failures or errors.
+All 1,448 core classes match both embedded copies. All 1,184 client classes match the final add-on.
+The packaged add-on also repeats the 192 focused-tab, 12 focused-button, 208 plain-tab, 147 arrow and 29 GLOBAL View cases.
+
+The fixtures supply trees, input order, geometry, properties, clocks, View fields and inactive or explicitly active manager state.
+External UIContext sinks retire shared arguments through the original destructor. They do not replace state or visibility outputs.
+The overlap fixture disables hover consumption so both controls acquire hover through the original pointer entry.
+Complete screen construction, update/binding order, manager activation, Button audio, edit-box selection and controller pointer receivers remain unfinished.
+These comparisons do not establish physical-device behavior or native pixels. The original reports and all five goal areas remain open.
