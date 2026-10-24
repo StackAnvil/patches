@@ -13,7 +13,7 @@ Form, NPC and container adapters admit the new renderer. Release 0.3.54 includes
 
 ## Installed-screen lifecycle
 
-The new lifecycle bridge remains outside release 0.3.54.
+Release 0.3.55 includes the installed-screen lifecycle bridge.
 The client sends an opening request after `Gui.setScreen` installs the actual inventory screen.
 Constructing an unused screen does not open the Bedrock inventory.
 The bridge supports direct translation and ViaProxy through the same negotiated payload.
@@ -36,6 +36,88 @@ Server closes identify the owning client token through a separate payload.
 A stale close cannot close a newer screen or another connection.
 The bridge replaces the constructor trigger and preserves the legacy installed-screen fallback for older direct translators.
 The full authored inventory layout, recipes, tabs, search and physical controller input remain unfinished.
+
+## Controller state and collection reference
+
+The target constructor is `0x144e0f520`. Its binding registrations use 32-bit FNV-1a hashes of the complete property names, including `#`.
+The registered callback at `0x144e5b410` implements `#is_creative_mode` and calls `0x144923190`.
+This shared helper checks creative mode. It does not identify the active input device.
+The earlier cooking reference called it an input accessor without establishing its meaning.
+
+The helper reads actor component `0x88d3eddf` through the original sparse registry.
+Raw game type `1` returns true. Raw game type `5` returns true only when the fallback getter returns `1`.
+An absent player, absent component, missing page, stale entity generation or raw value `-1` returns false.
+The reference executes 640 cases through both the original helper and the registered callback, for 1,280 calls.
+Actor delivery, component backing and the fallback virtual getter remain supplied interfaces.
+
+The constructor also stores an independent flag at offset `0x1319`.
+Its producer compares a virtual service result with `1`; the service comes from client vtable offset `0x578`, then service vtable offset `0x70`.
+The service type remains unverified. The implementation must not substitute the effective creative predicate or the input mode for this flag.
+
+### Layout and tabs
+
+The original property getters select these numeric values:
+
+| State | Value | Property |
+| --- | --- | --- |
+| Layout | 1 | `#is_survival_layout` |
+| Layout | 2 | `#is_recipe_book_layout` |
+| Layout | 3 | `#is_creative_layout` |
+| Left tab | 1 | `#is_left_tab_construct` |
+| Left tab | 2 | `#is_left_tab_equipment` |
+| Left tab | 3 | `#is_left_tab_items` |
+| Left tab | 4 | `#is_left_tab_nature` |
+| Left tab | 5 | `#is_left_tab_search` |
+| Left tab | 6 | `#is_left_tab_inventory` |
+| Right tab | 1 | `#is_right_tab_fullscreen` |
+| Right tab | 2 | `#is_right_tab_crafting` |
+| Right tab | 3 | `#is_right_tab_armor` |
+
+The constructor selects the active saved layout for inventory or workbench and retains the other layout separately.
+Its default is `3` for creative inventory and `2` otherwise. Workbench always uses default `2`.
+Saved `0` and positive values greater than `3` use that default. Negative values remain unchanged.
+The independent constructor flag forces the default. Saved layout `3` becomes `2` outside creative inventory.
+These rules do not change the raw saved preferences.
+
+The constructor normalizes tabs too. Without the independent flag, left tab `6` becomes search tab `5`.
+With that flag, input mode `3` and noncreative state select inventory/armor tabs or search/crafting tabs, according to screen type.
+Noncreative fullscreen right tab `1` becomes crafting tab `2`.
+The raw filtering preference remains separate from the recipe model's effective filter, which is disabled in creative mode.
+
+The bounded constructor reference executes 3,472 combinations of layouts, tabs, filtering, both flags, screen type and controller input mode.
+Each case then executes sixteen original property getters, for 55,552 getter calls.
+The reference supplies model-filter updates and initial tab publication. It disables the separate restricted-tab policy.
+Full construction, restricted-tab availability, device delivery and visible pixels remain unverified.
+
+### Logical item and recipe collections
+
+The original initializer at `0x1431bd020` constructs 67 collection names.
+The executed slice uses supplied map nodes and sufficient string capacity. Native hash insertion and string allocation remain outside this reference.
+The player model requires these distinct collections:
+
+| Native ID | Collection |
+| --- | --- |
+| 6 | `armor_items` |
+| 12 | `combined_hotbar_and_inventory_items` |
+| 13 | `crafting_input_items` |
+| 14 | `crafting_output_items` |
+| 15 | `recipe_construction` |
+| 16 | `recipe_nature` |
+| 17 | `recipe_items` |
+| 18 | `recipe_search` |
+| 20 | `recipe_equipment` |
+| 28 | `hotbar_items` |
+| 29 | `inventory_items` |
+| 34 | `offhand_items` |
+| 59 | `cursor_items` |
+| 60 | `creative_output_items` |
+
+Model builder `0x1434360d0` creates the item collections and four category recipe collections through `0x143438210`.
+It also creates a separate search collection. These recipe collections share constructor `0x143443e50`.
+The category counts use the source category's group references; search uses the complete source list.
+This model construction evidence comes from disassembly. Recipe ordering, grouping, evaluation and mutation still need executed references and a production implementation.
+The player screen must retain the complete catalog and recipes that need a crafting table.
+A fabricated empty recipe catalog cannot establish support for the default inventory asset.
 
 ## Target and original functions
 

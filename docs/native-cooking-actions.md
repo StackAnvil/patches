@@ -500,7 +500,8 @@ The carried controls in modes `1` and `3` produce no selection or requests.
 
 Original focus entry, selection, placement, return, provider mutation, request allocation, automatic scopes, flush, and serialization execute.
 Typed controller and model fields, recipe/result caches, physical starting contents, and abstract world interfaces remain supplied inputs.
-The client mode getter and no-local-player getter are supplied interfaces; native weak checks and input accessor `0x144923190` execute.
+The client mode getter and no-local-player getter are supplied interfaces; native weak checks and creative-mode predicate `0x144923190` execute.
+The [player-inventory binding reference](native-player-inventory.md#controller-state-and-collection-reference) establishes this predicate's meaning separately from the controller input mode.
 The earlier external startup, OS/CRT, diagnostic text, and transport-sink boundaries still apply.
 Full controller construction, physical event producers, server acknowledgments, and native pixels remain outside these controls.
 
