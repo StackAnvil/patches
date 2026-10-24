@@ -407,3 +407,30 @@ All 1,448 core classes match both embedded copies, and all 1,181 client classes 
 The packaged add-on matches all 3,216 raw-phase steps, the 200 GLOBAL View steps and the 240 Toggle/Furnace callback steps.
 It also retains the earlier 2,169 composed arrow steps and 840 controller button events.
 Six packaged screen and input regressions pass with mandatory production class origins, including fallback before unsupported GLOBAL slot actions.
+
+## VIEW tab groups
+
+VIEW tab events traverse the visible, enabled `navigation_tab` toggles.
+They choose the next authored index and wrap from an endpoint. Tree order decides the last checked control and duplicate-index owner.
+This route differs from the separate Furnace category callback and its count-based rules.
+Eligible toggles update together. The group change precedes old/new tab hover events and retains its native false notification flag.
+Control-local hover leaves both View pointer positions unchanged.
+Keyboard admission now checks the mapping's VIEW receiver.
+
+Original 1.26.51.1/protocol2193 execution matches 208 cases and 2,117 steps, including 815 group changes and 906 controller buttons.
+The corpus includes all three input modes, retained phases, disabled and hidden controls and parents, duplicate indices and zero-width geometry.
+All 79,461 native frees complete with no native allocations left.
+Nine incorrect selection, eligibility, phase, notification, ownership and pointer variants fail the comparisons.
+The real screen regression covers authored selection, preference synchronization and a held key across the matching model update.
+
+Fixtures supply the tree, component order, geometry and initial checked state.
+Generic index probes also cover values outside cooking-screen admission. Their callback adapter constructs the corresponding preference record separately from installation.
+Original factories, traversal, mutation, hover and Furnace callbacks execute; downstream setters, full screen update and settings timing remain observed boundaries.
+The 585 captured kind-5 pointer events remain outside the controller consumer.
+Focus-enabled VIEW tabs retain the ordinary screen pending their separate lifecycle. Default Furnace tabs explicitly disable focus.
+Complete screen construction and admission, devices, pixels, the original reports and all five goal areas remain unfinished.
+
+All four builds pass 2,770 tests with 163 optional skips and no failures or errors.
+All 1,448 core classes match both embedded copies; all 1,181 client classes match the final add-on.
+The final add-on repeats the 208 tab cases, the earlier 147 arrow cases and all 29 GLOBAL View cases with mandatory class origins.
+Ten packaged screen and input regressions pass, including authored VIEW tab preference synchronization and held input across a matching model update.
