@@ -944,3 +944,25 @@ Native comparisons reject both FNV-1a hashing and named-definition eviction afte
 All 1,513 core classes and three registry resources match their embedded add-on and proxy copies.
 All 1,191 client classes match the tested add-on.
 The test worker uses a 1 GB heap for the complete construction fixtures.
+
+## Coupled component updates
+
+Two additional original controls add 8,540 packaged comparisons across 22 typed ItemData declarations.
+They execute nonempty component readers inside complete registry construction and late block registration.
+The controls distinguish omitted components, missing fields, malformed selectors, mismatched owners and replacement flags 0, 1 and 255.
+
+Component updates use exact raw names after constructor selection and the staging drain.
+A canonical definition can exist while an uppercase or unqualified update key misses it.
+Readers follow the definition that survives the staging drain, including builtin ComponentItems selected by a Legacy declaration.
+Twelve receivers also match native stacking, legacy durability, associated block, food-predicate and block-placer observations.
+The property getters use a genuinely constructed empty ItemStack.
+
+Both controls use the existing default Experiments and base-game version 1.26.50 context in native build 51061372, protocol 2193.
+Original input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+These results do not establish all component types, custom blocks, other version/experiment contexts or class-specific ItemStack output.
+Complete caller admission, recipe contexts, installed player screens and physical input remain unfinished.
+
+The optional regression belongs to the inventory consumer patch because it also compares cooking properties.
+The complete ViaBedrock suite passes 1,721 tests with 86 optional skips and no failures or errors.
+Checkstyle passes. Packaged comparisons reject normalized update keys and flag resets after invalid selectors.
+Runtime sources, resources and build configuration match the previously verified four-project build exactly.
