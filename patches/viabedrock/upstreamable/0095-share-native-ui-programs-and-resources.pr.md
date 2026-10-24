@@ -500,3 +500,17 @@ The complete player catalog producer, unlocks, craftability, action admission, f
 The final four-project build passes 2,823 tests with 163 optional skips and no failures or errors.
 Checkstyle passes after replay. All 1,465 core classes match both embedded copies, and all 1,191 client classes match the tested add-on.
 The packaged core repeats all 4,144 collection comparisons with its production class origin verified.
+
+## Current recipe-row eligibility
+
+Query current availability separately from collection refresh, using a caller-supplied evaluator and native representative/header comparison.
+Flat rows disable states two and three. Grouped rows disable only state two, with a representative exemption for headers.
+Expanded member rows retain their own eligibility; the query does not replace or reorder the snapshot.
+Original getter `1434461c0` supplies 3,584 matching cases with item-copy, icon-comparison and evaluator boundaries.
+Three regressions cover fresh availability, stable snapshots, exact representative/count matching and grouped member behavior.
+Additional native reset controls confirm that a flat refresh retains grouped expansion history even when its reset argument is true.
+Full catalog acquisition, controller ownership, action admission, physical input and visible native parity remain unfinished.
+
+The full four-project build passes 2,826 tests with 163 optional skips and no failures or errors.
+Checkstyle passes after replay. All 1,466 core classes match the embedded copies, and all 1,191 client classes match the tested add-on.
+The packaged core matches all 3,584 eligibility cases and retains all 4,144 collection/history comparisons, with production origins verified.

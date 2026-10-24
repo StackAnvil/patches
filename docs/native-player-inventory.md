@@ -50,9 +50,17 @@ An absent player, absent component, missing page, stale entity generation or raw
 The reference executes 640 cases through both the original helper and the registered callback, for 1,280 calls.
 Actor delivery, component backing and the fallback virtual getter remain supplied interfaces.
 
-The constructor also stores an independent flag at offset `0x1319`.
+The constructor also stores an independent profile predicate at offset `0x1319`.
 Its producer compares a virtual service result with `1`; the service comes from client vtable offset `0x578`, then service vtable offset `0x70`.
-The service type remains unverified. The implementation must not substitute the effective creative predicate or the input mode for this flag.
+The native inventory factory uses the same getter to choose the desktop root for zero and the pocket root for nonzero values.
+Only value one sets the constructor predicate. Other nonzero values still select the pocket root but leave that predicate false.
+This state must remain separate from effective creative mode and controller input mode.
+
+Seven raw signed values execute the original factory selection and constructor comparison, including the native client getter at `0x145dc2800`.
+The factory slice runs from `0x14052eb9c` to `0x14052ec1b`; the constructor slice runs from `0x144e0f832` to `0x144e0f86a`.
+The service getter result, context backing, allocator and CRT boundaries are supplied.
+These slices do not execute complete screen construction, settings acquisition, physical input or rendering.
+The service's concrete type remains unverified. The client getter reads field `0xe10`, whose shared owner occupies `0xe18`.
 
 ### Layout and tabs
 
@@ -86,7 +94,7 @@ The raw filtering preference remains separate from the recipe model's effective 
 
 The bounded constructor reference executes 3,472 combinations of layouts, tabs, filtering, both flags, screen type and controller input mode.
 Each case then executes sixteen original property getters, for 55,552 getter calls.
-The reference supplies model-filter updates and initial tab publication. It disables the separate restricted-tab policy.
+The reference supplies model-filter updates and initial collection refresh. It disables the separate restricted-tab policy.
 Full construction, restricted-tab availability, device delivery and visible pixels remain unverified.
 
 ### Logical item and recipe collections
@@ -121,6 +129,8 @@ A fabricated empty recipe catalog cannot establish support for the default inven
 
 ## Shared recipe collections
 
+Release 0.3.56 includes this shared collection model.
+
 The shared `RecipeCollection` model implements the target collection ordering and retained header expansion.
 Cooking uses the same partitioner for its flat visible recipe prefix.
 The player controller still needs a complete catalog producer before it can use grouped collections.
@@ -144,9 +154,76 @@ The steps cover expansion history and groups with equal icons but different iden
 Native vector allocation and cleanup execute. Item copy/destruction, icon equality, availability evaluation and external callbacks use supplied boundaries.
 These checks do not establish recipe acquisition, unlocks, craftability, full controller ownership, physical input or visible screen parity.
 Six focused regressions cover ordering, representative identity, filtering, invalid entries, expansion history and immutable snapshots.
-The complete build passes 2,823 tests, with 163 optional skips and no failures or errors.
+The collection milestone's complete build passed 2,823 tests, with 163 optional skips and no failures or errors.
 All 1,465 core classes match the embedded add-on and proxy copies; all 1,191 client classes match the tested add-on.
 The packaged core repeats all 4,144 recipe comparisons with its class origin verified.
+
+## Current recipe-row eligibility
+
+The continuation after 0.3.56 adds a query for current row availability without refreshing or reordering its retained snapshot.
+Flat collections disable evaluator states two and three.
+Grouped collections disable only state two, with an exception for headers that match a retained representative by icon and count.
+The exception applies to expanded and collapsed headers. It does not apply to member rows.
+Representatives come from the last collection refresh; the query does not recompute them.
+
+Original getter `0x1434461c0` supplies 3,584 cases with fresh evaluator values after collection construction.
+Every captured query passes byte one to the evaluator interface.
+The shared API keeps that query separate from the refresh evaluator.
+It requires the caller to supply current availability and exact representative/header item comparison.
+Original count checks and representative traversal execute. Item copy/destruction, icon equality and evaluator results use supplied boundaries.
+Three regressions cover fresh queries, unchanged snapshots, representative identity, icon/count matching and grouped member behavior.
+This query supplies presentation state. It does not authorize a recipe action or establish full player-controller support.
+
+The eligibility milestone's complete build passes 2,826 tests, with 163 optional skips and no failures or errors.
+All 1,466 core classes match both embedded copies, and all 1,191 client classes match the tested add-on.
+The packaged core matches all 3,584 eligibility cases and repeats the 4,144 collection/history checks with its class origin verified.
+
+## Registry and catalog source reference
+
+The lookup at `0x143491110` locks an `ItemRegistryRef` and reads the registry's field at offset `0x430`.
+The target's diagnostics identify `ItemRegistryRef::_lockRegistry()` and the downstream `NonOwnerPointer<CreativeItemRegistry>` access.
+It copies an activation pointer, lifetime owner and source pointer.
+The lookup does not test the activation byte itself; callers must still admit the returned handle.
+
+The complete original lookup passes 192 supplied registry/owner/holder cases.
+Input reference counts remain balanced. Successful copies retain the output owner.
+Failed-lock diagnostic calls return false at an explicit external boundary.
+The checks observe returned references before caller release.
+They do not construct a registry or acquire its data from a server.
+
+The category constructor's slice from `0x1434382ec` to `0x143438361` passes 500 capacity cases.
+It sums the member-vector lengths of referenced groups, counts repeated references again and skips invalid unsigned group indices.
+An absent category owner or group-data pointer produces zero capacity.
+The fixture supplies category, group and member-vector backing and stops before allocation.
+
+The original phase table at `0x14e880e90` contains these collection/selector pairs:
+
+| Phase | Collection ID | Internal selector |
+| --- | --- | --- |
+| 0 | 18, search | 6 |
+| 1 | 15, construction | 1 |
+| 2 | 16, nature | 2 |
+| 3 | 20, equipment | 3 |
+| 4 | 17, items | 4 |
+
+Disassembly of `0x143439c20` uses selector six for the full search list and the other selectors for registry category groups.
+These selectors describe the internal model; they do not establish network enum values.
+Complete catalog registration, recipe matching, unlocks, craftability, incremental publication and live mutation still need implementation and verification.
+
+## Recipe collection refresh admission
+
+Function `0x144e1f430` refreshes a dirty selected collection. It does not change or publish the selected tab.
+Left tabs one through five resolve collection IDs 15, 20, 17, 16 and 18 respectively.
+The corresponding dirty bit clears only after the dispatcher locks a live collection and calls its refresh receiver.
+An absent lookup result, missing weak owner, expired strong count or absent collection leaves the bit set for a later retry.
+Tab six clears the inventory bit without a recipe lookup. Other unsupported tab values leave the mask unchanged.
+The dispatcher forwards its refresh argument without changing its 32-bit value.
+
+The complete original dispatcher passes 2,880 cases across tab values, dirty masks, lookup results, owner state and refresh arguments.
+Its switch, string handling, mask transitions and shared/weak reference operations execute through normal return.
+Global-name lookup, model collection lookup and the final refresh receiver use supplied boundaries.
+All observed reference counts remain balanced, and native temporary allocations are released.
+This reference does not execute full controller construction, collection production, physical input or rendering.
 
 ## Target and original functions
 
@@ -208,7 +285,7 @@ The reference does not establish GPU output, clipping, physical input delivery o
 
 ## Java implementation checks
 
-The full stack passes 2,817 tests, with 163 optional skips.
+The installed-screen milestone's complete build passed 2,817 tests, with 163 optional skips.
 Three packaged camera regressions pass and reject four deliberately incorrect implementations.
 The native comparison covers framing, actor rotation and body yaw in all 672 cases.
 Head-yaw comparisons cover the 336 cases with that component present.
