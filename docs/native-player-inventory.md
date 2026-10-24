@@ -123,9 +123,57 @@ The player model requires these distinct collections:
 Model builder `0x1434360d0` creates the item collections and four category recipe collections through `0x143438210`.
 It also creates a separate search collection. These recipe collections share constructor `0x143443e50`.
 The category counts use the source category's group references; search uses the complete source list.
-This model construction evidence comes from disassembly. Production recipe acquisition, category assignment, availability evaluation and mutation remain unfinished.
+This model construction evidence comes from disassembly. The player search source now uses definition categories from the connection registry.
+The four grouped category sources, recipe availability evaluation and mutation remain unfinished.
 The player screen must retain the complete catalog and recipes that need a crafting table.
 A fabricated empty recipe catalog cannot establish support for the default inventory asset.
+
+## Player search catalog
+
+This section describes the unreleased player search catalog.
+
+The model constructor receives the local player and stores it at offset `0x30`.
+The player owns the search vector at offsets `0x600` through `0x610`.
+The original rebuild routine is `0x14020ec60`.
+It copies creative registry entries in their existing order and admits definition categories one through four.
+An absent definition or any other category excludes the entry.
+Group category, item count, Java fallback identity and crafting-grid size do not select this source.
+
+Text search, unlocks and craftability run later through separate evaluators.
+
+The connection registry now retains each definition's category byte.
+Built-in defaults come from complete native registration and cover all 1,949 factory identifiers in the existing table.
+New ordinary and component definitions start at category four.
+Explicit component construction replaces a built-in default before any ordered component updates.
+Legacy component readers preserve this category.
+
+For component items, a compound `item_properties` reads the integer property `creative_category` and takes its low byte.
+A missing or mistyped property sets the byte to zero.
+An absent or mistyped `item_properties` block preserves the previous byte.
+Unknown `None` registrations receive their fallback definition after component updates.
+Final runtime-ID replacement selects the surviving definition.
+
+`CreativeCatalog` retains a separate search list when `ItemRewriter` receives the server catalog.
+This list uses the connection registry and preserves the admitted entries' identities, variants, duplicates and order.
+The complete creative catalog remains available independently.
+The search list does not discard recipes that require a crafting table.
+The authored player screen and its evaluator still need integration.
+
+The complete original search rebuild and vector growth execute 906 controls.
+They cover all category bytes, absent definitions, duplicates, allocation boundaries and repeated replacement.
+Item copy/destruction, allocator and CRT calls use supplied boundaries.
+
+Separate controls execute complete component construction, binary NBT parsing, property reading and destruction.
+These cover 279 inputs and five retained-update steps; the complete legacy reader preserves the constructor category for the same inputs.
+Built-in registration executes with the retained versioned block bootstrap and an empty packet vector.
+This establishes constructor defaults rather than a server packet baseline.
+Physical inventory rendering, unlock policy, recipe solving and controller input remain unverified.
+
+All four projects build with 2,830 tests passed, 163 optional skips and no failures or errors.
+The packaged core matches 1,949 factory defaults, 563 typed-update comparisons and 906 search rebuilds.
+It also retains all 7,728 original eligibility and collection/history comparisons.
+All 1,466 core classes and the factory table match the embedded add-on and proxy copies.
+All 1,191 client classes match the tested add-on.
 
 ## Shared recipe collections
 
@@ -133,7 +181,7 @@ Release 0.3.56 includes this shared collection model.
 
 The shared `RecipeCollection` model implements the target collection ordering and retained header expansion.
 Cooking uses the same partitioner for its flat visible recipe prefix.
-The player controller still needs a complete catalog producer before it can use grouped collections.
+The player controller still needs the four grouped category sources before it can use grouped collections.
 
 Entries retain four stable evaluator buckets.
 A contiguous catalog group moves as one run: state zero wins, then state one; otherwise the first member selects state two or three.

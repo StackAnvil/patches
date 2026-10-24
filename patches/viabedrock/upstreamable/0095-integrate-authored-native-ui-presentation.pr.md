@@ -715,3 +715,23 @@ A fresh BDS run passes all three cooking families and same-world reconnect with 
 Both launches match its checksum. All nine observed owned identities retire, and the private display stops normally.
 Java cooking screens handle these controls. Unsupported authored preference mappings still prevent native screen acceptance.
 The client source tree is unchanged by this naming update.
+
+## Definition-owned creative categories
+
+Retain the definition category used by the native player search source.
+The existing factory table now includes all 1,949 constructor defaults from complete pinned native registry initialization.
+New definitions start at category four. Explicit component construction replaces the built-in default before ordered component readers run.
+
+A compound `item_properties` sets the low byte of integer `creative_category`, with zero for absent or mistyped values.
+Omitted or mistyped property blocks preserve the previous category. Legacy readers leave it unchanged.
+Unknown `None` entries receive their fallback after component readers, and final runtime-ID replacement selects the surviving definition.
+
+Complete native component construction, binary NBT parsing, property loading and destruction cover 279 typed inputs and five retained-update steps.
+The complete legacy reader preserves its category across the same inputs.
+The built-in reference uses the retained native block bootstrap and an empty network vector; it establishes defaults rather than a normal server packet baseline.
+These facts support catalog acquisition. They do not establish recipe unlocks, craftability, authored player screens or physical input.
+
+The complete four-project build passes 2,830 tests with 163 optional skips and no failures or errors.
+The packaged core matches all 1,949 category defaults, 563 typed-update comparisons and 906 search rebuilds.
+All 1,466 core classes and the factory table match the add-on and proxy copies; all 1,191 client classes match the tested add-on.
+The previous 7,728 eligibility and collection/history comparisons still pass against the packaged core.

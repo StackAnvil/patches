@@ -1,4 +1,4 @@
-From dc5bd4b9362ba5cc60c93f4d572481cf7676c6bd Mon Sep 17 00:00:00 2001
+From 46baa49d1180225f6709a60620b55e0b8191f153 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -26,24 +26,39 @@ bytecode emits this slot for creative-menu Q. Geyser
 PlayerInventoryTranslator documents the same native created-output slot
 50 flow since Bedrock 1.18.2. Actual packet tests cover plate and stone
 counts, pending-close queuing, and invalid stack bounds.
+
+Build the player search source from the current connection's complete
+creative registry. Native Player rebuild14020ec60 admits definition
+categories one through four in registry order; it does not use group
+category, Java fallback identity, stack count or crafting-grid size.
+Keep exact entry references, duplicates, variants and source order in a
+separate immutable list, alongside the complete creative palette.
+ItemRewriter supplies the connection registry on every catalog receipt.
+
+The complete original rebuild and vector growth/cleanup execute 906
+controls, including every category byte, absent definitions, duplicates,
+allocation boundaries and repeated replacement. Item copy/destruction,
+allocation and CRT boundaries are supplied. Text, unlock and craftability
+evaluators, grouped category sources and authored player screen/input
+integration remain separate work.
 ---
- .../protocol/model/CreativeCatalog.java       | 142 ++++++++++
+ .../protocol/model/CreativeCatalog.java       | 152 ++++++++++
  .../protocol/packet/InventoryPackets.java     | 198 ++++++++-----
  .../protocol/rewriter/ItemRewriter.java       |  31 +-
  .../storage/InventoryRequestTracker.java      |  24 ++
- .../protocol/model/CreativeCatalogTest.java   | 109 +++++++
+ .../protocol/model/CreativeCatalogTest.java   | 145 ++++++++++
  .../protocol/packet/InventoryPacketsTest.java | 266 ++++++++++++++----
  .../storage/InventoryRequestTrackerTest.java  |  83 ++++++
- 7 files changed, 715 insertions(+), 138 deletions(-)
+ 7 files changed, 761 insertions(+), 138 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java b/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
 new file mode 100644
-index 000000000..fcbaa4e46
+index 000000000..afece9faa
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,152 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -79,14 +94,15 @@ index 000000000..fcbaa4e46
 +public final class CreativeCatalog {
 +
 +    private static final String ENTRY_KEY = "viabedrock:creative_entry";
-+    private static final CreativeCatalog EMPTY = new CreativeCatalog(List.of(), List.of());
++    private static final CreativeCatalog EMPTY = new CreativeCatalog(List.of(), List.of(), new ItemRegistry(new ItemEntry[0]));
 +
 +    private final List<Group> groups;
 +    private final List<Entry> entries;
++    private final List<Entry> searchEntries;
 +    private final Int2ObjectMap<Entry> byEntryId = new Int2ObjectOpenHashMap<>();
 +    private final Int2ObjectMap<Entry> byJavaItemId = new Int2ObjectOpenHashMap<>();
 +
-+    public CreativeCatalog(final List<Group> groups, final List<Entry> entries) {
++    public CreativeCatalog(final List<Group> groups, final List<Entry> entries, final ItemRegistry registry) {
 +        this.groups = List.copyOf(groups);
 +        final List<Entry> marked = new ArrayList<>(entries.size());
 +        for (final Entry entry : entries) {
@@ -106,6 +122,10 @@ index 000000000..fcbaa4e46
 +            }
 +        }
 +        this.entries = List.copyOf(marked);
++        this.searchEntries = this.entries.stream().filter(entry -> {
++            final int category = registry.creativeCategory(entry.bedrockItem().identifier());
++            return category >= 1 && category <= 4;
++        }).toList();
 +    }
 +
 +    public static CreativeCatalog empty() {
@@ -118,6 +138,11 @@ index 000000000..fcbaa4e46
 +
 +    public List<Entry> entries() {
 +        return this.entries;
++    }
++
++    /** Complete player search source before text, unlock and craftability evaluation. */
++    public List<Entry> searchEntries() {
++        return this.searchEntries;
 +    }
 +
 +    public boolean containsJavaItem(final int identifier) {
@@ -451,7 +476,7 @@ index a1a76a4d9..4cec1d2cb 100644
  
      public static boolean handleLegacyOffhandClick(final UserConnection user, final Container container,
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index ef32aca46..a9540e7a7 100644
+index ef32aca46..28475b5d9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -50,6 +50,7 @@ import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
@@ -512,7 +537,7 @@ index ef32aca46..a9540e7a7 100644
 -        return result;
 +    public void setCreativeCatalog(final List<CreativeCatalog.Group> groups,
 +                                   final List<CreativeCatalog.Entry> entries) {
-+        this.creativeCatalog = new CreativeCatalog(groups, entries);
++        this.creativeCatalog = new CreativeCatalog(groups, entries, this.registry);
      }
  
      public BedrockItem[] bedrockItems(final Item[] javaItems) {
@@ -567,13 +592,14 @@ index d08578907..8544e1ab3 100644
  
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
 new file mode 100644
-index 000000000..dfb8c95ff
+index 000000000..5a946d77c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,145 @@
 +package net.raphimc.viabedrock.protocol.model;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
 +import com.viaversion.viaversion.api.data.FullMappings;
 +import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
 +import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
@@ -583,11 +609,14 @@ index 000000000..dfb8c95ff
 +import com.viaversion.viaversion.api.minecraft.item.data.PotionEffect;
 +import java.lang.reflect.Field;
 +import java.lang.reflect.Proxy;
++import java.util.ArrayList;
 +import java.util.List;
 +import org.junit.jupiter.api.Test;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertSame;
++import static org.junit.jupiter.api.Assertions.assertThrows;
 +
 +class CreativeCatalogTest {
 +
@@ -596,7 +625,7 @@ index 000000000..dfb8c95ff
 +        final Item paper = javaItem(1);
 +        final CreativeCatalog catalog = new CreativeCatalog(List.of(), List.of(
 +                new CreativeCatalog.Entry(11, 0, new BedrockItem(100), paper, true, false),
-+                new CreativeCatalog.Entry(12, 0, new BedrockItem(101), paper, true, false)));
++                new CreativeCatalog.Entry(12, 0, new BedrockItem(101), paper, true, false)), new ItemRegistry(new ItemEntry[0]));
 +
 +        assertEquals(100, catalog.creativeEntry(catalog.entries().get(0).javaItem()).bedrockItem().identifier());
 +        assertEquals(101, catalog.creativeEntry(catalog.entries().get(1).javaItem()).bedrockItem().identifier());
@@ -613,7 +642,7 @@ index 000000000..dfb8c95ff
 +        final Item mapped = javaItem(2);
 +        final CreativeCatalog catalog = new CreativeCatalog(List.of(), List.of(
 +                new CreativeCatalog.Entry(21, 0, new BedrockItem(200), mapped, true, false),
-+                new CreativeCatalog.Entry(22, 0, new BedrockItem(201), mapped, false, true)));
++                new CreativeCatalog.Entry(22, 0, new BedrockItem(201), mapped, false, true)), new ItemRegistry(new ItemEntry[0]));
 +
 +        assertEquals(201, catalog.creativeEntry(mapped).bedrockItem().identifier());
 +        assertEquals(22, catalog.creativeEntry(mapped).netId());
@@ -635,7 +664,7 @@ index 000000000..dfb8c95ff
 +        final BedrockItem nativeOozing = new BedrockItem(100, (short) 43, (byte) 1, null);
 +        final CreativeCatalog catalog = new CreativeCatalog(List.of(), List.of(
 +                new CreativeCatalog.Entry(11, 0, nativeStrength, strength, false, true),
-+                new CreativeCatalog.Entry(12, 0, nativeOozing, oozing, false, true)));
++                new CreativeCatalog.Entry(12, 0, nativeOozing, oozing, false, true)), new ItemRegistry(new ItemEntry[0]));
 +        assertEquals(11, catalog.creativeEntry(strength.copy()).netId());
 +        assertEquals(12, catalog.creativeEntry(oozing.copy()).netId());
 +        assertNull(catalog.creativeEntry(javaItem(3)));
@@ -658,7 +687,7 @@ index 000000000..dfb8c95ff
 +        final var second = new BedrockItem(100, (short) 0, (byte) 1, secondTag);
 +        final var catalog = new CreativeCatalog(List.of(), List.of(
 +                new CreativeCatalog.Entry(31, 0, first, item, false, true),
-+                new CreativeCatalog.Entry(32, 0, second, item, false, true)));
++                new CreativeCatalog.Entry(32, 0, second, item, false, true)), new ItemRegistry(new ItemEntry[0]));
 +        assertNull(catalog.creativeEntry(item));
 +        final Item owned = javaItem(5);
 +        final var context = new CompoundTag();
@@ -667,6 +696,38 @@ index 000000000..dfb8c95ff
 +        owned.dataContainer().set(StructuredDataKey.CUSTOM_DATA, context);
 +        assertEquals(32, catalog.creativeEntry(owned).netId());
 +        assertEquals(31, catalog.creativeEntry(catalog.entries().getFirst().javaItem()).netId());
++    }
++
++    @Test
++    void searchRetainsDefinitionCategoriesInRegistryOrderAndPreservesEntryIdentity() throws ReflectiveOperationException {
++        final var definitions = new ArrayList<ItemEntry>();
++        for (int category = 0; category <= 6; category++) {
++            final var properties = new CompoundTag();
++            properties.putInt("creative_category", category);
++            final var components = new CompoundTag();
++            components.put("item_properties", properties);
++            final var data = new CompoundTag();
++            data.put("components", components);
++            definitions.add(new ItemEntry("test:category" + category, 100 + category, true,
++                    ItemVersion.DataDriven, data));
++        }
++        final var registry = new ItemRegistry(definitions.toArray(ItemEntry[]::new));
++        final var entries = new ArrayList<CreativeCatalog.Entry>();
++        for (final int identifier : new int[]{104, 100, 103, 101, 104, 200, 102, 105, 106}) {
++            entries.add(new CreativeCatalog.Entry(entries.size() + 1, 999,
++                    new BedrockItem(identifier, (short) 7, (byte) (identifier == 102 ? 0 : 64)), javaItem(1), true, false));
++        }
++        final var catalog = new CreativeCatalog(List.of(new CreativeCatalog.Group(5, "", javaItem(1))), entries, registry);
++        assertEquals(List.of(1, 3, 4, 5, 7), catalog.searchEntries().stream().map(CreativeCatalog.Entry::netId).toList());
++        assertEquals(9, catalog.entries().size());
++        assertEquals(0, catalog.searchEntries().getLast().bedrockItem().amount());
++        for (final var entry : catalog.searchEntries()) {
++            assertSame(catalog.entries().get(entry.netId() - 1), entry);
++        }
++        assertThrows(UnsupportedOperationException.class, () -> catalog.searchEntries().clear());
++        final var replaced = new CreativeCatalog(catalog.groups(), catalog.entries(), new ItemRegistry(new ItemEntry[0]));
++        assertEquals(0, replaced.searchEntries().size());
++        assertEquals(5, catalog.searchEntries().size());
 +    }
 +
 +    private static Item javaItem(final int identifier) throws ReflectiveOperationException {
