@@ -456,7 +456,7 @@ The inline ScreenComponent constructor executes before registration. Component v
 
 Full screen updates, downstream setters and settings timing remain observed boundaries.
 Six paired inactive-manager probes show different hover delivery. Production manager activation and that inactive path remain unfinished.
-The native fixture has no Button selection-latch component; its complete held lifetime still needs a real consumer.
+The native fixture has no edit-box component. Its selection flag and the separate Button press state still need their native owners.
 All 1,284 new kind-5 controller pointer events remain outside this adapter.
 Full screen construction and admission, native scroll reveal, devices, pixels, the original reports and all five goal areas remain open.
 
@@ -464,3 +464,34 @@ All four project builds pass 2,773 tests with 163 optional skips and no failures
 All 1,448 core classes match both embedded copies; all 1,181 client classes match the final add-on.
 The final JAR matches both focused-input corpora and repeats the 208 plain-tab, 147 arrow and 29 GLOBAL View cases with mandatory class origins.
 Thirteen packaged screen and input regressions pass, including focus transfer, reveal relayout and the false-latch regression.
+
+
+## Button state evidence and remaining consumer gaps
+
+The original type registry identifies type `0` as Button and type `4` as edit box.
+The original factory dispatch confirms their separate components.
+The edit-box component owns selection flag `0x80`. The earlier description of that flag as a Button latch was incorrect.
+Focus ownership must not create that flag. The existing focus correction remains supported by the original captures.
+
+The Button appearance component owns a separate press byte and the control-level `consume_event` setting.
+Raw phases `0` and `1` change the press byte. Phase `2` preserves it.
+The mapping selection flags determine whether that change immediately updates the visible state.
+Hover exit, hiding the Button, and disabling the Button clear the press byte.
+An ancestor enabled change preserves it and broadcasts general event `17`, which updates the visible state.
+Press and hover do not use a default fallback for missing state children. Disabled state uses the default child without a locked child.
+
+Original execution covers 184 state cases, 720 Button/Input cases and 64 property-producer cases, totaling 15,088 steps.
+The factories, deferred name resolver, callbacks, visibility setters and destructors execute.
+The producer cases also execute parent attachment, enabled propagation and general-event delivery.
+All 128,802 native frees finish with no native allocations. Each fixture verifies all declared owner counts.
+
+The published 0.3.49 JAR reproduces two production gaps with mandatory class origins.
+For `consume_event: false`, production consumes the hover and press that native leaves unconsumed.
+Production shows the hover child after the press. Native shows the pressed child.
+The supplied Java scene action enables presentation input. This comparison uses the original native Button/Input case and the actual published classes.
+These results establish gaps, not a production fix.
+
+The fixtures supply the tree, geometry, properties, clocks and external UIContext notifications.
+Notification sinks retire their shared arguments through the original destructor. They do not replace state or visibility outputs.
+Complete ScreenView delivery, screen construction, button audio, controller pointer receivers, devices and pixels remain outside these captures.
+The original reports and all five goal areas remain open.
