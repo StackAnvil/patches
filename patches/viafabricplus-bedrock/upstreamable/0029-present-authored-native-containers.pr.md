@@ -427,10 +427,40 @@ Fixtures supply the tree, component order, geometry and initial checked state.
 Generic index probes also cover values outside cooking-screen admission. Their callback adapter constructs the corresponding preference record separately from installation.
 Original factories, traversal, mutation, hover and Furnace callbacks execute; downstream setters, full screen update and settings timing remain observed boundaries.
 The 585 captured kind-5 pointer events remain outside the controller consumer.
-Focus-enabled VIEW tabs retain the ordinary screen pending their separate lifecycle. Default Furnace tabs explicitly disable focus.
+Focus-enabled VIEW delivery now follows the separate active-manager path described below. Default Furnace tabs explicitly disable focus.
 Complete screen construction and admission, devices, pixels, the original reports and all five goal areas remain unfinished.
 
 All four builds pass 2,770 tests with 163 optional skips and no failures or errors.
 All 1,448 core classes match both embedded copies; all 1,181 client classes match the final add-on.
 The final add-on repeats the 208 tab cases, the earlier 147 arrow cases and all 29 GLOBAL View cases with mandatory class origins.
 Ten packaged screen and input regressions pass, including authored VIEW tab preference synchronization and held input across a matching model update.
+
+## Focus-enabled VIEW tabs
+
+Focus-enabled tabs now select their native focus target and reveal it before calculating hover geometry.
+Their whole-view hover queue reaches the controller before the group change.
+Both stored View pointer positions stay unchanged. Non-focus tabs retain their separate group-change-first, local-hover route.
+The screen regression covers focus transfer, preference synchronization and held input across the matching model update.
+A separate regression verifies hover after reveal relayout.
+
+Focus ownership no longer manufactures the native selection-latch flag.
+Original overlapping controls can assign hover and focus to different owners.
+The old flag activated an extra focused mapping and changed the preference twice.
+The combined input corpus rejects that behavior and preserves the actual hover owner.
+
+Original 1.26.51.1/protocol2193 execution matches 204 composed cases and 2,388 steps, including 804 group changes and 1,182 controller buttons.
+The controls cover three input modes, mixed focus settings, radio states, input orders, hover consumption and overlapping or fractional bounds.
+All 127,116 native frees finish with no native allocations. Nine incorrect variants fail the comparisons.
+Original Input, Toggle, Focus and manager factories, registration, forced selection, reveal/hover and Furnace callbacks execute.
+The inline ScreenComponent constructor executes before registration. Component vectors, tree/order, geometry, initial bindings, View fields and active manager state are supplied.
+
+Full screen updates, downstream setters and settings timing remain observed boundaries.
+Six paired inactive-manager probes show different hover delivery. Production manager activation and that inactive path remain unfinished.
+The native fixture has no Button selection-latch component; its complete held lifetime still needs a real consumer.
+All 1,284 new kind-5 controller pointer events remain outside this adapter.
+Full screen construction and admission, native scroll reveal, devices, pixels, the original reports and all five goal areas remain open.
+
+All four project builds pass 2,773 tests with 163 optional skips and no failures or errors.
+All 1,448 core classes match both embedded copies; all 1,181 client classes match the final add-on.
+The final JAR matches both focused-input corpora and repeats the 208 plain-tab, 147 arrow and 29 GLOBAL View cases with mandatory class origins.
+Thirteen packaged screen and input regressions pass, including focus transfer, reveal relayout and the false-latch regression.
