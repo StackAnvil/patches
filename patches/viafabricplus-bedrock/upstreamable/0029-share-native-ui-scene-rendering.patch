@@ -1,4 +1,4 @@
-From a5c43fc7ff5b5da18a69847e8d66676c49a56607 Mon Sep 17 00:00:00 2001
+From d88b09d1ba580729052716a21bd9841346e03455 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -392,6 +392,16 @@ layout instead of selecting a visual again during draw collection.
 
 Expose a visibility revision for retained layout and avoid replaying
 named setters when the same scene instance attaches again.
+
+Preserve native Input double-press history when visibility callbacks and
+input-order removal invalidate every mapping phase. A retained control can
+leave normal input order while its captured release still reaches the real
+component. Model registration separately from capture identity so hidden
+GLOBAL releases remain deliverable without admitting new hidden presses.
+Original 1.26.51.1 UIControl and complete ScreenView pending-update execution
+cover 144 visible/ignored parent and owner cases with balanced ownership.
+The external notification queue, modal root and input mode are supplied;
+full construction, binding scheduling, devices and pixels remain open.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   3 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -437,8 +447,8 @@ named setters when the same scene instance attaches again.
  .../bedrock/screen/ui/NativeUiImageCache.java | 229 +++++
  .../screen/ui/NativeUiImageRegions.java       | 132 +++
  .../bedrock/screen/ui/NativeUiImages.java     | 171 ++++
- .../bedrock/screen/ui/NativeUiInput.java      | 234 +++++
- .../screen/ui/NativeUiInputRouter.java        |  73 ++
+ .../bedrock/screen/ui/NativeUiInput.java      | 237 +++++
+ .../screen/ui/NativeUiInputRouter.java        |  74 ++
  .../bedrock/screen/ui/NativeUiLayout.java     | 522 ++++++++++
  .../screen/ui/NativeUiMultilineInput.java     | 267 +++++
  .../screen/ui/NativeUiPresentation.java       | 162 +++
@@ -472,8 +482,8 @@ named setters when the same scene instance attaches again.
  .../screen/ui/NativeUiImageCacheTest.java     | 142 +++
  .../screen/ui/NativeUiImageRegionsTest.java   | 217 ++++
  .../bedrock/screen/ui/NativeUiImagesTest.java | 100 ++
- .../screen/ui/NativeUiInputRouterTest.java    | 107 ++
- .../bedrock/screen/ui/NativeUiInputTest.java  | 153 +++
+ .../screen/ui/NativeUiInputRouterTest.java    | 125 +++
+ .../bedrock/screen/ui/NativeUiInputTest.java  | 172 ++++
  .../bedrock/screen/ui/NativeUiLayoutTest.java | 942 ++++++++++++++++++
  .../screen/ui/NativeUiMultilineInputTest.java | 210 ++++
  .../screen/ui/NativeUiPresentationTest.java   | 258 +++++
@@ -485,7 +495,7 @@ named setters when the same scene instance attaches again.
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |  86 ++
  .../screen/ui/NativeUiViewportTest.java       |  55 +
- 92 files changed, 10583 insertions(+), 24 deletions(-)
+ 92 files changed, 10624 insertions(+), 24 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -4385,10 +4395,10 @@ index 0000000..8475ec8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInput.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInput.java
 new file mode 100644
-index 00000000..97f6c3a4
+index 00000000..af1777e2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInput.java
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,237 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4478,6 +4488,9 @@ index 00000000..97f6c3a4
 +        }
 +
 +        public int phase(final int index) { return this.phases[index]; }
++
++        /** Visibility callbacks and input-order removal preserve double-press history. */
++        public void invalidateMappings() { java.util.Arrays.fill(this.phases, 2); }
 +
 +        public Dispatch dispatch(final int source, final int phase, final Context context) {
 +            final List<ButtonEvent> events = new ArrayList<>();
@@ -4625,10 +4638,10 @@ index 00000000..97f6c3a4
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputRouter.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputRouter.java
 new file mode 100644
-index 00000000..e43f6dd4
+index 00000000..69cc08be
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputRouter.java
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,74 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4670,6 +4683,7 @@ index 00000000..e43f6dd4
 +        }
 +        final List<K> requested = new ArrayList<>(phase != 0 && captured != null ? captured : List.of());
 +        for (final var control : controls) {
++            if (!control.registered) continue;
 +            if (consumed) {
 +                control.state.suppress(source, phase, control.context.get());
 +                continue;
@@ -4696,9 +4710,9 @@ index 00000000..e43f6dd4
 +
 +    public boolean captures(final int source) { return this.captures.containsKey(source); }
 +
-+    /** Component effects run before the next control samples its current context. */
++    /** Captured controls remain addressable after they leave the normal input order. */
 +    public record Control<K>(K key, NativeUiInput.State state, Supplier<NativeUiInput.Context> context,
-+                             Consumer<NativeUiInput.ButtonEvent> handler) {}
++                             Consumer<NativeUiInput.ButtonEvent> handler, boolean registered) {}
 +    public record Event<K>(K key, NativeUiInput.ButtonEvent button) {}
 +    public record Result<K>(boolean consumed, List<Event<K>> events) {}
 +}
@@ -9383,10 +9397,10 @@ index 0000000..0d360fd
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputRouterTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputRouterTest.java
 new file mode 100644
-index 00000000..3da58a9b
+index 00000000..69a6bc2d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputRouterTest.java
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,125 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9404,6 +9418,24 @@ index 00000000..3da58a9b
 +
 +final class NativeUiInputRouterTest {
 +    private static final int SOURCE = NativeUiInput.symbol("button.menu_ok");
++
++    @Test
++    void aRetainedControlOutsideInputOrderReceivesOnlyItsCapturedRelease() {
++        final var input = state("global", true);
++        final var router = new NativeUiInputRouter<Integer>();
++        final var registered = control(0, input, true);
++        router.dispatch(SOURCE, 1, List.of(registered));
++        input.invalidateMappings();
++        final var removed = new NativeUiInputRouter.Control<>(0, input, registered.context(), registered.handler(), false);
++        assertTrue(router.dispatch(SOURCE, 1, List.of(removed)).events().isEmpty());
++        assertTrue(router.captures(SOURCE));
++        final var release = router.dispatch(SOURCE, 0, List.of(removed));
++        assertEquals(1, release.events().size());
++        assertEquals(2, release.events().getFirst().button().previous());
++        assertEquals(0, input.phase(0));
++        assertFalse(router.captures(SOURCE));
++        assertTrue(router.dispatch(SOURCE, 0, List.of(removed)).events().isEmpty());
++    }
 +
 +    @Test
 +    void unavailablePhaseDoesNotRetireTheCapturedRelease() {
@@ -9460,9 +9492,9 @@ index 00000000..3da58a9b
 +        final var second = state("focused", false);
 +        final var first = new NativeUiInputRouter.Control<>(0, state("global", false),
 +            () -> new NativeUiInput.Context(0x7e, 1, 0, 0, true, true, false, false, 0, 0),
-+            _ -> flags.set(0x7c));
++            _ -> flags.set(0x7c), true);
 +        final var following = new NativeUiInputRouter.Control<>(1, second,
-+            () -> new NativeUiInput.Context(flags.get(), 1, 0, 0, true, true, false, false, 0, 0), _ -> { });
++            () -> new NativeUiInput.Context(flags.get(), 1, 0, 0, true, true, false, false, 0, 0), _ -> { }, true);
 +        final var result = new NativeUiInputRouter<Integer>().dispatch(SOURCE, 1, List.of(first, following));
 +        assertEquals(List.of(0), result.events().stream().map(NativeUiInputRouter.Event::key).toList());
 +        assertEquals(2, second.phase(0));
@@ -9491,15 +9523,15 @@ index 00000000..3da58a9b
 +    private static NativeUiInputRouter.Control<Integer> control(final int key, final NativeUiInput.State state,
 +                                                               final boolean hovered) {
 +        return new NativeUiInputRouter.Control<>(key, state,
-+            () -> new NativeUiInput.Context(0x7c | (hovered ? 2 : 0), 1, 0, 0, hovered, true, false, false, 0, 0), _ -> { });
++            () -> new NativeUiInput.Context(0x7c | (hovered ? 2 : 0), 1, 0, 0, hovered, true, false, false, 0, 0), _ -> { }, true);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputTest.java
 new file mode 100644
-index 00000000..e8c1aa58
+index 00000000..b42d8a67
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputTest.java
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,172 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9516,6 +9548,25 @@ index 00000000..e8c1aa58
 +
 +final class NativeUiInputTest {
 +    private static final int SOURCE = NativeUiInput.symbol("button.menu_ok");
++
++    @Test
++    void invalidatingMappingsPreservesDoublePressHistoryAndRetiresEverySource() {
++        final var properties = properties("double_pressed", true);
++        final var other = properties("global", false).getAsJsonArray("button_mappings").get(0).deepCopy().getAsJsonObject();
++        final int otherSource = NativeUiInput.symbol("button.menu_cancel");
++        other.addProperty("from_button_id", "button.menu_cancel");
++        properties.getAsJsonArray("button_mappings").add(other);
++        final var input = new NativeUiInput.State(NativeUiInput.parse(properties));
++        input.dispatch(SOURCE, 1, context(1, 0, 0, 1_000_000_000L, true));
++        input.dispatch(otherSource, 1, context(1, 0, 0, 1_050_000_000L, true));
++        input.invalidateMappings();
++        assertEquals(2, input.phase(0));
++        assertEquals(2, input.phase(1));
++        final var doubled = input.dispatch(SOURCE, 1, context(1, 0, 0, 1_100_000_000L, true));
++        assertTrue(doubled.events().getFirst().transition());
++        assertEquals(2, doubled.events().getFirst().previous());
++        assertEquals(2, input.dispatch(otherSource, 0, context(1, 0, 0, 1_150_000_000L, true)).events().getFirst().previous());
++    }
 +
 +    @Test
 +    void unavailablePhaseIsRetainedWithoutActivationOrCapture() {

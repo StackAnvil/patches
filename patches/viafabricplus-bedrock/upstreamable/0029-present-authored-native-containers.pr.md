@@ -518,3 +518,49 @@ External UIContext sinks retire shared arguments through the original destructor
 The overlap fixture disables hover consumption so both controls acquire hover through the original pointer entry.
 Complete screen construction, update/binding order, manager activation, Button audio, edit-box selection and controller pointer receivers remain unfinished.
 These comparisons do not establish physical-device behavior or native pixels. The original reports and all five goal areas remain open.
+
+## Visibility callbacks and input registration
+
+Supported cooking controls now retain native visibility callbacks and input registration across scene updates.
+Own `visible` and `ignored` changes invalidate every mapping phase in both directions.
+Hiding an ancestor removes its descendants from normal input order and invalidates their mapping phases.
+The hidden hover callback clears Button appearance without synthesizing implicit hover buttons for the controller.
+Double-press history and captured control identity survive these transitions.
+
+A hidden control can still receive its captured GLOBAL release.
+Showing only its ancestor preserves that release phase. Showing the control itself triggers its own visibility callback and invalidates the phase.
+Deleting the control still retires its captures before another control can reuse the identity.
+
+The comparison executes these original 1.26.51.1/protocol 2193 producers:
+
+- `144582b20`: the UIControl setter for visible and ignored state.
+- `1448422c0`: the complete View function that drains pending updates.
+- `144847310`: inherited visibility and hidden hover propagation.
+- `144847620` and `1448491c0`: input admission, mapping invalidation, and sorted registration or removal.
+- Original raw View routing, captured releases, base controller delivery, and native destructors.
+
+The 144 cases cover three input modes, owner and parent changes, visible and ignored state, three mapping kinds, and independent capture policies.
+All 2,592 steps and 1,452 controller buttons match the source consumer.
+Twelve separate fixtures start with hidden raw flags and prove phase invalidation during initial registration.
+Both captures complete 40,932 native frees with balanced allocations and owner counts.
+The published 0.3.50 add-on fails the comparison when its first hovered control becomes hidden.
+
+The fixture supplies the external notification queue and its scheduling boundary.
+The real Input factory creates the modal root that establishes the admitted screen context.
+Tree, geometry, clocks, input mode, and inactive manager state remain supplied.
+No visibility, mapping phase, registration, or capture result uses a replacement function.
+The raw View entry returns `void`, so its leftover return register remains excluded.
+Whole screen construction, binding scheduling, synchronous named-child updates, modal transitions, manager activation, devices, and pixels remain open.
+The four original reports and all five implementation areas remain unfinished.
+
+The direct visibility callback comparison adds 12 cases, 120 steps, and 2,190 balanced native frees.
+Its preserved hover exposes incorrect double-press history clearing that the screen sequence alone cannot distinguish.
+The final add-on matches all three new corpora with mandatory production class origins.
+Six incorrect variants fail behavioral assertions, including the history-clearing variant against the direct callback corpus.
+
+Twenty-five packaged regressions pass, including four new mapping, registration, visibility, and capture regressions.
+All four builds pass 2,785 tests with 163 optional skips and no failures or errors.
+All 1,448 core classes match both embedded copies. All 1,184 client classes match the final add-on.
+The final JAR also matches all six earlier Button corpora and the earlier focus, tab, arrow, and GLOBAL comparisons.
+The rebuilt modpack contains the exact verified ViaFabricPlus and add-on JARs.
+These lifecycle changes remain outside published release 0.3.50.

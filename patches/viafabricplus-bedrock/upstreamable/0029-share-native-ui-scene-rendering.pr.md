@@ -299,3 +299,21 @@ Button/Input and hover composition match another 732 cases and 8,004 steps.
 The container consumer also matches 336 ScreenView and overlap cases, including capture-priority releases.
 Eight incorrect variants fail the native comparisons or lifecycle regressions.
 Full screen construction, property-update timing, controller pointer receivers, Button audio, devices and pixels remain separate gates.
+
+## Input visibility and capture ownership
+
+Input visibility callbacks invalidate all mapping phases without clearing double-press history.
+Removing a control from normal input order also invalidates its phases.
+Captured controls retain their identity after removal and receive their captured release before the normal pass.
+New presses do not reach an unregistered control.
+
+The source consumer matches 144 native pending-update cases and 12 initially hidden fixtures.
+The complete original View update executes visibility propagation, input registration and removal, capture routing, and controller delivery.
+The container patch owns the visibility producer and its retained scene integration.
+External notification queue insertion, the admitted root, geometry, clocks, and input mode remain supplied boundaries.
+Full screen construction, binding scheduling, modal transitions, physical devices, and native pixels remain unfinished.
+
+The packaged consumer matches all 144 update cases, 12 initial hidden fixtures, and 12 direct visibility callback cases.
+The direct callback corpus exposes an incorrect history-clearing variant that the screen sequence alone cannot distinguish.
+Six incorrect variants fail behavioral assertions. All four builds pass 2,785 tests with 163 optional skips.
+Twenty-five packaged regressions and the earlier input comparisons pass with mandatory production class origins.
