@@ -437,3 +437,127 @@ These live checks verify the Java workflow; they do not establish native screen 
 
 All five goal areas and the four original reports remain open.
 These changes target release 0.3.53.
+
+
+## Native ingredient counting
+
+Count native ingredient availability separately from placement and stack request authority.
+Group by concrete descriptor hash, retain the first stack's match set, and sort once by cardinality then descending quantity.
+Preserve collection-relative source references, repeated allocation rounds and the final partial round.
+Require at least one nonempty ingredient because the original counter does not terminate for empty recipes within the execution bounds.
+Concrete recipe matching and registration admission remain the caller's unfinished integration work.
+
+The current-owner producer snapshots grid, hotbar, inventory and optional cursor collections in native order.
+Player and table grids use four and nine inputs. Armor, offhand and preview cells remain outside those collections.
+The connection rewriter supplies actual descriptor conversion and hashing. Network IDs do not gate ingredient counts.
+These APIs do not replace item authority, request admission or placement.
+
+Complete original counter `0x14297b140` supplies 755 cases, 7,282 allocation rounds and 55,549 matcher calls.
+Fifty controls cover large cardinality/quantity sorts, including native tie ordering.
+Native descriptor construction, hashing, sorting, source-reference copying and nested cleanup execute.
+Source backing, ordinary definitions, connection lookup and concrete recipe matching remain supplied interfaces.
+The comparison checks counts, every round and reference, and exact matcher-call order.
+See the [ingredient reference](../../../docs/native-player-inventory.md#ingredient-availability-rounds) for boundaries and source mappings.
+Actual actor capture, concrete recipe admission/matching, complete availability evaluation, screen delivery, actions and pixels remain unfinished.
+
+The full four-project build passes 2,850 tests, with 163 optional skips and no failures or errors.
+Checkstyle passes. All 1,483 core classes match the embedded add-on and proxy copies; all 1,191 client classes match the tested add-on.
+The packaged counter matches all 755 controls and six focused regressions, and rejects six deliberate semantic changes.
+Retained packaged search, output-unlock and progressive-model comparisons also pass.
+
+
+## Resolved Recipe source matcher
+
+Bind already resolved ordinary descriptors to native Recipe source matching and current-owner counter snapshots.
+Reject an `ench` ListTag or nonzero `minecraft:item_lock` ByteTag before the matcher's source conversion.
+Retain absent versus empty userdata for empty descriptors, wildcard metadata and canonical associated block ownership.
+Share source guards with cooking. Keep grid matching on its separate path.
+The first nonzero stack still controls eligibility for every later source with its descriptor hash.
+
+The original shaped and shapeless factories install the same matcher and comparator.
+Actual Item construction, typed CompoundTag lookups, descriptor comparisons and the complete counter execute in the new reference.
+It covers 1,443 direct matches and 260 counter controls, including 496 rounds and 3,305 matcher calls.
+Thirty-nine shapeless controls also match. Typed metatype getters, ordinary definitions, registry lookup, source backing and allocator/CRT remain supplied interfaces.
+The original constructor clears Item references at zero quantity; the fixture now executes that construction before typed userdata injection.
+
+`countResolvedRecipeInputs` accepts resolved descriptors with explicit empty positions.
+Deferred wire names can select aliases or block fallback. The model below resolves them against explicit registry interfaces.
+Actual registry acquisition, tag/Molang payloads, complete wire admission and installed availability remain unfinished.
+See the [resolved ingredient reference](../../../docs/native-player-inventory.md#resolved-ingredient-matching) for evidence and limits.
+
+The full four-project build passes 2,854 tests, with 163 optional skips and no failures or errors. Checkstyle passes.
+All 1,485 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+The packaged matcher passes 1,703 direct/counter controls and three focused integration regressions, and rejects six deliberate semantic changes.
+All retained counter, search, output-unlock and progressive-model comparisons also pass.
+
+
+## Deferred name and alias descriptors
+
+Resolve names through native signed-short narrowing, wildcard alias selection, ordinary lookup rewriting and BlockLegacy fallback.
+Validate associated block state before metadata clamping. Keep a failed found Item separate from an absent Item eligible for fallback.
+Retain each deferred position's first resolution, including failure, after source guards and conversion.
+Preserve alias representatives independently of live membership, air-based emptiness and wildcard matching.
+
+The rich current-owner counter overload requires an explicit complete registry context.
+Query emptiness during native minimum and consumption phases instead of caching active slots before matching.
+Keep candidate-first default descriptor dispatch separate from the generic key API's contract.
+
+Complete original routines provide 1,904 resolution/emptiness controls, 4,032 comparisons and 220 full counter controls.
+The mixed counters cover 514 rounds and 1,179 registry calls with exact lookup order and post-resolution cleanup.
+Registry, alias/member, BlockLegacy/state and typed source interfaces remain supplied boundaries.
+Actual registry acquisition, tag/Molang payload resolution, full wire admission and installed availability remain unfinished.
+The [deferred descriptor reference](../../../docs/native-player-inventory.md#deferred-names-and-complex-aliases) records the contract and limits.
+
+The full four-project build passes 2,859 tests, with 163 optional skips and no failures or errors. Checkstyle passes.
+All 1,493 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+The packaged core matches both new corpora and three focused integration regressions.
+Nine deliberate changes fail value or lookup-order comparisons. All retained packaged comparisons also pass.
+
+
+## Constructor-owned ItemRegistry aliases
+
+Expose exact alias admission and ordered member names through the connection registry.
+Load the native ItemRegistry's 89 redirects and 60 complex aliases with 561 members.
+Apply one redirect before complex lookup. Preserve exact names and member order.
+Require the pinned asset and protocol; unregistered names retain the native empty-vector result.
+
+Complete original ItemRegistry initialization follows native block/state construction under the recorded default version and Experiments.
+The empty parsed network vector establishes pre-packet constructor data, not actual server admission.
+All native input, registry, TLS, static and CRT cleanup completes with no remaining allocations or held locks.
+Item alias registrations differ from block aliases and restriction groups, including wood order, item-only groups and slab redirects.
+The [ItemRegistry alias reference](../../../docs/native-player-inventory.md#constructor-owned-itemregistry-aliases) records the evidence and limits.
+
+Ordered member names do not replace auxiliary callbacks or live definition ownership.
+Ordinary named lookup rewriting, member/representative lookup, block fallback, complete Java registry construction and installed availability remain unfinished.
+
+The packaged connection registry matches all 2,127 original getter controls, including 86 registered results and 767 member-name comparisons.
+The controls query every constructed factory key and both names in each native redirect.
+Three deliberate changes fail value comparisons: ignored redirects, reversed member order and substituted block tables.
+The retained descriptor, counter, source matcher, search, unlock and progressive-model comparisons also pass.
+All four builds pass with 2,860 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
+All 1,495 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
+
+
+## Native legacy names and metadata callbacks
+
+Parse names with native ASCII case folding, colon/C-string suffix rules, tile-prefix removal and auxiliary acceptance.
+Expose registry fallback rewriting separately from component-definition precedence and live Item ownership.
+After one redirect and target parsing, execute the target's metadata callback and clear its auxiliary.
+The pinned data requires all 60 callbacks: 38 member-indexed definitions and 22 explicit mappings with 439 values.
+Preserve signed-short arguments, byte guards, signed remainder behavior and default targets.
+Reject metadata that indexes outside native callback storage; complete caller admission still needs implementation.
+
+Complete original parser and registry rewriter provide 2,501 parser controls and 22,917 rewrites after native block/state and ItemRegistry initialization.
+The harness supplies read-only UTF-8 caller backing, allocation and ordinary Windows CRT imports.
+Native game parsing, conversion dispatch/range checks, redirects, callbacks and owned string retirement execute.
+All original input, registry, TLS, static and CRT cleanup completes with no native allocations or held locks.
+Forty-six out-of-storage input combinations remain outside the normal-result corpus.
+See the [name-resolution reference](../../../docs/native-player-inventory.md#native-name-parsing-and-metadata-rewrites) for exact scope and limits.
+
+Live component/member/representative definitions, underlying definition lookup, Item construction, full registry replacement, recipe admission and installed availability remain unfinished.
+
+The packaged core matches all 2,501 parser controls, 22,917 rewrites and 46 explicit unsupported-index guards.
+Nine deliberate parser or callback changes fail native value comparisons.
+The 2,127 alias getter controls and three retained alias regressions also pass, along with the earlier descriptor, counter, search, unlock and progressive comparisons.
+All four builds pass with 2,862 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
+All 1,498 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.

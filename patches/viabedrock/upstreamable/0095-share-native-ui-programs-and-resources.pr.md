@@ -376,10 +376,12 @@ The shared UI patch now exports the query matcher, target normalizer, and raw ed
 These APIs do not register a channel or replace the default cooking screen.
 The production menu still publishes an empty query until name producers, transport, and widget integration are complete.
 
-`CookingRecipeSearch` normalizes the query once and requests primary names lazily.
+`NativeRecipeSearch` in `COOKING` mode normalizes the query once and requests primary names lazily.
 A primary match skips the secondary-label producer. An empty query skips both producers.
 The secondary branch removes native formatting codes before normalization.
-The matcher does not trim spaces, split words, or substitute Java preview names.
+This mode does not trim spaces, split words, or substitute Java preview names.
+The same API now provides explicit player substring and word-prefix policies.
+See [the player search reference](../../../docs/native-player-inventory.md#player-search-policies) for their rules and evidence.
 
 `CookingSearchText` retains the latest pending raw string until a ready tick.
 Equal edits still apply. An empty string remains a pending edit until that tick.
@@ -500,3 +502,44 @@ The complete player catalog producer, unlocks, craftability, action admission, f
 The final four-project build passes 2,823 tests with 163 optional skips and no failures or errors.
 Checkstyle passes after replay. All 1,465 core classes match both embedded copies, and all 1,191 client classes match the tested add-on.
 The packaged core repeats all 4,144 collection comparisons with its production class origin verified.
+
+## Current recipe-row eligibility
+
+Query current availability separately from collection refresh, using a caller-supplied evaluator and native representative/header comparison.
+Flat rows disable states two and three. Grouped rows disable only state two, with a representative exemption for headers.
+Expanded member rows retain their own eligibility; the query does not replace or reorder the snapshot.
+Original getter `1434461c0` supplies 3,584 matching cases with item-copy, icon-comparison and evaluator boundaries.
+Three regressions cover fresh availability, stable snapshots, exact representative/count matching and grouped member behavior.
+Additional native reset controls confirm that a flat refresh retains grouped expansion history even when its reset argument is true.
+Full catalog acquisition, controller ownership, action admission, physical input and visible native parity remain unfinished.
+
+The full four-project build passes 2,826 tests with 163 optional skips and no failures or errors.
+Checkstyle passes after replay. All 1,466 core classes match the embedded copies, and all 1,191 client classes match the tested add-on.
+The packaged core matches all 3,584 eligibility cases and retains all 4,144 collection/history comparisons, with production origins verified.
+
+## Shared player search policy
+
+`NativeRecipeSearch` replaces the cooking-only API with explicit cooking, player substring and player word-prefix modes.
+The cooking policy preserves its primary-name behavior. Player policies remove formatting from both name sources.
+All modes share target normalization and lazy primary/secondary producers.
+The player word policy requires the complete literal query and any query-token/name-token prefix match.
+It splits only at ASCII spaces and preserves the native treatment of leading, repeated and trailing delimiters.
+
+The packaged core matches 1,136 complete native player searches, 1,220 normalized word controls and 304 retained cooking compositions.
+Four deliberate semantic regressions fail. Native formatting, normalization, validity, matching, vector allocation and cleanup execute.
+Name/unlock providers, raw/fallback game types, stable item definitions and standard byte/stream interfaces remain supplied boundaries.
+The [player search reference](../../../docs/native-player-inventory.md#player-search-policies) records these limits and the evaluator dependencies.
+
+All four builds pass with 2,842 tests, 163 optional skips and no failures or errors.
+Checkstyle passes after full replay. All 1,472 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+The actual player availability evaluator, authoritative name acquisition, installed-screen search and pixels remain unfinished.
+
+
+## Shared native sort
+
+Extract the pinned STL algorithm into `NativeSort` with an explicit comparator.
+Cooking priorities retain their existing behavior, including the native ordering of equal priorities.
+The deferred crafting consumer uses the same algorithm for ingredient cardinality and quantity.
+Keep the Microsoft STL license beside the extracted implementation.
+Existing cooking-order tests pass. The consuming patch compares large pair sorts against complete original counter executions.
+This extraction does not install the player availability evaluator or change screen admission.

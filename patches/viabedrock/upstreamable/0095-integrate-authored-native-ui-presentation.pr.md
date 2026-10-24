@@ -715,3 +715,43 @@ A fresh BDS run passes all three cooking families and same-world reconnect with 
 Both launches match its checksum. All nine observed owned identities retire, and the private display stops normally.
 Java cooking screens handle these controls. Unsupported authored preference mappings still prevent native screen acceptance.
 The client source tree is unchanged by this naming update.
+
+## Definition-owned creative categories
+
+Retain the definition category used by the native player search source.
+The existing factory table now includes all 1,949 constructor defaults from complete pinned native registry initialization.
+New definitions start at category four. Explicit component construction replaces the built-in default before ordered component readers run.
+
+A compound `item_properties` sets the low byte of integer `creative_category`, with zero for absent or mistyped values.
+Omitted or mistyped property blocks preserve the previous category. Legacy readers leave it unchanged.
+Unknown `None` entries receive their fallback after component readers, and final runtime-ID replacement selects the surviving definition.
+
+Complete native component construction, binary NBT parsing, property loading and destruction cover 279 typed inputs and five retained-update steps.
+The complete legacy reader preserves its category across the same inputs.
+The built-in reference uses the retained native block bootstrap and an empty network vector; it establishes defaults rather than a normal server packet baseline.
+These facts support catalog acquisition. They do not establish recipe unlocks, craftability, authored player screens or physical input.
+
+The complete four-project build passes 2,830 tests with 163 optional skips and no failures or errors.
+The packaged core matches all 1,949 category defaults, 563 typed-update comparisons and 906 search rebuilds.
+All 1,466 core classes and the factory table match the add-on and proxy copies; all 1,191 client classes match the tested add-on.
+The previous 7,728 eligibility and collection/history comparisons still pass against the packaged core.
+
+Creative content can later rewrite the shared category byte through admitted group membership.
+These updates remain in the connection registry across later catalog replacement.
+The final membership assignment controls search for all variants of that definition.
+Complete native creative-registry construction, content replacement, group/member assignment, search rebuilding and destruction provide 186 additional controls.
+Typed descriptor conversion, item copies/destruction, diagnostics and ordinary allocator/CRT calls remain supplied boundaries.
+The packaged core matches these controls, and all four builds pass 2,833 tests with 163 optional skips.
+Raw group and category sources are retained; native collection population, evaluators and player screen/input integration remain open.
+
+Native value identity now permits defined zero-quantity catalog icons while ordinary stack-query admission still rejects an empty quantity.
+Creative groups retain their native icon beside the Java presentation.
+The catalog adapter supplies owned row snapshots, retained first-matching entry references, member-count admission and native icon/count header history to the shared collection model.
+Complete original creative registration, item comparison, source assignment, collection ordering and projection execute together in 300 controls.
+Three retained flows also execute native header toggles and refreshes.
+Availability results, typed item backing, item copies/destruction, change notifications and allocator/CRT remain supplied interfaces.
+Progressive frame delivery, actual availability evaluation and the full player controller/screen remain open.
+
+The final four-project build passes 2,838 tests with 163 optional skips and no failures or errors.
+All 1,468 core classes and the factory table match the embedded add-on and proxy copies; all 1,191 client classes match the tested add-on.
+The final packaged core retains all 11,332 prior comparisons and matches the 309 new catalog/collection case and flow steps.

@@ -50,9 +50,17 @@ An absent player, absent component, missing page, stale entity generation or raw
 The reference executes 640 cases through both the original helper and the registered callback, for 1,280 calls.
 Actor delivery, component backing and the fallback virtual getter remain supplied interfaces.
 
-The constructor also stores an independent flag at offset `0x1319`.
+The constructor also stores an independent profile predicate at offset `0x1319`.
 Its producer compares a virtual service result with `1`; the service comes from client vtable offset `0x578`, then service vtable offset `0x70`.
-The service type remains unverified. The implementation must not substitute the effective creative predicate or the input mode for this flag.
+The native inventory factory uses the same getter to choose the desktop root for zero and the pocket root for nonzero values.
+Only value one sets the constructor predicate. Other nonzero values still select the pocket root but leave that predicate false.
+This state must remain separate from effective creative mode and controller input mode.
+
+Seven raw signed values execute the original factory selection and constructor comparison, including the native client getter at `0x145dc2800`.
+The factory slice runs from `0x14052eb9c` to `0x14052ec1b`; the constructor slice runs from `0x144e0f832` to `0x144e0f86a`.
+The service getter result, context backing, allocator and CRT boundaries are supplied.
+These slices do not execute complete screen construction, settings acquisition, physical input or rendering.
+The service's concrete type remains unverified. The client getter reads field `0xe10`, whose shared owner occupies `0xe18`.
 
 ### Layout and tabs
 
@@ -86,7 +94,7 @@ The raw filtering preference remains separate from the recipe model's effective 
 
 The bounded constructor reference executes 3,472 combinations of layouts, tabs, filtering, both flags, screen type and controller input mode.
 Each case then executes sixteen original property getters, for 55,552 getter calls.
-The reference supplies model-filter updates and initial tab publication. It disables the separate restricted-tab policy.
+The reference supplies model-filter updates and initial collection refresh. It disables the separate restricted-tab policy.
 Full construction, restricted-tab availability, device delivery and visible pixels remain unverified.
 
 ### Logical item and recipe collections
@@ -115,15 +123,154 @@ The player model requires these distinct collections:
 Model builder `0x1434360d0` creates the item collections and four category recipe collections through `0x143438210`.
 It also creates a separate search collection. These recipe collections share constructor `0x143443e50`.
 The category counts use the source category's group references; search uses the complete source list.
-This model construction evidence comes from disassembly. Production recipe acquisition, category assignment, availability evaluation and mutation remain unfinished.
+This model construction evidence comes from disassembly. The player search source now uses definition categories from the connection registry.
+The connection catalog now retains the category membership sources.
+Installed-screen tick delivery, recipe availability evaluation and model publication remain unfinished.
 The player screen must retain the complete catalog and recipes that need a crafting table.
 A fabricated empty recipe catalog cannot establish support for the default inventory asset.
 
+## Player search and category catalogs
+
+This section describes the unreleased player catalog changes.
+
+The model constructor receives the local player and stores it at offset `0x30`.
+The player owns the search vector at offsets `0x600` through `0x610`.
+The original rebuild routine is `0x14020ec60`.
+It copies creative registry entries in their existing order and admits definition categories one through four.
+An absent definition or any other category excludes the entry.
+The rebuild reads the current definition byte after creative membership updates.
+Item count, Java fallback identity and crafting-grid size do not select this source.
+
+Text search, unlocks and craftability run later through separate evaluators.
+
+The connection registry now retains each definition's category byte.
+Built-in defaults come from complete native registration and cover all 1,949 factory identifiers in the existing table.
+New ordinary and component definitions start at category four.
+Explicit component construction replaces a built-in default before any ordered component updates.
+Legacy component readers preserve this category.
+
+For component items, a compound `item_properties` reads the integer property `creative_category` and takes its low byte.
+A missing or mistyped property sets the byte to zero.
+An absent or mistyped `item_properties` block preserves the previous byte.
+Unknown `None` registrations receive their fallback definition after component updates.
+Final runtime-ID replacement selects the surviving definition.
+
+Creative content registers categories one through five in packet order.
+The first named declaration within each category retains its icon.
+Anonymous groups remain separate and use an empty icon.
+Repeated named declarations and unsupported categories do not take a group slot.
+Item group indices address the registered vector directly.
+
+Membership updates the shared definition category in entry order.
+The final assignment controls search admission for every variant of that definition.
+A later catalog preserves categories for definitions that receive no new membership.
+The complete palette, search source and category sources remain separate snapshots.
+Category sources visit groups in registration order, then members in entry order.
+
+`CreativeCatalog` retains a separate search list when `ItemRewriter` receives the server catalog.
+This list uses the connection registry and preserves the admitted entries' identities, variants, duplicates and order.
+The complete creative catalog remains available independently.
+The search list does not discard recipes that require a crafting table.
+The authored player screen and its evaluator still need integration.
+
+Complete original creative-registry construction, content replacement, category setup, group registration and member assignment execute 186 controls.
+Definition rewrites, search rebuilding and registry destruction execute too, with no remaining native allocations.
+Descriptor conversion, typed item backing, item copy/destruction, diagnostics and ordinary allocator/CRT calls remain supplied boundaries.
+These controls cover replacement, duplicate names, anonymous groups, unsupported categories, direct registered indices and shared definition updates.
+The prior committed catalog admits two search rows after hidden membership; the corrected packaged core and native reference both admit zero.
+
+### Native collection adapter
+
+The unreleased catalog retains each native group icon beside its Java presentation.
+`ItemRewriter.creativeCollectionSource` binds a catalog snapshot to the shared `RecipeCollection`.
+The caller must supply current availability evaluation; the adapter does not invent an unlock or craftability policy.
+
+Population copies each source stack and retains its first matching creative entry before availability evaluation.
+Refreshes use that stored reference when they select a group.
+The comparison uses native metadata wildcards, userdata, directional block state and restrictions.
+Root quantity and network ID do not select the matching entry.
+The source entry's advertised group cannot override this first match.
+
+A header needs at least two registered members and a defined native icon.
+The icon may have zero quantity.
+Expansion history compares native icon identity and quantity, independently of the Java fallback item.
+Anonymous groups retain empty icons and produce individual rows.
+
+Complete original creative registration, item comparison, source assignment, bucket ordering, header construction and projection execute together in 300 controls.
+Three retained-state flows also execute native header toggles and refreshes with zero-count icons.
+Parsed descriptor backing, stable ordinary definitions, descriptor conversion, item copy/destruction, availability results, change notifications and allocator/CRT calls remain supplied interfaces.
+The packaged comparison checks stored catalog references, collection order, eligible counts, visible rows and retained expansion.
+Full player-controller lifetime, actual availability evaluation, frame delivery and visible screen behavior remain unverified.
+
+The zero-count controls supply an icon with an existing definition.
+They do not establish raw descriptor construction at zero count.
+
+### Population into recipe collections
+
+The unreleased `CreativeInventoryModel` owns the five creative collection buffers and their retained refresh state.
+`ItemRewriter.creativeInventoryModel` binds a connection catalog with explicit per-view availability evaluation.
+The installed player screen still needs to own this model and deliver its ticks.
+
+Original provider `0x143439c20` visits search first, then construction, nature, equipment and items.
+One budget covers all five sources and derives from their combined count divided by eight.
+Group, member and destination cursors persist between ticks.
+The model retains fixed-capacity empty rows until population replaces them with owned snapshots and catalog references.
+The original collection constructor stores `-1` for an unpopulated source reference.
+
+The executed guard consumes work only when the combined count exceeds seven.
+Smaller controls retain their initial phase; the Java model preserves that behavior.
+This controlled result does not establish the behavior of a fully constructed screen with a small catalog.
+
+The call after the final write phase reports completion once.
+Controller tick `0x144e168b0` then dirties the active left tab.
+Dispatcher `0x144e1f430` refreshes that collection and retains the other dirty tabs.
+An initial dirty tab can refresh before population completes.
+Inventory tab six clears its bit without selecting a recipe collection.
+Population order remains separate from the left-tab mapping.
+
+Source assignment runs `0x1434463c0` and `0x143446410`.
+It stores the first matching creative entry index, with native metadata wildcard matching and independent stack counts.
+The collection then resolves that entry's group reference.
+This index is not the selected entry's packet group index.
+The catalog adapter retains this distinction when it supplies group identity to `RecipeCollection`.
+
+Complete original creative setup, five collection constructors and destructors, progressive population, controller tick, refresh dispatch, ordering and projection execute together in 508 controls.
+The packaged model is compared across all 9,438 frames, including row references, phases, cursors, dirty masks, visible rows and eligible counts.
+The reference supplies parsed descriptors, stable ordinary definitions, descriptor conversion, item copies/destruction, labels, name/receiver lookup, availability functions, unrelated base-controller ticking and allocator/CRT calls.
+Gesture, focus and delayed-action flags remain inactive during these complete tick controls.
+Native allocation cleanup completes with no remaining allocations.
+
+Three additional weak-owner flows execute 68 native frames.
+They establish that a missing strong owner prevents population while ordinary dirty-tab dispatch can still run.
+The Java screen's opening and retirement ownership is not integrated by these controls.
+Full screen construction, raw packet/item construction, actual availability policy, rendering and physical input remain unverified.
+
+The earlier provider-only reference retains 181 controls across 2,296 frames with independently supplied category/group/member sources.
+Those broader input controls remain separate from the coherent creative-content and controller comparisons above.
+
+The complete original search rebuild and vector growth execute 906 controls.
+They cover all category bytes, absent definitions, duplicates, allocation boundaries and repeated replacement.
+Item copy/destruction, allocator and CRT calls use supplied boundaries.
+
+Separate controls execute complete component construction, binary NBT parsing, property reading and destruction.
+These cover 279 inputs and five retained-update steps; the complete legacy reader preserves the constructor category for the same inputs.
+Built-in registration executes with the retained versioned block bootstrap and an empty packet vector.
+This establishes constructor defaults rather than a server packet baseline.
+Physical inventory rendering, unlock policy, recipe solving and controller input remain unverified.
+
+All four projects build with 2,841 tests passed, 163 optional skips and no failures or errors.
+The packaged core matches 1,949 factory defaults, 563 typed-update comparisons and 906 search rebuilds.
+It also retains all 7,728 original eligibility and collection/history comparisons.
+All 1,471 core classes and the factory table match the embedded add-on and proxy copies.
+All 1,191 client classes match the tested add-on.
+
 ## Shared recipe collections
+
+Release 0.3.56 includes this shared collection model.
 
 The shared `RecipeCollection` model implements the target collection ordering and retained header expansion.
 Cooking uses the same partitioner for its flat visible recipe prefix.
-The player controller still needs a complete catalog producer before it can use grouped collections.
+The player controller still needs installed-screen tick delivery, opening ownership and its availability evaluator before it can publish these bound collections.
 
 Entries retain four stable evaluator buckets.
 A contiguous catalog group moves as one run: state zero wins, then state one; otherwise the first member selects state two or three.
@@ -144,9 +291,76 @@ The steps cover expansion history and groups with equal icons but different iden
 Native vector allocation and cleanup execute. Item copy/destruction, icon equality, availability evaluation and external callbacks use supplied boundaries.
 These checks do not establish recipe acquisition, unlocks, craftability, full controller ownership, physical input or visible screen parity.
 Six focused regressions cover ordering, representative identity, filtering, invalid entries, expansion history and immutable snapshots.
-The complete build passes 2,823 tests, with 163 optional skips and no failures or errors.
+The collection milestone's complete build passed 2,823 tests, with 163 optional skips and no failures or errors.
 All 1,465 core classes match the embedded add-on and proxy copies; all 1,191 client classes match the tested add-on.
 The packaged core repeats all 4,144 recipe comparisons with its class origin verified.
+
+## Current recipe-row eligibility
+
+The continuation after 0.3.56 adds a query for current row availability without refreshing or reordering its retained snapshot.
+Flat collections disable evaluator states two and three.
+Grouped collections disable only state two, with an exception for headers that match a retained representative by icon and count.
+The exception applies to expanded and collapsed headers. It does not apply to member rows.
+Representatives come from the last collection refresh; the query does not recompute them.
+
+Original getter `0x1434461c0` supplies 3,584 cases with fresh evaluator values after collection construction.
+Every captured query passes byte one to the evaluator interface.
+The shared API keeps that query separate from the refresh evaluator.
+It requires the caller to supply current availability and exact representative/header item comparison.
+Original count checks and representative traversal execute. Item copy/destruction, icon equality and evaluator results use supplied boundaries.
+Three regressions cover fresh queries, unchanged snapshots, representative identity, icon/count matching and grouped member behavior.
+This query supplies presentation state. It does not authorize a recipe action or establish full player-controller support.
+
+The eligibility milestone's complete build passes 2,826 tests, with 163 optional skips and no failures or errors.
+All 1,466 core classes match both embedded copies, and all 1,191 client classes match the tested add-on.
+The packaged core matches all 3,584 eligibility cases and repeats the 4,144 collection/history checks with its class origin verified.
+
+## Registry and catalog source reference
+
+The lookup at `0x143491110` locks an `ItemRegistryRef` and reads the registry's field at offset `0x430`.
+The target's diagnostics identify `ItemRegistryRef::_lockRegistry()` and the downstream `NonOwnerPointer<CreativeItemRegistry>` access.
+It copies an activation pointer, lifetime owner and source pointer.
+The lookup does not test the activation byte itself; callers must still admit the returned handle.
+
+The complete original lookup passes 192 supplied registry/owner/holder cases.
+Input reference counts remain balanced. Successful copies retain the output owner.
+Failed-lock diagnostic calls return false at an explicit external boundary.
+The checks observe returned references before caller release.
+They do not construct a registry or acquire its data from a server.
+
+The category constructor's slice from `0x1434382ec` to `0x143438361` passes 500 capacity cases.
+It sums the member-vector lengths of referenced groups, counts repeated references again and skips invalid unsigned group indices.
+An absent category owner or group-data pointer produces zero capacity.
+The fixture supplies category, group and member-vector backing and stops before allocation.
+
+The original phase table at `0x14e880e90` contains these collection/selector pairs:
+
+| Phase | Collection ID | Internal selector |
+| --- | --- | --- |
+| 0 | 18, search | 6 |
+| 1 | 15, construction | 1 |
+| 2 | 16, nature | 2 |
+| 3 | 20, equipment | 3 |
+| 4 | 17, items | 4 |
+
+Disassembly of `0x143439c20` uses selector six for the full search list and the other selectors for registry category groups.
+These selectors describe the internal model; they do not establish network enum values.
+Complete catalog registration, recipe matching, unlocks, craftability, incremental publication and live mutation still need implementation and verification.
+
+## Recipe collection refresh admission
+
+Function `0x144e1f430` refreshes a dirty selected collection. It does not change or publish the selected tab.
+Left tabs one through five resolve collection IDs 15, 20, 17, 16 and 18 respectively.
+The corresponding dirty bit clears only after the dispatcher locks a live collection and calls its refresh receiver.
+An absent lookup result, missing weak owner, expired strong count or absent collection leaves the bit set for a later retry.
+Tab six clears the inventory bit without a recipe lookup. Other unsupported tab values leave the mask unchanged.
+The dispatcher forwards its refresh argument without changing its 32-bit value.
+
+The complete original dispatcher passes 2,880 cases across tab values, dirty masks, lookup results, owner state and refresh arguments.
+Its switch, string handling, mask transitions and shared/weak reference operations execute through normal return.
+Global-name lookup, model collection lookup and the final refresh receiver use supplied boundaries.
+All observed reference counts remain balanced, and native temporary allocations are released.
+This reference does not execute full controller construction, collection production, physical input or rendering.
 
 ## Target and original functions
 
@@ -208,7 +422,7 @@ The reference does not establish GPU output, clipping, physical input delivery o
 
 ## Java implementation checks
 
-The full stack passes 2,817 tests, with 163 optional skips.
+The installed-screen milestone's complete build passed 2,817 tests, with 163 optional skips.
 Three packaged camera regressions pass and reject four deliberately incorrect implementations.
 The native comparison covers framing, actor rotation and body yaw in all 672 cases.
 Head-yaw comparisons cover the 336 cases with that component present.
@@ -235,3 +449,349 @@ The installed-screen bridge has sixteen packaged lifecycle and codec regressions
 The full player-inventory controller and physical input delivery remain unfinished.
 Direct joins, creative item actions, reconfiguration and recovery under packet delay still need live verification.
 All five implementation areas and the four original bug reports remain open.
+
+## Player search policies
+
+`NativeRecipeSearch` shares normalized query bytes between cooking and player search.
+Callers select an explicit mode. Cooking preserves primary-name formatting.
+Both player modes remove native formatting from primary names and secondary display labels.
+A primary match skips the secondary producer. An empty normalized query skips both producers.
+Search does not remove query formatting, trim spaces or substitute Java preview names.
+
+`PLAYER_SUBSTRING` requires the complete normalized query to occur in either normalized name.
+`PLAYER_WORD_PREFIX` requires that literal match plus a prefix match between any query token and any name token.
+It does not require every query token to match. Only ASCII space separates tokens.
+Leading and repeated spaces produce empty tokens. A trailing space does not produce a final empty token.
+Tabs, newlines and Unicode spaces remain inside tokens after target normalization.
+
+For example, `on` matches `stone` only in substring mode.
+It matches `stone onyx` in both player modes.
+The query `en sto` matches `wooden stone bricks` in word-prefix mode because `sto` prefixes `stone`.
+The complete query still occurs literally in that name. The query `wood brick` fails that literal check.
+
+The pinned client is Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Complete original functions `0x143438780` and `0x143438da0` supply 1,136 player-search cases and 1,220 normalized word controls.
+Comparisons include malformed UTF-8, embedded NULs, formatting, Unicode normalization, repeated spaces and lazy name acquisition.
+Native formatting, normalization, empty-item checks, matching, vector allocation and cleanup execute.
+The harness supplies name and unlock providers, raw/fallback game types, stable item definitions and standard byte/stream interfaces.
+Thirty invalid-stack controls confirm that an empty query returns state one before native validity checks.
+Eighteen secondary-label controls confirm the raw/fallback creative flag delivered to the name provider.
+These additional controls describe native dependencies; the shared matcher does not own item admission or game mode.
+
+The shared API returns a text match. The full player availability evaluator remains unfinished.
+Native function `0x14341c4c0` installs separate search and category evaluators after collection construction.
+Search combines text matching, recipe unlocking and craftability. Category views also depend on filtering and an actor ability predicate.
+The ability predicate is not established as creative mode.
+The player screen still needs authoritative name producers, concrete recipe matching, actual context inputs and installed-screen callbacks.
+The four original reports and all five goal areas remain unresolved.
+
+The packaged core matches all 2,660 search comparisons, including 304 retained cooking compositions.
+Four deliberate regressions fail: omitting the literal check, accepting trailing empty tokens, preserving player-name formatting and requiring every query token.
+The retained progressive player model still matches 508 controls across 9,438 frames.
+All four projects build with 2,842 passing tests, 163 optional skips and no failures or errors.
+Checkstyle passes after full replay. All 1,472 core classes match the embedded add-on and proxy copies.
+All 1,191 client classes match the tested add-on. Captures and verifiers remain private.
+
+## Output unlocking
+
+`CraftingDataTracker.isOutputUnlocked` reads current connection game rules, registered recipes and unlocked recipe IDs.
+Disabled or unavailable `recipesUnlock` rules admit the output before lookup, as the native predicate does.
+With unlocking enabled, the query uses the native output index independently of displayed recipes and ingredient placement capacity.
+
+Registration indexes only the first fixed result. It reconstructs a count-one Item key before selecting the exact definition/auxiliary bucket.
+This construction preserves associated-block resolution, metadata normalization and the native wildcard value.
+Ingredient wildcard comparison does not select output-index buckets.
+The query applies full native stack identity after it selects the bucket.
+Root quantity does not determine that identity.
+
+Each output bucket retains the latest recipe with a given ID, including registrations under different station tags.
+Context, stack and unlock filtering happen after that replacement.
+An earlier unlocked recipe cannot remain visible when its replacement belongs to another context or has different stack data.
+Different output buckets retain their own replacements.
+
+The tracker caches the private index against the catalog revision and connection rewriters.
+Recipe additions, catalog clears and unlock updates invalidate that snapshot.
+Each query reads current rules and unlock membership. It does not cache the unlocked result or reuse Java recipe-book visibility.
+The tests also compose actual associated-block construction with the stripped-oak-wood auxiliary-eight alias and wildcard metadata.
+
+The pinned client remains Bedrock 1.26.51.1, build 51061372, protocol 2193.
+The original registration region `0x14324d3bf` through `0x14324e422` executes key construction, tree/hash insertion, replacement and rehash.
+Complete output queries `0x143249b10` and `0x143249870` execute context hashing, per-query deduplication and full stack matching.
+Complete functions `0x143439200`, `0x14344d180` and `0x142895850` execute rule checks, actor-component lookup and unlock membership.
+Negative input auxiliaries use the original count-one constructor before the harness sets controlled quantities.
+Query temporaries return to the persistent index's allocation baseline.
+
+The reference has 589 controls. The packaged tracker and real Item rewriter match 553 ordinary controls across 1,659 unlock-state comparisons.
+Four retained catalog flows add 12 update/clear comparisons.
+Thirty-six missing-component controls remain native references for later screen-ownership integration.
+Six deliberate regressions fail: first-registration retention, early context filtering, early stack filtering, stale index reuse, ignored rules and collapsed metadata buckets.
+
+The harness supplies admitted static recipe objects, result getters, context/Level/actor backing, stable ordinary definitions and connection definition lookup.
+Item copies/destruction, empty userdata loading, derived item refresh, clocks and allocator/CRT remain supplied interfaces.
+The complete wire registration, concrete recipe-class admission, actual recipe-context production and actor-component construction remain unverified.
+Nonordinary block canonicalization retains its earlier constructor evidence; these new full-query controls use ordinary definitions and controlled block pointers.
+
+All four projects build with 2,843 passing tests, 163 optional skips and no failures or errors.
+Checkstyle passes. All 1,475 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+
+The player availability evaluator still needs concrete ingredient matching, actual context inputs, evaluator installation and screen lifecycle integration.
+The four original reports and all five goal areas remain active.
+
+## Ingredient availability rounds
+
+`NativeRecipeCounter` counts available ingredients independently of Java placement capacity and item request authority.
+The concrete recipe supplies ingredient emptiness and matching. It must contain at least one nonempty ingredient.
+The original counter does not terminate for empty or all-empty ingredient vectors within the execution bounds.
+The Java boundary rejects those inputs. Concrete registration and admission remain unfinished.
+
+The counter groups source stacks by their concrete descriptor hash.
+Only the first stack with a nonzero quantity for each hash determines its compatible ingredient slots.
+Later stacks retain that decision, including an empty match set. Stack request IDs do not determine count eligibility.
+The counter sorts groups once by compatible-slot count, then by descending aggregate quantity.
+The shared `NativeSort` retains the target STL ordering of equivalent groups above the insertion-sort threshold.
+Cooking priorities use the same extracted algorithm, with the original license notice intact.
+
+Each round distributes a group's remaining quantity evenly among its unfilled compatible slots.
+Earlier slots receive the remainder. Each nonzero assignment retains all contributing collection and slot references.
+The smallest allocation among nonempty ingredients adds to the total.
+Each active ingredient then consumes that quantity from its chosen group, including repeated consumption from a shared group.
+The result retains every round, including the final partial or zero round.
+Ingredient descriptor quantities do not divide allocations inside this counter. The concrete matcher can still depend on those quantities.
+
+`InventoryTracker.craftingSources` captures the current owner's native collections in this order:
+
+| Collection | Player inventory | Crafting table |
+| --- | --- | --- |
+| `CraftingInputContainer` | HUD slots 28 through 31 | Table slots 32 through 40 |
+| `HotbarContainer` | Inventory slots 0 through 8 | Inventory slots 0 through 8 |
+| `InventoryContainer` | Inventory slots 9 through 35 | Inventory slots 9 through 35 |
+| `CursorContainer` | Optional HUD slot 0 | Optional HUD slot 0 |
+
+The optional flag controls cursor inclusion. Both paths always include the crafting grid.
+Armor, offhand and preview stacks do not enter these collections.
+The producer copies stack data and rejects a missing, stale or unsupported owner.
+Result slots remain collection-relative. They require translation before any future item request uses them.
+`ItemRewriter.countRecipeInputs` binds the snapshots to the connection's concrete descriptor conversion and hashing.
+This API does not publish a second item authority or replace placement and request admission.
+
+The pinned client remains Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Complete original counter `0x14297b140` executes source grouping, matching dispatch, allocation rounds and nested cleanup.
+Source descriptor construction `0x142486a70` and `0x1424d0b30`, hashing `0x1424e54b0`, and pair sorting `0x142982a00` also execute.
+Source-reference construction and copying preserve actual collection names and relative slot indices.
+Constructor `0x1434360d0` establishes collection order and the four-input or nine-input grid capacity.
+
+The reference covers 755 cases, 7,282 allocation rounds and 55,549 matcher calls.
+Fifty controls exercise large sorts, including comparator-equivalent groups above 32 entries.
+The Java comparison checks total counts, every allocation, every source reference and exact matcher-call order.
+Separate tests compose the real connection rewriter with player and table snapshots, cursor inclusion, immutable copies and owner rejection.
+
+The harness supplies immutable source models, collection names, vectors, stable ordinary definitions and connection definition lookup.
+It supplies the concrete recipe's matching interface through typed per-stack matching sets.
+Ingredient descriptor types, emptiness and quantities are controlled inputs. No count or availability decision uses a supplied result.
+Native temporary allocation and nested cleanup return to the ingredient baseline; final descriptor cleanup leaves no allocations.
+Actual actor/provider capture, concrete recipe admission and matching, full availability evaluation, installed-screen delivery, actions and pixels remain unverified.
+
+The packaged core matches all 755 counter controls and the six focused counter/source regressions.
+Six deliberate changes fail value comparisons: ascending quantity, stable ties, repeated empty-hash matching, zero-quantity inclusion, omitted partial rounds and reversed remainder order.
+The retained packaged comparisons pass all 2,660 searches, 1,671 output-unlock/update checks and 508 progressive controls across 9,438 frames.
+
+All four projects build with 2,850 passing tests, 163 optional skips and no failures or errors.
+Checkstyle passes after full replay. All 1,483 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+
+The four original reports and all five goal areas remain active.
+
+
+## Resolved ingredient matching
+
+`RecipeIngredientMatcher` implements the shared native Recipe matcher after ordinary descriptors resolve.
+`ItemRewriter.matchesResolvedRecipeIngredient` supplies connection descriptor conversion and canonical associated block ownership.
+`countResolvedRecipeInputs` combines that matcher with current-owner snapshots and the verified counter.
+The input vector retains null keys as empty ingredient positions. The counter still requires at least one nonempty ingredient.
+Outer ingredient quantities do not change this resolved matcher or divide counter allocations.
+
+The source guard runs before the matcher converts the stack.
+An `ench` ListTag rejects the source, including an empty list. Other `ench` tag types do not activate that guard.
+A nonzero `minecraft:item_lock` ByteTag also rejects the source. Zero ByteTags and other tag types do not activate that guard.
+Cooking now shares these guards through the same helper.
+
+An empty ingredient matches an empty source descriptor only when source userdata is absent.
+A present empty CompoundTag remains distinct from absent userdata in this matcher.
+Nonempty descriptors retain wildcard auxiliaries and canonical associated block comparison.
+These rules belong to Recipe source matching. The separate shaped and shapeless grid matchers use different paths and keep their existing behavior.
+
+The counter still caches the first nonzero stack's match result for each descriptor hash.
+If that first stack is enchanted or locked, later ordinary stacks with the same hash remain unavailable.
+If the first stack passes, later enchanted or locked stacks with that hash still contribute their quantities and source references.
+Repeated source eligibility checks would change native counts.
+
+The original shaped factory `0x1432697f0` installs vtable `0x14e872280`.
+The shapeless factory `0x14326a0a0` installs vtable `0x14e872300`.
+Both tables select source matcher `0x14297a2e0` and descriptor comparison `0x14297a710`.
+Both return true from virtual slot `0x50`, which activates output validation in registration `0x14324b590`.
+This table evidence does not establish complete wire admission or every recipe class.
+
+The reference executes the original Item constructor before it supplies typed userdata.
+That constructor clears the Item reference at zero quantity. Earlier raw zero-quantity seeds did not represent that construction and were corrected.
+Original CompoundTag lookups `0x142548a90` and `0x142548b90`, descriptor construction/comparison, and the complete counter execute.
+The capture contains 1,443 direct matches and 260 counter controls with 496 rounds and 3,305 matcher calls.
+Thirty-nine shapeless controls also match the shared path.
+Separate Java tests cover lazy conversion after source guards, real owner snapshots, empty positions and canonical associated block ownership.
+
+The harness supplies typed tag trees and metatype getters, stable ordinary definitions, registry lookup, source model backing and allocator/CRT interfaces.
+Temporary native descriptor and counter allocations return to their baseline.
+The capture does not execute binary NBT loading, complete source Item retirement, native actor/provider capture, installed screens, actions or pixels.
+
+The packaged core matches all 1,703 direct/counter controls and the three focused integration regressions.
+Six deliberate regressions fail value comparisons: ignored enchantment lists, rejected non-list enchantment tags, rejected zero locks, ignored empty userdata, exact-only metadata and repeated source eligibility.
+The retained 755 counter controls, 2,660 searches, 1,671 unlock/update comparisons and 508 progressive controls across 9,438 frames also pass.
+All four builds pass with 2,854 tests, 163 optional skips and no failures or errors. Checkstyle passes.
+All 1,485 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+
+Deferred wire names require another resolution stage before this API can consume their results.
+Original resolver `0x142522910` can select a runtime alias descriptor or fall back to a block definition.
+Treating every wire name as an ordinary Item key would skip those branches and can misclassify empty ingredients.
+The model below implements deferred names and alias behavior against explicit registry interfaces.
+Production registry acquisition, tag/Molang payload resolution, full wire admission, actual recipe contexts and installed availability remain unfinished.
+The four original reports and all five goal areas remain active.
+
+
+## Deferred names and complex aliases
+
+`NativeRecipeDescriptor` retains empty, ordinary, complex-alias and deferred values.
+Name resolution narrows the requested auxiliary to a signed short before selecting a branch.
+Only a wildcard request can select a registered complex alias before ordinary name lookup.
+Ordinary lookup can rewrite the auxiliary. The resolver narrows that result before associated block validation and clamps it afterward.
+A found Item with an invalid associated block state resolves empty. It does not fall back to another block.
+An absent Item can use block fallback, which produces a wildcard descriptor independently of the requested auxiliary.
+An empty name resolves empty without registry queries.
+
+Each ingredient position owns its deferred value.
+The first query retains the resolved descriptor, including a missing result.
+Source guards and source descriptor conversion precede deferred source matching.
+The native clone and wrapper conversion establish this ownership and mutation behavior.
+A complete recipe loader still needs to create and retire these values with their native owners.
+
+Alias representatives, emptiness and matching are separate data.
+The representative can exist while every alias member is unavailable. It does not become an implicit member.
+Emptiness enumerates current members and requires a definition other than `minecraft:air`.
+Matching enumerates current members independently and compares their definition IDs with wildcard metadata.
+An air-only alias can therefore count as empty yet match an air definition.
+An ordinary air descriptor also retains its identity while its emptiness predicate returns true.
+The model preserves those results instead of replacing every empty descriptor with a null key.
+Member enumeration and lookup stay live and stop at the first qualifying member.
+
+The rich `ItemRewriter.countResolvedRecipeInputs` overload requires a complete native registry context.
+It combines these descriptors with copied current-owner sources and the shared matcher/counter.
+The counter now queries emptiness during each minimum and consumption phase after source matching.
+An early cached active-slot vector changed native lookup phases and could hide changing alias membership.
+Default descriptor double dispatch also visits the candidate first. The source matcher now retains that block-query order.
+The separate generic key API retains its own query contract.
+
+The reference executes complete resolver `0x142522910`, legacy/default constructors, alias construction, enumeration, matching and wrapper emptiness.
+Original deferred clone `0x142521bc0` owns the copied name and auxiliary before counter evaluation.
+Native air predicate `0x142525430` reads the definition name independently of its numeric ID.
+The original global initializer supplies the `minecraft:air` symbol used by that predicate.
+Original string/hash construction, allocation, result destruction and counter cleanup execute.
+The capture covers 1,904 resolution/emptiness controls and 4,032 descriptor comparisons.
+A separate 220-case mixed counter capture covers 514 rounds and 1,179 registry calls.
+It checks total counts, every round and source reference, and exact lookup order through deferred resolution and repeated emptiness queries.
+All post-resolution ingredient payloads and counter temporaries are destroyed, leaving no tracked native allocations.
+
+The captures supply registry name lookup and auxiliary rewriting, alias existence, representatives, member vectors and member lookup.
+They also supply BlockLegacy fallback/state interfaces, stable ordinary definitions, typed source backing and allocator/CRT/TLS services.
+The mixed counter corpus uses ordinary sources without associated blocks; associated block controls remain in the resolver corpus.
+Diagnostics use a supplied boundary and are excluded from Java lookup-order comparisons.
+These controls do not establish actual registry acquisition, full block/registry implementations, wire admission, actor construction or complete source Item retirement.
+
+The packaged core matches both corpora and three focused rich-descriptor integration regressions.
+Nine deliberate changes fail value or lookup-order comparisons, including early emptiness caching and repeated deferred resolution.
+The retained counter, source matcher, search, unlock and progressive-model comparisons also pass.
+All four builds pass with 2,859 tests, 163 optional skips and no failures or errors. Checkstyle passes.
+All 1,493 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+
+The registry interface has no default empty tables or replacement data.
+The ItemRegistry section below supplies built-in alias registrations and ordered member names.
+Production must still supply auxiliary rewriting, live definition ownership and block fallback from the same native context.
+Tag/Molang resolution, recipe contexts, installed evaluators, screen lifecycle, physical input, actions and native pixels remain unfinished.
+The four original reports and all five goal areas remain active.
+
+
+## Constructor-owned ItemRegistry aliases
+
+The connection ItemRegistry now exposes native alias admission and ordered member names.
+It loads 89 name redirects and 60 complex aliases with 561 member names from the pinned target.
+Each getter applies one exact redirect before reading the complex table.
+It does not qualify names, parse legacy metadata or follow redirect chains.
+An unregistered name returns the native empty member list. Missing or mismatched asset data fails immediately.
+
+ItemRegistry aliases have their own registrations and member order.
+For example, the ItemRegistry `wood` group places all ordinary woods before stripped woods.
+It also includes item groups such as boats, buckets, dyes and spawn eggs.
+Its `double_stone_slab` redirect selects `stone_block_slab`.
+The block registry and restriction tables cannot supply these ItemRegistry queries.
+
+The reference executes complete original ItemRegistry initialization `0x143480dc0` after native vanilla block and state construction.
+It uses target 1.26.51.1, build 51061372, protocol 2193, the original 1.26.50 BaseGameVersion and owned default Experiments.
+The empty parsed network vector establishes constructor-owned data before packet updates.
+It does not establish normal server packet contents or wire admission.
+All 60 aliases also have constructed native factory definitions at that point.
+Input, registry, TLS, static and CRT cleanup finish with no remaining native allocations or held locks.
+
+The alias predicates and member getters expose names. The model below supplies metadata callback rewrites separately.
+Ordinary named lookup can use a redirect with metadata, then a complex-alias callback, and reset the auxiliary after that callback.
+Each alias's ordered members do not define that callback's metadata mapping.
+Live member and representative ownership, full ordinary definition lookup, block fallback and complete Java registry construction remain unfinished.
+The rich descriptor model still requires that complete registry context before installed recipe evaluation can use it.
+All four original reports and all five goal areas remain active.
+
+The packaged connection registry matches all 2,127 original getter controls, including 86 registered results and 767 member-name comparisons.
+The controls query every constructed factory key and both names in each native redirect.
+Three deliberate changes fail value comparisons: ignored redirects, reversed member order and substituted block tables.
+The retained descriptor, counter, source matcher, search, unlock and progressive-model comparisons also pass.
+All four builds pass with 2,860 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
+All 1,495 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
+
+
+## Native name parsing and metadata rewrites
+
+`NativeItemName.parse` produces a name and auxiliary value before definition lookup.
+It preserves ASCII case folding, native colon fields, tile-prefix removal and numeric suffix rules.
+Empty input produces no query. Invalid or out-of-range numeric suffixes retain the incoming auxiliary.
+The second-field digit test reads a C string from that field's start, including later colon fields until a NUL.
+A namespaced third field accepts a C-locale numeric prefix. It does not require the complete field to be numeric.
+
+`ItemRegistry.rewriteLegacyName` accepts an already parsed query after the caller checks component definitions.
+It applies one name redirect, or the metadata-qualified redirect when no direct redirect exists.
+It parses the redirect target and then applies that target's complex callback.
+It does not follow another name redirect.
+For example, `minecraft:double_stone_slab` with auxiliary 3 becomes `minecraft:cobblestone_slab` with auxiliary 0.
+Stopping at `minecraft:stone_block_slab` would omit the callback.
+Each callback clears the auxiliary after selecting its target, even when the selected name remains equal.
+Keep deferred wildcard alias selection on its earlier raw-name path.
+
+The pinned asset now requires all 60 callback definitions.
+Thirty-eight callbacks index their registered members. The other 22 use 439 explicit metadata values and native default targets.
+Preserve signed-short callback arguments, the low-byte guards and the signed remainder rules.
+Missing callback data fails instead of selecting an inferred member rule.
+Some high-word metadata combinations pass a native byte guard but index outside its vectors.
+The Java fallback rejects those unsupported inputs explicitly. Complete caller admission remains unfinished.
+These guards do not establish a normal native result for the excluded inputs.
+
+The reference executes complete parser `0x140ad1110` and name/auxiliary rewriter `0x1434735e0` after actual block/state and ItemRegistry construction.
+It supplies read-only UTF-8 caller backing, allocation services and ordinary C-runtime imports.
+The supplied numeric import follows the [Windows C-runtime conversion contract](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/strtol-wcstol-strtol-l-wcstol-l?view=msvc-170).
+Native conversion dispatch, range checks, name parsing, redirects, alias callbacks and owned string retirement still execute.
+The capture covers 2,501 parser controls and 22,917 rewrites. It records 46 unsupported callback input combinations separately.
+Input, registry, TLS, static and CRT cleanup finishes with no remaining native allocations or held locks.
+A separate primitive parser capture also matches 552 controls.
+
+These APIs do not resolve live Item definitions or replace full recipe admission.
+Component-map precedence, ordinary/block definition lookup, member/representative ownership, actual Item construction and complete registry replacement remain unfinished.
+The rich descriptor Registry still requires those inputs before installed availability can use it.
+All four original reports and all five goal areas remain active.
+
+The packaged core matches all 2,501 parser controls, 22,917 rewrites and 46 explicit unsupported-index guards.
+Nine deliberate parser or callback changes fail native value comparisons.
+The 2,127 alias getter controls and three retained alias regressions also pass, along with the earlier descriptor, counter, search, unlock and progressive comparisons.
+All four builds pass with 2,862 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
+All 1,498 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
