@@ -268,3 +268,13 @@ The comparison excludes 1,920 manager-disabled fixtures because manager activati
 Three deliberate first-control, double-score and unsigned-coercion variants fail these comparisons.
 The container consumer now owns authored VIEW arrow delivery and post-focus hover ordering.
 Full native factories, focus-tab traversal, controller pointer events, devices and pixels remain unfinished.
+
+
+## Raw native input phases
+
+Component and capture routing now retain raw phases zero, one and two.
+Only phase one requests a press capture or counts as a pressed controller event.
+Phase two preserves a completed double press until phase zero releases it.
+The original factory, dispatch and cleanup corpus matches 3,216 steps and 1,032 exact button events.
+The API carries raw phases through the router; physical callers convert their boolean state at the boundary.
+The container patch owns GLOBAL reinjection and its controller capability checks.

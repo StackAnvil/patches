@@ -283,7 +283,7 @@ All 54 targeted component, geometry, scroll, presentation and screen tests pass.
 Screen tests cover focused keyboard preference updates and non-consuming tab/filter changes without vanilla inventory dispatch.
 The source parser accepts all 15 unchanged default toggle definitions.
 The complete default screens still fall back because search, slider and other handlers remain unfinished.
-Screen-owned view/global routing, unresolved toggle collection indices and unsupported modal/controller policies remain explicit admission limits.
+Remaining VIEW focus-tab routes, recursive GLOBAL wildcards, unresolved toggle collection indices and unsupported modal/controller policies remain explicit admission limits.
 This change does not establish complete authored-screen support or resolve the original inventory screenshot report.
 
 ## Recipe hover entry and exit
@@ -368,10 +368,42 @@ The fixture supplies ScreenView fields, input order, rectangles and empty contro
 Original component factories, inline ScreenComponent constructor bytes, mapping, selection, hover and base controller delivery execute.
 It does not construct the full screen or establish native input-order construction.
 The 1,353 captured kind-5 controller pointer events remain outside this consumer.
-GLOBAL reinjection, focus-tab groups, modal/deflection routing, full scroll geometry, devices and pixels remain unfinished.
+Recursive GLOBAL wildcards, focus-tab groups, modal/deflection routing, full scroll geometry, devices and pixels remain unfinished.
 The complete default-screen admission gate remains in place. The original reported bugs and all five goal areas remain open.
 
 All four project builds pass 2,756 tests with 163 optional skips and no failures or errors.
 All 1,448 core classes match both embedded copies, and all 1,181 client classes match the final add-on.
 The packaged add-on repeats the ranking and composed ScreenView comparisons with mandatory production class origins.
 Five packaged screen and input regressions pass, including missing authored keys and reveal relayout.
+
+
+## GLOBAL input reinjection
+
+GLOBAL mappings now re-inject the target with the previous raw phase before the original controller event arrives.
+The previous phase can be two. It must not become a press, release or collection-hover exit.
+Implicit hover reinjection uses the current View mode and event time, rather than its zero-mode event header.
+Physical pointer coordinates remain separate from focus hover coordinates for raw geometry and clip checks.
+Recursive GLOBAL wildcards still retain the ordinary screen before input.
+Inventory, recipe and close actions still use a separate direct pointer controller.
+Cooking scenes with GLOBAL targets or cross-control aliases that could authorize those actions retain the ordinary screen.
+Their complete event receivers remain required integration work.
+
+The original raw mapping and View pipeline match 29 GLOBAL cases and 200 steps, including 286 controller button events.
+These controls cover captured releases, prior phase two, hover recursion, physical/logical coordinates and all three input modes.
+Another 48 cases match 240 Toggle/Furnace callback steps through the actual input and preference adapters.
+All 49,930 native frees complete across these corpora with no native allocations left.
+Ten deliberately incorrect phase, capture, mode, coordinate and ordering variants fail the comparisons.
+
+The captures supply View fields/order, bare controls, inactive or supplied focus geometry, base callback containers and empty controller children.
+Original component factories, mapping, recursion, callbacks and control/manager/controller/capture-map cleanup execute.
+Preference setters and refresh remain observed boundaries. Immediate settings-notification timing remains outside the Java callback adapter.
+The inspected Furnace constructor chain has no pointer callbacks of its own; complete child-controller population remains unverified.
+The 36 new captured kind-5 pointer events remain unported, alongside the earlier pointer-event corpus.
+Full screen construction, controller pointer handling, focus-tab groups, modal/deflection policies, physical devices and pixels remain unfinished.
+Existing controller-command admission checks remain in place. This work does not resolve the original four reports or complete any of the five goal areas.
+
+All four project builds pass 2,766 tests with 163 optional skips and no failures or errors.
+All 1,448 core classes match both embedded copies, and all 1,181 client classes match the final add-on.
+The packaged add-on matches all 3,216 raw-phase steps, the 200 GLOBAL View steps and the 240 Toggle/Furnace callback steps.
+It also retains the earlier 2,169 composed arrow steps and 840 controller button events.
+Six packaged screen and input regressions pass with mandatory production class origins, including fallback before unsupported GLOBAL slot actions.

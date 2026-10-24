@@ -1,4 +1,4 @@
-From b4a82f350c410989ab29cc417a3569a039ea63a1 Mon Sep 17 00:00:00 2001
+From 2b980d00a203eae58f29d9da37c6f1c2498e9e55 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -367,6 +367,15 @@ replaces the first-control shortcut used before directional navigation.
 Original 1.26.51.1 execution matches 1,920 enabled ranking cases and 19
 typed property reads. Screen-owned routing and physical input remain
 separate consumer responsibilities.
+
+Retain the raw native input phase through component dispatch and release
+capture routing. Phase two is neither a press nor a release and cannot be
+normalized to boolean. It does not request capture or activation, and it
+preserves a completed double until an actual release. Controller press
+queries match phase one only. This permits faithful GLOBAL reinjection
+of the previous mapping phase rather than manufacturing a fresh press.
+Original factories, dispatch, event/capture cleanup and destructors match
+3,072 raw-phase steps and 1,008 exact button events.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   3 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -411,7 +420,7 @@ separate consumer responsibilities.
  .../bedrock/screen/ui/NativeUiImageCache.java | 229 +++++
  .../screen/ui/NativeUiImageRegions.java       | 132 +++
  .../bedrock/screen/ui/NativeUiImages.java     | 171 ++++
- .../bedrock/screen/ui/NativeUiInput.java      | 231 +++++
+ .../bedrock/screen/ui/NativeUiInput.java      | 234 +++++
  .../screen/ui/NativeUiInputRouter.java        |  63 ++
  .../bedrock/screen/ui/NativeUiLayout.java     | 522 ++++++++++
  .../screen/ui/NativeUiMultilineInput.java     | 267 +++++
@@ -445,8 +454,8 @@ separate consumer responsibilities.
  .../screen/ui/NativeUiImageCacheTest.java     | 142 +++
  .../screen/ui/NativeUiImageRegionsTest.java   | 217 ++++
  .../bedrock/screen/ui/NativeUiImagesTest.java | 100 ++
- .../screen/ui/NativeUiInputRouterTest.java    |  80 ++
- .../bedrock/screen/ui/NativeUiInputTest.java  | 126 +++
+ .../screen/ui/NativeUiInputRouterTest.java    |  92 ++
+ .../bedrock/screen/ui/NativeUiInputTest.java  | 153 +++
  .../bedrock/screen/ui/NativeUiLayoutTest.java | 942 ++++++++++++++++++
  .../screen/ui/NativeUiMultilineInputTest.java | 210 ++++
  .../screen/ui/NativeUiPresentationTest.java   | 258 +++++
@@ -458,7 +467,7 @@ separate consumer responsibilities.
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |  86 ++
  .../screen/ui/NativeUiViewportTest.java       |  55 +
- 90 files changed, 10248 insertions(+), 24 deletions(-)
+ 90 files changed, 10290 insertions(+), 24 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -4198,10 +4207,10 @@ index 0000000..8475ec8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInput.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInput.java
 new file mode 100644
-index 00000000..c45ff7ea
+index 00000000..97f6c3a4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInput.java
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,234 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4292,14 +4301,14 @@ index 00000000..c45ff7ea
 +
 +        public int phase(final int index) { return this.phases[index]; }
 +
-+        public Dispatch dispatch(final int source, final boolean pressed, final Context context) {
++        public Dispatch dispatch(final int source, final int phase, final Context context) {
 +            final List<ButtonEvent> events = new ArrayList<>();
 +            int result = 0;
 +            if (this.definition.options.wildcard) {
-+                events.add(event(source, source, 2, pressed, context.mode, this.definition.options.wildcardScope, false, false));
++                events.add(event(source, source, 2, phase, context.mode, this.definition.options.wildcardScope, false, false));
 +                result = 1;
 +            }
-+            final boolean doubled = this.doublePress(source, pressed, context);
++            final boolean doubled = this.doublePress(source, phase, context);
 +            for (int index = 0; index < this.definition.mappings.size(); index++) {
 +                final var mapping = this.definition.mappings.get(index);
 +                if (mapping.source != source || doubled != (mapping.kind == Kind.DOUBLE_PRESSED || context.touchFallback)) continue;
@@ -4309,16 +4318,16 @@ index 00000000..c45ff7ea
 +                final boolean admitted = condition && gamepad && switch (mapping.kind) {
 +                    case GLOBAL -> true;
 +                    case FOCUSED -> (context.flags & 0x82) != 0;
-+                    case PRESSED -> ordinary && this.pointer(mapping, pressed, this.phases[index], context);
-+                    case DOUBLE_PRESSED -> !ordinary && this.pointer(mapping, pressed, this.phases[index], context);
++                    case PRESSED -> ordinary && this.pointer(mapping, phase, this.phases[index], context);
++                    case DOUBLE_PRESSED -> !ordinary && this.pointer(mapping, phase, this.phases[index], context);
 +                };
 +                if (!admitted) { this.phases[index] = 2; result = 0; continue; }
 +                final int previous = this.phases[index];
-+                this.phases[index] = pressed ? 1 : 0;
-+                events.add(event(mapping.source, mapping.target, previous, pressed, context.mode,
++                this.phases[index] = phase;
++                events.add(event(mapping.source, mapping.target, previous, phase, context.mode,
 +                    mapping.scope, mapping.handleSelect, mapping.handleDeselect));
 +                if ((context.handlerMask & 1) == 0) result = mapping.consume ? 1 : 2;
-+                return new Dispatch(result, List.copyOf(events), pressed && mapping.firstRefusal ? List.of(source) : List.of());
++                return new Dispatch(result, List.copyOf(events), phase == 1 && mapping.firstRefusal ? List.of(source) : List.of());
 +            }
 +            return new Dispatch(result, List.copyOf(events), List.of());
 +        }
@@ -4329,7 +4338,7 @@ index 00000000..c45ff7ea
 +            final boolean changed = previous != hovered;
 +            final List<ButtonEvent> events = new ArrayList<>();
 +            if (changed) for (final var binding : this.definition.hoverBindings) {
-+                events.add(new ButtonEvent(0, binding.target, 0, hovered, false, 0, binding.scope, false, false));
++                events.add(new ButtonEvent(0, binding.target, 0, hovered ? 1 : 0, false, 0, binding.scope, false, false));
 +            }
 +            final boolean handled = hovered && (!changed || (handlerMask & 1) == 0);
 +            return new Hover(forcedOut || handled && this.definition.options.consumeHoverEvents ? 1 : 0,
@@ -4343,27 +4352,27 @@ index 00000000..c45ff7ea
 +            return new Pointer(deliverPointer && (handlerMask & 1) != 0 ? 0 : hover.result, hover, deliverPointer);
 +        }
 +
-+        public void suppress(final int source, final boolean pressed, final Context context) {
-+            final boolean doubled = this.doublePress(source, pressed, context);
++        public void suppress(final int source, final int phase, final Context context) {
++            final boolean doubled = this.doublePress(source, phase, context);
 +            for (int index = 0; index < this.definition.mappings.size(); index++) {
 +                final var mapping = this.definition.mappings.get(index);
 +                if (mapping.source == source && doubled == (mapping.kind == Kind.DOUBLE_PRESSED || context.touchFallback)) this.phases[index] = 2;
 +            }
 +        }
 +
-+        private boolean pointer(final Mapping mapping, final boolean pressed, final int previous, final Context context) {
++        private boolean pointer(final Mapping mapping, final int phase, final int previous, final Context context) {
 +            if (mapping.ignoreScope && (context.flags & 0x20) != 0) return true;
 +            final boolean admitted = mapping.alternateScope ? context.insideAlternate
 +                : (context.flags & 2) != 0 || this.definition.options.alwaysListenToInput && context.inside;
-+            return admitted && (context.mode == 3 || context.insideClip) || !pressed && mapping.firstRefusal && previous == 1;
++            return admitted && (context.mode == 3 || context.insideClip) || phase == 0 && mapping.firstRefusal && previous == 1;
 +        }
 +
-+        private boolean doublePress(final int source, final boolean pressed, final Context context) {
++        private boolean doublePress(final int source, final int phase, final Context context) {
 +            if (!context.touchFallback && this.definition.mappings.stream().noneMatch(mapping -> mapping.source == source && mapping.kind == Kind.DOUBLE_PRESSED)) return false;
 +            final var history = this.presses.computeIfAbsent(source, key -> new PressHistory());
-+            if (!pressed) {
++            if (phase != 1) {
 +                if (history.phase != 2) return false;
-+                history.phase = 0;
++                if (phase == 0) history.phase = 0;
 +                return true;
 +            }
 +            final float dx = context.x - history.x, dy = context.y - history.y;
@@ -4376,10 +4385,10 @@ index 00000000..c45ff7ea
 +            return doubled;
 +        }
 +
-+        private static ButtonEvent event(final int source, final int target, final int previous, final boolean pressed,
++        private static ButtonEvent event(final int source, final int target, final int previous, final int phase,
 +                                         final int mode, final Scope scope, final boolean select, final boolean deselect) {
 +            final int activation = mode == 2 ? 0 : 1;
-+            return new ButtonEvent(source, target, previous, pressed, (pressed ? 1 : 0) == activation && previous != activation,
++            return new ButtonEvent(source, target, previous, phase, phase == activation && previous != activation,
 +                mode, scope, select, deselect);
 +        }
 +
@@ -4417,8 +4426,11 @@ index 00000000..c45ff7ea
 +    public record Context(int flags, int mode, float x, float y, boolean inside, boolean insideClip,
 +                          boolean insideAlternate, boolean touchFallback, long nanos, int handlerMask) {}
 +
-+    public record ButtonEvent(int source, int target, int previous, boolean pressed, boolean transition, int mode,
-+                              Scope scope, boolean handleSelect, boolean handleDeselect) {}
++    /** Retains the native raw phase; only phase one is a pressed controller event. */
++    public record ButtonEvent(int source, int target, int previous, int phase, boolean transition, int mode,
++                              Scope scope, boolean handleSelect, boolean handleDeselect) {
++        public boolean pressed() { return this.phase == 1; }
++    }
 +    public record Dispatch(int result, List<ButtonEvent> events, List<Integer> captureRequests) {}
 +    public record Hover(int result, boolean hovered, boolean changed, List<ButtonEvent> events) {}
 +    public record Pointer(int result, Hover hover, boolean pointerEvent) {}
@@ -4435,7 +4447,7 @@ index 00000000..c45ff7ea
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputRouter.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputRouter.java
 new file mode 100644
-index 00000000..2c44d979
+index 00000000..c2f7f46e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputRouter.java
 @@ -0,0 +1,63 @@
@@ -4457,29 +4469,29 @@ index 00000000..2c44d979
 +public final class NativeUiInputRouter<K> {
 +    private final Map<Integer, List<K>> captures = new HashMap<>();
 +
-+    public Result<K> dispatch(final int source, final boolean pressed, final List<Control<K>> controls) {
++    public Result<K> dispatch(final int source, final int phase, final List<Control<K>> controls) {
 +        final Map<K, Control<K>> indexed = new LinkedHashMap<>();
 +        for (final var control : controls) indexed.put(control.key, control);
 +        final List<Event<K>> events = new ArrayList<>();
 +        boolean consumed = false;
-+        final var captured = pressed ? this.captures.get(source) : this.captures.remove(source);
-+        if (!pressed && captured != null) {
++        final var captured = phase != 0 ? this.captures.get(source) : this.captures.remove(source);
++        if (phase == 0 && captured != null) {
 +            for (final K key : captured) {
 +                final var control = indexed.get(key);
 +                if (control == null) continue;
-+                final var result = control.state.dispatch(source, false, control.context);
++                final var result = control.state.dispatch(source, 0, control.context);
 +                for (final var event : result.events()) events.add(new Event<>(key, event));
 +                consumed = result.result() == 1;
 +                if (consumed) break;
 +            }
 +        }
-+        final List<K> requested = new ArrayList<>(pressed && captured != null ? captured : List.of());
++        final List<K> requested = new ArrayList<>(phase != 0 && captured != null ? captured : List.of());
 +        for (final var control : controls) {
 +            if (consumed) {
-+                control.state.suppress(source, pressed, control.context);
++                control.state.suppress(source, phase, control.context);
 +                continue;
 +            }
-+            final var result = control.state.dispatch(source, pressed, control.context);
++            final var result = control.state.dispatch(source, phase, control.context);
 +            for (final var event : result.events()) events.add(new Event<>(control.key, event));
 +            for (final int capture : result.captureRequests()) {
 +                if (capture != source) throw new IllegalStateException("Native capture changed its source input");
@@ -9061,10 +9073,10 @@ index 0000000..0d360fd
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputRouterTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputRouterTest.java
 new file mode 100644
-index 00000000..2098ed0b
+index 00000000..893d3c59
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputRouterTest.java
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,92 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9084,12 +9096,24 @@ index 00000000..2098ed0b
 +    private static final int SOURCE = NativeUiInput.symbol("button.menu_ok");
 +
 +    @Test
++    void unavailablePhaseDoesNotRetireTheCapturedRelease() {
++        final var router = new NativeUiInputRouter<Integer>();
++        final var controls = List.of(control(0, state("global", true), true));
++        router.dispatch(SOURCE, 1, controls);
++        assertTrue(router.captures(SOURCE));
++        assertEquals(2, router.dispatch(SOURCE, 2, controls).events().getFirst().button().phase());
++        assertTrue(router.captures(SOURCE));
++        router.dispatch(SOURCE, 0, controls);
++        assertFalse(router.captures(SOURCE));
++    }
++
++    @Test
 +    void capturePrecedesTheCurrentPointerTargetAndSuppressesTheNormalPass() {
 +        final var first = state("pressed", true);
 +        final var second = state("pressed", true);
 +        final var router = new NativeUiInputRouter<Integer>();
-+        router.dispatch(SOURCE, true, controls(first, second, 0));
-+        final var release = router.dispatch(SOURCE, false, controls(first, second, 1));
++        router.dispatch(SOURCE, 1, controls(first, second, 0));
++        final var release = router.dispatch(SOURCE, 0, controls(first, second, 1));
 +        assertEquals(List.of(0), release.events().stream().map(NativeUiInputRouter.Event::key).toList());
 +        assertTrue(release.consumed());
 +        assertEquals(1, release.events().getFirst().button().previous());
@@ -9103,9 +9127,9 @@ index 00000000..2098ed0b
 +        final var input = state("global", false);
 +        final var router = new NativeUiInputRouter<Integer>();
 +        final var controls = List.of(control(0, input, true));
-+        router.dispatch(SOURCE, true, controls);
-+        router.dispatch(SOURCE, true, controls);
-+        final var release = router.dispatch(SOURCE, false, controls);
++        router.dispatch(SOURCE, 1, controls);
++        router.dispatch(SOURCE, 1, controls);
++        final var release = router.dispatch(SOURCE, 0, controls);
 +        assertEquals(List.of(1, 0, 0), release.events().stream().map(event -> event.button().previous()).toList());
 +        assertFalse(router.captures(SOURCE));
 +    }
@@ -9113,11 +9137,11 @@ index 00000000..2098ed0b
 +    @Test
 +    void deletedControlsRetireCapturesBeforeAnIdentityCanBeReused() {
 +        final var router = new NativeUiInputRouter<Integer>();
-+        router.dispatch(SOURCE, true, List.of(control(0, state("global", false), true)));
++        router.dispatch(SOURCE, 1, List.of(control(0, state("global", false), true)));
 +        router.retain(Set.of());
 +        assertFalse(router.captures(SOURCE));
 +        final var replacement = state("global", false);
-+        assertEquals(1, router.dispatch(SOURCE, false, List.of(control(0, replacement, true))).events().size());
++        assertEquals(1, router.dispatch(SOURCE, 0, List.of(control(0, replacement, true))).events().size());
 +    }
 +
 +    private static NativeUiInput.State state(final String kind, final boolean consume) {
@@ -9147,10 +9171,10 @@ index 00000000..2098ed0b
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputTest.java
 new file mode 100644
-index 00000000..7c665b78
+index 00000000..e8c1aa58
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiInputTest.java
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,153 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9169,24 +9193,51 @@ index 00000000..7c665b78
 +    private static final int SOURCE = NativeUiInput.symbol("button.menu_ok");
 +
 +    @Test
++    void unavailablePhaseIsRetainedWithoutActivationOrCapture() {
++        final var input = state("global", true);
++        input.dispatch(SOURCE, 1, context(1, 0, 0, 0, true));
++        final var unavailable = input.dispatch(SOURCE, 2, context(1, 0, 0, 1, true));
++        assertEquals(2, input.phase(0));
++        assertEquals(1, unavailable.events().getFirst().previous());
++        assertEquals(2, unavailable.events().getFirst().phase());
++        assertFalse(unavailable.events().getFirst().pressed());
++        assertFalse(unavailable.events().getFirst().transition());
++        assertTrue(unavailable.captureRequests().isEmpty());
++        assertEquals(2, input.dispatch(SOURCE, 0, context(1, 0, 0, 2, true)).events().getFirst().previous());
++        assertTrue(input.dispatch(SOURCE, 1, context(1, 0, 0, 3, true)).events().getFirst().transition());
++    }
++
++    @Test
++    void unavailablePhaseKeepsACompletedDoublePressUntilAnActualRelease() {
++        final var input = state("double_pressed", false);
++        assertTrue(input.dispatch(SOURCE, 1, context(1, 0, 0, 0, true)).events().isEmpty());
++        assertTrue(input.dispatch(SOURCE, 2, context(1, 0, 0, 1, true)).events().isEmpty());
++        assertTrue(input.dispatch(SOURCE, 1, context(1, 0, 0, 2, true)).events().getFirst().transition());
++        assertEquals(2, input.dispatch(SOURCE, 2, context(1, 0, 0, 3, true)).events().getFirst().phase());
++        assertEquals(2, input.dispatch(SOURCE, 2, context(1, 0, 0, 4, true)).events().getFirst().phase());
++        assertEquals(0, input.dispatch(SOURCE, 0, context(1, 0, 0, 5, true)).events().getFirst().phase());
++        assertTrue(input.dispatch(SOURCE, 2, context(1, 0, 0, 6, true)).events().isEmpty());
++    }
++
++    @Test
 +    void factoryPhaseDistinguishesInitialTouchReleaseFromActivation() {
 +        final var input = state("pressed", false);
-+        assertFalse(input.dispatch(SOURCE, false, context(2, 0, 0, 0, true)).events().getFirst().transition());
-+        assertFalse(input.dispatch(SOURCE, true, context(2, 0, 0, 1, true)).events().getFirst().transition());
-+        assertTrue(input.dispatch(SOURCE, false, context(2, 0, 0, 2, true)).events().getFirst().transition());
-+        assertFalse(input.dispatch(SOURCE, false, context(2, 0, 0, 3, true)).events().getFirst().transition());
++        assertFalse(input.dispatch(SOURCE, 0, context(2, 0, 0, 0, true)).events().getFirst().transition());
++        assertFalse(input.dispatch(SOURCE, 1, context(2, 0, 0, 1, true)).events().getFirst().transition());
++        assertTrue(input.dispatch(SOURCE, 0, context(2, 0, 0, 2, true)).events().getFirst().transition());
++        assertFalse(input.dispatch(SOURCE, 0, context(2, 0, 0, 3, true)).events().getFirst().transition());
 +    }
 +
 +    @Test
 +    void capturedReleaseSurvivesPointerExitOnceAndRequestsCaptureOnRepeatedPresses() {
 +        final var input = state("pressed", true);
-+        assertEquals(List.of(SOURCE), input.dispatch(SOURCE, true, context(1, 20, 30, 0, true)).captureRequests());
-+        assertEquals(List.of(SOURCE), input.dispatch(SOURCE, true, context(1, 20, 30, 1, true)).captureRequests());
-+        final var release = input.dispatch(SOURCE, false, context(1, 100, 30, 2, false));
++        assertEquals(List.of(SOURCE), input.dispatch(SOURCE, 1, context(1, 20, 30, 0, true)).captureRequests());
++        assertEquals(List.of(SOURCE), input.dispatch(SOURCE, 1, context(1, 20, 30, 1, true)).captureRequests());
++        final var release = input.dispatch(SOURCE, 0, context(1, 100, 30, 2, false));
 +        assertEquals(1, release.result());
 +        assertEquals(1, release.events().getFirst().previous());
 +        assertEquals(0, input.phase(0));
-+        assertTrue(input.dispatch(SOURCE, false, context(1, 100, 30, 3, false)).events().isEmpty());
++        assertTrue(input.dispatch(SOURCE, 0, context(1, 100, 30, 3, false)).events().isEmpty());
 +        assertEquals(2, input.phase(0));
 +    }
 +
@@ -9195,12 +9246,12 @@ index 00000000..7c665b78
 +        for (final float distance : new float[]{Math.nextDown(10F), 10F}) {
 +            for (final long elapsed : new long[]{499_999_999L, 500_000_000L}) {
 +                final var input = state("double_pressed", false);
-+                assertTrue(input.dispatch(SOURCE, true, context(1, 0, 0, 1_000_000_000L, true)).events().isEmpty());
-+                input.dispatch(SOURCE, false, context(1, 0, 0, 1_000_000_001L, true));
++                assertTrue(input.dispatch(SOURCE, 1, context(1, 0, 0, 1_000_000_000L, true)).events().isEmpty());
++                input.dispatch(SOURCE, 0, context(1, 0, 0, 1_000_000_001L, true));
 +                final boolean expected = distance < 10F && elapsed < 500_000_000L;
-+                assertEquals(expected, !input.dispatch(SOURCE, true,
++                assertEquals(expected, !input.dispatch(SOURCE, 1,
 +                    context(1, distance, 0, 1_000_000_000L + elapsed, true)).events().isEmpty());
-+                assertEquals(expected, !input.dispatch(SOURCE, false,
++                assertEquals(expected, !input.dispatch(SOURCE, 0,
 +                    context(1, distance, 0, 1_000_000_001L + elapsed, true)).events().isEmpty());
 +            }
 +        }
@@ -9213,7 +9264,7 @@ index 00000000..7c665b78
 +        wildcard.addProperty("from_button_id", "any");
 +        properties.getAsJsonArray("button_mappings").add(wildcard);
 +        final var input = new NativeUiInput.State(NativeUiInput.parse(properties));
-+        final var result = input.dispatch(SOURCE, true, context(1, 100, 30, 0, false));
++        final var result = input.dispatch(SOURCE, 1, context(1, 100, 30, 0, false));
 +        assertEquals(0, result.result());
 +        assertEquals(1, result.events().size());
 +        assertEquals(SOURCE, result.events().getFirst().target());
@@ -11497,7 +11548,7 @@ index 0000000..b8567f0
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiToggleTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiToggleTest.java
 new file mode 100644
-index 00000000..f28799c5
+index 00000000..de63cd36
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiToggleTest.java
 @@ -0,0 +1,86 @@
@@ -11583,7 +11634,7 @@ index 00000000..f28799c5
 +    }
 +
 +    private static NativeUiInput.ButtonEvent button(final String target) {
-+        return new NativeUiInput.ButtonEvent(0, NativeUiInput.symbol(target), 0, true, true, 1,
++        return new NativeUiInput.ButtonEvent(0, NativeUiInput.symbol(target), 0, 1, true, 1,
 +            NativeUiInput.Scope.DEFAULT, true, true);
 +    }
 +}
