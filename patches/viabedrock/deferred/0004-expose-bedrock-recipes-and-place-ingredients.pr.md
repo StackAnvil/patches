@@ -481,10 +481,34 @@ Thirty-nine shapeless controls also match. Typed metatype getters, ordinary defi
 The original constructor clears Item references at zero quantity; the fixture now executes that construction before typed userdata injection.
 
 `countResolvedRecipeInputs` accepts resolved descriptors with explicit empty positions.
-Deferred wire names can select aliases or block fallback. Their resolution, tag/Molang payloads, complete wire admission and installed availability remain unfinished.
+Deferred wire names can select aliases or block fallback. The model below resolves them against explicit registry interfaces.
+Actual registry acquisition, tag/Molang payloads, complete wire admission and installed availability remain unfinished.
 See the [resolved ingredient reference](../../../docs/native-player-inventory.md#resolved-ingredient-matching) for evidence and limits.
 
 The full four-project build passes 2,854 tests, with 163 optional skips and no failures or errors. Checkstyle passes.
 All 1,485 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
 The packaged matcher passes 1,703 direct/counter controls and three focused integration regressions, and rejects six deliberate semantic changes.
 All retained counter, search, output-unlock and progressive-model comparisons also pass.
+
+
+## Deferred name and alias descriptors
+
+Resolve names through native signed-short narrowing, wildcard alias selection, ordinary lookup rewriting and BlockLegacy fallback.
+Validate associated block state before metadata clamping. Keep a failed found Item separate from an absent Item eligible for fallback.
+Retain each deferred position's first resolution, including failure, after source guards and conversion.
+Preserve alias representatives independently of live membership, air-based emptiness and wildcard matching.
+
+The rich current-owner counter overload requires an explicit complete registry context.
+Query emptiness during native minimum and consumption phases instead of caching active slots before matching.
+Keep candidate-first default descriptor dispatch separate from the generic key API's contract.
+
+Complete original routines provide 1,904 resolution/emptiness controls, 4,032 comparisons and 220 full counter controls.
+The mixed counters cover 514 rounds and 1,179 registry calls with exact lookup order and post-resolution cleanup.
+Registry, alias/member, BlockLegacy/state and typed source interfaces remain supplied boundaries.
+Actual registry acquisition, tag/Molang payload resolution, full wire admission and installed availability remain unfinished.
+The [deferred descriptor reference](../../../docs/native-player-inventory.md#deferred-names-and-complex-aliases) records the contract and limits.
+
+The full four-project build passes 2,859 tests, with 163 optional skips and no failures or errors. Checkstyle passes.
+All 1,493 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+The packaged core matches both new corpora and three focused integration regressions.
+Nine deliberate changes fail value or lookup-order comparisons. All retained packaged comparisons also pass.

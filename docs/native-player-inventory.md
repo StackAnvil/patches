@@ -650,5 +650,66 @@ All 1,485 core classes match both embedded copies; all 1,191 client classes matc
 Deferred wire names require another resolution stage before this API can consume their results.
 Original resolver `0x142522910` can select a runtime alias descriptor or fall back to a block definition.
 Treating every wire name as an ordinary Item key would skip those branches and can misclassify empty ingredients.
-Deferred names, alias/tag/Molang payloads, full wire admission, actual recipe contexts and installed availability remain unfinished.
+The model below implements deferred names and alias behavior against explicit registry interfaces.
+Production registry acquisition, tag/Molang payload resolution, full wire admission, actual recipe contexts and installed availability remain unfinished.
+The four original reports and all five goal areas remain active.
+
+
+## Deferred names and complex aliases
+
+`NativeRecipeDescriptor` retains empty, ordinary, complex-alias and deferred values.
+Name resolution narrows the requested auxiliary to a signed short before selecting a branch.
+Only a wildcard request can select a registered complex alias before ordinary name lookup.
+Ordinary lookup can rewrite the auxiliary. The resolver narrows that result before associated block validation and clamps it afterward.
+A found Item with an invalid associated block state resolves empty. It does not fall back to another block.
+An absent Item can use block fallback, which produces a wildcard descriptor independently of the requested auxiliary.
+An empty name resolves empty without registry queries.
+
+Each ingredient position owns its deferred value.
+The first query retains the resolved descriptor, including a missing result.
+Source guards and source descriptor conversion precede deferred source matching.
+The native clone and wrapper conversion establish this ownership and mutation behavior.
+A complete recipe loader still needs to create and retire these values with their native owners.
+
+Alias representatives, emptiness and matching are separate data.
+The representative can exist while every alias member is unavailable. It does not become an implicit member.
+Emptiness enumerates current members and requires a definition other than `minecraft:air`.
+Matching enumerates current members independently and compares their definition IDs with wildcard metadata.
+An air-only alias can therefore count as empty yet match an air definition.
+An ordinary air descriptor also retains its identity while its emptiness predicate returns true.
+The model preserves those results instead of replacing every empty descriptor with a null key.
+Member enumeration and lookup stay live and stop at the first qualifying member.
+
+The rich `ItemRewriter.countResolvedRecipeInputs` overload requires a complete native registry context.
+It combines these descriptors with copied current-owner sources and the shared matcher/counter.
+The counter now queries emptiness during each minimum and consumption phase after source matching.
+An early cached active-slot vector changed native lookup phases and could hide changing alias membership.
+Default descriptor double dispatch also visits the candidate first. The source matcher now retains that block-query order.
+The separate generic key API retains its own query contract.
+
+The reference executes complete resolver `0x142522910`, legacy/default constructors, alias construction, enumeration, matching and wrapper emptiness.
+Original deferred clone `0x142521bc0` owns the copied name and auxiliary before counter evaluation.
+Native air predicate `0x142525430` reads the definition name independently of its numeric ID.
+The original global initializer supplies the `minecraft:air` symbol used by that predicate.
+Original string/hash construction, allocation, result destruction and counter cleanup execute.
+The capture covers 1,904 resolution/emptiness controls and 4,032 descriptor comparisons.
+A separate 220-case mixed counter capture covers 514 rounds and 1,179 registry calls.
+It checks total counts, every round and source reference, and exact lookup order through deferred resolution and repeated emptiness queries.
+All post-resolution ingredient payloads and counter temporaries are destroyed, leaving no tracked native allocations.
+
+The captures supply registry name lookup and auxiliary rewriting, alias existence, representatives, member vectors and member lookup.
+They also supply BlockLegacy fallback/state interfaces, stable ordinary definitions, typed source backing and allocator/CRT/TLS services.
+The mixed counter corpus uses ordinary sources without associated blocks; associated block controls remain in the resolver corpus.
+Diagnostics use a supplied boundary and are excluded from Java lookup-order comparisons.
+These controls do not establish actual registry acquisition, full block/registry implementations, wire admission, actor construction or complete source Item retirement.
+
+The packaged core matches both corpora and three focused rich-descriptor integration regressions.
+Nine deliberate changes fail value or lookup-order comparisons, including early emptiness caching and repeated deferred resolution.
+The retained counter, source matcher, search, unlock and progressive-model comparisons also pass.
+All four builds pass with 2,859 tests, 163 optional skips and no failures or errors. Checkstyle passes.
+All 1,493 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+
+The registry interface has no default empty tables or replacement data.
+Production must supply actual alias registration, ordered members, auxiliary rewriting and block fallback from the same native context.
+Tag/Molang resolution, recipe contexts, installed evaluators, screen lifecycle, physical input, actions and native pixels remain unfinished.
 The four original reports and all five goal areas remain active.
