@@ -1,4 +1,4 @@
-From 46baa49d1180225f6709a60620b55e0b8191f153 Mon Sep 17 00:00:00 2001
+From 554f9ab1225394eaa48033c5f3ab080d913dc477 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -39,26 +39,47 @@ The complete original rebuild and vector growth/cleanup execute 906
 controls, including every category byte, absent definitions, duplicates,
 allocation boundaries and repeated replacement. Item copy/destruction,
 allocation and CRT boundaries are supplied. Text, unlock and craftability
-evaluators, grouped category sources and authored player screen/input
+evaluators, native collection population and authored player screen/input
 integration remain separate work.
+
+Construct creative groups with the native category/name rules before
+assigning entries. Only categories one through five register. Named
+groups retain their first declaration within a category; anonymous groups
+remain distinct and ignore their supplied icon. Entry group indices address
+the registered group vector directly rather than a remapped wire table.
+
+Membership rewrites the shared item definition category in entry order.
+The final update controls search admission for every variant of that
+definition, and survives subsequent catalog replacement without membership.
+Retain immutable group and category sources in group/member order for the
+player model while keeping the complete palette and search independent.
+
+Complete pinned registry construction, content replacement, native group
+registration, member assignment, definition updates, search rebuild and
+registry destruction execute 186 controls. Descriptor conversion, typed
+item backing, item copies/destruction, diagnostics and ordinary allocator/
+CRT boundaries remain supplied. The frame population reference also
+executes 181 original controls across 2,296 frames, including first-match
+catalog identity; frame publication, evaluator and player UI integration
+remain separate work.
 ---
- .../protocol/model/CreativeCatalog.java       | 152 ++++++++++
+ .../protocol/model/CreativeCatalog.java       | 201 +++++++++++++
  .../protocol/packet/InventoryPackets.java     | 198 ++++++++-----
  .../protocol/rewriter/ItemRewriter.java       |  31 +-
  .../storage/InventoryRequestTracker.java      |  24 ++
- .../protocol/model/CreativeCatalogTest.java   | 145 ++++++++++
+ .../protocol/model/CreativeCatalogTest.java   | 222 +++++++++++++++
  .../protocol/packet/InventoryPacketsTest.java | 266 ++++++++++++++----
  .../storage/InventoryRequestTrackerTest.java  |  83 ++++++
- 7 files changed, 761 insertions(+), 138 deletions(-)
+ 7 files changed, 887 insertions(+), 138 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java b/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
 new file mode 100644
-index 000000000..afece9faa
+index 000000000..8dc359350
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,201 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -79,16 +100,23 @@ index 000000000..afece9faa
 +import com.viaversion.nbt.tag.IntTag;
 +import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 +import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
 +import com.viaversion.viaversion.api.minecraft.item.data.PotionContents;
 +import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
 +import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
 +import net.raphimc.viabedrock.api.model.NativeItemStackData;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CreativeItemCategory;
 +import net.raphimc.viabedrock.protocol.rewriter.ItemDataRewriter;
 +
 +import java.util.ArrayList;
 +import java.util.Arrays;
++import java.util.EnumMap;
++import java.util.HashMap;
++import java.util.HashSet;
 +import java.util.List;
++import java.util.Map;
 +import java.util.Objects;
++import java.util.Set;
 +
 +/** The creative inventory advertised by one Bedrock server connection. */
 +public final class CreativeCatalog {
@@ -99,11 +127,28 @@ index 000000000..afece9faa
 +    private final List<Group> groups;
 +    private final List<Entry> entries;
 +    private final List<Entry> searchEntries;
++    private final List<List<Entry>> groupEntries;
++    private final Map<CreativeItemCategory, List<Entry>> categoryEntries;
 +    private final Int2ObjectMap<Entry> byEntryId = new Int2ObjectOpenHashMap<>();
 +    private final Int2ObjectMap<Entry> byJavaItemId = new Int2ObjectOpenHashMap<>();
 +
 +    public CreativeCatalog(final List<Group> groups, final List<Entry> entries, final ItemRegistry registry) {
-+        this.groups = List.copyOf(groups);
++        final List<Group> registeredGroups = new ArrayList<>(groups.size());
++        final Map<Integer, Set<String>> names = new HashMap<>();
++        for (final Group group : groups) {
++            if (group.category() < 1 || group.category() > 5) {
++                continue;
++            }
++            if (group.name().isEmpty() || names.computeIfAbsent(group.category(), ignored -> new HashSet<>()).add(group.name())) {
++                registeredGroups.add(new Group(group.category(), group.name(),
++                        group.name().isEmpty() ? StructuredItem.empty() : group.icon().copy()));
++            }
++        }
++        this.groups = List.copyOf(registeredGroups);
++        final List<List<Entry>> members = new ArrayList<>(this.groups.size());
++        for (int index = 0; index < this.groups.size(); index++) {
++            members.add(new ArrayList<>());
++        }
 +        final List<Entry> marked = new ArrayList<>(entries.size());
 +        for (final Entry entry : entries) {
 +            final Item javaItem = entry.javaItem().copy();
@@ -112,9 +157,16 @@ index 000000000..afece9faa
 +            markedData.putInt(ENTRY_KEY, entry.netId());
 +            javaItem.dataContainer().set(StructuredDataKey.CUSTOM_DATA, markedData);
 +
-+            final Entry markedEntry = new Entry(entry.netId(), entry.groupIndex(), entry.bedrockItem().copy(),
++            final int groupIndex = entry.groupIndex();
++            // Wire indices address the registered group vector directly, even when earlier declarations were omitted.
++            final boolean grouped = groupIndex >= 0 && groupIndex < this.groups.size()
++                    && registry.assignCreativeCategory(entry.bedrockItem().identifier(), this.groups.get(groupIndex).category());
++            final Entry markedEntry = new Entry(entry.netId(), grouped ? groupIndex : -1, entry.bedrockItem().copy(),
 +                    javaItem, entry.bedrockOnly(), entry.canonical());
 +            marked.add(markedEntry);
++            if (grouped) {
++                members.get(groupIndex).add(markedEntry);
++            }
 +            this.byEntryId.put(entry.netId(), markedEntry);
 +            final Entry previous = this.byJavaItemId.get(javaItem.identifier());
 +            if (previous == null || markedEntry.canonical()) {
@@ -122,6 +174,15 @@ index 000000000..afece9faa
 +            }
 +        }
 +        this.entries = List.copyOf(marked);
++        this.groupEntries = members.stream().map(List::copyOf).toList();
++        final Map<CreativeItemCategory, List<Entry>> categories = new EnumMap<>(CreativeItemCategory.class);
++        for (int index = 0; index < this.groups.size(); index++) {
++            categories.computeIfAbsent(CreativeItemCategory.getByValue(this.groups.get(index).category()), ignored -> new ArrayList<>())
++                    .addAll(this.groupEntries.get(index));
++        }
++        categories.replaceAll((category, values) -> List.copyOf(values));
++        this.categoryEntries = Map.copyOf(categories);
++        // Every membership update runs before search reads the final shared definition categories.
 +        this.searchEntries = this.entries.stream().filter(entry -> {
 +            final int category = registry.creativeCategory(entry.bedrockItem().identifier());
 +            return category >= 1 && category <= 4;
@@ -143,6 +204,15 @@ index 000000000..afece9faa
 +    /** Complete player search source before text, unlock and craftability evaluation. */
 +    public List<Entry> searchEntries() {
 +        return this.searchEntries;
++    }
++
++    public List<Entry> groupEntries(final int groupIndex) {
++        return this.groupEntries.get(groupIndex);
++    }
++
++    /** Native category group order followed by each group's member order, before availability evaluation. */
++    public List<Entry> categoryEntries(final CreativeItemCategory category) {
++        return this.categoryEntries.getOrDefault(category, List.of());
 +    }
 +
 +    public boolean containsJavaItem(final int identifier) {
@@ -592,14 +662,15 @@ index d08578907..8544e1ab3 100644
  
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
 new file mode 100644
-index 000000000..5a946d77c
+index 000000000..8851b4569
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,222 @@
 +package net.raphimc.viabedrock.protocol.model;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CreativeItemCategory;
 +import com.viaversion.viaversion.api.data.FullMappings;
 +import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
 +import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
@@ -617,6 +688,8 @@ index 000000000..5a946d77c
 +import static org.junit.jupiter.api.Assertions.assertNull;
 +import static org.junit.jupiter.api.Assertions.assertSame;
 +import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertNotSame;
++import static org.junit.jupiter.api.Assertions.assertTrue;
 +
 +class CreativeCatalogTest {
 +
@@ -728,6 +801,80 @@ index 000000000..5a946d77c
 +        final var replaced = new CreativeCatalog(catalog.groups(), catalog.entries(), new ItemRegistry(new ItemEntry[0]));
 +        assertEquals(0, replaced.searchEntries().size());
 +        assertEquals(5, catalog.searchEntries().size());
++    }
++
++    @Test
++    void groupMembershipUpdatesSharedCategoriesBeforeSearchAndAcrossCatalogReplacement() throws ReflectiveOperationException {
++        final var registry = registry(100, 101);
++        final var groups = List.of(new CreativeCatalog.Group(1, "visible", javaItem(1)),
++                new CreativeCatalog.Group(5, "hidden", javaItem(2)));
++        final var catalog = new CreativeCatalog(groups, List.of(
++                creativeEntry(1, 0, 100, 0), creativeEntry(2, 0, 101, 0),
++                creativeEntry(3, 1, 100, 5), creativeEntry(4, 999, 100, 17)), registry);
++        assertEquals(5, registry.creativeCategory(100));
++        assertEquals(1, registry.creativeCategory(101));
++        assertEquals(List.of(2), catalog.searchEntries().stream().map(CreativeCatalog.Entry::netId).toList());
++        assertEquals(List.of(1, 2), catalog.categoryEntries(CreativeItemCategory.Construction).stream().map(CreativeCatalog.Entry::netId).toList());
++        assertEquals(List.of(3), catalog.categoryEntries(CreativeItemCategory.ItemCommandOnly).stream().map(CreativeCatalog.Entry::netId).toList());
++        assertEquals(-1, catalog.entries().getLast().groupIndex());
++        final var ungrouped = new CreativeCatalog(List.of(), List.of(creativeEntry(5, -1, 100, 0)), registry);
++        assertTrue(ungrouped.searchEntries().isEmpty());
++        assertEquals(5, registry.creativeCategory(100));
++        final var equipment = new CreativeCatalog(List.of(new CreativeCatalog.Group(3, "changed", javaItem(1))),
++                List.of(creativeEntry(6, 0, 100, 0)), registry);
++        assertEquals(3, registry.creativeCategory(100));
++        assertEquals(1, equipment.searchEntries().size());
++        assertSame(equipment.entries().getFirst(), equipment.categoryEntries(CreativeItemCategory.Equipment).getFirst());
++        assertEquals(List.of(2), catalog.searchEntries().stream().map(CreativeCatalog.Entry::netId).toList());
++    }
++
++    @Test
++    void nativeGroupRegistrationUsesCategoryNamesAndRegisteredVectorIndices() throws ReflectiveOperationException {
++        final var groups = List.of(new CreativeCatalog.Group(0, "ignored", javaItem(1)),
++                new CreativeCatalog.Group(1, "same", javaItem(1)), new CreativeCatalog.Group(1, "same", javaItem(2)),
++                new CreativeCatalog.Group(2, "same", javaItem(2)), new CreativeCatalog.Group(1, "", javaItem(3)),
++                new CreativeCatalog.Group(1, "", javaItem(4)));
++        final var catalog = new CreativeCatalog(groups, List.of(
++                creativeEntry(1, 0, 100, 0), creativeEntry(2, 1, 101, 0),
++                creativeEntry(3, 2, 102, 0), creativeEntry(4, 3, 103, 0),
++                creativeEntry(5, 4, 104, 0), creativeEntry(6, 5, 105, 0)), registry(100, 101, 102, 103, 104, 105));
++        assertEquals(4, catalog.groups().size());
++        assertEquals(List.of(0, 1, 2, 3, -1, -1), catalog.entries().stream().map(CreativeCatalog.Entry::groupIndex).toList());
++        assertEquals(List.of(1, 3, 4), catalog.categoryEntries(CreativeItemCategory.Construction).stream().map(CreativeCatalog.Entry::netId).toList());
++        assertEquals(List.of(2), catalog.categoryEntries(CreativeItemCategory.Nature).stream().map(CreativeCatalog.Entry::netId).toList());
++        assertTrue(catalog.groups().get(2).icon().isEmpty());
++        assertTrue(catalog.groups().get(3).icon().isEmpty());
++        assertNotSame(catalog.groups().get(2), catalog.groups().get(3));
++    }
++
++    @Test
++    void categorySourcesFollowGroupOrderAndRetainDuplicateMemberIdentity() throws ReflectiveOperationException {
++        final var catalog = new CreativeCatalog(List.of(new CreativeCatalog.Group(1, "a", javaItem(1)),
++                new CreativeCatalog.Group(1, "b", javaItem(2))), List.of(
++                creativeEntry(11, 1, 100, 0), creativeEntry(12, 0, 101, 0),
++                creativeEntry(13, 1, 100, 0), creativeEntry(14, 0, 102, 0),
++                creativeEntry(15, 1, 103, 0)), registry(100, 101, 102, 103));
++        final var source = catalog.categoryEntries(CreativeItemCategory.Construction);
++        assertEquals(List.of(12, 14, 11, 13, 15), source.stream().map(CreativeCatalog.Entry::netId).toList());
++        assertEquals(List.of(11, 13, 15), catalog.groupEntries(1).stream().map(CreativeCatalog.Entry::netId).toList());
++        assertSame(catalog.entries().getFirst(), source.get(2));
++        assertSame(catalog.entries().get(2), source.get(3));
++        assertTrue(catalog.categoryEntries(CreativeItemCategory.Undefined).isEmpty());
++        assertThrows(UnsupportedOperationException.class, source::clear);
++        assertThrows(UnsupportedOperationException.class, () -> catalog.groupEntries(1).clear());
++    }
++
++    private static CreativeCatalog.Entry creativeEntry(final int netId, final int group, final int identifier,
++                                                        final int metadata) throws ReflectiveOperationException {
++        return new CreativeCatalog.Entry(netId, group, new BedrockItem(identifier, (short) metadata, (byte) 1), javaItem(1), false, false);
++    }
++
++    private static ItemRegistry registry(final int... identifiers) {
++        final var entries = new ArrayList<ItemEntry>();
++        for (final int identifier : identifiers) {
++            entries.add(new ItemEntry("test:item" + identifier, identifier, false, ItemVersion.Legacy, null));
++        }
++        return new ItemRegistry(entries.toArray(ItemEntry[]::new));
 +    }
 +
 +    private static Item javaItem(final int identifier) throws ReflectiveOperationException {

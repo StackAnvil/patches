@@ -735,3 +735,11 @@ The complete four-project build passes 2,830 tests with 163 optional skips and n
 The packaged core matches all 1,949 category defaults, 563 typed-update comparisons and 906 search rebuilds.
 All 1,466 core classes and the factory table match the add-on and proxy copies; all 1,191 client classes match the tested add-on.
 The previous 7,728 eligibility and collection/history comparisons still pass against the packaged core.
+
+Creative content can later rewrite the shared category byte through admitted group membership.
+These updates remain in the connection registry across later catalog replacement.
+The final membership assignment controls search for all variants of that definition.
+Complete native creative-registry construction, content replacement, group/member assignment, search rebuilding and destruction provide 186 additional controls.
+Typed descriptor conversion, item copies/destruction, diagnostics and ordinary allocator/CRT calls remain supplied boundaries.
+The packaged core matches these controls, and all four builds pass 2,833 tests with 163 optional skips.
+Raw group and category sources are retained; native collection population, evaluators and player screen/input integration remain open.
