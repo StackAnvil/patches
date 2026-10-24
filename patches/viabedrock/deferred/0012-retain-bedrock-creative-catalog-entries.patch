@@ -1,4 +1,4 @@
-From 649fbe7cca0763bd94ac5839681583252756e511 Mon Sep 17 00:00:00 2001
+From ed6445070fa141da6d14d4778cfc1cbb4dd4d269 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -79,16 +79,38 @@ Typed packet/descriptor backing, item
 copy/destruction, allocator/CRT and injected availability remain supplied
 boundaries. Progressive frame delivery, actual availability evaluation and
 full player controller/screen integration remain separate work.
+
+Populate the five creative collections through one native frame budget,
+visiting search, construction, nature, equipment and items in that order.
+Retain group/member/destination cursors and initially invalid source rows.
+The original provider leaves combined totals below eight pending; preserve
+that guard rather than forcing a minimum budget.
+
+Completion reports once on the call after the final write phase and dirties
+only the active tab. Keep inactive dirty tabs and header expansion, and use
+the native left-tab mapping separately from population order. Bind the
+model through ItemRewriter with explicit per-view availability evaluation.
+
+Complete original creative setup, five collection constructors/destructors,
+progressive population, controller tick, weak-owner operations, dirty-tab
+refresh dispatch and collection ordering/projection execute in 508 controls
+across 9,438 frames. Three additional weak-owner flows remain reference-only.
+Typed descriptor/definition backing, item conversion/copies/destruction,
+label and receiver interfaces, injected availability, unrelated base tick
+and allocator/CRT boundaries remain supplied. Actual availability policy,
+full screen ownership and installed-screen frame delivery remain open.
 ---
- .../protocol/model/CreativeCatalog.java       | 266 +++++++++++++++
- .../protocol/packet/InventoryPackets.java     | 198 ++++++++----
- .../protocol/rewriter/ItemRewriter.java       |  33 +-
+ .../protocol/model/CreativeCatalog.java       | 266 ++++++++++++
+ .../model/CreativeInventoryModel.java         | 193 +++++++++
+ .../protocol/packet/InventoryPackets.java     | 198 ++++++---
+ .../protocol/rewriter/ItemRewriter.java       |  39 +-
  .../storage/InventoryRequestTracker.java      |  24 ++
- .../protocol/model/CreativeCatalogTest.java   | 303 ++++++++++++++++++
- .../protocol/packet/InventoryPacketsTest.java | 266 ++++++++++++---
- .../storage/InventoryRequestTrackerTest.java  |  83 +++++
- 7 files changed, 1037 insertions(+), 136 deletions(-)
+ .../protocol/model/CreativeCatalogTest.java   | 382 ++++++++++++++++++
+ .../protocol/packet/InventoryPacketsTest.java | 266 +++++++++---
+ .../storage/InventoryRequestTrackerTest.java  |  83 ++++
+ 8 files changed, 1315 insertions(+), 136 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CreativeInventoryModel.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java b/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
@@ -363,6 +385,205 @@ index 000000000..128248459
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeInventoryModel.java b/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeInventoryModel.java
+new file mode 100644
+index 000000000..c52a8436f
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeInventoryModel.java
+@@ -0,0 +1,193 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import net.raphimc.viabedrock.api.resourcepack.ui.RecipeCollection;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CreativeItemCategory;
++
++import java.util.ArrayList;
++import java.util.EnumMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Objects;
++import java.util.function.BiPredicate;
++import java.util.function.ToIntBiFunction;
++
++/** One player model's progressive creative collections and retained active-tab refresh state. */
++public final class CreativeInventoryModel {
++
++    private static final List<View> POPULATION_ORDER = List.of(View.SEARCH, View.CONSTRUCTION, View.NATURE, View.EQUIPMENT, View.ITEMS);
++
++    private final Map<View, Collection> collections = new EnumMap<>(View.class);
++    private final long totalEntries;
++    private int phase;
++    private int groupIndex;
++    private int memberIndex;
++    private int rowIndex;
++    private int dirty = 0x3F;
++
++    public CreativeInventoryModel(final CreativeCatalog catalog, final ToIntBiFunction<View, BedrockItem> evaluation,
++                                  final BiPredicate<BedrockItem, BedrockItem> identity) {
++        Objects.requireNonNull(catalog);
++        Objects.requireNonNull(evaluation);
++        Objects.requireNonNull(identity);
++        long total = 0;
++        for (final View view : POPULATION_ORDER) {
++            final List<List<CreativeCatalog.Entry>> groups = new ArrayList<>();
++            if (view == View.SEARCH) {
++                groups.add(catalog.searchEntries());
++            } else {
++                for (int index = 0; index < catalog.groups().size(); index++) {
++                    if (catalog.groups().get(index).category() == view.category.getValue()) {
++                        groups.add(catalog.groupEntries(index));
++                    }
++                }
++            }
++            final var source = catalog.collectionSource(item -> evaluation.applyAsInt(view, item), identity);
++            final var collection = new Collection(groups, source);
++            this.collections.put(view, collection);
++            total += collection.entries.size();
++        }
++        this.totalEntries = total;
++    }
++
++    /** Population completion dirties the active tab once, on the call after the final write phase. */
++    public boolean tick(final int leftTab, final boolean grouping, final boolean filtering) {
++        final int bit = 1 << (leftTab - 1 & 31);
++        if (this.populate()) {
++            this.dirty |= bit;
++        }
++        if ((this.dirty & bit) <= 0) {
++            return false;
++        }
++        final View selected = View.fromLeftTab(leftTab);
++        if (selected != null) {
++            final Collection collection = this.collections.get(selected);
++            collection.view.refresh(collection.entries, grouping, filtering, false);
++            this.dirty &= ~bit;
++        } else if (leftTab == 6) {
++            this.dirty &= ~bit;
++        }
++        return true;
++    }
++
++    private boolean populate() {
++        if (this.phase == POPULATION_ORDER.size()) {
++            this.phase++;
++            return true;
++        }
++        // The original provider leaves totals below eight pending, rather than forcing a minimum budget.
++        if (this.ready() || this.totalEntries < 8) {
++            return false;
++        }
++        int remaining = (int) (this.totalEntries >>> 3);
++        while (this.phase < POPULATION_ORDER.size() && remaining > 0) {
++            final Collection collection = this.collections.get(POPULATION_ORDER.get(this.phase));
++            if (this.phase == 0) {
++                final List<CreativeCatalog.Entry> search = collection.groups.getFirst();
++                final int count = Math.min(remaining, search.size() - this.rowIndex);
++                for (int index = 0; index < count; index++) {
++                    collection.entries.set(this.rowIndex, collection.source.populate(search.get(this.rowIndex).bedrockItem()));
++                    this.rowIndex++;
++                }
++                remaining -= count;
++            } else {
++                while (remaining > 0 && this.groupIndex < collection.groups.size()) {
++                    final List<CreativeCatalog.Entry> group = collection.groups.get(this.groupIndex);
++                    while (remaining > 0 && this.memberIndex < group.size()) {
++                        collection.entries.set(this.rowIndex, collection.source.populate(group.get(this.memberIndex).bedrockItem()));
++                        this.memberIndex++;
++                        this.rowIndex++;
++                        remaining--;
++                    }
++                    if (this.memberIndex < group.size()) {
++                        break;
++                    }
++                    this.memberIndex = 0;
++                    this.groupIndex++;
++                    if (this.rowIndex == collection.entries.size()) {
++                        break;
++                    }
++                }
++            }
++            if (this.rowIndex == collection.entries.size()) {
++                this.rowIndex = 0;
++                this.groupIndex = 0;
++                this.phase++;
++            }
++        }
++        return false;
++    }
++
++    public boolean ready() {
++        return this.phase > POPULATION_ORDER.size();
++    }
++
++    public void invalidate(final View view) {
++        this.dirty |= 1 << (view.leftTab - 1);
++    }
++
++    public void invalidateAll() {
++        this.dirty |= 0x3F;
++    }
++
++    public List<CreativeCatalog.CollectionEntry> entries(final View view) {
++        return List.copyOf(this.collections.get(view).entries);
++    }
++
++    public RecipeCollection<CreativeCatalog.CollectionEntry, CreativeCatalog.Group> collection(final View view) {
++        return this.collections.get(view).view;
++    }
++
++    public enum View {
++        CONSTRUCTION(1, CreativeItemCategory.Construction),
++        EQUIPMENT(2, CreativeItemCategory.Equipment),
++        ITEMS(3, CreativeItemCategory.Items),
++        NATURE(4, CreativeItemCategory.Nature),
++        SEARCH(5, null);
++
++        private final int leftTab;
++        private final CreativeItemCategory category;
++
++        View(final int leftTab, final CreativeItemCategory category) {
++            this.leftTab = leftTab;
++            this.category = category;
++        }
++
++        public int leftTab() {
++            return this.leftTab;
++        }
++
++        private static View fromLeftTab(final int tab) {
++            for (final View view : values()) {
++                if (view.leftTab == tab) {
++                    return view;
++                }
++            }
++            return null;
++        }
++    }
++
++    private static final class Collection {
++        private final List<List<CreativeCatalog.Entry>> groups;
++        private final CreativeCatalog.CollectionSource source;
++        private final List<CreativeCatalog.CollectionEntry> entries;
++        private final RecipeCollection<CreativeCatalog.CollectionEntry, CreativeCatalog.Group> view;
++
++        private Collection(final List<List<CreativeCatalog.Entry>> groups, final CreativeCatalog.CollectionSource source) {
++            this.groups = List.copyOf(groups);
++            this.source = source;
++            this.entries = new ArrayList<>();
++            for (final List<CreativeCatalog.Entry> group : groups) {
++                for (int index = 0; index < group.size(); index++) {
++                    this.entries.add(new CreativeCatalog.CollectionEntry(BedrockItem.empty(), null));
++                }
++            }
++            this.view = new RecipeCollection<>(source);
++        }
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 index a1a76a4d9..1f9574928 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
@@ -628,18 +849,19 @@ index a1a76a4d9..1f9574928 100644
  
      public static boolean handleLegacyOffhandClick(final UserConnection user, final Container container,
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index d1e8b3c38..4892086ab 100644
+index d1e8b3c38..0176f672c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-@@ -50,6 +50,7 @@ import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
+@@ -50,6 +50,8 @@ import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
  import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
  import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomItemTags;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.CreativeCatalog;
++import net.raphimc.viabedrock.protocol.model.CreativeInventoryModel;
  import net.raphimc.viabedrock.protocol.model.ItemEntry;
  import net.raphimc.viabedrock.protocol.model.ItemRegistry;
  import net.raphimc.viabedrock.protocol.model.ItemNameContext;
-@@ -78,9 +79,10 @@ import net.raphimc.viabedrock.protocol.types.item.NetworkItemStackContext;
+@@ -78,9 +80,11 @@ import net.raphimc.viabedrock.protocol.types.item.NetworkItemStackContext;
  
  import java.util.HashMap;
  import java.util.HashSet;
@@ -648,10 +870,11 @@ index d1e8b3c38..4892086ab 100644
 -import java.util.Objects;
  import java.util.Set;
 +import java.util.function.ToIntFunction;
++import java.util.function.ToIntBiFunction;
  import java.util.logging.Level;
  
  public class ItemRewriter extends StoredObject implements NetworkItemStackContext {
-@@ -113,7 +115,7 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -113,7 +117,7 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
      private final Type<BedrockItem> optionalNewItemType;
      private final Type<BedrockItem[]> newItemArrayType;
      private final Type<BedrockItem> stackRequestResultType;
@@ -660,7 +883,7 @@ index d1e8b3c38..4892086ab 100644
  
      static {
          // TODO: Add missing item nbt rewriters
-@@ -450,29 +452,18 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -450,29 +454,22 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
                  "Translating Java items to Bedrock is not yet supported");
      }
  
@@ -692,6 +915,10 @@ index d1e8b3c38..4892086ab 100644
 -        final BedrockItem result = creativeItem.copy();
 -        result.setAmount(item.amount());
 -        return result;
++    public CreativeInventoryModel creativeInventoryModel(final ToIntBiFunction<CreativeInventoryModel.View, BedrockItem> evaluation) {
++        return new CreativeInventoryModel(this.creativeCatalog, evaluation, this::matchesStackIdentity);
++    }
++
 +    public void setCreativeCatalog(final List<CreativeCatalog.Group> groups,
 +                                   final List<CreativeCatalog.Entry> entries) {
 +        this.creativeCatalog = new CreativeCatalog(groups, entries, this.registry);
@@ -749,10 +976,10 @@ index d08578907..8544e1ab3 100644
  
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
 new file mode 100644
-index 000000000..af059ce23
+index 000000000..b560e6c03
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
-@@ -0,0 +1,303 @@
+@@ -0,0 +1,382 @@
 +package net.raphimc.viabedrock.protocol.model;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
@@ -775,6 +1002,7 @@ index 000000000..af059ce23
 +import org.junit.jupiter.api.Test;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
 +import static org.junit.jupiter.api.Assertions.assertNull;
 +import static org.junit.jupiter.api.Assertions.assertSame;
 +import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -1025,6 +1253,84 @@ index 000000000..af059ce23
 +        final var collection = new RecipeCollection<>(population);
 +        assertSame(row, collection.refresh(List.of(row), false, true, true).ordered().getFirst());
 +        assertSame(row, collection.refresh(List.of(row), true, false, false).ordered().getFirst());
++    }
++
++    @Test
++    void playerModelPopulatesSearchFirstAndRefreshesAfterTheCompletionPulse() throws ReflectiveOperationException {
++        final var model = playerModel(playerCatalog(16));
++        assertTrue(model.tick(1, true, false));
++        assertEquals(4, model.entries(CreativeInventoryModel.View.SEARCH).stream().filter(row -> !row.item().isEmpty()).count());
++        assertTrue(model.collection(CreativeInventoryModel.View.CONSTRUCTION).snapshot().rows().isEmpty());
++        for (int frame = 2; frame <= 8; frame++) {
++            assertFalse(model.tick(1, true, false));
++            assertFalse(model.ready());
++        }
++        assertTrue(model.collection(CreativeInventoryModel.View.CONSTRUCTION).snapshot().rows().isEmpty());
++        assertTrue(model.tick(1, true, false));
++        assertTrue(model.ready());
++        assertEquals(1, model.collection(CreativeInventoryModel.View.CONSTRUCTION).snapshot().rows().size());
++        assertFalse(model.tick(1, true, false));
++    }
++
++    @Test
++    void playerModelKeepsSmallNativeSourcesPendingAndSharesBudgetsAcrossCollections() throws ReflectiveOperationException {
++        final var small = playerModel(playerCatalog(3));
++        for (int frame = 0; frame < 20; frame++) {
++            assertEquals(frame == 0, small.tick(5, true, false));
++        }
++        assertFalse(small.ready());
++        assertEquals(3, small.entries(CreativeInventoryModel.View.SEARCH).size());
++        assertTrue(small.entries(CreativeInventoryModel.View.SEARCH).stream().allMatch(row -> row.item().isEmpty()));
++        final var model = playerModel(playerCatalog(11));
++        for (int frame = 0; frame < 6; frame++) {
++            model.tick(6, true, false);
++        }
++        assertEquals(11, model.entries(CreativeInventoryModel.View.SEARCH).stream().filter(row -> !row.item().isEmpty()).count());
++        assertEquals(1, model.entries(CreativeInventoryModel.View.CONSTRUCTION).stream().filter(row -> !row.item().isEmpty()).count());
++        assertTrue(model.entries(CreativeInventoryModel.View.NATURE).stream().allMatch(row -> row.item().isEmpty()));
++        assertThrows(UnsupportedOperationException.class, () -> model.entries(CreativeInventoryModel.View.SEARCH).clear());
++    }
++
++    @Test
++    void playerModelRetainsInactiveDirtyTabsAndExpandedHeaders() throws ReflectiveOperationException {
++        final var catalog = playerCatalog(16);
++        final var model = playerModel(catalog);
++        for (int frame = 0; frame < 9; frame++) {
++            model.tick(6, true, false);
++        }
++        assertTrue(model.ready());
++        assertTrue(model.collection(CreativeInventoryModel.View.CONSTRUCTION).snapshot().rows().isEmpty());
++        assertTrue(model.tick(1, true, false));
++        final var collection = model.collection(CreativeInventoryModel.View.CONSTRUCTION);
++        assertEquals(4, collection.toggleHeader(catalog.groups().getFirst()).memberCount());
++        model.invalidate(CreativeInventoryModel.View.CONSTRUCTION);
++        assertTrue(model.tick(5, true, false));
++        assertTrue(model.tick(1, true, false));
++        assertEquals(5, collection.snapshot().rows().size());
++        assertFalse(model.tick(1, true, false));
++        model.invalidateAll();
++        assertTrue(model.tick(1, true, false));
++        assertEquals(5, collection.snapshot().rows().size());
++    }
++
++    private static CreativeInventoryModel playerModel(final CreativeCatalog catalog) {
++        return new CreativeInventoryModel(catalog, (view, item) -> 1,
++                (first, second) -> NativeItemStackMatcher.matchesIdentity(first, second, ignored -> null, ignored -> Set.of()));
++    }
++
++    private static CreativeCatalog playerCatalog(final int count) throws ReflectiveOperationException {
++        final var groups = new ArrayList<CreativeCatalog.Group>();
++        for (int category = 1; category <= 4; category++) {
++            groups.add(new CreativeCatalog.Group(category, "g" + category, new BedrockItem(50), javaItem(1)));
++        }
++        final var entries = new ArrayList<CreativeCatalog.Entry>();
++        final int[] identifiers = new int[count + 1];
++        identifiers[0] = 50;
++        for (int index = 0; index < count; index++) {
++            identifiers[index + 1] = 100 + index;
++            entries.add(creativeEntry(index + 1, index % 4, 100 + index, index));
++        }
++        return new CreativeCatalog(groups, entries, registry(identifiers));
 +    }
 +
 +    private static CreativeCatalog.CollectionSource collectionSource(final CreativeCatalog catalog) {

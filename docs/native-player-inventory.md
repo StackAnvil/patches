@@ -125,7 +125,7 @@ It also creates a separate search collection. These recipe collections share con
 The category counts use the source category's group references; search uses the complete source list.
 This model construction evidence comes from disassembly. The player search source now uses definition categories from the connection registry.
 The connection catalog now retains the category membership sources.
-Progressive frame delivery, recipe availability evaluation and model publication remain unfinished.
+Installed-screen tick delivery, recipe availability evaluation and model publication remain unfinished.
 The player screen must retain the complete catalog and recipes that need a crafting table.
 A fabricated empty recipe catalog cannot establish support for the default inventory asset.
 
@@ -207,10 +207,26 @@ They do not establish raw descriptor construction at zero count.
 
 ### Population into recipe collections
 
+The unreleased `CreativeInventoryModel` owns the five creative collection buffers and their retained refresh state.
+`ItemRewriter.creativeInventoryModel` binds a connection catalog with explicit per-view availability evaluation.
+The installed player screen still needs to own this model and deliver its ticks.
+
 Original provider `0x143439c20` visits search first, then construction, nature, equipment and items.
-Its budget derives from the total source count and persists across frames.
-The executed guard consumes work only when that total exceeds seven; smaller controls retain their initial phase.
-Full caller construction and publication remain outside this reference.
+One budget covers all five sources and derives from their combined count divided by eight.
+Group, member and destination cursors persist between ticks.
+The model retains fixed-capacity empty rows until population replaces them with owned snapshots and catalog references.
+The original collection constructor stores `-1` for an unpopulated source reference.
+
+The executed guard consumes work only when the combined count exceeds seven.
+Smaller controls retain their initial phase; the Java model preserves that behavior.
+This controlled result does not establish the behavior of a fully constructed screen with a small catalog.
+
+The call after the final write phase reports completion once.
+Controller tick `0x144e168b0` then dirties the active left tab.
+Dispatcher `0x144e1f430` refreshes that collection and retains the other dirty tabs.
+An initial dirty tab can refresh before population completes.
+Inventory tab six clears its bit without selecting a recipe collection.
+Population order remains separate from the left-tab mapping.
 
 Source assignment runs `0x1434463c0` and `0x143446410`.
 It stores the first matching creative entry index, with native metadata wildcard matching and independent stack counts.
@@ -218,10 +234,19 @@ The collection then resolves that entry's group reference.
 This index is not the selected entry's packet group index.
 The catalog adapter retains this distinction when it supplies group identity to `RecipeCollection`.
 
-The complete provider, source assignment and native item comparison execute 181 controls across 2,296 frames.
-Collection-name lookup, receiver lookup and registry-reference delivery remain supplied interfaces.
-The reference uses controlled ordinary definitions, nullable userdata, block state and child state.
-Native packet decoding, recipe evaluation, publication, rendering and physical input remain unverified.
+Complete original creative setup, five collection constructors and destructors, progressive population, controller tick, refresh dispatch, ordering and projection execute together in 508 controls.
+The packaged model is compared across all 9,438 frames, including row references, phases, cursors, dirty masks, visible rows and eligible counts.
+The reference supplies parsed descriptors, stable ordinary definitions, descriptor conversion, item copies/destruction, labels, name/receiver lookup, availability functions, unrelated base-controller ticking and allocator/CRT calls.
+Gesture, focus and delayed-action flags remain inactive during these complete tick controls.
+Native allocation cleanup completes with no remaining allocations.
+
+Three additional weak-owner flows execute 68 native frames.
+They establish that a missing strong owner prevents population while ordinary dirty-tab dispatch can still run.
+The Java screen's opening and retirement ownership is not integrated by these controls.
+Full screen construction, raw packet/item construction, actual availability policy, rendering and physical input remain unverified.
+
+The earlier provider-only reference retains 181 controls across 2,296 frames with independently supplied category/group/member sources.
+Those broader input controls remain separate from the coherent creative-content and controller comparisons above.
 
 The complete original search rebuild and vector growth execute 906 controls.
 They cover all category bytes, absent definitions, duplicates, allocation boundaries and repeated replacement.
@@ -233,10 +258,10 @@ Built-in registration executes with the retained versioned block bootstrap and a
 This establishes constructor defaults rather than a server packet baseline.
 Physical inventory rendering, unlock policy, recipe solving and controller input remain unverified.
 
-All four projects build with 2,838 tests passed, 163 optional skips and no failures or errors.
+All four projects build with 2,841 tests passed, 163 optional skips and no failures or errors.
 The packaged core matches 1,949 factory defaults, 563 typed-update comparisons and 906 search rebuilds.
 It also retains all 7,728 original eligibility and collection/history comparisons.
-All 1,468 core classes and the factory table match the embedded add-on and proxy copies.
+All 1,471 core classes and the factory table match the embedded add-on and proxy copies.
 All 1,191 client classes match the tested add-on.
 
 ## Shared recipe collections
@@ -245,7 +270,7 @@ Release 0.3.56 includes this shared collection model.
 
 The shared `RecipeCollection` model implements the target collection ordering and retained header expansion.
 Cooking uses the same partitioner for its flat visible recipe prefix.
-The player controller still needs progressive frame delivery and its availability evaluator before it can publish these bound collections.
+The player controller still needs installed-screen tick delivery, opening ownership and its availability evaluator before it can publish these bound collections.
 
 Entries retain four stable evaluator buckets.
 A contiguous catalog group moves as one run: state zero wins, then state one; otherwise the first member selects state two or three.
