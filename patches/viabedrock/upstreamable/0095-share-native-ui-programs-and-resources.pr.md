@@ -533,3 +533,13 @@ The [player search reference](../../../docs/native-player-inventory.md#player-se
 All four builds pass with 2,842 tests, 163 optional skips and no failures or errors.
 Checkstyle passes after full replay. All 1,472 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
 The actual player availability evaluator, authoritative name acquisition, installed-screen search and pixels remain unfinished.
+
+
+## Shared native sort
+
+Extract the pinned STL algorithm into `NativeSort` with an explicit comparator.
+Cooking priorities retain their existing behavior, including the native ordering of equal priorities.
+The deferred crafting consumer uses the same algorithm for ingredient cardinality and quantity.
+Keep the Microsoft STL license beside the extracted implementation.
+Existing cooking-order tests pass. The consuming patch compares large pair sorts against complete original counter executions.
+This extraction does not install the player availability evaluator or change screen admission.

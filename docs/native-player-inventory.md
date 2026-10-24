@@ -482,7 +482,7 @@ The shared API returns a text match. The full player availability evaluator rema
 Native function `0x14341c4c0` installs separate search and category evaluators after collection construction.
 Search combines text matching, recipe unlocking and craftability. Category views also depend on filtering and an actor ability predicate.
 The ability predicate is not established as creative mode.
-The player screen still needs authoritative name producers, unlock/query inputs, native ingredient counting and installed-screen callbacks.
+The player screen still needs authoritative name producers, concrete recipe matching, actual context inputs and installed-screen callbacks.
 The four original reports and all five goal areas remain unresolved.
 
 The packaged core matches all 2,660 search comparisons, including 304 retained cooking compositions.
@@ -534,5 +534,68 @@ Nonordinary block canonicalization retains its earlier constructor evidence; the
 All four projects build with 2,843 passing tests, 163 optional skips and no failures or errors.
 Checkstyle passes. All 1,475 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
 
-The player availability evaluator still needs ingredient counts, actual context inputs, evaluator installation and screen lifecycle integration.
+The player availability evaluator still needs concrete ingredient matching, actual context inputs, evaluator installation and screen lifecycle integration.
+The four original reports and all five goal areas remain active.
+
+## Ingredient availability rounds
+
+`NativeRecipeCounter` counts available ingredients independently of Java placement capacity and item request authority.
+The concrete recipe supplies ingredient emptiness and matching. It must contain at least one nonempty ingredient.
+The original counter does not terminate for empty or all-empty ingredient vectors within the execution bounds.
+The Java boundary rejects those inputs. Concrete registration and admission remain unfinished.
+
+The counter groups source stacks by their concrete descriptor hash.
+Only the first stack with a nonzero quantity for each hash determines its compatible ingredient slots.
+Later stacks retain that decision, including an empty match set. Stack request IDs do not determine count eligibility.
+The counter sorts groups once by compatible-slot count, then by descending aggregate quantity.
+The shared `NativeSort` retains the target STL ordering of equivalent groups above the insertion-sort threshold.
+Cooking priorities use the same extracted algorithm, with the original license notice intact.
+
+Each round distributes a group's remaining quantity evenly among its unfilled compatible slots.
+Earlier slots receive the remainder. Each nonzero assignment retains all contributing collection and slot references.
+The smallest allocation among nonempty ingredients adds to the total.
+Each active ingredient then consumes that quantity from its chosen group, including repeated consumption from a shared group.
+The result retains every round, including the final partial or zero round.
+Ingredient descriptor quantities do not divide allocations inside this counter. The concrete matcher can still depend on those quantities.
+
+`InventoryTracker.craftingSources` captures the current owner's native collections in this order:
+
+| Collection | Player inventory | Crafting table |
+| --- | --- | --- |
+| `CraftingInputContainer` | HUD slots 28 through 31 | Table slots 32 through 40 |
+| `HotbarContainer` | Inventory slots 0 through 8 | Inventory slots 0 through 8 |
+| `InventoryContainer` | Inventory slots 9 through 35 | Inventory slots 9 through 35 |
+| `CursorContainer` | Optional HUD slot 0 | Optional HUD slot 0 |
+
+The optional flag controls cursor inclusion. Both paths always include the crafting grid.
+Armor, offhand and preview stacks do not enter these collections.
+The producer copies stack data and rejects a missing, stale or unsupported owner.
+Result slots remain collection-relative. They require translation before any future item request uses them.
+`ItemRewriter.countRecipeInputs` binds the snapshots to the connection's concrete descriptor conversion and hashing.
+This API does not publish a second item authority or replace placement and request admission.
+
+The pinned client remains Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Complete original counter `0x14297b140` executes source grouping, matching dispatch, allocation rounds and nested cleanup.
+Source descriptor construction `0x142486a70` and `0x1424d0b30`, hashing `0x1424e54b0`, and pair sorting `0x142982a00` also execute.
+Source-reference construction and copying preserve actual collection names and relative slot indices.
+Constructor `0x1434360d0` establishes collection order and the four-input or nine-input grid capacity.
+
+The reference covers 755 cases, 7,282 allocation rounds and 55,549 matcher calls.
+Fifty controls exercise large sorts, including comparator-equivalent groups above 32 entries.
+The Java comparison checks total counts, every allocation, every source reference and exact matcher-call order.
+Separate tests compose the real connection rewriter with player and table snapshots, cursor inclusion, immutable copies and owner rejection.
+
+The harness supplies immutable source models, collection names, vectors, stable ordinary definitions and connection definition lookup.
+It supplies the concrete recipe's matching interface through typed per-stack matching sets.
+Ingredient descriptor types, emptiness and quantities are controlled inputs. No count or availability decision uses a supplied result.
+Native temporary allocation and nested cleanup return to the ingredient baseline; final descriptor cleanup leaves no allocations.
+Actual actor/provider capture, concrete recipe admission and matching, full availability evaluation, installed-screen delivery, actions and pixels remain unverified.
+
+The packaged core matches all 755 counter controls and the six focused counter/source regressions.
+Six deliberate changes fail value comparisons: ascending quantity, stable ties, repeated empty-hash matching, zero-quantity inclusion, omitted partial rounds and reversed remainder order.
+The retained packaged comparisons pass all 2,660 searches, 1,671 output-unlock/update checks and 508 progressive controls across 9,438 frames.
+
+All four projects build with 2,850 passing tests, 163 optional skips and no failures or errors.
+Checkstyle passes after full replay. All 1,483 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+
 The four original reports and all five goal areas remain active.

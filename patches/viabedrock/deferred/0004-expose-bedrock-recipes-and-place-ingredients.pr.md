@@ -437,3 +437,30 @@ These live checks verify the Java workflow; they do not establish native screen 
 
 All five goal areas and the four original reports remain open.
 These changes target release 0.3.53.
+
+
+## Native ingredient counting
+
+Count native ingredient availability separately from placement and stack request authority.
+Group by concrete descriptor hash, retain the first stack's match set, and sort once by cardinality then descending quantity.
+Preserve collection-relative source references, repeated allocation rounds and the final partial round.
+Require at least one nonempty ingredient because the original counter does not terminate for empty recipes within the execution bounds.
+Concrete recipe matching and registration admission remain the caller's unfinished integration work.
+
+The current-owner producer snapshots grid, hotbar, inventory and optional cursor collections in native order.
+Player and table grids use four and nine inputs. Armor, offhand and preview cells remain outside those collections.
+The connection rewriter supplies actual descriptor conversion and hashing. Network IDs do not gate ingredient counts.
+These APIs do not replace item authority, request admission or placement.
+
+Complete original counter `0x14297b140` supplies 755 cases, 7,282 allocation rounds and 55,549 matcher calls.
+Fifty controls cover large cardinality/quantity sorts, including native tie ordering.
+Native descriptor construction, hashing, sorting, source-reference copying and nested cleanup execute.
+Source backing, ordinary definitions, connection lookup and concrete recipe matching remain supplied interfaces.
+The comparison checks counts, every round and reference, and exact matcher-call order.
+See the [ingredient reference](../../../docs/native-player-inventory.md#ingredient-availability-rounds) for boundaries and source mappings.
+Actual actor capture, concrete recipe admission/matching, complete availability evaluation, screen delivery, actions and pixels remain unfinished.
+
+The full four-project build passes 2,850 tests, with 163 optional skips and no failures or errors.
+Checkstyle passes. All 1,483 core classes match the embedded add-on and proxy copies; all 1,191 client classes match the tested add-on.
+The packaged counter matches all 755 controls and six focused regressions, and rejects six deliberate semantic changes.
+Retained packaged search, output-unlock and progressive-model comparisons also pass.
