@@ -491,3 +491,48 @@ The retained progressive player model still matches 508 controls across 9,438 fr
 All four projects build with 2,842 passing tests, 163 optional skips and no failures or errors.
 Checkstyle passes after full replay. All 1,472 core classes match the embedded add-on and proxy copies.
 All 1,191 client classes match the tested add-on. Captures and verifiers remain private.
+
+## Output unlocking
+
+`CraftingDataTracker.isOutputUnlocked` reads current connection game rules, registered recipes and unlocked recipe IDs.
+Disabled or unavailable `recipesUnlock` rules admit the output before lookup, as the native predicate does.
+With unlocking enabled, the query uses the native output index independently of displayed recipes and ingredient placement capacity.
+
+Registration indexes only the first fixed result. It reconstructs a count-one Item key before selecting the exact definition/auxiliary bucket.
+This construction preserves associated-block resolution, metadata normalization and the native wildcard value.
+Ingredient wildcard comparison does not select output-index buckets.
+The query applies full native stack identity after it selects the bucket.
+Root quantity does not determine that identity.
+
+Each output bucket retains the latest recipe with a given ID, including registrations under different station tags.
+Context, stack and unlock filtering happen after that replacement.
+An earlier unlocked recipe cannot remain visible when its replacement belongs to another context or has different stack data.
+Different output buckets retain their own replacements.
+
+The tracker caches the private index against the catalog revision and connection rewriters.
+Recipe additions, catalog clears and unlock updates invalidate that snapshot.
+Each query reads current rules and unlock membership. It does not cache the unlocked result or reuse Java recipe-book visibility.
+The tests also compose actual associated-block construction with the stripped-oak-wood auxiliary-eight alias and wildcard metadata.
+
+The pinned client remains Bedrock 1.26.51.1, build 51061372, protocol 2193.
+The original registration region `0x14324d3bf` through `0x14324e422` executes key construction, tree/hash insertion, replacement and rehash.
+Complete output queries `0x143249b10` and `0x143249870` execute context hashing, per-query deduplication and full stack matching.
+Complete functions `0x143439200`, `0x14344d180` and `0x142895850` execute rule checks, actor-component lookup and unlock membership.
+Negative input auxiliaries use the original count-one constructor before the harness sets controlled quantities.
+Query temporaries return to the persistent index's allocation baseline.
+
+The reference has 589 controls. The packaged tracker and real Item rewriter match 553 ordinary controls across 1,659 unlock-state comparisons.
+Four retained catalog flows add 12 update/clear comparisons.
+Thirty-six missing-component controls remain native references for later screen-ownership integration.
+Six deliberate regressions fail: first-registration retention, early context filtering, early stack filtering, stale index reuse, ignored rules and collapsed metadata buckets.
+
+The harness supplies admitted static recipe objects, result getters, context/Level/actor backing, stable ordinary definitions and connection definition lookup.
+Item copies/destruction, empty userdata loading, derived item refresh, clocks and allocator/CRT remain supplied interfaces.
+The complete wire registration, concrete recipe-class admission, actual recipe-context production and actor-component construction remain unverified.
+Nonordinary block canonicalization retains its earlier constructor evidence; these new full-query controls use ordinary definitions and controlled block pointers.
+
+All four projects build with 2,843 passing tests, 163 optional skips and no failures or errors.
+Checkstyle passes. All 1,475 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+
+The player availability evaluator still needs ingredient counts, actual context inputs, evaluator installation and screen lifecycle integration.
+The four original reports and all five goal areas remain active.
