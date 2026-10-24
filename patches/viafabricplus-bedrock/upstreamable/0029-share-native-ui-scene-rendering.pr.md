@@ -1,10 +1,12 @@
 Shared native scene, layout, image, text, HUD and GUI actor rendering precedes the form and inventory adapters.
 
-## Player inventory renderer reference
+## Player inventory renderer
 
 The target selects a separate `live_player_renderer` for player inventory.
 It reads the local actor directly and retains independent actor rotation, body-yaw history and head-yaw history.
-The horse portrait camera cannot supply these semantics through a renderer-name alias.
+The shared renderer now supports this separate local-player path.
+Java PIP applies its native model correction after portrait translation and before entity submission.
+Scoped actor, body and head rotations preserve world player state.
 
 A private reference executes 672 original player draw calls through normal return with an absent renderer result.
 The original component lookups, body-yaw getter/setter, matrix arithmetic and player/mount restoration execute.
@@ -12,8 +14,20 @@ The cases cover standing, swimming, crawling, gliding, overlapping flags, contro
 Renderer-context boundaries, actor delivery, flags, cursor admission getters and host float math remain supplied.
 GPU output, successful renderer variables, effects and physical input producers remain unverified.
 
-The [player inventory reference](../../../docs/native-player-inventory.md) records the target functions, pose fields and implementation requirements.
-Production still lacks the live player renderer and the complete player-inventory controller.
+Three packaged camera regressions cover the native framing and pose fields and reject four deliberately incorrect implementations.
+The full stack passes 2,801 tests, with 163 optional skips.
+All 1,450 core classes match both packaged copies, and all 1,188 client classes match the add-on.
+The prior 35 screen regressions and 1,940 UI input reference cases still pass.
+
+Two private Java 26.3 clients retain 36 actual PIP submission samples at 854 by 480 and 1920 by 1013 pixels.
+Their Java/native GUI scale pairs are 2/1 and 3/4.
+The checks cover mouse coordinates, cursor tracking, supplied native pose flags, local actor selection and unchanged world rotation fields.
+Private screenshots show the local player in both viewports.
+The scene and native flags are supplied. These checks do not reproduce genuine world gliding or a complete authored inventory screen.
+Native pixels, successful native renderer variables, converted skins, equipment, emotes, GUI effects, mounted queries and Iris comparisons remain incomplete.
+
+The [player inventory reference](../../../docs/native-player-inventory.md) records the target functions, pose fields and remaining implementation requirements.
+Production still lacks the complete player-inventory controller. These changes remain outside release 0.3.53.
 
 ## Actor-backed UI portraits
 

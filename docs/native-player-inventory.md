@@ -7,7 +7,9 @@ This reference supports the remaining player-inventory implementation. It descri
 Release 0.3.53 synchronizes player-inventory preferences and preserves independent inventory and workbench layouts.
 The E-key path still opens Java's inventory screen.
 The native inventory asset requires `live_player_renderer`, armor and crafting collections, recipe controls, tabs and search.
-The shared Java renderer currently supports `live_horse_renderer` and actor portraits. It does not support `live_player_renderer`.
+The shared Java renderer now supports `live_player_renderer` through the actual local player.
+It preserves separate actor, body and head rotations and applies the native model transform after Java's portrait translation.
+Form, NPC and container adapters admit the new renderer. The portrait changes remain outside release 0.3.53.
 
 ## Target and original functions
 
@@ -50,6 +52,7 @@ Raw input mode `1` reads the native mouse coordinates and GUI scale.
 Other captured modes use a separate cursor object and two admission getters.
 An absent or inactive cursor contributes zero deltas.
 The admission getters' physical producers remain unverified.
+The current Java adapter supplies mouse coordinates. Physical controller and touch delivery remain unfinished.
 
 The draw temporarily changes the admitted mount's body yaw too.
 The normal return restores actor rotation, both yaw histories and the mount's body yaw.
@@ -66,7 +69,23 @@ Host float math supplies `atanf`, `sinf` and `cosf`.
 The absent renderer result skips successful renderer submission, renderer variables and effects.
 The reference does not establish GPU output, clipping, physical input delivery or visible native parity.
 
-The Java port must retain separate pose values and isolate preview state from world state.
-It also needs checks through the real GUI entity submission path.
+## Java implementation checks
+
+The full stack passes 2,801 tests, with 163 optional skips.
+Three packaged camera regressions pass and reject four deliberately incorrect implementations.
+The native comparison covers framing, actor rotation and body yaw in all 672 cases.
+Head-yaw comparisons cover the 336 cases with that component present.
+The prior 35 screen regressions and 1,940 UI input reference cases also pass.
+
+Two private Java 26.3 clients verify actual entity submission at 854 by 480 and 1920 by 1013 pixels.
+Their Java/native GUI scale pairs are 2/1 and 3/4.
+The checks retain 36 submission samples across twelve supplied scene stages.
+They cover cursor tracking, pose-specific framing and a malformed horse-style entity ID that the local-player renderer ignores.
+Every observed preview draw preserves the world player's rotation fields.
+Private screenshots show the local player at both viewport sizes.
+
+These client checks supply the scene and native pose flags. They do not reproduce genuine world gliding or the authored inventory controller.
+Native visible comparisons, successful native renderer variables, converted skins, equipment, emotes, GUI effects and Iris comparisons remain incomplete.
+Actual mounted preview queries and seat ownership also need verification.
 The full player-inventory controller, screen lifecycle and input delivery remain unfinished.
 All five implementation areas and the four original bug reports remain open.
