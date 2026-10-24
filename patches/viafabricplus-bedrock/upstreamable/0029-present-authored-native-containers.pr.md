@@ -564,3 +564,32 @@ All 1,448 core classes match both embedded copies. All 1,184 client classes matc
 The final JAR also matches all six earlier Button corpora and the earlier focus, tab, arrow, and GLOBAL comparisons.
 The rebuilt modpack contains the exact verified ViaFabricPlus and add-on JARs.
 These lifecycle changes remain outside published release 0.3.50.
+
+## Synchronous named-control visibility
+
+The host creates and indexes all input components before it resolves Button names.
+Named visibility setters notify the target Input before its Button callback.
+Inherited visibility, hover exit, and ordinary registration wait for the later View update.
+Later controls in the same raw pass therefore retain native delivery and observe the correct mapping phase.
+Matching scene copies restore cached appearance without replaying intermediate aliased property changes.
+
+The new comparison executes the original tree constructor, deferred resolver, by-value notification methods, and complete pending-update drain.
+Those notification methods populate and deduplicate the actual queues. The fixture does not insert queue entries directly.
+The remaining notification queue at `+b8` has no established consumer in this corpus. Binding expressions remain outside its scope.
+
+The 216 original 1.26.51.1/protocol 2193 cases cover nested controls, self references, and wildcard callbacks.
+All 3,456 steps and 3,012 controller buttons match. All 73,002 native frees complete with balanced owners and allocations.
+The prior packaged implementation fails the first named-child phase comparison.
+An intermediate implementation also resets held input when cached visuals restore an aliased scene copy.
+A separate regression preserves that Java representation boundary without claiming a native scene-copy event.
+
+Root attachment, control trees, geometry, clocks, input mode, manager state, and drain boundaries remain supplied.
+Full screen construction, binding expressions, physical frame scheduling, modal transitions, Button audio, devices, and pixels remain open.
+Default/player inventory, the four original reports, and all five implementation areas remain unfinished.
+
+The final JAR matches all 1,700 cases across twelve Button and visibility corpora.
+Seven new incorrect variants fail behavioral assertions, including the scene-restoration regression.
+All 33 packaged regressions and the earlier focus, tab, arrow, and GLOBAL comparisons pass.
+All four builds pass 2,793 tests with 163 optional skips and no failures or errors.
+All 1,448 core classes match both embedded copies. All 1,184 client classes match the final add-on.
+The modpack contains the exact verified client JARs. These changes are the candidate for release 0.3.51.

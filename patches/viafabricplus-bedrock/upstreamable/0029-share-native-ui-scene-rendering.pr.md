@@ -317,3 +317,21 @@ The packaged consumer matches all 144 update cases, 12 initial hidden fixtures, 
 The direct callback corpus exposes an incorrect history-clearing variant that the screen sequence alone cannot distinguish.
 Six incorrect variants fail behavioral assertions. All four builds pass 2,785 tests with 163 optional skips.
 Twenty-five packaged regressions and the earlier input comparisons pass with mandatory production class origins.
+
+## Synchronous component callbacks and scene restoration
+
+Input dispatch now runs sibling callbacks before it commits the sender phase.
+A reentrant visibility callback can invalidate other mappings without replacing the sender's final phase.
+Wildcard callbacks also run before the following mapping samples its phase and double-press history.
+
+Button components exist before deferred names bind.
+Runtime setters notify the host immediately, while matching scene copies restore cached visuals without property callbacks.
+This prevents intermediate alias writes from resetting held child input during a redraw.
+The container notes record the original factories, tree notifications, composed comparisons, and remaining lifecycle boundaries.
+
+The final JAR matches all 1,700 cases across twelve Button and visibility corpora.
+Seven new incorrect variants fail behavioral assertions, including the scene-restoration regression.
+All 33 packaged regressions and the earlier focus, tab, arrow, and GLOBAL comparisons pass.
+All four builds pass 2,793 tests with 163 optional skips and no failures or errors.
+All 1,448 core classes match both embedded copies. All 1,184 client classes match the final add-on.
+The modpack contains the exact verified client JARs. These changes are the candidate for release 0.3.51.
