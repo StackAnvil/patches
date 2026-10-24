@@ -631,3 +631,45 @@ Three incorrect initialization variants fail behavioral assertions after both ba
 All 34 packaged regressions and the earlier focus, tab, arrow, and GLOBAL comparisons pass.
 All four builds pass 2,794 tests with 163 optional skips and no failures or errors.
 The embedded core classes, compiled client classes, and exact bundled client JARs match.
+
+## Stationary pointer admission
+
+Cooking screens receive the current pointer after Java resynchronizes it, before the first frame.
+The Gui hook uses the existing native viewport conversion and requires the same screen to remain installed.
+A stationary pointer therefore selects and shows the hovered recipe without a movement event.
+Refreshes and resize preparation keep their existing input lifetime.
+
+The whole original installer now executes resize, initial mode notification, activation, and its optional wrapper/View pointer path.
+All 96 cases match the published component implementation across 480 raw steps and 282 controller-button events.
+All 25,602 native frees balance.
+Client services supply the pointer, viewport, mode, empty screen stack, absent player, and empty service list.
+Keyboard context handling remains an explicit external boundary.
+
+The complete original `handleInputModeChanged` callback also executes its native screen lambda and GUI context construction.
+Its 72 sequences cover 576 steps and 216 notifications, including repeated values and held input.
+Mode notifications invalidate mappings while capture identities survive. All 18,480 native frees balance.
+The one-screen enumeration service, GUI/context notifications, input subsystem, and telemetry remain supplied.
+Physical notification admission and the client's actual screen selection policy remain unverified.
+This capture does not add production gamepad delivery.
+
+Java 26.3 calls `Screen.init`, resynchronizes its pointer, then returns from `Gui.setScreen`.
+`Minecraft.setScreenAndShow` renders a frame before it returns.
+Normal movement delivery requires nonzero accumulated movement.
+The hook therefore runs inside `Gui.setScreen` after resynchronization.
+The actual screen regression covers fresh pointer coordinates, unequal UI scales, recipe selection, matching model updates, and stale screen ownership.
+The initial regression fails before this correction with no compilation or linkage error.
+
+Bare native controls, empty layout queues, clocks, option values, and external services remain supplied.
+Derived cooking controllers, authored layout and bindings, devices, and pixels remain separate gates.
+Default/player inventory, other screens, all five implementation areas, and the four original reports remain unfinished.
+These changes remain outside published release 0.3.52.
+
+All four builds pass 2,794 tests with 163 optional skips and no failures or errors.
+The final JAR matches 1,940 cases across fourteen Button, visibility, initialization, and admission corpora.
+All 35 packaged regressions and the earlier focus, tab, arrow, and GLOBAL comparisons pass.
+Three incorrect pointer-admission variants fail behavioral assertions after the unchanged baseline passes.
+The isolated Java 26.3 client applies the hook after resynchronization and before the first forced frame.
+A passive bytecode observer verifies that placement in the actual transformed Gui class.
+This runtime check establishes hook application and order. The screen regression supplies external Minecraft and network services.
+The 1,448 core classes match both embedded copies, and all 1,185 compiled client classes match the add-on.
+The rebuilt modpack contains the exact verified client JARs.
