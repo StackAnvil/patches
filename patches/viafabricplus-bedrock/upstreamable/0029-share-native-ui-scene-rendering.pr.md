@@ -1,5 +1,20 @@
 Shared native scene, layout, image, text, HUD and GUI actor rendering precedes the form and inventory adapters.
 
+## Player inventory renderer reference
+
+The target selects a separate `live_player_renderer` for player inventory.
+It reads the local actor directly and retains independent actor rotation, body-yaw history and head-yaw history.
+The horse portrait camera cannot supply these semantics through a renderer-name alias.
+
+A private reference executes 672 original player draw calls through normal return with an absent renderer result.
+The original component lookups, body-yaw getter/setter, matrix arithmetic and player/mount restoration execute.
+The cases cover standing, swimming, crawling, gliding, overlapping flags, control shapes and cursor admission paths.
+Renderer-context boundaries, actor delivery, flags, cursor admission getters and host float math remain supplied.
+GPU output, successful renderer variables, effects and physical input producers remain unverified.
+
+The [player inventory reference](../../../docs/native-player-inventory.md) records the target functions, pose fields and implementation requirements.
+Production still lacks the live player renderer and the complete player-inventory controller.
+
 ## Actor-backed UI portraits
 
 The shared renderer accepts the pinned `live_horse_renderer` for verified real player actors.
