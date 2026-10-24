@@ -254,3 +254,17 @@ The container patch consumes these components and owns its domain callbacks and 
 Original factories, component handlers, capture routing and destructors provide the comparison corpus.
 The actual container consumer also matches 384 composed native Input/Toggle/controller steps.
 Complete screen/controller construction, device-origin translation and pixels remain separate requirements.
+
+
+## Initial native focus selection
+
+Initial focus now ranks the authored precedence before the native float top-left score.
+Equal scores retain registration order. All-negative precedences and scores at the initial maximum leave focus empty.
+The signed 64-bit property reader narrows accepted integers to 32 bits.
+Unsigned-only integers, real values, booleans and other types retain zero.
+
+The production selector matches 1,920 original native default-ranking cases and 19 factory property reads.
+The comparison excludes 1,920 manager-disabled fixtures because manager activation belongs to the caller.
+Three deliberate first-control, double-score and unsigned-coercion variants fail these comparisons.
+The container consumer now owns authored VIEW arrow delivery and post-focus hover ordering.
+Full native factories, focus-tab traversal, controller pointer events, devices and pixels remain unfinished.

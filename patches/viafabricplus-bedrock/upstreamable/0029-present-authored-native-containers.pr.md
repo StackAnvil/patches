@@ -340,9 +340,38 @@ The real screen regression fails against the previous content-only core.
 Its fixture declares an actual screen and content hierarchy, with no substitute input wrapper.
 
 The unimplemented player-hurt close policy retains the ordinary menu before input.
-The complete default hosts also retain view-owned navigation, layout, cursor/drop and other commands that still need handlers.
+The complete default hosts retain focus-tab navigation, layout, cursor/drop and other commands that still need handlers.
 Search/edit controls, held-input/reset flow, remaining policies, physical devices and pixels remain open.
 Preserving the full host does not establish full default-screen admission.
 All four builds pass: 2,745 tests, with 163 optional skips.
 Final JARs pass the three desktop host structure checks and both actual host-owned screen regressions, with mandatory production class origins.
-Pocket self-reference handling remains a separate native resolver requirement.
+Pocket declarations now resolve through the shared definition store. Production pocket profile selection remains unfinished.
+
+
+## Screen-owned arrow input
+
+Authored VIEW arrows now use retained component phases and activation transitions.
+Java key repeats no longer move focus directly. Release retires the authored mapping phase.
+Focus-enabled panels participate without a controller action.
+The screen reveals and lays out the selected control before the adapter calculates its logical pointer position.
+Nested hover buttons reach the controller before the outer button queue.
+Preference waits suppress focus changes while still retiring input phases.
+
+Original 1.26.51.1/protocol2193 execution covers 147 composed ScreenView cases and 2,169 focus, pointer and hover steps.
+The production adapter matches those states and all 840 captured controller button events.
+The capture includes three input modes, registration orders, precedence types, wrapping, fractional geometry and mixed controller/VIEW queues.
+All 91,920 native frees complete with no remaining native allocations.
+Seven incorrect selection, type, repeat, pointer, admission and queue-order variants fail the comparisons.
+Targeted tests also cover retained phases, reveal relayout, real key handlers and missing authored arrow mappings.
+
+The fixture supplies ScreenView fields, input order, rectangles and empty controller children.
+Original component factories, inline ScreenComponent constructor bytes, mapping, selection, hover and base controller delivery execute.
+It does not construct the full screen or establish native input-order construction.
+The 1,353 captured kind-5 controller pointer events remain outside this consumer.
+GLOBAL reinjection, focus-tab groups, modal/deflection routing, full scroll geometry, devices and pixels remain unfinished.
+The complete default-screen admission gate remains in place. The original reported bugs and all five goal areas remain open.
+
+All four project builds pass 2,756 tests with 163 optional skips and no failures or errors.
+All 1,448 core classes match both embedded copies, and all 1,181 client classes match the final add-on.
+The packaged add-on repeats the ranking and composed ScreenView comparisons with mandatory production class origins.
+Five packaged screen and input regressions pass, including missing authored keys and reveal relayout.

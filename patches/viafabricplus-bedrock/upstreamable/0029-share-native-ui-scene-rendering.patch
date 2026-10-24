@@ -1,4 +1,4 @@
-From 7b70f5fefb2ce3ca4b066bebdfa5744141acf381 Mon Sep 17 00:00:00 2001
+From b4a82f350c410989ab29cc417a3569a039ea63a1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -359,6 +359,14 @@ lifecycle integration before unchanged screens can be admitted. Bare
 control/screen fields, clock/CRT/allocator boundaries and selected
 controller observers remain declared native execution boundaries. Full
 control construction, physical input and pixels remain unverified.
+
+Rank initial focus with native signed-int64 precedence narrowed to int32,
+then the original float top-left score. Keep registration order for equal
+scores and leave all-negative or unrankable candidates unselected. This
+replaces the first-control shortcut used before directional navigation.
+Original 1.26.51.1 execution matches 1,920 enabled ranking cases and 19
+typed property reads. Screen-owned routing and physical input remain
+separate consumer responsibilities.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   3 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -397,7 +405,7 @@ control construction, physical input and pixels remain unverified.
  .../bedrock/screen/ui/NativeUiController.java |  37 +
  .../bedrock/screen/ui/NativeUiDimension.java  |  93 ++
  .../bedrock/screen/ui/NativeUiFlipbook.java   |  47 +
- .../bedrock/screen/ui/NativeUiFocus.java      | 299 ++++++
+ .../bedrock/screen/ui/NativeUiFocus.java      | 329 ++++++
  .../bedrock/screen/ui/NativeUiFont.java       |  47 +
  .../bedrock/screen/ui/NativeUiGraphics.java   |  47 +
  .../bedrock/screen/ui/NativeUiImageCache.java | 229 +++++
@@ -433,7 +441,7 @@ control construction, physical input and pixels remain unverified.
  .../screen/ui/NativeUiAnimationsTest.java     | 264 +++++
  .../screen/ui/NativeUiAsepriteTest.java       | 108 ++
  .../screen/ui/NativeUiColorAnimationTest.java | 114 +++
- .../bedrock/screen/ui/NativeUiFocusTest.java  |  89 ++
+ .../bedrock/screen/ui/NativeUiFocusTest.java  | 124 +++
  .../screen/ui/NativeUiImageCacheTest.java     | 142 +++
  .../screen/ui/NativeUiImageRegionsTest.java   | 217 ++++
  .../bedrock/screen/ui/NativeUiImagesTest.java | 100 ++
@@ -450,7 +458,7 @@ control construction, physical input and pixels remain unverified.
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |  86 ++
  .../screen/ui/NativeUiViewportTest.java       |  55 +
- 90 files changed, 10183 insertions(+), 24 deletions(-)
+ 90 files changed, 10248 insertions(+), 24 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -3199,10 +3207,10 @@ index 0000000..399e5e8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFocus.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFocus.java
 new file mode 100644
-index 00000000..79aff467
+index 00000000..0d643631
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFocus.java
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,329 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3213,6 +3221,7 @@ index 00000000..79aff467
 +import com.google.gson.JsonElement;
 +import com.google.gson.JsonObject;
 +import java.lang.ref.WeakReference;
++import java.math.BigInteger;
 +import java.util.ArrayDeque;
 +import java.util.ArrayList;
 +import java.util.IdentityHashMap;
@@ -3250,7 +3259,7 @@ index 00000000..79aff467
 +                              final History history) {
 +        if (targets.isEmpty()) return null;
 +        final Target current = targets.stream().filter(target -> target.box.node() == selected).findFirst().orElse(null);
-+        if (current == null) return targets.getFirst();
++        if (current == null) return initial(targets, viewportWidth);
 +        final String override = string(current.box.node(), direction.property);
 +        if (override.equals("FOCUS_OVERRIDE_STOP")) return current;
 +        Target target = null;
@@ -3295,6 +3304,35 @@ index 00000000..79aff467
 +            if (remembered != null) return remembered;
 +        }
 +        return target;
++    }
++
++    private static Target initial(final List<Target> targets, final float viewportWidth) {
++        int maximum = 0;
++        for (final var target : targets) maximum = Math.max(maximum, precedence(target.box.node()));
++        Target selected = null;
++        float nearest = Float.MAX_VALUE;
++        for (final var target : targets) {
++            if (precedence(target.box.node()) != maximum) continue;
++            final var bounds = target.box.bounds();
++            final float score = bounds.y() * viewportWidth + bounds.x();
++            if (score < nearest) {
++                selected = target;
++                nearest = score;
++            }
++        }
++        return selected;
++    }
++
++    private static int precedence(final NativeUiScene.Node node) {
++        final var value = node.properties().get("default_focus_precedence");
++        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) return 0;
++        try {
++            // The native signed-int64 reader narrows to int32; unsigned-only and real values use zero.
++            final var integer = new BigInteger(value.getAsString());
++            return integer.bitLength() <= 63 ? integer.intValue() : 0;
++        } catch (final NumberFormatException invalid) {
++            return 0;
++        }
 +    }
 +
 +    private static void subtree(final NativeUiLayout.Box box, final Map<NativeUiScene.Node, Target> targets, final List<Target> result) {
@@ -8416,10 +8454,10 @@ index 0000000..a4d6db9
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFocusTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFocusTest.java
 new file mode 100644
-index 00000000..7df892e3
+index 00000000..f0227660
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFocusTest.java
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,124 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -8428,12 +8466,47 @@ index 00000000..7df892e3
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.google.gson.JsonObject;
++import java.math.BigInteger;
 +import java.util.List;
 +import org.junit.jupiter.api.Test;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class NativeUiFocusTest {
++    @Test
++    void initialFocusRanksPrecedenceBeforeTopLeftPositionAndExcludesNegativeOnlyCandidates() {
++        final var upper = target(0, 0, 100, 100);
++        final var preferred = target(40, 40, 1, 1);
++        preferred.box().node().properties().addProperty("default_focus_precedence", 2);
++        final var targets = List.of(upper, preferred);
++        assertSame(preferred, NativeUiFocus.next(targets, null, NativeUiFocus.Direction.LEFT, 200, 200, new NativeUiFocus.History()));
++        upper.box().node().properties().addProperty("default_focus_precedence", -1);
++        preferred.box().node().properties().addProperty("default_focus_precedence", -2);
++        assertNull(NativeUiFocus.next(targets, null, NativeUiFocus.Direction.RIGHT, 200, 200, new NativeUiFocus.History()));
++    }
++
++    @Test
++    void initialFocusUsesFloatScoresAndRetainsTheFirstEqualScore() {
++        final var first = target(16_777_216, 1.00001F, 20, 20);
++        final var second = target(16_777_216, 1, 20, 20);
++        assertSame(first, NativeUiFocus.next(List.of(first, second), null, NativeUiFocus.Direction.DOWN, 10, 200, new NativeUiFocus.History()));
++        final var unranked = target(Float.MAX_VALUE, 0, 20, 20);
++        assertNull(NativeUiFocus.next(List.of(unranked), null, NativeUiFocus.Direction.UP, 1, 200, new NativeUiFocus.History()));
++    }
++
++    @Test
++    void initialFocusNarrowsSignedIntegersAndDoesNotCoerceUnsignedOrRealProperties() {
++        final var first = target(0, 0, 20, 20);
++        final var second = target(40, 0, 20, 20);
++        final var targets = List.of(first, second);
++        second.box().node().properties().addProperty("default_focus_precedence", new BigInteger("4294967299"));
++        assertSame(second, NativeUiFocus.next(targets, null, NativeUiFocus.Direction.UP, 200, 200, new NativeUiFocus.History()));
++        second.box().node().properties().addProperty("default_focus_precedence", new BigInteger("9223372036854775808"));
++        assertSame(first, NativeUiFocus.next(targets, null, NativeUiFocus.Direction.UP, 200, 200, new NativeUiFocus.History()));
++        second.box().node().properties().addProperty("default_focus_precedence", 3.0);
++        assertSame(first, NativeUiFocus.next(targets, null, NativeUiFocus.Direction.UP, 200, 200, new NativeUiFocus.History()));
++    }
++
 +    @Test
 +    void measuresTheNearestDirectionalEdgeRatherThanTheCenter() {
 +        final var current = target(0, 0, 20, 20);
