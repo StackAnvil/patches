@@ -599,3 +599,56 @@ All four projects build with 2,850 passing tests, 163 optional skips and no fail
 Checkstyle passes after full replay. All 1,483 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
 
 The four original reports and all five goal areas remain active.
+
+
+## Resolved ingredient matching
+
+`RecipeIngredientMatcher` implements the shared native Recipe matcher after ordinary descriptors resolve.
+`ItemRewriter.matchesResolvedRecipeIngredient` supplies connection descriptor conversion and canonical associated block ownership.
+`countResolvedRecipeInputs` combines that matcher with current-owner snapshots and the verified counter.
+The input vector retains null keys as empty ingredient positions. The counter still requires at least one nonempty ingredient.
+Outer ingredient quantities do not change this resolved matcher or divide counter allocations.
+
+The source guard runs before the matcher converts the stack.
+An `ench` ListTag rejects the source, including an empty list. Other `ench` tag types do not activate that guard.
+A nonzero `minecraft:item_lock` ByteTag also rejects the source. Zero ByteTags and other tag types do not activate that guard.
+Cooking now shares these guards through the same helper.
+
+An empty ingredient matches an empty source descriptor only when source userdata is absent.
+A present empty CompoundTag remains distinct from absent userdata in this matcher.
+Nonempty descriptors retain wildcard auxiliaries and canonical associated block comparison.
+These rules belong to Recipe source matching. The separate shaped and shapeless grid matchers use different paths and keep their existing behavior.
+
+The counter still caches the first nonzero stack's match result for each descriptor hash.
+If that first stack is enchanted or locked, later ordinary stacks with the same hash remain unavailable.
+If the first stack passes, later enchanted or locked stacks with that hash still contribute their quantities and source references.
+Repeated source eligibility checks would change native counts.
+
+The original shaped factory `0x1432697f0` installs vtable `0x14e872280`.
+The shapeless factory `0x14326a0a0` installs vtable `0x14e872300`.
+Both tables select source matcher `0x14297a2e0` and descriptor comparison `0x14297a710`.
+Both return true from virtual slot `0x50`, which activates output validation in registration `0x14324b590`.
+This table evidence does not establish complete wire admission or every recipe class.
+
+The reference executes the original Item constructor before it supplies typed userdata.
+That constructor clears the Item reference at zero quantity. Earlier raw zero-quantity seeds did not represent that construction and were corrected.
+Original CompoundTag lookups `0x142548a90` and `0x142548b90`, descriptor construction/comparison, and the complete counter execute.
+The capture contains 1,443 direct matches and 260 counter controls with 496 rounds and 3,305 matcher calls.
+Thirty-nine shapeless controls also match the shared path.
+Separate Java tests cover lazy conversion after source guards, real owner snapshots, empty positions and canonical associated block ownership.
+
+The harness supplies typed tag trees and metatype getters, stable ordinary definitions, registry lookup, source model backing and allocator/CRT interfaces.
+Temporary native descriptor and counter allocations return to their baseline.
+The capture does not execute binary NBT loading, complete source Item retirement, native actor/provider capture, installed screens, actions or pixels.
+
+The packaged core matches all 1,703 direct/counter controls and the three focused integration regressions.
+Six deliberate regressions fail value comparisons: ignored enchantment lists, rejected non-list enchantment tags, rejected zero locks, ignored empty userdata, exact-only metadata and repeated source eligibility.
+The retained 755 counter controls, 2,660 searches, 1,671 unlock/update comparisons and 508 progressive controls across 9,438 frames also pass.
+All four builds pass with 2,854 tests, 163 optional skips and no failures or errors. Checkstyle passes.
+All 1,485 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+
+Deferred wire names require another resolution stage before this API can consume their results.
+Original resolver `0x142522910` can select a runtime alias descriptor or fall back to a block definition.
+Treating every wire name as an ordinary Item key would skip those branches and can misclassify empty ingredients.
+Deferred names, alias/tag/Molang payloads, full wire admission, actual recipe contexts and installed availability remain unfinished.
+The four original reports and all five goal areas remain active.

@@ -464,3 +464,27 @@ The full four-project build passes 2,850 tests, with 163 optional skips and no f
 Checkstyle passes. All 1,483 core classes match the embedded add-on and proxy copies; all 1,191 client classes match the tested add-on.
 The packaged counter matches all 755 controls and six focused regressions, and rejects six deliberate semantic changes.
 Retained packaged search, output-unlock and progressive-model comparisons also pass.
+
+
+## Resolved Recipe source matcher
+
+Bind already resolved ordinary descriptors to native Recipe source matching and current-owner counter snapshots.
+Reject an `ench` ListTag or nonzero `minecraft:item_lock` ByteTag before the matcher's source conversion.
+Retain absent versus empty userdata for empty descriptors, wildcard metadata and canonical associated block ownership.
+Share source guards with cooking. Keep grid matching on its separate path.
+The first nonzero stack still controls eligibility for every later source with its descriptor hash.
+
+The original shaped and shapeless factories install the same matcher and comparator.
+Actual Item construction, typed CompoundTag lookups, descriptor comparisons and the complete counter execute in the new reference.
+It covers 1,443 direct matches and 260 counter controls, including 496 rounds and 3,305 matcher calls.
+Thirty-nine shapeless controls also match. Typed metatype getters, ordinary definitions, registry lookup, source backing and allocator/CRT remain supplied interfaces.
+The original constructor clears Item references at zero quantity; the fixture now executes that construction before typed userdata injection.
+
+`countResolvedRecipeInputs` accepts resolved descriptors with explicit empty positions.
+Deferred wire names can select aliases or block fallback. Their resolution, tag/Molang payloads, complete wire admission and installed availability remain unfinished.
+See the [resolved ingredient reference](../../../docs/native-player-inventory.md#resolved-ingredient-matching) for evidence and limits.
+
+The full four-project build passes 2,854 tests, with 163 optional skips and no failures or errors. Checkstyle passes.
+All 1,485 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+The packaged matcher passes 1,703 direct/counter controls and three focused integration regressions, and rejects six deliberate semantic changes.
+All retained counter, search, output-unlock and progressive-model comparisons also pass.
