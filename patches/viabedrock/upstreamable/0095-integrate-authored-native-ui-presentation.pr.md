@@ -14,7 +14,7 @@ Unsupported callback indices retain their explicit Java preconditions. These gua
 
 Populated captures distinguish the priority name map from a DataDriven constructor class.
 Both secondary name maps, raw staging keys, definition lifetimes and numeric owners remain separate model requirements.
-Complete populated factory ownership, the later block producer and installed recipe evaluation remain unfinished.
+The runtime now models the recorded populated factory ownership and late block producer. Complete recipe evaluation in the installed client remains unfinished.
 
 ## Purpose
 
@@ -793,7 +793,8 @@ Expected post-registration results do not supply its registration decisions.
 
 The controls cover the recorded builtin context and empty component data.
 They do not establish complete custom-block, experiment or version-dependent construction.
-Nonempty component branches, class-specific ItemStack construction and complete caller admission still need coupled native coverage.
+The component controls below add the measured nonempty branches.
+Class-specific ItemStack output and complete caller admission still need coupled native coverage.
 The recipe registry interfaces, installed player screen and physical input remain unfinished.
 All four original reports and all five goal areas remain active.
 

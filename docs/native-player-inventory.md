@@ -785,9 +785,9 @@ The capture covers 2,501 parser controls and 22,917 rewrites. It records 46 unsu
 Input, registry, TLS, static and CRT cleanup finishes with no remaining native allocations or held locks.
 A separate primitive parser capture also matches 552 controls.
 
-These APIs do not resolve live Item definitions or replace full recipe admission.
-Priority-map precedence, ordinary/fallback definition lookup, member/representative ownership, actual Item construction and complete registry replacement remain unfinished.
-The rich descriptor Registry still requires those inputs before installed availability can use it.
+The shared registry now resolves saved names to constructed definitions, including both secondary maps and independent numeric owners.
+Complete recipe admission, member/representative integration, actual Item construction and registry retirement remain unfinished.
+The rich descriptor Registry still requires that integration before installed availability can use it.
 All four original reports and all five goal areas remain active.
 
 The packaged core matches all 2,501 parser controls, 22,917 rewrites and 46 explicit unsupported-index guards.
@@ -801,8 +801,8 @@ All 1,498 core classes and the alias asset match both embedded copies; all 1,191
 
 Native named definitions and numeric lookup owners have separate lifetimes.
 A runtime-ID collision does not remove either named definition.
-The current Java registry removes the earlier named definition through its bidirectional ID map.
-The packaged reproduction confirms this mismatch. The runtime correction remains unfinished.
+The earlier Java registry removed colliding names through its bidirectional ID map.
+A packaged reproduction confirmed this mismatch. The runtime now retains both named definitions and selects numeric owners separately.
 
 The reference uses 20 explicit typed ItemData registrations under the same pinned target, version and experiment configuration.
 These synthetic controls cover repeated names, colliding IDs, constructor classes, invalid IDs and metadata aliases.
@@ -837,7 +837,8 @@ All component controls occupy the ordinary map at registry offset `0x98`.
 The priority map at `0xd8` and the fallback map at `0x118` remain empty in this capture.
 The DataDriven `minecraft:planks` definition therefore does not bypass its ordinary metadata alias.
 Named stack construction with auxiliary three still produces `minecraft:jungle_planks` with auxiliary zero.
-Nonempty priority-map registration and complete lookup precedence still need execution coverage.
+That capture did not exercise nonempty priority-map registration.
+The populated constructor control below adds both secondary maps.
 
 The observation at the return from `0x143ee0830` contains only air.
 It does not establish a complete builtin snapshot.
@@ -860,9 +861,9 @@ All four original reports and all five goal areas remain active.
 
 ## Constructor staging and secondary names
 
-The shared registry foundation now owns the verified parser, alias getters, metadata callbacks and their tests.
+The shared registry foundation owns definition construction, saved-name parsing, alias getters, metadata callbacks and their tests.
 These APIs precede recipe and active-use consumers in the patch stack.
-They preserve their existing runtime behavior. Complete live definition ownership remains unfinished.
+The recorded builtin and component contexts have coupled coverage. Complete recipe integration and other version/experiment contexts remain unfinished.
 
 The empty-input reference separates three constructor phases.
 The ordinary map first owns air at ID -158. A separate staging map holds 1,241 definitions.
@@ -874,7 +875,7 @@ Staging keys and canonical definition names differ in 119 entries.
 For example, the raw key `element_39` refers to a definition named `minecraft:element_39`.
 Constructor selection queries the raw staging key. Normalizing these keys together changes that lookup.
 The later block-registration callback also queries current numeric and named owners before it constructs or associates an Item.
-Its remaining predicates and component branches need populated execution coverage before the registry correction can use this phase.
+The constructed-registry implementation below now uses these inputs and executed predicates.
 
 A further 31-entry control distinguishes raw staging selection from ordinary name replacement.
 Input `element_39` removes its raw staged key and retains the component definition under `minecraft:element_39`.
@@ -901,7 +902,7 @@ Observed bucket counts progress through 8, 64, 512, 1,024 and 2,048.
 The final numeric ownership pass follows this iteration order.
 An independent ordering model matches all 7,833 insertion steps across four complete captures.
 FNV-1a hashing and reversed bucket insertion each fail concrete native comparisons.
-This ordering model is reference evidence, rather than a production registry implementation.
+The production registry now uses this ordering model to select final numeric owners.
 
 The empty-input capture completes 126 named and 1,965 numeric ItemStack controls.
 The populated capture completes 192 named and 1,995 numeric controls, including priority and fallback lookup.
@@ -934,7 +935,8 @@ Expected post-registration results do not supply its registration decisions.
 
 The controls cover the recorded builtin context and empty component data.
 They do not establish complete custom-block, experiment or version-dependent construction.
-Nonempty component branches, class-specific ItemStack construction and complete caller admission still need coupled native coverage.
+The component controls below add the measured nonempty branches.
+Class-specific ItemStack output and complete caller admission still need coupled native coverage.
 The recipe registry interfaces, installed player screen and physical input remain unfinished.
 All four original reports and all five goal areas remain active.
 
