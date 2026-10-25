@@ -663,3 +663,43 @@ That core also fails to decode both empty-result packet controls. Implementation
 All 1,523 core classes match both embedded copies.
 Only the result decoder and three build-identity classes change; 1,519 classes and all 198 assets remain byte-identical.
 No new installed player capture ran for this correction.
+
+## Block result association and field bounds (October 25, 2026)
+
+Result Item IDs must fit a signed short. Auxiliary values must be from zero through 32767.
+The decoder checks those fields before narrowing or reading later fields.
+Nineteen complete native packet controls establish eight accepted values and eleven rejections, including exact failure positions.
+Original error-tree, packet and static cleanup completes without remaining allocations or held locks.
+These field controls decode descriptors without materializing results.
+
+Recipe result construction now reads the selected Item definition's own Block association before resolving metadata.
+Associated Items discard transmitted auxiliary data; ordinary Items retain it.
+A dedicated connection context supplies this constructor to the recipe decoder.
+The shared inventory constructor keeps its existing behavior.
+
+Twenty complete native packet-to-registration controls cover apple, stripped oak wood, acacia log and item-prefixed acacia planks.
+Each uses auxiliary 0, 1, 2, 8 or 32767.
+All twenty register, match the apple ingredient and select the recorded output state.
+Acacia log auxiliary one previously produced the wrong constructed Item.
+The preceding implementation also retained wildcard auxiliary data on three associated Block results.
+Original packet, recipe, Item, Block, TLS, static and CRT retirement leaves no allocations or held locks.
+
+Java comparisons construct the registry from the same typed NBT declarations.
+Original native Block-selector observations supply the declared Block interface backing.
+The packets transmit runtime ID zero. Their Item constructors select actual default Block states through the fallback path.
+Nonzero transmitted runtime IDs, complete world-palette ownership, the full packet handler and installed player publication remain unverified here.
+
+All 106 core patches replay. The four-project build passes 2,952 tests, with 160 optional skips and no failures or errors.
+ViaBedrock passes 1,821 tests with 83 optional skips. All 19 focused packaged tests pass.
+The packaged core matches all 39 new native packet comparisons.
+The preceding core differs on eleven invalid-field cases and four Block-result cases; all fifteen differences fail value assertions.
+Constructor signatures select each packaged version's actual construction API. Implementation origins are verified.
+The range comparison supplies an empty construction boundary and compares parsing only.
+The Block comparison uses the production registry constructor with declared native selector data.
+
+All 1,524 core classes match both embedded copies.
+Compared with the preceding core, 1,515 classes and all 198 assets remain byte-identical.
+The new recipe context adds one interface.
+Three existing implementation classes, two compiler-owned nested classes and three build-identity classes change.
+Both nested classes retain identical declarations and instructions.
+Packaged implementation classes match compilation. No new installed player capture ran.

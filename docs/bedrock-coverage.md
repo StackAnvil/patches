@@ -126,6 +126,8 @@ Rejected entries do not reserve either key. Java grid limits apply after native 
 Presented books retain their catalog and unlock revision. Replacement registrations receive fresh click IDs.
 Recipe models copy their ingredients and nested result data so callers cannot change a registered recipe.
 Recipe result decoding consumes complete headers and clamps signed-short output counts from one through 64.
+Result Item IDs must fit a signed short, and auxiliary values must be from zero through 32767.
+Recipe result construction discards auxiliary data when the selected definition owns a Block association.
 Every result must resolve to a registered non-air item before its recipe can claim registration keys.
 Executable fixtures cover the registration guards, dimensions, result validation, count conversion and dynamic-factory selection.
 These probes do not establish complete native factory construction, item ownership or visual parity.
@@ -9725,3 +9727,39 @@ The cumulative Java registration IDs match every recorded native output-index re
 Four value assertions and both empty-header packet controls fail against the preceding packaged core.
 All 1,523 core classes match both embedded copies; 1,519 classes and all 198 assets remain byte-identical to that preceding core.
 No new installed player capture ran for this correction.
+
+## Recipe result Block associations and field bounds (October 25, 2026)
+
+The result decoder now checks Item IDs against signed-short bounds before narrowing them.
+It also checks unsigned auxiliary values against the native range from zero through 32767.
+Nineteen original native packet controls establish eight accepted cases and eleven rejected cases, with exact byte consumption.
+Each completes original schema, binary, error-tree, packet and static cleanup.
+
+The selected Item definition determines whether a recipe result keeps transmitted auxiliary data.
+Items with an associated Block discard it before selecting their result state.
+Ordinary Items retain it. A dedicated recipe construction context now preserves this distinction.
+
+Twenty complete native packet controls cover four Items and five auxiliary values.
+Every control executes result construction, registration, output lookup and full original retirement.
+All twenty match their apple ingredient and enter the recorded output index.
+For acacia log auxiliary one, the preceding packaged core constructs a different Item.
+It also retains wildcard metadata on three associated Block results.
+
+The Java comparison uses the same typed registry declarations and original native Block-selector observations as declared interface backing.
+These packets transmit runtime ID zero and exercise fallback selection of actual default Block states.
+They do not establish nonzero transmitted runtime lookup, complete world-palette ownership, full handler/controller execution or installed player publication.
+
+All 106 core patches replay. The four-project build passes 2,952 tests, with 160 optional skips and no failures or errors.
+ViaBedrock passes 1,821 tests with 83 optional skips. All 19 focused packaged tests pass.
+The packaged core matches all 39 new native packet comparisons.
+The preceding core differs on eleven invalid-field cases and four Block-result cases; all fifteen differences fail value assertions.
+Constructor signatures select each packaged version's actual construction API. Implementation origins are verified.
+The range comparison supplies an empty construction boundary and compares parsing only.
+The Block comparison uses the production registry constructor with declared native selector data.
+
+All 1,524 core classes match both embedded copies.
+Compared with the preceding core, 1,515 classes and all 198 assets remain byte-identical.
+The new recipe context adds one interface.
+Three existing implementation classes, two compiler-owned nested classes and three build-identity classes change.
+Both nested classes retain identical declarations and instructions.
+Packaged implementation classes match compilation. No new installed player capture ran.
