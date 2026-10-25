@@ -1766,3 +1766,55 @@ All six requests receive successful responses; the pumpkin request contains orde
 Client and core states match after reconciliation, and the final native close is acknowledged.
 Installed artifact and embedded-class checks pass, the driver completes normally, and all processes started by the run retire.
 This server-authoritative control verifies those final states, not frame-by-frame native prediction, direct joins, legacy authority or complete native controller parity.
+
+## Definition-owned item tags
+
+Item tags belong to the selected constructed definition, independently of its name and numeric runtime owner.
+Copies retain that definition; raw network stacks select the current numeric owner.
+ItemRewriter transports the same tags in emitted animation data.
+
+The registry applies tag stages in native order:
+
+1. Genuine builtin constructors provide their initial tags.
+2. DataDriven component readers append nonempty string entries from `item_tags`.
+3. Late Block registration can append Block tags to its selected component receiver.
+4. The final named pass appends tags through exact ordinary-name lookup.
+
+Component reads preserve insertion order and deduplicate exact, case-sensitive values.
+Omitted fields, empty lists and mistyped values retain earlier tags.
+Legacy receivers ignore compiled component tag updates.
+Replacing a builtin with a generic component does not copy the displaced constructor's tags.
+A newly constructed prefixed BlockItem also does not update the displaced component.
+
+The target metadata records 450 nonempty builtin constructor vectors, 1,379 Block inputs and 387 final named registration rules.
+Thirty-two generated names remain absent under the default experiments.
+A separate control declares generic components with those names and executes both native registration loops.
+It verifies tag updates for those declarations without adding the absent Block feature.
+
+Six controls execute complete original registry initialization, typed component updates, late Block registration and runtime-ID reassignment.
+The coupled comparison checks all 11,773 final definition tag vectors.
+Each run completes input, registry, TLS, static and CRT retirement without remaining allocations or held locks.
+The inputs are declared typed NBT controls, not a normal server packet baseline.
+
+Original `14252d8e0` separately checks 89,252 tag predicates over retained definition and vector backing.
+Native HashedString construction and byte comparison execute without supplied predicate results.
+Query storage is retired; definition backing remains declared retained storage for this predicate control.
+This separate check does not establish full registry or client lifetime.
+
+Existing recipe predicates, cooking expansion and Java recipe displays now use receiver-owned tags.
+Expansion filters definitions before constructing matched default items, preserving the constructor's independent numeric and Block selection.
+The existing restricted Molang tag parser uses the same data; this does not establish complete native Molang compilation.
+
+Wire descriptor admission, owned Tag/Molang payloads and installed player recipe publication remain unfinished.
+The authored E-key screen and all four original reports remain open.
+
+The four-project build passes 2,943 tests with 161 optional skips; ViaBedrock passes 1,812 tests with 84 optional skips.
+The packaged core passes 138 focused checks, including seven new tag and consumer checks.
+Five deliberate regressions fail value assertions: discarded earlier tags, folded case, inherited generic defaults, numeric tag ownership and numeric cooking enumeration.
+Implementation origins are verified, and mutation checks leave production sources unchanged.
+
+All 1,523 core classes match both embedded copies, and all 1,191 client classes match the compiled add-on.
+The comparison retains 1,486 byte-identical core classes and 196 unchanged assets from the output-availability build.
+Twenty-one other classes retain identical declarations and instruction disassembly despite compiler metadata changes.
+Only the factory and registry assets change; their existing metadata remains semantically unchanged after removing the new tag fields.
+No new live inventory or animation capture ran for this milestone.

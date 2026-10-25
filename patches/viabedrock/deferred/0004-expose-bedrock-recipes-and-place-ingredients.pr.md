@@ -615,3 +615,15 @@ All 1,523 core classes match both embedded copies; all 1,191 client classes matc
 All 198 assets and 1,509 existing core classes remain byte-identical to the ability milestone.
 The change adds one candidate record. Eight changed nested classes retain identical declarations and instruction disassembly.
 No new live inventory-screen capture ran for this change.
+
+## Receiver-owned recipe tags
+
+Use the constructed definition's tags for existing tag predicates, restricted Molang tag predicates, cooking expansion and recipe displays.
+Filter definitions before default-item construction, preserving its independent numeric owner and Block conversion.
+Focused collisions check expansion cardinality and displayed item identity.
+The restricted parser remains separate from native Molang compilation and wire descriptor admission.
+See [the tag ownership reference](../../../docs/native-player-inventory.md#definition-owned-item-tags).
+
+Both new consumer regressions pass against the packaged core.
+Collapsing cooking enumeration to numeric owners fails the expansion cardinality assertion.
+All 138 focused packaged checks and the four-project build pass.

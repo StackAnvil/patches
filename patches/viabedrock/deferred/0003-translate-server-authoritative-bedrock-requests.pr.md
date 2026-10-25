@@ -1160,3 +1160,22 @@ Shift-click places one pumpkin in armor before merging two into inventory, and r
 All six fixture and shift-click requests receive successful responses.
 Final client/core state, native close acknowledgment, installed artifacts and process cleanup pass verification.
 These server-authoritative final states do not establish frame-by-frame native prediction, legacy authority or complete controller parity.
+
+## Definition tag ownership
+
+Retain tags on constructed definitions through component updates and ID collisions.
+Apply constructor defaults, compiled component updates, selected Block updates and final exact-name registration in native order.
+Legacy readers ignore compiled tags; generic replacements do not inherit the displaced constructor's tags.
+Transport receiver-owned tags in emitted item animation data.
+
+Six complete original registry controls compare all 11,773 definition tag vectors and finish original cleanup without allocations or held locks.
+A separate comparison checks 89,252 original predicates with retained definition/vector backing and native HashedString construction.
+Declared typed inputs do not establish a normal packet baseline, full client lifecycle or live animation parity.
+See [the tag ownership reference](../../../docs/native-player-inventory.md#definition-owned-item-tags).
+
+The current four-project build passes 2,943 tests with 161 optional skips.
+All 138 packaged checks pass; five deliberate tag regressions fail value assertions with verified implementation origins.
+Both embedded copies match all 1,523 core classes, and the add-on matches all 1,191 compiled client classes.
+The two tag metadata assets change while 196 other assets remain byte-identical.
+Existing metadata in both changed assets remains semantically unchanged.
+No new live inventory or animation capture ran for this milestone.
