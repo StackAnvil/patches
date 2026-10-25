@@ -668,3 +668,44 @@ The optional regression belongs to the inventory consumer patch because it also 
 The complete ViaBedrock suite passes 1,721 tests with 86 optional skips and no failures or errors.
 Checkstyle passes. Packaged comparisons reject normalized update keys and flag resets after invalid selectors.
 Runtime sources, resources and build configuration match the previously verified four-project build exactly.
+
+
+## Constructed recipe context
+
+Named recipe matching now retains constructed definitions and their receiver-owned block associations.
+Numeric collisions do not replace the selected recipe definition with the numeric owner.
+Recipe-source matching retains typed guards before deferred lookup.
+Descriptor comparison leaves source admission to its manual or automatic caller.
+
+The adapter uses normal saved-name lookup for recipe names and narrows the requested auxiliary value to a signed short first.
+Complex-alias representatives use normal named lookup with auxiliary zero.
+Alias members use parsed direct lookup without metadata rewriting.
+Block fallback uses registered BlockLegacy numeric ownership independently of auxiliary conversion or archetype support.
+The descriptor and source guards now precede recipe consumers in the inventory patch.
+
+An original native control supplies 24 typed ItemData declarations under target 1.26.51.1, build 51061372, protocol 2193.
+It constructs the global block/state registry and complete ItemRegistry with default Experiments and base-game version 1.26.50.
+Original named descriptor construction, lazy resolution, repeated emptiness checks and deleting destructors execute.
+All 540 resolved recipes match the packaged adapter's kinds, selected/representative names and IDs, auxiliary values and emptiness results.
+All 1,379 registered block numeric identities also match.
+Native comparisons reject numeric-owner substitution and direct alias-representative lookup.
+Input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+This control does not execute complete client/level setup or establish custom-archetype, registry-retirement or installed availability behavior.
+
+A broader control covers 4,440 named stacks, 1,987 numeric initializations, 1,920 zero-runtime network constructors and 20,685 block selections.
+Named lookup and numeric ownership match throughout that control.
+The existing network model misses five positive-count coal-to-charcoal conversions at auxiliary one.
+Canonical saved-name construction and retained stack definition identity still need correction.
+A private network-header projection also differs for air ID zero. That projection does not establish complete production named construction.
+
+The broad control differs on 12 block selections. A focused range finds 107 differences across barrel, jigsaw, glow lichen, campfire and tube coral.
+The earlier server sweep queried Script API `ItemStack.matches`; it did not directly read the legacy converter's selected block pointer.
+The Script API path and complete client/level cache setup need comparison before the legacy-conversion data changes.
+These observations remain separate caller contexts. The existing auxiliary data remains unchanged.
+
+The four-project build passes 2,856 tests with 163 optional skips and no failures or errors.
+A separate complete core run passes 1,725 tests with 86 optional skips. Checkstyle passes.
+All nine retained packaged suites and the nonempty-component suite pass.
+All 1,514 core classes and three registry resources match the embedded client and proxy copies.
+All 1,191 client classes match the tested add-on.
+All four original reports and all five goal areas remain active.

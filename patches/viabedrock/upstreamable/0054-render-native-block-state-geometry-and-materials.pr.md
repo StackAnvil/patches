@@ -497,3 +497,15 @@ A fresh default-OpenGL Galaxite run reaches spawn and completes a 30-second play
 The accepted server packs produce no mapping, geometry-conversion, or Java model-loading errors.
 Forced software Vulkan and a later longer run disconnect before spawn.
 The [survey follow-up](../../../docs/lobby-survey.md#galaxite-block-conversion-follow-up-22-october) records the validation limits and broader audit.
+
+
+## Registered block item ownership
+
+Retain the registered BlockLegacy numeric item identity independently of auxiliary-state conversion.
+Builtin palette block IDs and accepted custom BlockProperties supply this identity.
+Named recipe fallback can use the identity while a custom archetype's auxiliary converter remains unverified.
+The full production context matches all 1,379 original registered block inputs from target 1.26.51.1, build 51061372, protocol 2193.
+
+Direct legacy-converter observations differ from the earlier Script API item-matching sweep for five block families.
+A full client/level setup and caller-path comparison remains necessary before auxiliary data changes.
+This change preserves the existing auxiliary data.
