@@ -529,3 +529,15 @@ Recipe consumers now use the shared registry's constructed definitions and indep
 Numeric collisions retain both names. Generic Legacy definitions do not inherit builtin traits from a matching name.
 Cooking and recipe tests use explicit numeric ownership instead of treating low builtin IDs as absent.
 The complete recipe Registry interface and installed native availability remain unfinished.
+
+## Retained definition consumers
+
+Cooking input expansion reads the selected definition's block association before default stack construction.
+It no longer replaces that named selection with the numeric owner for this check.
+Output admission also retains the constructed stack's definition.
+The shared constructor preserves canonical definition identity, and full stack queries retain their separate name-and-ID comparison.
+
+Primitive fixtures declare their warm block caches, ordinary definitions and empty alias tables explicitly.
+Their native counter and output-index expectations remain unchanged.
+The separate complete registry control compares the packaged constructor and ItemRewriter against original native functions.
+Installed recipe availability and complete named/NBT construction remain unfinished.

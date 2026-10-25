@@ -826,3 +826,19 @@ The optional regression belongs to the inventory consumer patch because it also 
 The complete ViaBedrock suite passes 1,721 tests with 86 optional skips and no failures or errors.
 Checkstyle passes. Packaged comparisons reject normalized update keys and flag resets after invalid selectors.
 Runtime sources, resources and build configuration match the previously verified four-project build exactly.
+
+## Constructed stack identity
+
+Constructed stacks retain their selected definition independently of numeric ownership.
+Copies retain that definition, and explicit identifier changes clear the selection.
+Container snapshot equality distinguishes definitions with the same encoded fields.
+Merge admission compares definition objects, while full stack queries compare names and IDs.
+The existing parsed name reaches canonical lookup without another saved-name parse.
+
+Stacking properties follow the retained receiver.
+Priority lookup and metadata-independent aliases can establish selection without an unmodeled Block auxiliary.
+Metadata-dependent lookup requires that missing context.
+Native weak ownership after registry retirement remains unfinished.
+
+The owning inventory patch records the complete network constructor control and packaged comparisons.
+The four-project build passes 2,861 tests with 162 optional skips. Checkstyle passes.

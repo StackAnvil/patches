@@ -694,8 +694,8 @@ This control does not execute complete client/level setup or establish custom-ar
 
 A broader control covers 4,440 named stacks, 1,987 numeric initializations, 1,920 zero-runtime network constructors and 20,685 block selections.
 Named lookup and numeric ownership match throughout that control.
-The existing network model misses five positive-count coal-to-charcoal conversions at auxiliary one.
-Canonical saved-name construction and retained stack definition identity still need correction.
+That control exposed five missing positive-count coal-to-charcoal conversions at auxiliary one.
+The canonical network construction section records their correction. Complete named and NBT construction remain unfinished.
 A private network-header projection also differs for air ID zero. That projection does not establish complete production named construction.
 
 The broad control differs on 12 block selections. A focused range finds 107 differences across barrel, jigsaw, glow lichen, campfire and tube coral.
@@ -703,9 +703,54 @@ The earlier server sweep queried Script API `ItemStack.matches`; it did not dire
 The Script API path and complete client/level cache setup need comparison before the legacy-conversion data changes.
 These observations remain separate caller contexts. The existing auxiliary data remains unchanged.
 
-The four-project build passes 2,856 tests with 163 optional skips and no failures or errors.
-A separate complete core run passes 1,725 tests with 86 optional skips. Checkstyle passes.
+The four-project build passes 2,861 tests with 162 optional skips and no failures or errors.
+The complete core run passes 1,730 tests with 85 optional skips. Checkstyle passes.
 All nine retained packaged suites and the nonempty-component suite pass.
 All 1,514 core classes and three registry resources match the embedded client and proxy copies.
 All 1,191 client classes match the tested add-on.
 All four original reports and all five goal areas remain active.
+
+## Canonical network construction
+
+Network construction now retains the selected definition independently of numeric ownership.
+Canonical lookup uses the existing constructed name without another saved-name parse.
+The constructor uses the selected Block's canonical auxiliary, or the stack auxiliary without a Block.
+A changed definition resets the stack auxiliary and can replace the Block with its associated default.
+Runtime candidate validation follows this upgrade before the constructor selects its fallback.
+
+Merge admission compares exact definition objects.
+Full stack queries compare definition names and numeric IDs.
+Stacking and cooking properties follow the retained receiver.
+Copies retain the definition, and container snapshot equality detects a different selected definition.
+Explicit identifier changes clear the retained selection.
+
+An original control remaps charcoal to ID 257 while numeric lookup for 257 still selects apple.
+Coal metadata one constructs the charcoal definition, despite that numeric collision.
+Native query and merge functions distinguish charcoal from apple and expose different stacked-by-data properties.
+The control uses 23 typed ItemData declarations and executes 672 complete zero-runtime network constructors.
+It also executes five identity pairs and ten property observations through original functions.
+Input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+The target remains 1.26.51.1, build 51061372, protocol 2193, with default Experiments and base-game version 1.26.50.
+The packaged ItemRewriter matches all 672 constructors, five pairs and ten property observations.
+The earlier 1,920-constructor control also matches, including its five previously missing coal-to-charcoal conversions.
+The 540 recipe resolutions and 1,379 registered block identities still match.
+Mutation controls reject lost definition ownership, skipped canonical upgrade and snapshots that ignore the selected definition.
+
+A runtime Block does not need an auxiliary converter when priority lookup or metadata-independent aliases establish the selected definition.
+Metadata-dependent selection requires the missing auxiliary context.
+No replacement auxiliary or missing-block answer substitutes for that context.
+The earlier primitive fixture retains its declared warm cache and empty alias tables, separately from the complete registry control.
+
+This evidence does not establish complete wire admission, negotiated nonzero runtime palettes, nonempty userdata or native registry retirement.
+The private network-header projection remains separate from a production named or NBT constructor.
+Some legacy actions still compare encoded fields through `BedrockItem.isDifferent`.
+Mixed raw snapshots, complete player screens, physical input and native pixels remain unfinished.
+The 12 broad and 107 focused block-state differences remain open, and the auxiliary data remains unchanged.
+All five goal areas and four original reports remain active.
+
+The four-project build passes 2,861 tests with 162 optional skips and no failures or errors.
+The complete core suite passes 1,730 tests with 85 optional skips. Checkstyle passes.
+All retained packaged comparison suites pass.
+All 1,514 core classes and three registry resources match the embedded client and proxy copies.
+All 1,191 client classes match the tested add-on.
