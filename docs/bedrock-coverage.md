@@ -9763,3 +9763,43 @@ The new recipe context adds one interface.
 Three existing implementation classes, two compiler-owned nested classes and three build-identity classes change.
 Both nested classes retain identical declarations and instructions.
 Packaged implementation classes match compilation. No new installed player capture ran.
+
+## Owned runtime palettes for recipe results (October 25, 2026)
+
+The new native reference constructs and populates the original dense BlockPalette with all 20,674 registered states.
+It executes metadata finalization, virtual runtime lookup and the original palette destructor.
+Its borrowed Level token supplies ownership backing but does not execute Level construction.
+Normal client palette negotiation and hashed runtime delivery remain unverified.
+
+The reference executes 168 complete recipe packets through result construction, registration and output lookup.
+Four output Items and three auxiliary values cover zero, ten valid runtime slots and three invalid runtime IDs.
+The slots include matching and mismatched Item owners, plus three axes for each log family.
+Original fallback selection handles invalid IDs and states with a different Item owner.
+Nine separate packet controls establish signed ZigZag encoding for the runtime field, including boundary bit patterns.
+
+The Java comparison uses the original palette declarations and native legacy-selector observations as typed backing.
+Real palette, descriptor, legacy-state, Item registry and recipe constructor policies execute.
+All 20,674 canonical auxiliary values and all 168 result values match the packaged core.
+Result comparisons include the assigned runtime ID and exact registered state identity.
+The earlier zero-runtime reference retained unassigned native runtime fields.
+Runtime-ID equality in that reference alone could not distinguish all axis states.
+
+Registration and output lookup remain separate operations.
+The original network-ID index retains all 168 recipes, including the exact cumulative ID sets.
+The normalized output index returns results for 156 controls.
+Twelve nondefault-axis results do not find their recipes through that index.
+The public Java output lookup agrees after explicit grants for the retained recipe IDs.
+These comparisons establish lookup presence, without asserting complete candidate membership or visitation order.
+
+Original packet, recipe, palette, Item, Block, TLS, static and CRT cleanup leaves no allocations or held locks.
+The harness supplies valid byte I/O, normal CRT exception counters and bounded allocation capacity.
+Guest C++ throw and unwind paths remain fatal.
+The sidecar stores typed state fields, without claiming original binary NBT serialization.
+
+The optional regression belongs to the existing recipe patch.
+It also passes against the packaged core, with implementation origins verified.
+A deliberate runtime-input regression fails twelve value assertions on the expected axis IDs.
+The focused stack run passes all 24 tests with no skips, plus both Checkstyle tasks.
+Production implementation and resource files remain unchanged.
+Full Level setup, hashed delivery, the complete packet handler and installed player publication remain unfinished.
+No new live capture ran, and the four original bug reports remain unresolved.

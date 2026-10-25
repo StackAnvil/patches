@@ -703,3 +703,31 @@ The new recipe context adds one interface.
 Three existing implementation classes, two compiler-owned nested classes and three build-identity classes change.
 Both nested classes retain identical declarations and instructions.
 Packaged implementation classes match compilation. No new installed player capture ran.
+
+## Owned runtime palette reference (October 25, 2026)
+
+The optional `STACKANVIL_NATIVE_RECIPE_PALETTE` reference constructs and populates the original dense BlockPalette.
+All 20,674 native slots carry assigned runtime IDs.
+The packaged Java palette and descriptor policies match every recorded canonical auxiliary value.
+The fixture includes a SHA-256-bound sidecar with typed state declarations.
+
+All 168 packet results match through the real Java recipe constructor and retained output lookup.
+The matrix covers four Items, three auxiliary values, ten valid nonzero slots, zero and three invalid runtime IDs.
+It includes axis selection, mismatched owners and fallback behavior.
+Registration remains separate from output lookup: twelve nondefault-axis results do not find their recipes through the normalized index.
+The original network-ID index retains all 168 recipes. The comparison also checks its exact cumulative ID sets.
+The comparison grants retained recipe IDs explicitly and compares lookup presence, without asserting complete candidate membership or order.
+
+Earlier zero-runtime controls retained unassigned native runtime fields.
+Their runtime-ID equality alone could not distinguish every axis state.
+This reference compares actual assigned IDs and exact registered state identity.
+A deliberate runtime-input regression fails twelve value assertions.
+The checked-in test also passes against the packaged core, with implementation origins verified.
+The focused stack run passes all 24 tests with no skips and both Checkstyle tasks.
+
+Original packet, recipe, palette, Item, Block, TLS, static and CRT retirement completes without retained allocations or locks.
+The harness hosts normal CRT exception counters and bounded allocation capacity. Guest C++ throw and unwind remain fatal.
+The original palette methods store a borrowed Level token but do not read it.
+Full Level construction, negotiated or hashed palette delivery, the complete handler and installed player behavior remain unverified.
+Production implementation and resource files remain unchanged. No new live capture ran.
+See the [owned palette reference](../../../docs/bedrock-coverage.md#owned-runtime-palettes-for-recipe-results-october-25-2026).
