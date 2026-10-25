@@ -663,6 +663,46 @@ Checkstyle passes after full replay. All 1,483 core classes match both embedded 
 The four original reports and all five goal areas remain active.
 
 
+## Player output availability count state
+
+`NativeRecipeCounter.availability` evaluates admitted output candidates in native priority order.
+It skips candidates that require a crafting table when the player uses the two-by-two grid.
+A complete ingredient count returns state zero with filtering, or state one without filtering.
+A positive allocation for any nonempty ingredient retains partial state two across later alternatives.
+Otherwise, the retained selected stack can supply state two. A different selection returns state three.
+Partial input skips the selected-stack query. Invalid output skips the entire decision.
+This calculation is separate from placement capacity and stack-request authority.
+
+`ItemRewriter.playerRecipeAvailability` captures the current owner's grid, hotbar, inventory and optional single cursor slot.
+Valid-output queries reject stale owners and exclude armor, offhand and preview slots.
+Its selected-stack comparison uses the connection's native stack identity.
+The recipe owner must supply admitted candidates, their priority, their concrete grid requirement and its retained selection.
+The API does not infer those values from a network recipe type.
+
+The native reference executes the complete original `0x143439420` output-count evaluator in 1,344 controls.
+It executes output lookup, priority sorting, grid requirements, cursor enum/model-map lookup, concrete matching, the full counter and selected-stack comparison.
+The controls include 33-, 41- and 65-candidate sorts and compare exact counter visitation.
+They execute 2,916 counter calls and 18,918 matcher calls.
+The Java comparison uses the real current-owner source bridge and resolved ordinary ingredient matching.
+
+The reference supplies context tags, stable ordinary definitions, model/vector backing, one output-vector getter and registry/CRT services.
+Other tested virtual methods use copied original shaped/shapeless tables.
+Evaluation temporaries return to the retained backing baseline.
+Complete registry retirement, wire admission, tag/Molang payloads, actor/controller capture and visible screen publication remain outside this control.
+
+The complete installed player recipe evaluator remains unfinished.
+Output-candidate acquisition, descriptor ownership, search/unlock policy and model publication remain integration work.
+The authored E-key screen and the original background/scale report remain unfinished.
+
+The complete four-project build passes 2,936 tests with 161 optional skips.
+Checkstyle and repository offline validation pass.
+The packaged core passes the three availability tests and 128 retained ability, frame, layout and permission/action checks.
+Seven deliberate priority, table, partial, selected-stack, filter and source-bridge regressions fail value assertions, with implementation origins verified.
+All 1,523 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+All 198 assets and 1,509 existing core classes remain unchanged from the ability milestone.
+Eight changed nested classes retain identical declarations and instruction disassembly. The candidate record is new.
+No new live inventory-screen capture ran for this change.
+
 ## Resolved ingredient matching
 
 `RecipeIngredientMatcher` implements the shared native Recipe matcher after ordinary descriptors resolve.

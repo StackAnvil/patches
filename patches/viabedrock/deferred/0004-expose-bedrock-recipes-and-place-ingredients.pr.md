@@ -579,3 +579,39 @@ This does not implement the authored player screen or resolve the original backg
 The complete four-project build passes 2,927 tests with 161 optional skips and no failures or errors.
 Checkstyle and repository offline validation pass.
 All 1,522 core classes match both embedded copies, all 1,191 client classes match the tested add-on, and all 198 assets remain unchanged.
+
+## Player output availability count state
+
+Evaluate admitted output candidates in native priority order through the full shared ingredient counter.
+Respect concrete crafting-table requirements and preserve partial input across alternatives.
+Complete input returns state zero with filtering, or state one without filtering.
+Partial input or an equal retained selected stack returns state two. Otherwise, return state three.
+Skip selected-stack comparison when partial input already determines the result.
+Keep placement capacity and stack-request authority separate.
+
+`ItemRewriter.playerRecipeAvailability` binds the decision to the actual current-owner source snapshot and native stack query.
+The caller still owns candidate admission, descriptor resolution, concrete grid requirements and retained selection.
+Search/unlock policy and installed player model publication remain unfinished.
+This change does not install the authored E-key screen or resolve the reported background problem.
+
+The original 1.26.51.1 evaluator at `0x143439420` agrees in 1,344 coupled source-bridge controls.
+The control executes output lookup `0x143249b10`, priority sorting `0x143265d00` and original grid requirements.
+Cursor enum/model-map lookup, concrete matching, counter `0x14297b140` and selected query `0x14248dac0` also execute.
+The comparison retains exact counter visitation, including 33-, 41- and 65-candidate sorts.
+It covers all four result states, 2,916 counter calls and 18,918 matcher calls.
+
+Context tags, ordinary definitions, model/vector backing, one output-vector getter and registry/CRT services remain supplied interfaces.
+Other tested virtual methods use copied original shaped/shapeless tables.
+Evaluation temporaries balance against retained backing. Complete registry/actor/controller lifetime remains outside this control.
+Wire admission, tag/Molang payloads, full installed availability, screen actions and pixels remain unfinished.
+See the [player output availability reference](../../../docs/native-player-inventory.md#player-output-availability-count-state).
+
+The ten targeted counter, source-bridge and availability tests pass with Checkstyle.
+The complete four-project build passes 2,936 tests with 161 optional skips and no failures or errors.
+Repository offline validation passes. All 106 patches replay.
+The packaged core passes three availability tests, six ability tests, 34 frame cases, five layout tests and 83 permission/action checks.
+Seven deliberate priority, table, partial, selected-stack, filter and source-bridge regressions fail value assertions, with implementation origins verified.
+All 1,523 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+All 198 assets and 1,509 existing core classes remain byte-identical to the ability milestone.
+The change adds one candidate record. Eight changed nested classes retain identical declarations and instruction disassembly.
+No new live inventory-screen capture ran for this change.
