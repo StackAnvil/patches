@@ -10,7 +10,26 @@ ViaBedrock reads skins from `PlayerListPacket` and `PlayerSkinPacket`. Its `Skin
 
 Native captures exposed two details that affect rendering. Geometry descriptions can use the full animation strip dimensions. Bedrock polygon UVs also use a bottom origin. The renderer adjusts the frame dimensions and UVs before it uploads each frame. It checks strip sizes, frame counts, and model bindings, then releases all animation textures when the skin changes.
 
-The add-on sends a [PlayerSkinPacket](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/player-skin-packet/) for classic and account character changes in a connected world. A matching packet from the server confirms the returned skin ID. A private protocol-2193 relay accepted an assembled character update with one animation, ten pieces, and three tint groups, then returned its matching acknowledgement. The run also exposed a PlayerList actor-ID decoding error. ViaBedrock now reads signed actor IDs consistently with StartGame and the native schema. A native second client displayed the assembled HelliArm character. A controlled color probe did not establish which animation frames it used. Acknowledgement and visual presence therefore do not establish native timing or complete format parity.
+The add-on requests a [PlayerSkinPacket](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/player-skin-packet/) through the same negotiated Java transport on direct and ViaProxy connections.
+Core assembles the complete appearance and selects the spawned native local player.
+A matching server appearance confirms the request after core publishes that appearance to the Java client.
+Confirmation compares all appearance fields and pixels, excluding the server-owned trust flag.
+Geometry comparison uses JSON values because the target server changes numeric formatting.
+The profile hash remains part of the comparison.
+The immediate local preview does not confirm synchronization.
+Replacement, timeout, disconnect and capability withdrawal retire the pending request.
+
+Earlier direct-path evidence: a private protocol-2193 relay accepted an assembled character update with one animation, ten pieces, and three tint groups, then returned its matching acknowledgement. The run also exposed a PlayerList actor-ID decoding error. ViaBedrock now reads signed actor IDs consistently with StartGame and the native schema. A native second client displayed the assembled HelliArm character. A controlled color probe did not establish which animation frames it used. Acknowledgement and visual presence therefore do not establish native timing or complete format parity.
+
+
+Fresh direct and ViaProxy checks use the same controlled 128 by 128 classic and persona appearances against BDS 1.26.51.1.
+Each route sends two complete native updates and receives two matching server echoes.
+The classic record includes a cape; the persona record also includes an animated surface, a piece and four tint channels.
+Packet comparison preserves all pixels and metadata, including the profile hash.
+Geometry JSON values match despite native numeric formatting changes; the server selects trust independently.
+Both production requests return confirmed results, and screenshots show the local skins and capes.
+These checks use declared geometry and textures without account writes.
+Additional clients and native graphical comparisons remain necessary for complete multiplayer and animation parity.
 
 ## Classic skins
 

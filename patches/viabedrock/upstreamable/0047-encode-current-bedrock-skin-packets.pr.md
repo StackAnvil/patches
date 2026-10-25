@@ -36,6 +36,34 @@ These limits protect transport memory; they do not define native skin dimensions
 Clients without the new channel retain the existing utility path.
 Tab-list removal does not delete appearance data because servers can hide visible player actors from that list.
 
+## Live skin uploads
+
+Clients register the incoming skin and result channels before core advertises live requests.
+Both direct translation and ViaProxy use the same Java play transport.
+Requests contain a transfer UUID and complete target skin bytes, without a player identity.
+Each request fragment contains at most 16 KiB because Java serverbound custom payloads allow only 32,767 bytes.
+The existing 64 MiB record limit remains a transport memory bound.
+
+Core resolves the spawned local actor through the native player list.
+A complete upload sends one native `PlayerSkinPacket` for that actor.
+Invalid ranges, ordering, native fields, missing actors and failed sends cannot confirm a change.
+A new upload rejects its predecessor.
+Partial uploads expire after 30 idle seconds; native confirmation expires after ten seconds.
+Capability withdrawal removes the session and its pending data.
+The channel event loop owns uploads, confirmation and cleanup.
+Unrelated channel changes leave this state alone.
+
+Core publishes the incoming native appearance before its confirmation result.
+Confirmation compares the native player identity and every encoded appearance field and pixel.
+Only the server-owned trust flag is excluded from that comparison.
+Geometry comparison uses JSON values, including array order.
+The target server changes numeric formatting, such as `0.5` to `0.50`, without changing the model.
+The profile hash remains part of the comparison.
+Geometry parsing has a separate nesting bound of 128 levels.
+An older skin ID with different pixels or metadata cannot confirm the current appearance.
+The Java connection and request UUID correlate the result at the client.
+A local preview never confirms server synchronization.
+
 ## Verification
 
 Targeted tests compare the complete re-encoded classic and persona records after fragmentation and reconstruction.
@@ -44,10 +72,13 @@ Additional tests cover ordering, replacement, disconnect cleanup, invalid ranges
 Negotiation tests cover configuration, late registration, failed sending, ordered delivery, and connection isolation.
 Pre-join tests verify copied payloads, ordering, count limits, and empty-packet rejection.
 Ownership tests cover different login UUIDs and negative actor IDs.
+Live-upload tests also cover reused skin IDs with changed pixels, confirmation identity, timeout, withdrawal and failed native sends.
+Fourteen focused tests pass against the packaged core JAR, with four production class origins verified.
+All 1,557 core classes and 199 assets match both embedded consumers.
 
-The full stack builds with Java 25 and passes 967 Java tests; 109 optional tests are skipped.
+The latest full stack builds with Java 25: 3,040 tests pass, 152 optional tests are skipped, and none fail.
 The saved native math fixtures remain enabled during this build.
-The bundle and both north-star patch application checks pass.
+Earlier bundle and north-star patch application checks pass.
 
 An authored target-session fixture adds three records, each exceeding five MiB and using 21 fragments.
 Direct and ViaProxy playback install all five skin updates, including the original early and repeated player-list records.
@@ -55,6 +86,16 @@ Hashes of the complete records at renderer installation match the producer recor
 Neither route rejects a skin, and both submit the local avatar through the native renderer.
 The proxy check uses its actual Java UUID without changing the login identity.
 These sparse playback observations do not establish visible native parity or remote-player lifecycle behavior.
+
+Fresh direct and ViaProxy sessions each send a classic skin with a cape and a complete persona record to BDS 1.26.51.1.
+Both production requests receive confirmed results on each route.
+Independent packet comparison verifies the native local actor, every image pixel, all metadata and the profile hash.
+The classic and persona records contain 78,454 and 142,192 bytes before the server reformats geometry and selects trust.
+The body images are 128 by 128 pixels.
+The persona includes a valid animated-face binding, one animated image, one piece and four tint channels.
+Runtime JAR hashes match the verified build.
+Screenshots show the local skins and capes on both routes.
+These are controlled fixtures, without account writes or a native graphical baseline.
 
 ## Remaining scope
 

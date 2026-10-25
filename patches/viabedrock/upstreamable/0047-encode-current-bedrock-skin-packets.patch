@@ -1,4 +1,4 @@
-From a61d7c822c15e71a57c4065e2865583b20d4318d Mon Sep 17 00:00:00 2001
+From 885579e7371fbb8d8ad94133d986456e796ab773 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] fix(skins): encode current Bedrock skin packets
@@ -30,31 +30,53 @@ can differ from the Bedrock actor UUID, so UUID-only installation misses
 the local avatar even though every skin field arrived. Establish ownership
 from the current actor unique ID or login identity and retain it through
 fragment assembly. Add player-list identity before calling the provider.
+
+Negotiate live skin uploads over Java play channels for direct and proxy
+clients. Bound request fragments below Java's serverbound payload limit,
+assemble the complete target SkinData, and select only the spawned native
+actor's UUID from the authoritative player list. Reject incomplete,
+malformed, stale and unnegotiated requests; cancel replaced uploads and
+expire partial data and unanswered native requests.
+
+Publish the incoming authoritative appearance before confirming a matching
+request. Match every appearance field and pixel as well as native identity;
+exclude only server-owned trust. Compare geometry JSON by value because
+the target server changes numeric formatting without changing geometry.
+Retain the profile hash in the comparison. Local preview and successful packet sending do not count as confirmation.
 ---
- .../api/model/NativeSkinAssembler.java        |  63 +++++++
- .../api/model/NativeSkinFragment.java         | 101 +++++++++++
+ .../api/model/NativeSkinAssembler.java        |  63 +++++
+ .../api/model/NativeSkinChange.java           | 111 ++++++++
+ .../api/model/NativeSkinFragment.java         | 101 +++++++
  .../viabedrock/api/util/PacketFactory.java    |  17 ++
  .../viabedrock/protocol/BedrockProtocol.java  |   5 +
  .../viabedrock/protocol/model/SkinData.java   |   2 +-
  .../protocol/packet/HudPackets.java           |   3 +-
- .../protocol/packet/JoinPackets.java          |   1 +
- .../protocol/packet/MultiStatePackets.java    |   2 +
- .../protocol/provider/SkinProvider.java       |  16 ++
- .../protocol/storage/NativeSkinStorage.java   | 121 +++++++++++++
- .../protocol/types/model/SkinType.java        |  67 ++++---
+ .../protocol/packet/JoinPackets.java          |   2 +
+ .../protocol/packet/MultiStatePackets.java    |  26 ++
+ .../protocol/provider/SkinProvider.java       |  21 ++
+ .../protocol/storage/ChannelStorage.java      |   4 +
+ .../protocol/storage/NativeSkinStorage.java   | 121 +++++++++
+ .../protocol/storage/SkinChangeStorage.java   | 242 +++++++++++++++++
+ .../protocol/types/model/SkinType.java        |  67 +++--
  .../protocol/types/primitive/ImageType.java   |   2 +-
- .../api/model/NativeSkinTransportTest.java    | 165 ++++++++++++++++++
- .../protocol/provider/SkinProviderTest.java   |  27 +++
- .../storage/NativeSkinStorageTest.java        | 163 +++++++++++++++++
- .../protocol/types/model/SkinTypeTest.java    |  74 ++++++++
- .../types/primitive/ImageTypeTest.java        |  33 ++++
- 17 files changed, 836 insertions(+), 26 deletions(-)
+ .../api/model/NativeSkinChangeTest.java       |  82 ++++++
+ .../api/model/NativeSkinTransportTest.java    | 165 ++++++++++++
+ .../protocol/provider/SkinProviderTest.java   |  27 ++
+ .../storage/NativeSkinStorageTest.java        | 163 +++++++++++
+ .../storage/SkinChangeStorageTest.java        | 252 ++++++++++++++++++
+ .../protocol/types/model/SkinTypeTest.java    |  74 +++++
+ .../types/primitive/ImageTypeTest.java        |  33 +++
+ 22 files changed, 1557 insertions(+), 26 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeSkinAssembler.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeSkinChange.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeSkinFragment.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/NativeSkinStorage.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeSkinChangeTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeSkinTransportTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/provider/SkinProviderTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeSkinStorageTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/model/SkinTypeTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/primitive/ImageTypeTest.java
 
@@ -124,6 +146,123 @@ index 000000000..4c42121b4
 +        this.transfer = null;
 +        this.totalLength = 0;
 +        this.bytes = null;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeSkinChange.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeSkinChange.java
+new file mode 100644
+index 000000000..4ca1e0cd1
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeSkinChange.java
+@@ -0,0 +1,111 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++import java.util.Arrays;
++import java.util.Objects;
++import java.util.UUID;
++import java.util.function.Consumer;
++
++/** A client request supplies appearance data; core selects the native player identity. */
++public record NativeSkinChange(UUID request, int totalLength, int offset, byte[] data) {
++
++    public static final String CHANNEL = "viabedrock:skin_change_v1";
++    // Java serverbound custom payloads are limited to 32767 bytes, including our envelope.
++    public static final int FRAGMENT_BYTES = 16 * 1024;
++    public static final Type<NativeSkinChange> TYPE = new Type<>(NativeSkinChange.class) {
++        @Override
++        public NativeSkinChange read(final ByteBuf buffer) {
++            readVersion(buffer);
++            final UUID request = Types.UUID.read(buffer);
++            final int totalLength = Types.VAR_INT.readPrimitive(buffer);
++            final int offset = Types.VAR_INT.readPrimitive(buffer);
++            validate(totalLength, offset, buffer.readableBytes());
++            final byte[] data = new byte[buffer.readableBytes()];
++            buffer.readBytes(data);
++            return new NativeSkinChange(request, totalLength, offset, data);
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final NativeSkinChange value) {
++            writeVersion(buffer);
++            Types.UUID.write(buffer, value.request);
++            Types.VAR_INT.writePrimitive(buffer, value.totalLength);
++            Types.VAR_INT.writePrimitive(buffer, value.offset);
++            buffer.writeBytes(value.data);
++        }
++    };
++
++    public NativeSkinChange {
++        Objects.requireNonNull(request);
++        validate(totalLength, offset, data.length);
++        data = data.clone();
++    }
++
++    @Override
++    public byte[] data() {
++        return this.data.clone();
++    }
++
++    public static void split(final UUID request, final byte[] skin, final Consumer<NativeSkinChange> send) {
++        validate(skin.length, 0, Math.min(FRAGMENT_BYTES, skin.length));
++        for (int offset = 0; offset < skin.length; offset += FRAGMENT_BYTES) {
++            send.accept(new NativeSkinChange(request, skin.length, offset,
++                    Arrays.copyOfRange(skin, offset, Math.min(offset + FRAGMENT_BYTES, skin.length))));
++        }
++    }
++
++    private static void validate(final int totalLength, final int offset, final int length) {
++        if (totalLength <= 0 || totalLength > NativeSkinFragment.MAX_SKIN_BYTES || offset < 0 || offset >= totalLength
++                || length <= 0 || length > FRAGMENT_BYTES || length > totalLength - offset) {
++            throw new IllegalArgumentException("Invalid skin change fragment range");
++        }
++    }
++
++    private static void readVersion(final ByteBuf buffer) {
++        if (Types.VAR_INT.readPrimitive(buffer) != 1
++                || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++            throw new IllegalArgumentException("Unsupported skin change format");
++        }
++    }
++
++    private static void writeVersion(final ByteBuf buffer) {
++        Types.VAR_INT.writePrimitive(buffer, 1);
++        Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++    }
++
++    public record Result(UUID request, boolean confirmed) {
++        public static final String CHANNEL = "viabedrock:skin_change_result_v1";
++        public static final Type<Result> TYPE = new Type<>(Result.class) {
++            @Override
++            public Result read(final ByteBuf buffer) {
++                readVersion(buffer);
++                final Result result = new Result(Types.UUID.read(buffer), buffer.readBoolean());
++                if (buffer.isReadable()) {
++                    throw new IllegalArgumentException("Unexpected skin change result fields");
++                }
++                return result;
++            }
++
++            @Override
++            public void write(final ByteBuf buffer, final Result value) {
++                writeVersion(buffer);
++                Types.UUID.write(buffer, value.request);
++                buffer.writeBoolean(value.confirmed);
++            }
++        };
++
++        public Result {
++            Objects.requireNonNull(request);
++        }
 +    }
 +
 +}
@@ -321,39 +460,87 @@ index a8564eafd..52e624da4 100644
                              uuidsToRemoveSafe.add(uuid);
                          }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 9c907aca4..e2c155800 100644
+index 9c907aca4..22924c897 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-@@ -571,6 +571,7 @@ public final class JoinPackets {
+@@ -571,8 +571,10 @@ public final class JoinPackets {
          joinGame.write(Types.BOOLEAN, false); // enforces secure chat
          joinGame.send(BedrockProtocol.class);
          user.get(PlayerWaypointTracker.class).markJoined();
 +        user.get(NativeSkinStorage.class).markJoined();
  
          WorldPackets.sendNativeCommandCapability(user);
++        SkinChangeStorage.refreshCapability(user);
  
+         clientPlayer.createTeam();
+         clientPlayer.sendInitialEntityData();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index 1909c2178..84ed5f5a2 100644
+index 1909c2178..ec472a623 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-@@ -42,6 +42,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.DisconnectFa
+@@ -31,6 +31,8 @@ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.CommandBlockEdit;
+ import net.raphimc.viabedrock.api.model.LocatorBarSnapshot;
+ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
++import net.raphimc.viabedrock.api.model.NativeSkinChange;
++import net.raphimc.viabedrock.api.model.NativeSkinFragment;
+ import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+@@ -42,6 +44,8 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.DisconnectFa
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.MinecraftPacketIds;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationSeverity;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationType;
 +import net.raphimc.viabedrock.protocol.storage.NativeSkinStorage;
++import net.raphimc.viabedrock.protocol.storage.SkinChangeStorage;
  import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
  import net.raphimc.viabedrock.protocol.storage.PlayerWaypointTracker;
  import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
-@@ -152,6 +153,7 @@ public final class MultiStatePackets {
+@@ -134,6 +138,17 @@ public final class MultiStatePackets {
+     public static final PacketHandler CUSTOM_PAYLOAD_HANDLER = wrapper -> {
+         wrapper.cancel();
+         final String channel = Key.namespaced(wrapper.read(Types.STRING)); // channel
++        if (channel.equals(NativeSkinChange.CHANNEL)) {
++            final SkinChangeStorage changes = wrapper.user().get(SkinChangeStorage.class);
++            if (changes != null && SkinChangeStorage.enabled(wrapper.user())) {
++                try {
++                    changes.accept(wrapper.read(NativeSkinChange.TYPE));
++                } catch (final IllegalArgumentException | IndexOutOfBoundsException malformed) {
++                    // Invalid envelopes never enter the native skin decoder.
++                }
++            }
++            return;
++        }
+         if (channel.equals(CommandBlockEdit.CHANNEL)) {
+             if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY) {
+                 try {
+@@ -145,6 +160,13 @@ public final class MultiStatePackets {
+             }
+             return;
+         }
++        if (channel.equals("minecraft:unregister")) {
++            final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
++            wrapper.user().get(ChannelStorage.class).removeChannels(channels);
++            if (channels.contains(NativeSkinFragment.CHANNEL) || channels.contains(NativeSkinChange.Result.CHANNEL)) {
++                SkinChangeStorage.refreshCapability(wrapper.user());
++            }
++        }
+         if (channel.equals("minecraft:register")) {
+             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
+             wrapper.user().get(ChannelStorage.class).addChannels(channels);
+@@ -152,6 +174,10 @@ public final class MultiStatePackets {
              if (channels.contains(LocatorBarSnapshot.CHANNEL) && wrapper.user().has(PlayerWaypointTracker.class)) {
                  wrapper.user().get(PlayerWaypointTracker.class).sendSnapshot();
              }
 +            wrapper.user().get(NativeSkinStorage.class).flush();
++            if (channels.contains(NativeSkinFragment.CHANNEL) || channels.contains(NativeSkinChange.Result.CHANNEL)) {
++                SkinChangeStorage.refreshCapability(wrapper.user());
++            }
              if (channels.contains(NativeBlockIdentifiers.CHANNEL)
                      && wrapper.user().has(ChunkTracker.class)) {
                  wrapper.user().get(ChunkTracker.class).sendNativeBlockSnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/SkinProvider.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/SkinProvider.java
-index cc2b1ea5a..b4c053418 100644
+index cc2b1ea5a..e01068984 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/provider/SkinProvider.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/SkinProvider.java
 @@ -20,6 +20,7 @@ package net.raphimc.viabedrock.protocol.provider;
@@ -364,17 +551,18 @@ index cc2b1ea5a..b4c053418 100644
  import net.raphimc.viabedrock.api.modinterface.BedrockSkinUtilityInterface;
  import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
  import net.raphimc.viabedrock.api.resourcepack.content.Content;
-@@ -34,6 +35,9 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InputMode;
+@@ -34,6 +35,10 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InputMode;
  import net.raphimc.viabedrock.protocol.model.SkinData;
  import net.raphimc.viabedrock.protocol.storage.AuthData;
  import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 +import net.raphimc.viabedrock.protocol.storage.NativeSkinStorage;
++import net.raphimc.viabedrock.protocol.storage.SkinChangeStorage;
 +import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
 +import net.raphimc.viabedrock.protocol.storage.EntityTracker;
  import net.raphimc.viabedrock.protocol.storage.HandshakeStorage;
  import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
  
-@@ -120,7 +124,15 @@ public class SkinProvider implements Provider {
+@@ -120,7 +125,19 @@ public class SkinProvider implements Provider {
      }
  
      public void setSkin(final UserConnection user, final UUID playerUuid, final SkinData skin) {
@@ -383,6 +571,10 @@ index cc2b1ea5a..b4c053418 100644
 +        final boolean local = isLocalPlayer(playerUuid, user.getProtocolInfo().getUuid(),
 +                entry == null ? null : entry.key(), entities == null ? null : entities.getClientPlayer().abilities().entityUniqueId());
 +        user.get(NativeSkinStorage.class).update(playerUuid, local, skin);
++        final SkinChangeStorage changes = user.get(SkinChangeStorage.class);
++        if (changes != null) {
++            changes.confirm(playerUuid, skin);
++        }
          final ChannelStorage channelStorage = user.get(ChannelStorage.class);
 +        if (channelStorage.hasChannel(NativeSkinFragment.CHANNEL)) {
 +            return;
@@ -390,7 +582,7 @@ index cc2b1ea5a..b4c053418 100644
          if (channelStorage.hasChannel(ViaBedrockUtilityInterface.CHANNEL)) {
              ViaBedrockUtilityInterface.sendSkin(user, playerUuid, skin);
          } else if (channelStorage.hasChannel(BedrockSkinUtilityInterface.CHANNEL)) {
-@@ -128,4 +140,8 @@ public class SkinProvider implements Provider {
+@@ -128,4 +145,8 @@ public class SkinProvider implements Provider {
          }
      }
  
@@ -399,6 +591,21 @@ index cc2b1ea5a..b4c053418 100644
 +    }
 +
  }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChannelStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChannelStorage.java
+index c33df2aad..d91eae86b 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChannelStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChannelStorage.java
+@@ -31,6 +31,10 @@ public class ChannelStorage implements StorableObject {
+         this.channels.addAll(channels);
+     }
+ 
++    public void removeChannels(final Collection<String> channels) {
++        this.channels.removeAll(channels);
++    }
++
+     public boolean hasChannel(final String channel) {
+         return this.channels.contains(channel);
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeSkinStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeSkinStorage.java
 new file mode 100644
 index 000000000..358166ab1
@@ -523,6 +730,254 @@ index 000000000..358166ab1
 +    }
 +
 +    record Update(UUID player, boolean localPlayer, byte[] data) {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorage.java
+new file mode 100644
+index 000000000..e9ef252b0
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorage.java
+@@ -0,0 +1,242 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StoredObject;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import com.viaversion.viaversion.libs.gson.JsonParseException;
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
++import com.viaversion.viaversion.libs.gson.stream.JsonReader;
++import com.viaversion.viaversion.libs.gson.stream.JsonToken;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.model.NativeSkinAssembler;
++import net.raphimc.viabedrock.api.model.NativeSkinChange;
++import net.raphimc.viabedrock.api.model.NativeSkinFragment;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.io.IOException;
++import java.io.StringReader;
++import java.nio.charset.StandardCharsets;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.UUID;
++import java.util.concurrent.ScheduledFuture;
++import java.util.concurrent.TimeUnit;
++import java.util.function.BiConsumer;
++import java.util.function.Consumer;
++
++/** One bounded upload and native confirmation per connection, confined to its channel event loop. */
++public final class SkinChangeStorage extends StoredObject {
++
++    private final NativeSkinAssembler assembler = new NativeSkinAssembler();
++    private final BiConsumer<UUID, SkinData> sendSkin;
++    private final Consumer<NativeSkinChange.Result> sendResult;
++    private UUID request;
++    private UUID player;
++    private byte[] appearanceHash;
++    private JsonElement geometry;
++    private ScheduledFuture<?> timeout;
++
++    public SkinChangeStorage(final UserConnection user) {
++        this(user, (player, skin) -> {
++            final var packet = PacketWrapper.create(ServerboundBedrockPackets.PLAYER_SKIN, user);
++            packet.write(BedrockTypes.UUID, player);
++            packet.write(BedrockTypes.SKIN, skin);
++            packet.write(BedrockTypes.STRING, ""); // localized new skin name
++            packet.write(BedrockTypes.STRING, ""); // localized old skin name
++            packet.sendToServer(BedrockProtocol.class);
++        }, result -> {
++            final var packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user);
++            packet.write(Types.STRING, NativeSkinChange.Result.CHANNEL);
++            packet.write(NativeSkinChange.Result.TYPE, result);
++            packet.send(BedrockProtocol.class);
++        });
++    }
++
++    SkinChangeStorage(final UserConnection user, final BiConsumer<UUID, SkinData> sendSkin,
++                      final Consumer<NativeSkinChange.Result> sendResult) {
++        super(user);
++        this.sendSkin = sendSkin;
++        this.sendResult = sendResult;
++    }
++
++    public static void refreshCapability(final UserConnection user) {
++        run(user, () -> {
++            final boolean enabled = enabled(user);
++            if (enabled == user.has(SkinChangeStorage.class)) {
++                return;
++            }
++            if (enabled) {
++                user.put(new SkinChangeStorage(user));
++            } else {
++                user.remove(SkinChangeStorage.class);
++            }
++            if (user.getProtocolInfo().getClientState() == State.PLAY) {
++                final var packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user);
++                packet.write(Types.STRING, enabled ? "minecraft:register" : "minecraft:unregister");
++                packet.write(Types.REMAINING_BYTES, NativeSkinChange.CHANNEL.getBytes(StandardCharsets.UTF_8));
++                packet.send(BedrockProtocol.class);
++            }
++        });
++    }
++
++    public static boolean enabled(final UserConnection user) {
++        final ChannelStorage channels = user.get(ChannelStorage.class);
++        return user.getProtocolInfo().getClientState() == State.PLAY
++                && channels.hasChannel(NativeSkinFragment.CHANNEL) && channels.hasChannel(NativeSkinChange.Result.CHANNEL);
++    }
++
++    public void accept(final NativeSkinChange fragment) {
++        run(this.user(), () -> this.acceptOnLoop(fragment));
++    }
++
++    private void acceptOnLoop(final NativeSkinChange fragment) {
++        if (!this.current()) {
++            return;
++        }
++        if (fragment.offset() == 0) {
++            this.finish(false);
++            this.request = fragment.request();
++            this.player = this.localPlayer();
++            if (this.player == null) {
++                this.finish(false);
++                return;
++            }
++        } else if (!fragment.request().equals(this.request)) {
++            // An unrelated continuation cannot cancel the current request.
++            this.sendResult.accept(new NativeSkinChange.Result(fragment.request(), false));
++            return;
++        }
++        if (this.appearanceHash != null) {
++            this.finish(false);
++            return;
++        }
++        try {
++            final SkinData skin = this.assembler.accept(new NativeSkinFragment(this.player, true, fragment.request(),
++                    fragment.totalLength(), fragment.offset(), fragment.data()));
++            if (skin == null) {
++                this.armTimeout(30);
++            } else {
++                if (!this.player.equals(this.localPlayer())) {
++                    this.finish(false);
++                    return;
++                }
++                this.geometry = geometry(skin.geometryData());
++                this.appearanceHash = appearanceHash(skin);
++                this.armTimeout(10);
++                this.sendSkin.accept(this.player, skin);
++            }
++        } catch (final RuntimeException malformedOrSendFailure) {
++            // Invalid native enums, counts, ranges and failed sends never produce a success result.
++            this.finish(false);
++        }
++    }
++
++    /** Called only for an incoming native skin, after publishing that authoritative appearance to Java. */
++    public void confirm(final UUID player, final SkinData skin) {
++        run(this.user(), () -> {
++            try {
++                if (this.current() && this.appearanceHash != null && player.equals(this.player)
++                        && MessageDigest.isEqual(this.appearanceHash, appearanceHash(skin))
++                        && this.geometry.equals(geometry(skin.geometryData()))) {
++                    this.finish(true);
++                }
++            } catch (final JsonParseException | IllegalArgumentException invalidGeometry) {
++                // An invalid server geometry cannot confirm the selected appearance.
++            }
++        });
++    }
++
++    private UUID localPlayer() {
++        final EntityTracker entities = this.user().get(EntityTracker.class);
++        final PlayerListStorage players = this.user().get(PlayerListStorage.class);
++        if (entities == null || entities.getClientPlayer() == null || !entities.getClientPlayer().isInitiallySpawned() || players == null) {
++            return null;
++        }
++        final var entry = players.getPlayer(entities.getClientPlayer().uniqueId());
++        return entry == null ? null : entry.key();
++    }
++
++    private static byte[] appearanceHash(final SkinData skin) {
++        // The server reformats geometry JSON and selects trust. Compare the geometry values separately.
++        final SkinData appearance = new SkinData(skin.skinId(), skin.playFabId(), skin.skinResourcePatch(), skin.skinData(),
++                skin.animations(), skin.capeData(), "", skin.geometryDataEngineVersion(), skin.animationData(),
++                skin.premium(), skin.persona(), skin.capeOnClassic(), skin.primaryUser(), skin.capeId(), skin.fullSkinId(),
++                skin.armSize(), skin.skinColor(), skin.personaPieces(), skin.tintColors(), skin.overridingPlayerAppearance(), "", skin.profileHash());
++        try {
++            return MessageDigest.getInstance("SHA-256").digest(NativeSkinFragment.encode(appearance));
++        } catch (final NoSuchAlgorithmException impossible) {
++            throw new AssertionError(impossible);
++        }
++    }
++
++    private static JsonElement geometry(final String data) {
++        if (data.isEmpty()) {
++            return new JsonPrimitive("");
++        }
++        try (JsonReader reader = new JsonReader(new StringReader(data))) {
++            // A transport parsing bound, separate from native model dimensions and bone counts.
++            reader.setNestingLimit(128);
++            final JsonElement geometry = JsonParser.parseReader(reader);
++            if (reader.peek() != JsonToken.END_DOCUMENT) {
++                throw new IllegalArgumentException("Unexpected skin geometry fields");
++            }
++            return geometry;
++        } catch (final IOException malformed) {
++            throw new IllegalArgumentException("Invalid skin geometry", malformed);
++        }
++    }
++
++    private void armTimeout(final int seconds) {
++        if (this.timeout != null) {
++            this.timeout.cancel(false);
++        }
++        this.timeout = this.user().getChannel().eventLoop().schedule(() -> this.finish(false), seconds, TimeUnit.SECONDS);
++    }
++
++    private boolean current() {
++        return this.user().get(SkinChangeStorage.class) == this && enabled(this.user()) && this.user().getChannel().isActive();
++    }
++
++    private void finish(final boolean confirmed) {
++        final UUID completed = this.request;
++        this.request = null;
++        this.player = null;
++        this.appearanceHash = null;
++        this.geometry = null;
++        this.assembler.clear();
++        if (this.timeout != null) {
++            this.timeout.cancel(false);
++            this.timeout = null;
++        }
++        if (completed != null && this.user().getChannel().isActive()
++                && this.user().get(ChannelStorage.class).hasChannel(NativeSkinChange.Result.CHANNEL)) {
++            this.sendResult.accept(new NativeSkinChange.Result(completed, confirmed));
++        }
++    }
++
++    @Override
++    public void onRemove() {
++        run(this.user(), () -> this.finish(false));
++    }
++
++    private static void run(final UserConnection user, final Runnable action) {
++        if (user.getChannel().eventLoop().inEventLoop()) {
++            action.run();
++        } else {
++            user.getChannel().eventLoop().execute(action);
++        }
 +    }
 +
 +}
@@ -697,6 +1152,94 @@ index 2431d957e..a92474825 100644
              return null;
          }
  
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeSkinChangeTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeSkinChangeTest.java
+new file mode 100644
+index 000000000..6e7ffd9ca
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeSkinChangeTest.java
+@@ -0,0 +1,82 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import org.junit.jupiter.api.Test;
++
++import java.util.Arrays;
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeSkinChangeTest {
++
++    @Test
++    void preservesEveryClassicAndPersonaFieldInServerboundSizedFragments() {
++        for (final boolean persona : List.of(false, true)) {
++            final byte[] encoded = NativeSkinFragment.encode(NativeSkinTransportTest.skin(persona, 1024));
++            final UUID request = UUID.randomUUID();
++            final UUID player = UUID.randomUUID();
++            final NativeSkinAssembler assembler = new NativeSkinAssembler();
++            final SkinData[] reconstructed = {null};
++            NativeSkinChange.split(request, encoded, fragment -> {
++                final var buffer = Unpooled.buffer();
++                try {
++                    NativeSkinChange.TYPE.write(buffer, fragment);
++                    assertTrue(buffer.readableBytes() < 32767);
++                    final NativeSkinChange received = NativeSkinChange.TYPE.read(buffer);
++                    assertEquals(request, received.request());
++                    assertFalse(buffer.isReadable());
++                    reconstructed[0] = assembler.accept(new NativeSkinFragment(player, true, received.request(),
++                            received.totalLength(), received.offset(), received.data()));
++                } finally {
++                    buffer.release();
++                }
++            });
++            assertArrayEquals(encoded, NativeSkinFragment.encode(reconstructed[0]));
++        }
++    }
++
++    @Test
++    void rejectsOversizedOrUnsupportedEnvelopesBeforeAllocatingAndSnapshotsData() {
++        final UUID id = UUID.randomUUID();
++        assertThrows(IllegalArgumentException.class, () -> new NativeSkinChange(id, Integer.MAX_VALUE, 0, new byte[1]));
++        assertThrows(IllegalArgumentException.class, () -> new NativeSkinChange(id, 1, 1, new byte[1]));
++        assertThrows(IllegalArgumentException.class, () -> new NativeSkinChange(id, 32767, 0, new byte[32767]));
++        final byte[] data = {1, 2};
++        final var fragment = new NativeSkinChange(id, 2, 0, data);
++        Arrays.fill(data, (byte) 0);
++        fragment.data()[0] = 0;
++        assertArrayEquals(new byte[]{1, 2}, fragment.data());
++        final var buffer = Unpooled.buffer();
++        try {
++            for (final int version : List.of(0, 2)) {
++                buffer.clear();
++                Types.VAR_INT.writePrimitive(buffer, version);
++                assertThrows(IllegalArgumentException.class, () -> NativeSkinChange.TYPE.read(buffer));
++            }
++            buffer.clear();
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION + 1);
++            assertThrows(IllegalArgumentException.class, () -> NativeSkinChange.TYPE.read(buffer));
++            buffer.clear();
++            NativeSkinChange.Result.TYPE.write(buffer, new NativeSkinChange.Result(id, true));
++            assertEquals(new NativeSkinChange.Result(id, true), NativeSkinChange.Result.TYPE.read(buffer));
++            buffer.clear();
++            NativeSkinChange.Result.TYPE.write(buffer, new NativeSkinChange.Result(id, false));
++            buffer.writeByte(0);
++            assertThrows(IllegalArgumentException.class, () -> NativeSkinChange.Result.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeSkinTransportTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeSkinTransportTest.java
 new file mode 100644
 index 000000000..3e2acceef
@@ -1067,6 +1610,264 @@ index 000000000..741411093
 +        image.setRGB(0, 0, pixel);
 +        return new SkinData("id", "", "", image, List.of(), null, "", "", "", false, false, false, false,
 +                "", "", "Wide", "#00000000", List.of(), List.of(), false, "", "");
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorageTest.java
+new file mode 100644
+index 000000000..708f0fb31
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorageTest.java
+@@ -0,0 +1,252 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.channel.embedded.EmbeddedChannel;
++import net.raphimc.viabedrock.api.model.NativeSkinChange;
++import net.raphimc.viabedrock.api.model.NativeSkinFragment;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import org.junit.jupiter.api.Test;
++
++import java.awt.image.BufferedImage;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.UUID;
++import java.util.concurrent.TimeUnit;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.*;
++import static org.mockito.Mockito.*;
++
++class SkinChangeStorageTest {
++
++    @Test
++    void sendsOnlyCompleteAppearanceForTheSpawnedNativeActorAndWaitsForItsEcho() {
++        try (Fixture fixture = new Fixture()) {
++            final SkinData skin = skin();
++            final var fragments = fragments(skin);
++            fixture.storage.accept(fragments.getFirst());
++            assertTrue(fixture.skins.isEmpty());
++            for (final var fragment : fragments.subList(1, fragments.size())) {
++                fixture.storage.accept(fragment);
++            }
++            assertEquals(List.of(fixture.nativePlayer), fixture.players);
++            assertArrayEquals(NativeSkinFragment.encode(skin), NativeSkinFragment.encode(fixture.skins.getFirst()));
++            assertTrue(fixture.results.isEmpty());
++            fixture.storage.confirm(fixture.javaPlayer, skin);
++            fixture.storage.confirm(fixture.nativePlayer, skin("other", 0, "profile", "True"));
++            assertTrue(fixture.results.isEmpty());
++            fixture.storage.confirm(fixture.nativePlayer, skin("skin", 0xFF123456, "profile", "True"));
++            assertTrue(fixture.results.isEmpty());
++            fixture.storage.confirm(fixture.nativePlayer, skin("skin", 0, "profile", "False"));
++            assertEquals(List.of(new NativeSkinChange.Result(fragments.getFirst().request(), true)), fixture.results);
++            fixture.storage.confirm(fixture.nativePlayer, skin);
++            fixture.advance(40);
++            assertEquals(1, fixture.results.size());
++        }
++    }
++
++    @Test
++    void acceptsServerJsonFormattingButRejectsChangedGeometryAndProfileHash() {
++        try (Fixture fixture = new Fixture()) {
++            fragments(skin("skin", 0, "profile", "False", "{\"value\":0.5,\"bones\":[1,2]}")).forEach(fixture.storage::accept);
++            fixture.storage.confirm(fixture.nativePlayer, skin("skin", 0, "changed", "True", "{\"value\":0.50,\"bones\":[1,2]}"));
++            fixture.storage.confirm(fixture.nativePlayer, skin("skin", 0, "profile", "True", "{\"value\":0.51,\"bones\":[1,2]}"));
++            fixture.storage.confirm(fixture.nativePlayer, skin("skin", 0, "profile", "True", "{\"value\":0.5,\"bones\":[2,1]}"));
++            fixture.storage.confirm(fixture.nativePlayer, skin("skin", 0, "profile", "True", "{"));
++            assertTrue(fixture.results.isEmpty());
++            fixture.storage.confirm(fixture.nativePlayer, skin("skin", 0, "profile", "true", "{ \"bones\" : [1.0,2.0], \"value\" : 0.50 }"));
++            assertTrue(fixture.results.getFirst().confirmed());
++            fixture.skins.clear();
++            fragments(skin("skin", 0, "profile", "False", "[".repeat(129) + "0" + "]".repeat(129))).forEach(fixture.storage::accept);
++            assertTrue(fixture.skins.isEmpty());
++            assertFalse(fixture.results.getLast().confirmed());
++        }
++    }
++
++    @Test
++    void rejectsReplacementSkippedFragmentsAndInvalidSkinWithoutAffectingUnrelatedUpload() {
++        try (Fixture fixture = new Fixture()) {
++            final var first = fragments(skin());
++            final var next = fragments(skin());
++            fixture.storage.accept(first.getFirst());
++            fixture.storage.accept(next.getFirst());
++            fixture.storage.accept(first.get(1));
++            for (final var fragment : next.subList(1, next.size())) {
++                fixture.storage.accept(fragment);
++            }
++            assertEquals(1, fixture.skins.size());
++            assertFalse(fixture.results.stream().anyMatch(NativeSkinChange.Result::confirmed));
++            fixture.storage.accept(first.getFirst());
++            fixture.storage.accept(first.get(2));
++            assertEquals(1, fixture.skins.size());
++            fixture.storage.accept(new NativeSkinChange(UUID.randomUUID(), 1, 0, new byte[]{0}));
++            assertEquals(1, fixture.skins.size());
++            assertFalse(fixture.results.stream().anyMatch(NativeSkinChange.Result::confirmed));
++        }
++    }
++
++    @Test
++    void timesOutBothPartialUploadsAndUnconfirmedNativeRequests() {
++        try (Fixture fixture = new Fixture()) {
++            final var first = fragments(skin());
++            fixture.storage.accept(first.getFirst());
++            fixture.advance(31);
++            assertEquals(List.of(new NativeSkinChange.Result(first.getFirst().request(), false)), fixture.results);
++            fixture.storage.accept(first.get(1));
++            assertTrue(fixture.skins.isEmpty());
++            final var next = fragments(skin());
++            next.forEach(fixture.storage::accept);
++            fixture.advance(11);
++            fixture.storage.confirm(fixture.nativePlayer, skin());
++            assertEquals(new NativeSkinChange.Result(next.getFirst().request(), false), fixture.results.getLast());
++            assertFalse(fixture.results.stream().anyMatch(NativeSkinChange.Result::confirmed));
++        }
++    }
++
++    @Test
++    void blocksUnspawnedUnnegotiatedAndRetiredConnectionsAndCancelsOnWithdrawal() {
++        try (Fixture fixture = new Fixture()) {
++            final var fragments = fragments(skin());
++            when(fixture.actor.isInitiallySpawned()).thenReturn(false);
++            fragments.forEach(fixture.storage::accept);
++            assertTrue(fixture.skins.isEmpty());
++            when(fixture.actor.isInitiallySpawned()).thenReturn(true);
++            fixture.storage.accept(fragments.getFirst());
++            fixture.channels.removeChannels(List.of(NativeSkinFragment.CHANNEL));
++            fixture.storage.onRemove();
++            fragments.forEach(fixture.storage::accept);
++            fixture.storage.confirm(fixture.nativePlayer, skin());
++            assertTrue(fixture.skins.isEmpty());
++            assertFalse(fixture.results.stream().anyMatch(NativeSkinChange.Result::confirmed));
++            fixture.channels.addChannels(List.of(NativeSkinFragment.CHANNEL));
++            when(fixture.user.get(SkinChangeStorage.class)).thenReturn(null);
++            fragments.forEach(fixture.storage::accept);
++            assertTrue(fixture.skins.isEmpty());
++        }
++    }
++
++    @Test
++    void rejectsFailedNativeSendWithoutPendingConfirmation() {
++        try (Fixture fixture = new Fixture()) {
++            final SkinChangeStorage failing = new SkinChangeStorage(fixture.user, (_, _) -> {
++                throw new IllegalStateException();
++            }, fixture.results::add);
++            when(fixture.user.get(SkinChangeStorage.class)).thenReturn(failing);
++            final var fragments = fragments(skin());
++            fragments.forEach(failing::accept);
++            failing.confirm(fixture.nativePlayer, skin());
++            assertEquals(List.of(new NativeSkinChange.Result(fragments.getFirst().request(), false)), fixture.results);
++        }
++    }
++
++    @Test
++    void advertisesRequestsOnlyWhenBothReplyChannelsAreRegisteredInPlay() {
++        try (Fixture fixture = new Fixture();
++             var packets = mockStatic(PacketWrapper.class)) {
++            final PacketWrapper packet = mock(PacketWrapper.class);
++            packets.when(() -> PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, fixture.user)).thenReturn(packet);
++            when(fixture.user.get(SkinChangeStorage.class)).thenReturn(null);
++            when(fixture.user.has(SkinChangeStorage.class)).thenReturn(false);
++            when(fixture.user.getProtocolInfo().getClientState()).thenReturn(State.CONFIGURATION);
++            SkinChangeStorage.refreshCapability(fixture.user);
++            verifyNoInteractions(packet);
++            when(fixture.user.getProtocolInfo().getClientState()).thenReturn(State.PLAY);
++            fixture.channels.removeChannels(List.of(NativeSkinChange.Result.CHANNEL));
++            SkinChangeStorage.refreshCapability(fixture.user);
++            verifyNoInteractions(packet);
++            fixture.channels.addChannels(List.of(NativeSkinChange.Result.CHANNEL));
++            SkinChangeStorage.refreshCapability(fixture.user);
++            verify(fixture.user).put(any(SkinChangeStorage.class));
++            verify(packet).write(Types.STRING, "minecraft:register");
++            clearInvocations(packet);
++            when(fixture.user.has(SkinChangeStorage.class)).thenReturn(true);
++            fixture.channels.removeChannels(List.of(NativeSkinFragment.CHANNEL));
++            SkinChangeStorage.refreshCapability(fixture.user);
++            verify(fixture.user).remove(SkinChangeStorage.class);
++            verify(packet).write(Types.STRING, "minecraft:unregister");
++        }
++    }
++
++    private static SkinData skin() {
++        return skin("skin", 0, "profile", "True");
++    }
++
++    private static SkinData skin(final String id, final int pixel, final String profileHash, final String trusted) {
++        return skin(id, pixel, profileHash, trusted, "{}");
++    }
++
++    private static SkinData skin(final String id, final int pixel, final String profileHash, final String trusted, final String geometry) {
++        final var image = new BufferedImage(128, 128, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, pixel);
++        return new SkinData(id, "playfab", "{}", image,
++                List.of(), new BufferedImage(64, 32, BufferedImage.TYPE_INT_ARGB), geometry, "1.14.0", "{}",
++                true, true, false, true, "cape", "full", "Slim", "#00112233",
++                List.of(new SkinData.PersonaPieceData("piece", "Hair", "00000000-0000-0000-0000-000000000001", false, "product")),
++                List.of(new SkinData.PersonaPieceTintData("Hair", List.of("#00112233", "#00112233", "#00112233", "#00112233"))), true, trusted, profileHash);
++    }
++
++    private static List<NativeSkinChange> fragments(final SkinData skin) {
++        final List<NativeSkinChange> fragments = new ArrayList<>();
++        NativeSkinChange.split(UUID.randomUUID(), NativeSkinFragment.encode(skin), fragments::add);
++        return fragments;
++    }
++
++    private static final class Fixture implements AutoCloseable {
++        final UserConnection user = mock(UserConnection.class);
++        final EmbeddedChannel channel = new EmbeddedChannel();
++        final ChannelStorage channels = new ChannelStorage();
++        final UUID nativePlayer = UUID.randomUUID();
++        final UUID javaPlayer = UUID.randomUUID();
++        final ClientPlayerEntity actor = mock(ClientPlayerEntity.class);
++        final List<UUID> players = new ArrayList<>();
++        final List<SkinData> skins = new ArrayList<>();
++        final List<NativeSkinChange.Result> results = new ArrayList<>();
++        final SkinChangeStorage storage;
++
++        Fixture() {
++            when(this.user.getChannel()).thenReturn(this.channel);
++            when(this.user.getProtocolInfo()).thenReturn(mock(ProtocolInfo.class));
++            when(this.user.getProtocolInfo().getClientState()).thenReturn(State.PLAY);
++            when(this.user.getProtocolInfo().getUuid()).thenReturn(this.javaPlayer);
++            this.channels.addChannels(List.of(NativeSkinFragment.CHANNEL, NativeSkinChange.Result.CHANNEL));
++            when(this.user.get(ChannelStorage.class)).thenReturn(this.channels);
++            final EntityTracker entities = mock(EntityTracker.class);
++            when(this.user.get(EntityTracker.class)).thenReturn(entities);
++            when(entities.getClientPlayer()).thenReturn(this.actor);
++            when(this.actor.isInitiallySpawned()).thenReturn(true);
++            when(this.actor.uniqueId()).thenReturn(-42L);
++            final PlayerListStorage list = new PlayerListStorage();
++            list.addPlayer(this.nativePlayer, -42L, "Native");
++            list.addPlayer(this.javaPlayer, -43L, "Java");
++            when(this.user.get(PlayerListStorage.class)).thenReturn(list);
++            this.storage = new SkinChangeStorage(this.user, (player, skin) -> {
++                this.players.add(player);
++                this.skins.add(skin);
++            }, this.results::add);
++            when(this.user.get(SkinChangeStorage.class)).thenReturn(this.storage);
++        }
++
++        void advance(final int seconds) {
++            this.channel.advanceTimeBy(seconds, TimeUnit.SECONDS);
++            this.channel.runScheduledPendingTasks();
++        }
++
++        @Override
++        public void close() {
++            this.storage.onRemove();
++            this.channel.finishAndReleaseAll();
++        }
 +    }
 +
 +}

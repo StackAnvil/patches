@@ -406,7 +406,7 @@ The sound-control change also passes the [complete main-branch CI build](https:/
 | D1 | Palettes, color channels, and limb editing | Unverified | Compare remaining palette options, asynchronous saves, and fresh native limb edits. |
 | D2 | Classic packs and imported-skin synchronization | Incomplete | Complete imported images without downloadable pack references and remaining account/platform flows. |
 | D3 | Catalog acquisition, purchases, redemption, and wallet | Incomplete | Complete acquisition and interactive Store behavior with native account comparisons. |
-| D4 | Multiplayer synchronization | Unverified | Compare live changes, height, arm width, faces, capes, outfits, and remote emotes on additional clients. |
+| D4 | Multiplayer synchronization | Incomplete | Direct and proxy live changes preserve complete classic and persona appearances through native server echoes. Compare visibility, height, arm width, faces, capes, outfits and remote emotes on additional clients. |
 
 The [skin flow](skin-flow.md#missing-features) records detailed implementation evidence and outstanding comparisons.
 Its verification section preserves the original skin and persona scope.
