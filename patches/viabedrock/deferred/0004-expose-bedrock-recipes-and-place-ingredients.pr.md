@@ -1065,3 +1065,20 @@ Inspection shows common enchantment descriptions and specialized effect or conta
 This increment verifies policy composition with supplied text producers.
 Specialized description production, full model/controller lifetime and installed player screen publication still need work.
 The original four live reports remain open.
+
+## Bound primary search text
+
+The player search entry point now binds `ItemRewriter.itemPrimaryName` and preserves its bytes through `NbtUtf8`.
+The producer remains lazy. Empty queries skip it, and primary matches skip the secondary-description supplier.
+Secondary production remains an explicit input.
+
+All 1,182 composed primary/search cases match the Java producer bytes, search states and producer call counts.
+The original primary selector, ordinary/component/book methods, common secondary methods, installed search callbacks, unlock query, concrete matcher and counter execute.
+The locale callback composes a separately executed original formatter over a supplied byte-key lookup table.
+Selected receiver fields, component and typed-NBT backing, root-tag self-equality, model/source vectors, contexts, output getters and CRT interfaces remain supplied.
+Main-machine native temporaries balance. The separate formatter resets its caller arena and does not establish complete native cleanup.
+
+Four targeted tests pass, and both Checkstyle tasks pass. All 104 core patches replay.
+Java tests cover retained definitions, missing definitions, malformed name bytes and source acquisition order.
+The native controls use stable receiver backing; they do not establish complete registry replacement or controller lifetime.
+Specialized secondary descriptions and installed player screen publication remain unfinished. The original four live reports remain open.

@@ -896,3 +896,10 @@ That build passes 2,956 tests with 160 optional skips and no failures or errors.
 Original recipe controls record native map bucket counts of 8, 64, 512 and 1024.
 They also cover UTF-8 bytes, replacement without relocation and exact query traversal.
 The [candidate reference](../../../docs/bedrock-coverage.md#retained-recipe-output-candidates-october-25-2026) records those controls and their remaining boundaries.
+
+Primary item text now resolves through the stack's selected definition and the existing unfiltered naming implementation.
+`ItemRegistry.primaryName` retains custom-name presence, written-book handling and ordinary append precedence.
+`ItemRewriter.itemPrimaryName` binds current block names, translations and base-game version lazily.
+Java display conversion shares that context builder.
+Defined zero-count stacks and retained definitions keep their name producer.
+The byte conversion belongs to the later search consumer.

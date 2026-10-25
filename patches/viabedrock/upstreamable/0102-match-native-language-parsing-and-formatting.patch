@@ -1,4 +1,4 @@
-From 51139012996f76e013072baad04d1b96dfee6277 Mon Sep 17 00:00:00 2001
+From ac30da42c7bc4fa4663eb23ddae04831e17247d8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 10:11:46 +0200
 Subject: [PATCH] fix(text): match native language parsing and formatting
@@ -29,18 +29,19 @@ vectors, allocator/CRT and single-thread lock boundaries. They do not
 establish full locale, asset-provider, client ownership or visible parity.
 ---
  .../api/resourcepack/content/Content.java     |  16 +-
- .../resourcepack/definition/LanguageFile.java | 117 +++++++++++++++
- .../definition/LanguageLookup.java            |  53 +++++++
- .../definition/LanguageTranslations.java      | 140 ++++++++++++++++++
- .../definition/TextDefinitions.java           |  34 ++++-
+ .../resourcepack/definition/LanguageFile.java | 117 +++++++++++
+ .../definition/LanguageLookup.java            |  53 +++++
+ .../definition/LanguageTranslations.java      | 140 ++++++++++++++
+ .../definition/TextDefinitions.java           |  34 +++-
  .../protocol/packet/JoinPackets.java          |   4 +-
  .../protocol/packet/MultiStatePackets.java    |  10 +-
  .../content/ContentLanguageCacheTest.java     |   7 +-
- .../definition/LanguageFileTest.java          | 126 ++++++++++++++++
- .../definition/LanguageLookupTest.java        |  82 ++++++++++
- .../definition/LanguageTranslationsTest.java  | 127 ++++++++++++++++
- .../definition/TextDefinitionsTest.java       |  76 ++++++++++
- 12 files changed, 764 insertions(+), 28 deletions(-)
+ .../definition/LanguageFileTest.java          | 126 ++++++++++++
+ .../definition/LanguageLookupTest.java        |  82 ++++++++
+ .../definition/LanguageTranslationsTest.java  | 127 ++++++++++++
+ .../definition/TextDefinitionsTest.java       |  76 ++++++++
+ .../protocol/model/ItemPrimaryNameTest.java   | 181 ++++++++++++++++++
+ 13 files changed, 945 insertions(+), 28 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFile.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookup.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslations.java
@@ -48,6 +49,7 @@ establish full locale, asset-provider, client ownership or visible parity.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookupTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslationsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitionsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemPrimaryNameTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 index 642bbdbd2..ad30a6607 100644
@@ -1030,6 +1032,193 @@ index 000000000..4e8d5804e
 +        content.put("texts/en_US.lang", raw);
 +        return new ResourcePack(content);
 +    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemPrimaryNameTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemPrimaryNameTest.java
+new file mode 100644
+index 000000000..83cd53621
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemPrimaryNameTest.java
+@@ -0,0 +1,181 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.*;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.io.NbtUtf8;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.definition.TextDefinitions;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.io.InputStreamReader;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.HashMap;
++import java.util.HexFormat;
++import java.util.List;
++import java.util.Map;
++import java.util.zip.GZIPInputStream;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class ItemPrimaryNameTest {
++
++    @Test
++    void retainsSelectedDefinitionAndSkipsSourcesForCustomOrAbsentNames() throws Exception {
++        final var first = registry("book", null);
++        final var owner = first.definition("minecraft:written_book");
++        final var selected = new BedrockItem(owner, (short) 0, (byte) 1);
++        final var data = new CompoundTag();
++        final String title = "Title\0" + (char) 0xDCFF;
++        data.putString("title", title);
++        data.putString("filteredTitle", "Filtered");
++        selected.setTag(data);
++        selected.setAmount(0);
++        final var context = context(registry("ordinary", null), Map.of("item.probe.name", "Probe"));
++        clearInvocations(context.user());
++        assertArrayEquals(NbtUtf8.encode(title), NbtUtf8.encode(context.items().itemPrimaryName(selected)));
++        verify(context.user(), never()).get(ResourcePackStorage.class);
++        final var raw = new BedrockItem(30001);
++        raw.setTag(data);
++        assertArrayEquals(NbtUtf8.encode("Probe"), NbtUtf8.encode(context.items().itemPrimaryName(raw)));
++        final var display = new CompoundTag();
++        display.putInt("Name", 7);
++        data.put("display", display);
++        clearInvocations(context.user());
++        assertArrayEquals(new byte[0], NbtUtf8.encode(context.items().itemPrimaryName(raw)));
++        assertArrayEquals(NbtUtf8.encode(title), NbtUtf8.encode(context.items().itemPrimaryName(selected)));
++        assertArrayEquals(new byte[0], NbtUtf8.encode(context.items().itemPrimaryName(new BedrockItem(32767))));
++        verify(context.user(), never()).get(ResourcePackStorage.class);
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_PRIMARY_SEARCH_TEXT", matches = ".+")
++    void matchesOriginalDefinitionOwnedPrimaryBytes() throws Exception {
++        try (var input = new InputStreamReader(new GZIPInputStream(Files.newInputStream(
++                Path.of(System.getenv("STACKANVIL_NATIVE_PRIMARY_SEARCH_TEXT")))), StandardCharsets.UTF_8)) {
++            verifyPrimary(JsonParser.parseReader(input).getAsJsonObject());
++        }
++    }
++
++    static int verifyPrimary(final JsonObject fixture) throws Exception {
++        final var contexts = new HashMap<String, Context>();
++        final var translations = translations(fixture);
++        int count = 0;
++        for (final var value : fixture.getAsJsonArray("rows")) {
++            final var row = value.getAsJsonObject();
++            final String kind = row.get("kind").getAsString();
++            final String description = row.get("description").isJsonNull() ? null : row.get("description").getAsString();
++            final String identity = kind + ':' + description;
++            Context context = contexts.get(identity);
++            if (context == null) {
++                context = context(registry(kind, description), translations);
++                contexts.put(identity, context);
++            }
++            final var item = item(row);
++            assertArrayEquals(HexFormat.of().parseHex(row.get("primary").getAsString()), NbtUtf8.encode(context.items().itemPrimaryName(item)), row::toString);
++            clearInvocations(context.user());
++            count++;
++        }
++        assertTrue(count > 0);
++        return count;
++    }
++
++    static ItemRegistry registry(final String kind, final String description) {
++        final var component = new CompoundTag();
++        if (description != null) {
++            final var name = new CompoundTag();
++            name.putString("value", NbtUtf8.decode(HexFormat.of().parseHex(description)));
++            final var components = new CompoundTag();
++            components.put("minecraft:display_name", name);
++            component.put("components", components);
++        }
++        return new ItemRegistry(new ItemEntry[]{
++            new ItemEntry(kind.equals("book") ? "minecraft:written_book" : "minecraft:probe", 30001, kind.equals("component"),
++                    kind.equals("book") ? ItemVersion.None : kind.equals("component") ? ItemVersion.DataDriven : ItemVersion.Legacy, component),
++            new ItemEntry("minecraft:probe_input", 30002, false, ItemVersion.Legacy, null)
++        });
++    }
++
++    static Context context(final ItemRegistry registry, final Map<String, String> translations) throws Exception {
++        final var user = mock(UserConnection.class);
++        final var items = mock(ItemRewriter.class, CALLS_REAL_METHODS);
++        doReturn(user).when(items).user();
++        configure(items, user, registry, translations);
++        return new Context(user, items);
++    }
++
++    static void configure(final ItemRewriter items, final UserConnection user, final ItemRegistry registry,
++                          final Map<String, String> translations) throws Exception {
++        final var field = ItemRewriter.class.getDeclaredField("registry");
++        field.setAccessible(true);
++        field.set(items, registry);
++        final var content = mock(Content.class);
++        when(content.contains("texts/en_US.lang")).thenReturn(true);
++        when(content.getLang("texts/en_US.lang")).thenReturn(translations);
++        final var pack = mock(ResourcePack.class);
++        when(pack.content()).thenReturn(content);
++        final var resources = mock(ResourcePackStorage.class);
++        when(resources.getPackStackBottomToTop()).thenReturn(List.of(pack));
++        final var texts = new TextDefinitions(resources);
++        when(resources.getTexts()).thenReturn(texts);
++        when(user.get(ResourcePackStorage.class)).thenReturn(resources);
++        when(user.get(ItemRewriter.class)).thenReturn(items);
++        final var blocks = mock(BlockStateRewriter.class);
++        when(user.get(BlockStateRewriter.class)).thenReturn(blocks);
++        final var session = mock(GameSessionStorage.class);
++        when(session.getBedrockBaseGameVersion()).thenReturn(BaseGameVersion.INVALID);
++        when(user.get(GameSessionStorage.class)).thenReturn(session);
++    }
++
++    static BedrockItem item(final JsonObject row) {
++        final var item = new BedrockItem(30001);
++        item.setTag(row.get("root").isJsonNull() ? null : compound(row.getAsJsonObject("root")));
++        if (row.get("retainedZero").getAsBoolean()) {
++            item.setAmount(0);
++        }
++        return item;
++    }
++
++    static Map<String, String> translations(final JsonObject fixture) {
++        final var translations = new HashMap<String, String>();
++        fixture.getAsJsonObject("translations").entrySet().forEach(entry -> translations.put(
++                NbtUtf8.decode(HexFormat.of().parseHex(entry.getKey())), NbtUtf8.decode(HexFormat.of().parseHex(entry.getValue().getAsString()))));
++        return translations;
++    }
++
++    private static CompoundTag compound(final JsonObject value) {
++        final var data = new CompoundTag();
++        for (final var entry : value.entrySet()) {
++            final var field = entry.getValue().getAsJsonArray();
++            final JsonElement raw = field.get(1);
++            data.put(entry.getKey(), switch (field.get(0).getAsInt()) {
++                case 1 -> new ByteTag((byte) raw.getAsInt());
++                case 3 -> new IntTag(raw.getAsInt());
++                case 8 -> new StringTag(NbtUtf8.decode(HexFormat.of().parseHex(raw.getAsString())));
++                case 10 -> compound(raw.getAsJsonObject());
++                default -> throw new IllegalArgumentException("Unsupported primary-name fixture tag");
++            });
++        }
++        return data;
++    }
++
++    record Context(UserConnection user, ItemRewriter items) { }
 +
 +}
 -- 

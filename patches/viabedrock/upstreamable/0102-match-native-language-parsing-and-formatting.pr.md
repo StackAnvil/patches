@@ -30,3 +30,10 @@ Build outputs match the relevant packaged classes after standard build-token rep
 The ordinary BDS 1.26.51.1 route passes all three cooking families and same-world reconnect.
 All final cooking counts match. The active integration copies use the current add-on, and normal cleanup stops the private display.
 This route does not establish native authored-screen acceptance or pixels.
+
+The primary-name integration test compares the selected-definition producer through current text resources with 1,182 original native cases.
+Ordinary, component and written-book methods cover custom-name types, append data, malformed UTF-8 and defined zero-count stacks.
+A simplified formatter in the first control disagreed on missing arguments. The control now composes the original native language formatter.
+The Java producer passes with the existing language implementation.
+A second test verifies retained definitions and lazy source acquisition.
+Native receiver fields and locale lookup remain supplied. Full locale and registry lifetime are not established.
