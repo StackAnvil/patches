@@ -1,4 +1,4 @@
-From 3b1d9d91b8da05a90101020c95d6da2acd5570a3 Mon Sep 17 00:00:00 2001
+From 97f3450f5ab07afc0269636d9fabd0bf95611b6a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -588,6 +588,18 @@ control verifies the 292 saved ID names and five legacy ID upgrades.
 Native source, registry, TLS/static and CRT cleanup completes with no
 allocations or held locks. Live screens and complete caller admission
 remain outside these constructor controls.
+
+Use native occupied-slot merge admission for ordinary pickup, quick move,
+drag distribution and pickup-all. Raw encoded equality can merge different
+retained definitions, restrictions or blocking state, and can reject
+metadata variants of an Item that does not stack by data. Keep the source
+first and retain destination fields after an occupied merge.
+
+The original 1.26.51.1 transfer executor 1433e8380 calls 142488fe0 for
+occupied transfers; its count-plus-full-query branch remains separate.
+Regression coverage exercises real definition construction, all four Java
+action paths, native merge controls and rejected prediction restoration.
+Do not substitute merge eligibility for stale-state or full stack queries.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
@@ -697,6 +709,7 @@ remain outside these constructor controls.
  .../storage/BundleInventoryActionTest.java    |  549 ++++++
  .../CraftedItemSynchronizationTest.java       |  287 ++++
  .../InventoryContainerGenerationTest.java     |  118 ++
+ .../storage/InventoryMergeActionTest.java     |  298 ++++
  .../storage/InventoryRequestRecoveryTest.java |   68 +
  .../InventoryRequestTrackerQueueTest.java     |  136 ++
  .../storage/InventoryRequestTrackerTest.java  |  385 +++++
@@ -712,7 +725,7 @@ remain outside these constructor controls.
  .../item/NetworkItemConstructionTest.java     |  171 ++
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 123 files changed, 17670 insertions(+), 985 deletions(-)
+ 124 files changed, 17968 insertions(+), 985 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
@@ -783,6 +796,7 @@ remain outside these constructor controls.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/BundleInventoryActionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronizationTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryContainerGenerationTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryMergeActionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestRecoveryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerQueueTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
@@ -1004,7 +1018,7 @@ index 913255f8f..d535541bf 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-index 26f172417..39ada7081 100644
+index 26f172417..edb89e53c 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 @@ -21,18 +21,50 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -1224,7 +1238,7 @@ index 26f172417..39ada7081 100644
 +        final ItemRewriter itemRewriter = this.user.get(ItemRewriter.class);
 +
 +        if (item.isEmpty()
-+                || (!item.isDifferent(cursorItem)
++                || (itemRewriter.canMerge(cursorItem, item)
 +                        && item.amount() < itemRewriter.maxStackSize(item))) {
 +            return this.singletonAction(this.handlePickupPlace(
 +                    clickContext, container, bedrockSlot, button, cursorItem, item));
@@ -1265,7 +1279,7 @@ index 26f172417..39ada7081 100644
 +        }
 +        final int amt = (button == 0 ? NativeTransferQuantity.ALL : NativeTransferQuantity.ONE).count(cursorItem.amount());
 +        final int amountToPlace =
-+                item.isDifferent(cursorItem)
++                item.isEmpty()
 +                        ? Math.min(amt, this.user.get(ItemRewriter.class).maxStackSize(cursorItem))
 +                        : Math.min(
 +                                this.user.get(ItemRewriter.class).maxStackSize(item)
@@ -1277,7 +1291,7 @@ index 26f172417..39ada7081 100644
 +
 +        final int containerNetId = item.netId() != null ? item.netId() : 0;
 +        BedrockItem finalContainerItem = item.copy();
-+        if (item.isDifferent(cursorItem)) {
++        if (item.isEmpty()) {
 +            finalContainerItem = cursorItem.copy();
 +            finalContainerItem.setAmount(amountToPlace);
 +        } else {
@@ -1416,7 +1430,7 @@ index 26f172417..39ada7081 100644
 +                    if (mergePass) {
 +                        if (destinationItem == null
 +                                || destinationItem.isEmpty()
-+                                || destinationItem.isDifferent(sourceItem)
++                                || !itemRewriter.canMerge(sourceItem, destinationItem)
 +                                || destinationItem.amount() >= slotMaxStackSize) {
 +                            continue;
 +                        }
@@ -1636,7 +1650,7 @@ index 26f172417..39ada7081 100644
 +            return false;
 +        }
 +        return container.canPlaceItem(destination.bedrockSlot(), cursor)
-+                && (item.isEmpty() || !item.isDifferent(cursor))
++                && (item.isEmpty() || this.user.get(ItemRewriter.class).canMerge(cursor, item))
 +                && item.amount() < this.user.get(ItemRewriter.class).maxStackSize(cursor);
 +    }
 +
@@ -1646,7 +1660,7 @@ index 26f172417..39ada7081 100644
 +            return false;
 +        }
 +        final BedrockItem item = source.container().getItem(source.bedrockSlot());
-+        return !item.isEmpty() && !item.isDifferent(cursor);
++        return !item.isEmpty() && this.user.get(ItemRewriter.class).canMerge(item, cursor);
 +    }
 +
 +    private boolean isOrdinaryItemSlot(
@@ -20307,6 +20321,310 @@ index 000000000..bb59fd162
 +
 +    private static ContainerOpenContext origin(final long actorUniqueId) {
 +        return new ContainerOpenContext((byte) ContainerType.CONTAINER.getValue(), new BlockPosition(1, 64, 2), actorUniqueId);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryMergeActionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryMergeActionTest.java
+new file mode 100644
+index 000000000..755a019d7
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryMergeActionTest.java
+@@ -0,0 +1,298 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.chunk.blockstate.BlockRegistryNames;
++import net.raphimc.viabedrock.api.model.container.ChestContainer;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ItemEntry;
++import net.raphimc.viabedrock.protocol.model.ItemRegistry;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.EnumSource;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.HexFormat;
++import java.util.Map;
++import java.util.Set;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class InventoryMergeActionTest {
++
++    @Test
++    void pickupRetainsDestinationMetadataAndRestoresRejectedPrediction() throws Exception {
++        final var fixture = new Fixture(false, false, 64);
++        final var source = fixture.item((short) 1, 4, 11);
++        final var destination = fixture.item((short) 2, 1, 12);
++        fixture.inventory.getHudContainer().setItem(0, source);
++        fixture.menu.setItem(9, destination);
++
++        final var request = fixture.click(9, 0, ContainerInput.PICKUP);
++        final var action = assertInstanceOf(ItemStackRequestAction.PlaceAction.class, request.actions().getFirst());
++        assertEquals(4, action.count());
++        assertEquals(12, action.destination().stackNetworkId());
++        assertEquals(5, fixture.menu.getItem(9).amount());
++        assertEquals(2, fixture.menu.getItem(9).data());
++        assertTrue(fixture.inventory.getHudContainer().getItem(0).isEmpty());
++
++        fixture.requests.restoreRejectedRequest(fixture.requests.getRequest(request.requestId()));
++        assertEquals(source, fixture.inventory.getHudContainer().getItem(0));
++        assertEquals(destination, fixture.menu.getItem(9));
++    }
++
++    @ParameterizedTest
++    @EnumSource(Conflict.class)
++    void pickupSwapsInsteadOfMergingIncompatibleNativeState(final Conflict conflict) throws Exception {
++        final var fixture = new Fixture(conflict == Conflict.SUBTYPE, conflict == Conflict.DAMAGE, 64);
++        final var source = conflict == Conflict.DEFINITION ? fixture.collidingItem(true, 4, 11) : fixture.item((short) 0, 4, 11);
++        final var destination = conflict == Conflict.DEFINITION ? fixture.collidingItem(false, 1, 12) : fixture.item((short) 0, 1, 12);
++        switch (conflict) {
++            case DEFINITION -> {
++                assertEquals(source.identifier(), destination.identifier());
++                assertEquals(source.data(), destination.data());
++                assertNotSame(source.definition(), destination.definition());
++            }
++            case RESTRICTION -> source.setCanPlace(new String[]{"minecraft:dirt"});
++            case BLOCKING -> destination.setBlockingTicks(1);
++            case SUBTYPE -> destination.setData((short) 1);
++            case DAMAGE -> {
++                final var tag = new CompoundTag();
++                tag.putInt("Damage", 1);
++                source.setTag(tag);
++                destination.setTag(tag.copy());
++            }
++        }
++        fixture.inventory.getHudContainer().setItem(0, source);
++        fixture.menu.setItem(9, destination);
++        final var request = fixture.click(9, 0, ContainerInput.PICKUP);
++        assertInstanceOf(ItemStackRequestAction.SwapAction.class, request.actions().getFirst());
++        assertEquals(source, fixture.menu.getItem(9));
++        assertEquals(destination, fixture.inventory.getHudContainer().getItem(0));
++    }
++
++    @Test
++    void quickMoveSkipsConflictingRestrictionsBeforeMergingDifferentMetadata() throws Exception {
++        final var fixture = new Fixture(false, false, 64);
++        final var source = fixture.item((short) 1, 4, 11);
++        source.setCanPlace(new String[]{"minecraft:stone"});
++        final var incompatible = fixture.item((short) 1, 1, 12);
++        incompatible.setCanPlace(new String[]{"minecraft:dirt"});
++        final var destination = fixture.item((short) 2, 60, 13);
++        destination.setCanPlace(source.canPlace().clone());
++        fixture.menu.setItem(9, source);
++        fixture.inventory.getInventoryContainer().setItem(35, incompatible);
++        fixture.inventory.getInventoryContainer().setItem(34, destination);
++
++        final var request = fixture.click(9, 0, ContainerInput.QUICK_MOVE);
++        final var action = assertInstanceOf(ItemStackRequestAction.PlaceAction.class, request.actions().getFirst());
++        assertEquals(1, request.actions().size());
++        assertEquals(34, action.destination().slot());
++        assertEquals(4, action.count());
++        assertEquals(incompatible, fixture.inventory.getInventoryContainer().getItem(35));
++        assertEquals(64, fixture.inventory.getInventoryContainer().getItem(34).amount());
++        assertEquals(2, fixture.inventory.getInventoryContainer().getItem(34).data());
++        assertTrue(fixture.menu.getItem(9).isEmpty());
++    }
++
++    @Test
++    void dragFiltersOccupiedSlotsBeforeDistributingAndPreservesTheirMetadata() throws Exception {
++        final var fixture = new Fixture(false, false, 64);
++        final var source = fixture.item((short) 0, 4, 11);
++        final var incompatible = fixture.item((short) 0, 1, 12);
++        incompatible.setBlockingTicks(1);
++        fixture.inventory.getHudContainer().setItem(0, source);
++        fixture.menu.setItem(9, incompatible);
++        fixture.menu.setItem(10, fixture.item((short) 2, 1, 13));
++        fixture.menu.handleClick(0, (short) -999, (byte) 0, ContainerInput.QUICK_CRAFT);
++        for (short slot : new short[]{9, 10, 11}) {
++            fixture.menu.handleClick(0, slot, (byte) 1, ContainerInput.QUICK_CRAFT);
++        }
++
++        final var request = fixture.click(-999, 2, ContainerInput.QUICK_CRAFT);
++        assertEquals(2, request.actions().size());
++        assertEquals(incompatible, fixture.menu.getItem(9));
++        assertEquals(3, fixture.menu.getItem(10).amount());
++        assertEquals(2, fixture.menu.getItem(10).data());
++        assertEquals(2, fixture.menu.getItem(11).amount());
++        assertTrue(fixture.inventory.getHudContainer().getItem(0).isEmpty());
++    }
++
++    @Test
++    void pickupAllUsesCollectedStacksAsSourcesAndPreservesCursorMetadata() throws Exception {
++        final var fixture = new Fixture(false, false, 64);
++        fixture.inventory.getHudContainer().setItem(0, fixture.collidingItem(true, 1, 11));
++        final var incompatible = fixture.collidingItem(false, 2, 12);
++        fixture.menu.setItem(9, incompatible);
++        fixture.menu.setItem(10, fixture.collidingItem(true, 2, 13));
++
++        final var request = fixture.click(9, 0, ContainerInput.PICKUP_ALL);
++        final var action = assertInstanceOf(ItemStackRequestAction.TakeAction.class, request.actions().getFirst());
++        assertEquals(1, request.actions().size());
++        assertEquals(10, action.source().slot());
++        assertEquals(incompatible, fixture.menu.getItem(9));
++        assertEquals(3, fixture.inventory.getHudContainer().getItem(0).amount());
++        assertEquals(0, fixture.inventory.getHudContainer().getItem(0).data());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_CONTAINER_MERGE", matches = ".+")
++    void matchesNativeMergeDecisionsThroughAllOrdinaryActionPaths() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(
++                System.getenv("STACKANVIL_NATIVE_CONTAINER_MERGE")))).getAsJsonObject();
++        Fixture fixture = null;
++        Configuration previousProperties = null;
++        for (final var element : reference.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            final var properties = new Configuration(row.get("stackedByData").getAsBoolean(),
++                    row.get("damageable").getAsBoolean(), row.get("maximum").getAsInt());
++            if (!properties.equals(previousProperties)) {
++                fixture = new Fixture(properties.subtype(), properties.damageable(), properties.maximum());
++                previousProperties = properties;
++            }
++            final var source = fixture.item(row.get("sourceAux").getAsShort(), 4, 11);
++            final var destination = fixture.item(row.get("destinationAux").getAsShort(), 1, 12);
++            if (!row.get("nbtHex").isJsonNull()) {
++                final var bytes = Unpooled.wrappedBuffer(HexFormat.of().parseHex(row.get("nbtHex").getAsString()));
++                try {
++                    source.setTag((CompoundTag) BedrockTypes.TAG_LE.read(bytes));
++                    destination.setTag(source.tag().copy());
++                    assertFalse(bytes.isReadable());
++                } finally {
++                    bytes.release();
++                }
++            }
++            final boolean merge = row.get("nativeCanMerge").getAsBoolean();
++            fixture.reset();
++            fixture.inventory.getHudContainer().setItem(0, source.copy());
++            fixture.menu.setItem(9, destination.copy());
++            final var pickup = fixture.click(9, 0, ContainerInput.PICKUP);
++            assertEquals(merge, pickup.actions().getFirst() instanceof ItemStackRequestAction.PlaceAction, row::toString);
++
++            fixture.reset();
++            fixture.menu.setItem(9, source.copy());
++            fixture.inventory.getInventoryContainer().setItem(9, destination.copy());
++            final var quickMove = fixture.click(9, 0, ContainerInput.QUICK_MOVE);
++            final var placement = assertInstanceOf(ItemStackRequestAction.PlaceAction.class, quickMove.actions().getFirst());
++            // Preserve the existing Java quick-move order; this control compares occupied-slot admission.
++            assertEquals(merge ? 9 : 8, placement.destination().slot(), row::toString);
++
++            fixture.reset();
++            fixture.inventory.getHudContainer().setItem(0, source.copy());
++            fixture.menu.setItem(9, destination.copy());
++            fixture.menu.handleClick(0, (short) -999, (byte) 0, ContainerInput.QUICK_CRAFT);
++            fixture.menu.handleClick(0, (short) 9, (byte) 1, ContainerInput.QUICK_CRAFT);
++            fixture.menu.handleClick(0, (short) 10, (byte) 1, ContainerInput.QUICK_CRAFT);
++            final var drag = fixture.click(-999, 2, ContainerInput.QUICK_CRAFT);
++            assertEquals(merge ? 2 : 1, drag.actions().size(), row::toString);
++
++            fixture.reset();
++            fixture.inventory.getHudContainer().setItem(0, destination.copy());
++            fixture.menu.setItem(9, source.copy());
++            final var collect = fixture.click(9, 0, ContainerInput.PICKUP_ALL);
++            assertEquals(merge, collect != null, row::toString);
++        }
++    }
++
++    private record Configuration(boolean subtype, boolean damageable, int maximum) { }
++
++    private enum Conflict {
++        DEFINITION, RESTRICTION, BLOCKING, SUBTYPE, DAMAGE
++    }
++
++    private static final class Fixture {
++        private final UserConnection user = mock(UserConnection.class);
++        private final InventoryTracker inventory = new InventoryTracker(this.user);
++        private final InventoryRequestTracker requests = new InventoryRequestTracker(this.user);
++        private final ChestContainer menu = new ChestContainer(this.user, (byte) 6, null, null, 27);
++        private final ItemRegistry registry;
++        private final ItemRewriter items = mock(ItemRewriter.class, CALLS_REAL_METHODS);
++        private ItemStackRequestInfo sent;
++
++        private Fixture(final boolean subtype, final boolean damageable, final int maximum) throws Exception {
++            final var properties = new CompoundTag();
++            properties.putInt("max_stack_size", maximum);
++            properties.putByte("stacked_by_data", (byte) (subtype ? 1 : 0));
++            final var components = new CompoundTag();
++            components.put("item_properties", properties);
++            if (damageable) {
++                components.put("minecraft:durability", new CompoundTag());
++            }
++            final var data = new CompoundTag();
++            data.put("components", components);
++            this.registry = new ItemRegistry(new ItemEntry[]{
++                new ItemEntry("test:stack", 2000, true, ItemVersion.DataDriven, data),
++                new ItemEntry("minecraft:charcoal", 257, false, ItemVersion.Legacy, new CompoundTag())});
++            final var field = ItemRewriter.class.getDeclaredField("registry");
++            field.setAccessible(true);
++            field.set(this.items, this.registry);
++            doReturn(this.user).when(this.items).user();
++            // These declared stacks are not bundles; their global bundle-tag mapping is outside this fixture.
++            doReturn(false).when(this.items).isBundle(any());
++            final var blocks = mock(BlockStateRewriter.class);
++            final var names = new BlockRegistryNames(Set.of("minecraft:stone", "minecraft:dirt"), Map.of());
++            when(blocks.restrictionBlocks(any())).thenAnswer(call -> names.restrictionBlocks(call.getArgument(0)));
++            final Map<Class<?>, Object> stores = Map.of(InventoryTracker.class, this.inventory,
++                    InventoryRequestTracker.class, this.requests, ItemRewriter.class, this.items, BlockStateRewriter.class, blocks);
++            when(this.user.get(any())).thenAnswer(call -> stores.get(call.getArgument(0)));
++            this.inventory.setCurrentContainer(this.menu);
++            this.requests.setPredictingClick(true);
++        }
++
++        private BedrockItem item(final short auxiliary, final int count, final int networkId) {
++            final var item = this.items.createNamedItem("test:stack", auxiliary, count);
++            item.setNetId(networkId);
++            return item;
++        }
++
++        private BedrockItem collidingItem(final boolean charcoal, final int count, final int networkId) {
++            final int identifier = charcoal ? this.registry.definition("minecraft:coal").id() : 257;
++            final var item = this.items.createNetworkItem(identifier, charcoal ? (short) 1 : 0, (byte) count, 0);
++            item.setNetId(networkId);
++            return item;
++        }
++
++        private void reset() {
++            if (this.sent != null) {
++                this.requests.removeRequest(this.sent.requestId());
++            }
++            this.sent = null;
++            this.requests.setPredictingClick(true);
++            this.menu.setItems(BedrockItem.emptyArray(27));
++            this.inventory.getInventoryContainer().setItems(BedrockItem.emptyArray(36));
++            this.inventory.getHudContainer().setItem(0, BedrockItem.empty());
++        }
++
++        private ItemStackRequestInfo click(final int slot, final int button, final ContainerInput action) {
++            this.sent = null;
++            try (var packets = mockStatic(PacketFactory.class)) {
++                packets.when(() -> PacketFactory.sendBedrockInventoryRequest(eq(this.user), any())).thenAnswer(call -> {
++                    this.sent = ((ItemStackRequestInfo[]) call.getArgument(1))[0];
++                    this.requests.getRequest(this.sent.requestId()).capturePrediction(this.inventory);
++                    return null;
++                });
++                this.menu.handleClick(0, (short) slot, (byte) button, action);
++            }
++            return this.sent;
++        }
 +    }
 +
 +}

@@ -873,3 +873,47 @@ Complete client/level setup, installed recipe availability, player screens and p
 Some legacy actions still use `BedrockItem.isDifferent` to compare encoded fields.
 The 12 broad and 107 focused Block-state differences remain open.
 All five goal areas and the four original reports remain active.
+
+
+## Ordinary inventory merge actions
+
+Ordinary Java pickup, shift-click, drag distribution and pickup-all now use the connection's native occupied-slot merge predicate.
+Each check passes the moving stack first and its destination second.
+The predicate checks retained definition identity, destination stackability, subtype metadata, native userdata equality, restrictions and blocking state.
+Items without the subtype flag can merge across auxiliary values.
+Items with matching encoded fields can still fail admission through their definitions or other retained state.
+
+An occupied merge preserves the destination's fields and increases its count.
+An empty destination receives a copy of the source.
+Pickup keeps its existing swap behavior when occupied merge admission fails.
+Drag eligibility filters incompatible destinations before count distribution or the single-slot pickup fallback.
+Pickup-all treats each collected stack as the source and the cursor as its destination.
+
+The complete target executor `1433e8380` calls merge predicate `142488fe0` with that argument order.
+Its separate count-plus-full-query branch calls `14248dac0`.
+The current change preserves that distinction and leaves `BedrockItem.isDifferent` unchanged.
+The original functions come from target 1.26.51.1, build 51061372, protocol 2193.
+
+The action regression constructs real registry definitions and executes the Java click, request and prediction paths.
+Nine ordinary cases cover definition collisions, restrictions, blocking state, subtype metadata, damage, destination preservation and rejected prediction restoration.
+The optional matrix applies 756 original native merge results to all four Java action paths, for 3,024 decision checks.
+The fixture declares non-bundle classification, a small registered Block-name set and intercepted packet transport.
+These checks preserve existing Java slot order; they do not establish native destination ordering.
+The action fixture passes all ten tests, including the optional matrix.
+The packaged JAR passes the same tests with verified implementation origins.
+Four deliberate raw-comparator reversions fail native decision comparisons through pickup, quick move, drag and pickup-all.
+The targeted inventory, bundle, response and native stacking run passes all 39 tests. Checkstyle passes.
+
+Crafting outputs, merchant and specialized workstation consumers still have separate encoded-field comparisons that need caller-specific audits.
+Legacy offhand and cursor acknowledgments also retain their existing stale-state checks.
+Complete native controller delivery, locked-item permissions and live wire/server acceptance remain separate requirements.
+All five goal areas and the four original reports remain active.
+
+
+The four-project build passes 2,882 tests with 161 optional skips and no failures or errors.
+The core suite passes 1,751 tests with 84 optional skips.
+All 1,520 core classes match their embedded add-on and proxy copies. All 1,191 client classes match the tested add-on.
+All 198 core asset resources match the previous validated JAR exactly.
+Apart from the Container implementation and three build-identity classes, the remaining 1,516 core classes are unchanged.
+This preserves the prior constructor, registry, recipe and component evidence through exact artifact comparison.
+Their separate packaged suites were not rerun for this consumer-only change.
