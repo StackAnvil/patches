@@ -1,4 +1,4 @@
-From c649196ffaf8f50392f1436fa05d2fed378f8a6d Mon Sep 17 00:00:00 2001
+From 19eba553a6709bf337e5322d6e03260088e6764f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -750,6 +750,22 @@ separate user-data placement override. Original evaluator controls cover
 864 ordinary-definition cases; four further controls retain first-source
 eligibility by descriptor hash. Constructor and model/source boundaries
 remain supplied, and installed player collection publication is pending.
+
+Evaluate player recipe categories against current Instabuild abilities and
+output unlocks before counting. Unfiltered non-Instabuild categories reject
+an output when the candidate list is empty or any candidate needs a table
+outside the workbench, even when another candidate fits. Instabuild skips
+these gates but still uses the counter. Only unfiltered categories map
+unavailable state 3 to state 2; filtered categories retain the exact state.
+Keep context lookup lazy when recipesUnlock disables the unlock gate.
+
+Evidence: Bedrock 1.26.51.1/build51061372/protocol2193 original installer
+14341c4c0 stores callbacks that agree in 384 category cases, including
+mixed grid requirements and all four returned states. Original ability
+lookup, unlock predicate, output index, concrete matcher and counter run.
+Enum/model-map backing, ordinary definitions, source vectors, contexts and
+output getters are supplied. Full model/controller lifetime, nonempty
+search name production and installed screen publication remain unverified.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 +
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -787,7 +803,7 @@ remain supplied, and installed player collection publication is pending.
  .../protocol/packet/MultiStatePackets.java    |  55 ++
  .../protocol/rewriter/ItemRewriter.java       | 162 +++-
  .../protocol/storage/CraftingDataStorage.java |   3 +-
- .../protocol/storage/CraftingDataTracker.java | 744 ++++++++++++++--
+ .../protocol/storage/CraftingDataTracker.java | 775 +++++++++++++++--
  .../storage/InventoryOptionsStorage.java      | 186 ++++
  .../storage/InventoryRequestTracker.java      |   7 +
  .../protocol/storage/InventoryTracker.java    |  47 ++
@@ -820,7 +836,7 @@ remain supplied, and installed player collection publication is pending.
  .../NativeRecipeConcreteCounterTest.java      | 165 ++++
  .../rewriter/NativeRecipePaletteTest.java     | 203 +++++
  .../PlayerRecipeAvailabilityTest.java         | 296 +++++++
- ...egisteredPlayerRecipeAvailabilityTest.java | 257 ++++++
+ ...egisteredPlayerRecipeAvailabilityTest.java | 372 ++++++++
  .../ResolvedRecipeIngredientTest.java         | 283 +++++++
  .../storage/CookingRecipeBookTest.java        | 194 +++++
  .../protocol/storage/CraftingCursorTest.java  | 158 ++++
@@ -839,7 +855,7 @@ remain supplied, and installed player collection publication is pending.
  .../types/model/FurnaceOptionsTypeTest.java   |  75 ++
  .../types/model/InventoryOptionsTypeTest.java |  46 +
  .../types/recipe/CraftingDataReaderTest.java  |  84 +-
- 88 files changed, 12052 insertions(+), 180 deletions(-)
+ 88 files changed, 12198 insertions(+), 180 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeAvailability.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeCatalog.java
@@ -4366,7 +4382,7 @@ index 4506fe070..2b1c6b934 100644
      @Override
      public @NonNull String toString() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
-index 73165b006..1fe8e4873 100644
+index 73165b006..eec7fd71f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 @@ -9,6 +9,7 @@
@@ -4377,7 +4393,7 @@ index 73165b006..1fe8e4873 100644
  import com.viaversion.viaversion.api.connection.StoredObject;
  import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.minecraft.HolderSet;
-@@ -19,17 +20,43 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
+@@ -19,17 +20,46 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
  
  import net.raphimc.viabedrock.api.model.container.Container;
@@ -4387,6 +4403,8 @@ index 73165b006..1fe8e4873 100644
 +import net.raphimc.viabedrock.api.util.Fnv1;
 +import net.raphimc.viabedrock.api.util.NativeStringMap;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.AbilitiesIndex;
++import net.raphimc.viabedrock.api.model.container.block.CraftingTableContainer;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.NativeRecipeRegistry;
 +import net.raphimc.viabedrock.protocol.model.NativeCraftingContext;
@@ -4406,6 +4424,7 @@ index 73165b006..1fe8e4873 100644
 +import java.util.Collection;
 +import java.util.function.Predicate;
 +import java.util.function.ToIntFunction;
++import java.util.function.Supplier;
  
  public final class CraftingDataTracker extends StoredObject {
  
@@ -4421,7 +4440,7 @@ index 73165b006..1fe8e4873 100644
  
      public CraftingDataTracker(final UserConnection user) {
          super(user);
-@@ -39,119 +66,406 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -39,119 +69,434 @@ public final class CraftingDataTracker extends StoredObject {
          return this.recipes;
      }
  
@@ -4442,11 +4461,15 @@ index 73165b006..1fe8e4873 100644
 +
 +    /** Query the current native output index without depending on displayed recipes or placement capacity. */
 +    public boolean isOutputUnlocked(final BedrockItem query, final List<String> contexts) {
++        return this.isOutputUnlocked(query, () -> contexts);
++    }
++
++    private boolean isOutputUnlocked(final BedrockItem query, final Supplier<List<String>> contexts) {
 +        final var rules = this.user().get(GameRulesStorage.class);
 +        if (rules == null || !Boolean.TRUE.equals(rules.getGameRule("recipesUnlock"))) {
 +            return true;
 +        }
-+        return this.outputCandidates(query, contexts).stream().anyMatch(this::isRecipeUnlocked);
++        return this.outputCandidates(query, contexts.get()).stream().anyMatch(this::isRecipeUnlocked);
 +    }
 +
 +    /** Retain native output-index order, context order and recipe-ID deduplication before caller filtering. */
@@ -4497,13 +4520,37 @@ index 73165b006..1fe8e4873 100644
 +                () -> this.playerRecipeCandidates(output, owner), output, selectedOutput, owner, filtering, includeCursor);
 +    }
 +
++    /** Evaluate a player category using current abilities, unlocks and every output candidate's grid requirement. */
++    public int playerRecipeCategoryAvailability(final BedrockItem output, final BedrockItem selectedOutput,
++                                                final Container owner, final boolean filtering, final boolean includeCursor) {
++        final boolean instabuild = this.user().get(EntityTracker.class).getClientPlayer()
++                .abilities().getBooleanValue(AbilitiesIndex.Instabuild);
++        if (!instabuild) {
++            if (!this.isOutputUnlocked(output, () -> this.recipeContexts(owner))) {
++                return 3;
++            }
++            if (!filtering) {
++                final List<CraftingDataStorage> candidates = this.outputCandidates(output, this.recipeContexts(owner));
++                if (candidates.isEmpty() || !(owner instanceof CraftingTableContainer)
++                        && candidates.stream().anyMatch(this::requiresCraftingTable)) {
++                    return 3;
++                }
++            }
++        }
++        final int state = this.playerRecipeAvailability(output, selectedOutput, owner, filtering, includeCursor);
++        return !filtering && state == 3 ? 2 : state;
++    }
++
++    private boolean requiresCraftingTable(final CraftingDataStorage data) {
++        return data.recipe() instanceof ShapedRecipe shaped
++                ? shaped.getWidth() >= 3 || shaped.getHeight() >= 3 : this.recipeIngredients(data).size() >= 5;
++    }
++
 +    private List<NativeRecipeCounter.Candidate> playerRecipeCandidates(final BedrockItem output, final Container owner) {
 +        final List<NativeRecipeCounter.Candidate> candidates = new ArrayList<>();
 +        for (final CraftingDataStorage data : this.outputCandidates(output, this.recipeContexts(owner))) {
 +            final List<NativeRecipeDescriptor> positions = this.recipeIngredients(data);
-+            final boolean requiresCraftingTable = data.recipe() instanceof ShapedRecipe shaped
-+                    ? shaped.getWidth() >= 3 || shaped.getHeight() >= 3 : positions.size() >= 5;
-+            candidates.add(new NativeRecipeCounter.Candidate(data.recipe().getPriority(), requiresCraftingTable, new NativeRecipeCounter.Recipe() {
++            candidates.add(new NativeRecipeCounter.Candidate(data.recipe().getPriority(), this.requiresCraftingTable(data), new NativeRecipeCounter.Recipe() {
 +                @Override
 +                public int ingredientCount() {
 +                    return positions.size();
@@ -4600,7 +4647,7 @@ index 73165b006..1fe8e4873 100644
 +        final List<NativeRecipeDescriptor> ingredients = this.recipeIngredients.get(data);
 +        if (ingredients == null) {
 +            throw new IllegalArgumentException("Recipe does not own registered crafting ingredients");
-         }
++        }
 +        return ingredients;
 +    }
 +
@@ -4627,7 +4674,7 @@ index 73165b006..1fe8e4873 100644
 +            case 3 -> this.unlockedRecipeIds.removeAll(ids);
 +            case 4 -> this.unlockedRecipeIds.clear();
 +            default -> { }
-+        }
+         }
 +        this.catalogRevision = revision;
 +    }
 +
@@ -4891,7 +4938,7 @@ index 73165b006..1fe8e4873 100644
      private boolean matches(final ItemDescriptor descriptor, final BedrockItem item) {
          return descriptor.matchesItem(this.user(), item)
                  && (item.isEmpty() || item.amount() >= descriptor.amount());
-@@ -168,19 +482,17 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -168,19 +513,17 @@ public final class CraftingDataTracker extends StoredObject {
                  continue;
              }
              final ItemDescriptor descriptor = recipe.getIngredients().get(0);
@@ -4917,7 +4964,7 @@ index 73165b006..1fe8e4873 100644
          }
  
          final PacketWrapper packet =
-@@ -192,6 +504,207 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -192,6 +535,207 @@ public final class CraftingDataTracker extends StoredObject {
                      BedrockProtocol.MAPPINGS.getJavaSlotDisplayId("minecraft:item_stack"), entry.output());
          }
          packet.send(BedrockProtocol.class);
@@ -5125,7 +5172,7 @@ index 73165b006..1fe8e4873 100644
      }
  
      static void writeStonecutterRecipe(final PacketWrapper packet, final int inputId,
-@@ -203,4 +716,93 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -203,4 +747,93 @@ public final class CraftingDataTracker extends StoredObject {
  
      private record StonecutterEntry(int inputId, Item output) { }
  
@@ -10061,10 +10108,10 @@ index 000000000..ed9829fdd
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/RegisteredPlayerRecipeAvailabilityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/RegisteredPlayerRecipeAvailabilityTest.java
 new file mode 100644
-index 000000000..d493b9a0d
+index 000000000..be18c48f0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/RegisteredPlayerRecipeAvailabilityTest.java
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,372 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -10079,6 +10126,12 @@ index 000000000..d493b9a0d
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import com.viaversion.viaversion.libs.gson.JsonParser;
 +import net.raphimc.viabedrock.api.model.container.block.CraftingTableContainer;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.AbilitiesIndex;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.SerializedAbilitiesData_SerializedAbilitiesLayer;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.GameRulesStorage;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.ItemEntry;
@@ -10290,6 +10343,115 @@ index 000000000..d493b9a0d
 +        }
 +        assertTrue(count > 0);
 +        return count;
++    }
++
++    @Test
++    void categoriesReadCurrentAbilitiesUnlocksAndEveryCandidateGridRequirement() throws Exception {
++        final var context = PlayerRecipeAvailabilityTest.context(false, IDENTIFIER_BASE);
++        final var user = context.items().user();
++        final var tracker = new CraftingDataTracker(user);
++        final var abilities = categoryAbilities(context);
++        final var rules = mock(GameRulesStorage.class);
++        when(user.get(GameRulesStorage.class)).thenReturn(rules);
++        when(rules.getGameRule("recipesUnlock")).thenReturn(true);
++        final var small = recipe(RecipeType.SHAPED, 1, 2, 1, List.of(name(1, 1), name(2, 1)));
++        final var large = recipe(RecipeType.SHAPED, 2, 3, 1,
++                List.of(name(1, 1), name(2, 1), new ItemDescriptor.InvalidDescriptor()));
++        tracker.updateCraftingDataList(List.of(new CraftingDataStorage(small.type(), small.networkId(), small.recipe(), false),
++                new CraftingDataStorage(large.type(), large.networkId(), large.recipe(), false)), true);
++        context.inventory().getInventoryContainer().setItem(9, item(1));
++        context.inventory().getInventoryContainer().setItem(10, item(2));
++        assertEquals(3, tracker.playerRecipeCategoryAvailability(item(1), BedrockItem.empty(), context.owner().copy(), true, true));
++        tracker.updateUnlockedRecipes(2, List.of("test:recipe_1"));
++        assertEquals(3, tracker.playerRecipeCategoryAvailability(item(1), BedrockItem.empty(), context.owner(), false, true));
++        assertEquals(0, tracker.playerRecipeCategoryAvailability(item(1), BedrockItem.empty(), context.owner(), true, true));
++        abilities.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.Base).setAbility(AbilitiesIndex.Instabuild, true);
++        tracker.updateUnlockedRecipes(4, List.of());
++        assertEquals(1, tracker.playerRecipeCategoryAvailability(item(1), BedrockItem.empty(), context.owner(), false, true));
++        context.inventory().getInventoryContainer().setItem(9, BedrockItem.empty());
++        context.inventory().getInventoryContainer().setItem(10, BedrockItem.empty());
++        assertEquals(2, tracker.playerRecipeCategoryAvailability(item(1), BedrockItem.empty(), context.owner(), false, true));
++        assertEquals(3, tracker.playerRecipeCategoryAvailability(item(1), BedrockItem.empty(), context.owner(), true, true));
++        abilities.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.Base).setAbility(AbilitiesIndex.Instabuild, false);
++        when(rules.getGameRule("recipesUnlock")).thenReturn(false);
++        // The disabled rule skips context production and the invalid output skips source capture.
++        assertEquals(3, tracker.playerRecipeCategoryAvailability(BedrockItem.empty(), item(1), null, true, true));
++        tracker.updateCraftingDataList(List.of(), true);
++        assertEquals(3, tracker.playerRecipeCategoryAvailability(item(1), item(1), context.owner(), false, true));
++        abilities.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.Base).setAbility(AbilitiesIndex.Instabuild, true);
++        assertEquals(2, tracker.playerRecipeCategoryAvailability(item(1), item(1), context.owner(), false, true));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_PLAYER_CATEGORIES", matches = ".+")
++    void matchesCategoriesStoredByOriginalInstaller() throws Exception {
++        try (var input = Files.newBufferedReader(Path.of(System.getenv("STACKANVIL_NATIVE_PLAYER_CATEGORIES")), StandardCharsets.UTF_8)) {
++            verifyCategories(JsonParser.parseReader(input).getAsJsonObject());
++        }
++    }
++
++    static int verifyCategories(final JsonObject fixture) throws Exception {
++        final var player = PlayerRecipeAvailabilityTest.context(false, IDENTIFIER_BASE);
++        final var table = PlayerRecipeAvailabilityTest.context(true, IDENTIFIER_BASE);
++        final var playerAbilities = categoryAbilities(player);
++        final var tableAbilities = categoryAbilities(table);
++        final var playerTracker = new CraftingDataTracker(player.items().user());
++        final var tableTracker = new CraftingDataTracker(table.items().user());
++        int count = 0;
++        for (final var element : fixture.getAsJsonArray("rows")) {
++            final var row = element.getAsJsonObject();
++            final boolean workbench = row.get("workbench").getAsBoolean();
++            final var context = workbench ? table : player;
++            final var tracker = workbench ? tableTracker : playerTracker;
++            final var abilities = workbench ? tableAbilities : playerAbilities;
++            abilities.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.Base)
++                    .setAbility(AbilitiesIndex.Instabuild, row.get("instabuild").getAsBoolean());
++            final var rules = mock(GameRulesStorage.class);
++            when(context.items().user().get(GameRulesStorage.class)).thenReturn(rules);
++            when(rules.getGameRule("recipesUnlock")).thenReturn(true);
++            when(rules.getGameRule("doLimitedCrafting")).thenReturn(row.get("limited").getAsBoolean());
++            final List<CraftingDataStorage> declarations = new ArrayList<>();
++            int id = 0;
++            for (final var value : row.getAsJsonArray("recipes")) {
++                final var declaration = value.getAsJsonObject();
++                final List<ItemDescriptor> ingredients = new ArrayList<>();
++                for (final var input : declaration.getAsJsonArray("ingredients")) {
++                    final var descriptor = input.getAsJsonObject();
++                    ingredients.add(descriptor.has("empty") && descriptor.get("empty").getAsBoolean()
++                            ? new ItemDescriptor.InvalidDescriptor() : name(descriptor.get("id").getAsInt(), 1));
++                }
++                final var recipe = new ShapedRecipe(declaration.get("name").getAsString(), new UUID(0, ++id), "crafting_table", 0,
++                        declaration.get("width").getAsInt(), declaration.get("height").getAsInt(), ingredients, List.of(item(1)), false);
++                declarations.add(new CraftingDataStorage(RecipeType.SHAPED, id, recipe, false));
++            }
++            tracker.updateCraftingDataList(declarations, true);
++            tracker.updateUnlockedRecipes(1, row.get("unlocked").getAsBoolean()
++                    ? declarations.stream().map(data -> data.recipe().getUniqueId()).toList() : List.of());
++            for (int slot = 0; slot < 36; slot++) {
++                context.inventory().getInventoryContainer().setItem(slot, BedrockItem.empty());
++            }
++            int slot = 9;
++            for (final var input : row.getAsJsonArray("inputs")) {
++                context.inventory().getInventoryContainer().setItem(slot++, item(input.getAsJsonObject()));
++            }
++            assertEquals(row.get("state").getAsInt(), tracker.playerRecipeCategoryAvailability(item(1), BedrockItem.empty(),
++                    context.owner(), row.get("filtering").getAsBoolean(), true), row::toString);
++            clearInvocations(context.items(), context.items().user(), context.items().user().get(InventoryRequestTracker.class),
++                    context.items().user().get(BlockStateRewriter.class));
++            count++;
++        }
++        assertTrue(count > 0);
++        return count;
++    }
++
++    private static PlayerAbilities categoryAbilities(final PlayerRecipeAvailabilityTest.Context context) {
++        final var entities = mock(EntityTracker.class);
++        final var player = mock(ClientPlayerEntity.class);
++        final var abilities = new PlayerAbilities(1, (byte) 0, (byte) 0);
++        when(context.items().user().get(EntityTracker.class)).thenReturn(entities);
++        when(entities.getClientPlayer()).thenReturn(player);
++        when(player.abilities()).thenReturn(abilities);
++        return abilities;
 +    }
 +
 +    private static ItemDescriptor name(final int id, final int amount) {

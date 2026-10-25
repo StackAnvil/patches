@@ -1007,3 +1007,29 @@ The compiler moves the existing enum switch map to make room for the new counter
 This entry point supplies counting only. Player collection ownership, search, unlock and Instabuild policies still need integration.
 Installed collection publication, controller behavior, specialized placement and complete native lifecycle verification remain unfinished.
 The all-empty counter safety divergence remains explicit. The four original live reports remain open.
+
+## Player category policies
+
+`CraftingDataTracker.playerRecipeCategoryAvailability` applies category policy before the retained ingredient counter.
+It reads current Instabuild abilities and output unlocks.
+With filtering off, a non-Instabuild category requires candidates and rejects the output if any candidate needs a table outside the workbench.
+A complete smaller candidate does not override that restriction.
+Instabuild skips those gates but still counts current ingredients.
+Only unfiltered categories map unavailable state 3 to state 2.
+Filtered categories return the counter state unchanged.
+When recipesUnlock is disabled, the unlock predicate skips context production.
+
+The original protocol-2193 installer selects, copies and stores all five collection callbacks in four Instabuild/filter combinations.
+The stored category callbacks agree with the Java retained-owner path in 384 cases across empty, small, table-only and mixed candidate lists.
+The matrix covers locked and unlocked outputs, missing and partial ingredients, workbench state, filtering and limited crafting, including all four returned states.
+All four native category collections agree per case, for 1,536 category calls.
+Original ability lookup, unlock checking, output indexing, concrete matching and counting execute.
+Enum-name/model-map backing, collection receivers, ordinary definitions, source vectors, context production and output getters remain supplied boundaries.
+Native temporary allocations balance per installation and evaluation.
+Full model, registry and controller lifetime and installed screen publication remain unverified.
+
+Six targeted tests pass, with one earlier optional fixture skipped in that targeted run.
+Both Checkstyle tasks pass, and all 104 core patches replay.
+The tests also cover live ability and unlock changes, stale ownership, selected output and lazy context lookup.
+This entry point does not yet connect the collections to the player screen.
+Search name production, search policy integration, controller behavior and the original four live reports remain open.
