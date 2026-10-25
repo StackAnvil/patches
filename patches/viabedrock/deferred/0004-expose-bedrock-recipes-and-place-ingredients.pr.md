@@ -963,3 +963,47 @@ The packaged core passes all five availability checks, including the 1,344-case 
 The preceding release passes the same fixture and existing source checks, but fails the new stale-owner regression without linkage errors.
 All 1,532 core classes, 198 core assets and 39 CubeConverter classes match both packaged consumers.
 All 1,193 compiled client classes match the add-on JAR.
+
+## Retained player recipe availability
+
+`CraftingDataTracker.playerRecipeAvailability` now connects the retained output index to the ingredient counter.
+It reads the owning block's current crafting contexts and reuses each accepted recipe's descriptor positions.
+First name resolution and tag admission remain owned by that registration.
+Ingredient retention follows concrete shaped, shapeless and smithing classes, including their chemistry and user-data variants.
+
+Candidate lookup is lazy. An invalid output returns before reading the owning block or building an output index.
+Each eligible candidate still captures current inventory sources separately.
+Availability counts descriptor positions independently of placement amounts and capacity.
+The user-data recipe's separate placement override remains unchanged.
+
+The target remains Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Inspected concrete tables share the corresponding shaped or shapeless grid and counting methods.
+The original evaluator matches Java's registered-owner path in all 864 cases across 18 recipe layouts.
+The matrix covers workbench state, filtering, cursor inclusion, selected output and source distribution.
+Four further original controls confirm first-source eligibility for each descriptor hash, with ingredient amounts 64 and zero.
+An earlier ineligible stack can suppress a later matching cursor stack. The bridge retains this native behavior.
+
+These controls execute the original evaluator, output lookup, priority sort, grid requirements, matcher, counter and selected-output fallback.
+Recipe constructor fields, ordinary definitions, model vectors, context production and the output-vector getter remain supplied boundaries.
+Temporary allocations balance per evaluation.
+The controls do not establish packet-family admission, normal smithing result materialization, complete registry lifetime or installed player behavior.
+Java fixtures use declared ordinary IDs to avoid built-in block associations.
+
+Production tests cover retained Name and Tag state, placement-quantity independence, source eligibility and current-owner validation.
+Changing workbench state selects custom contexts, preserves explicit-empty contexts and restores fallback only when the component is absent.
+World state and block components are supplied in that Java test.
+
+All four projects build with 3,000 passing tests, 152 optional skips and no failures or errors.
+Both Checkstyle tasks pass, and all 104 core patches replay.
+Ten packaged availability checks pass with nine implementation origins verified.
+They include the new 864-case registered-owner comparison and the existing 1,344-case supplied-candidate comparison.
+
+All 1,533 core classes, 198 core assets and 39 CubeConverter classes match both embedded consumers.
+All 1,193 compiled client classes match the add-on JAR.
+Against the preceding build, 1,514 core classes and all core assets remain byte-identical.
+Twelve changed nested classes retain identical declarations and instructions.
+The compiler moves the existing enum switch map to make room for the new counter adapter; its three recipe types remain unchanged.
+
+This entry point supplies counting only. Player collection ownership, search, unlock and Instabuild policies still need integration.
+Installed collection publication, controller behavior, specialized placement and complete native lifecycle verification remain unfinished.
+The all-empty counter safety divergence remains explicit. The four original live reports remain open.

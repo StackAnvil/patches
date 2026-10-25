@@ -1,4 +1,4 @@
-From 3ac89ee18feeb76a586e6494a091a5b29967663c Mon Sep 17 00:00:00 2001
+From c649196ffaf8f50392f1436fa05d2fed378f8a6d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -736,6 +736,20 @@ invalid output, an absent candidate or a skipped table-only recipe. Its
 first complete candidate stops later reads. Twenty-eight original controls
 record 91 vector reads over 26 counter calls with balanced temporaries.
 Keep current-owner validation on paths that actually count ingredients.
+
+Evaluate player recipe counts through the retained output index and the
+current owning block's crafting contexts. Reuse each accepted recipe's
+owned descriptors so first name resolution and tag admission survive
+later queries and registry changes. Delay candidate lookup until output
+validity is established, independently of the per-candidate source reads.
+
+Retain ingredients by concrete recipe class, including chemistry and
+smithing owners. Native tables for these owners share the corresponding
+shaped or shapeless counting and grid-requirement methods. Preserve the
+separate user-data placement override. Original evaluator controls cover
+864 ordinary-definition cases; four further controls retain first-source
+eligibility by descriptor hash. Constructor and model/source boundaries
+remain supplied, and installed player collection publication is pending.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 +
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -771,9 +785,9 @@ Keep current-owner validation on paths that actually count ingredients.
  .../protocol/packet/InventoryPackets.java     | 146 +++-
  .../protocol/packet/JoinPackets.java          |   1 +
  .../protocol/packet/MultiStatePackets.java    |  55 ++
- .../protocol/rewriter/ItemRewriter.java       | 161 +++-
+ .../protocol/rewriter/ItemRewriter.java       | 162 +++-
  .../protocol/storage/CraftingDataStorage.java |   3 +-
- .../protocol/storage/CraftingDataTracker.java | 701 +++++++++++++--
+ .../protocol/storage/CraftingDataTracker.java | 744 ++++++++++++++--
  .../storage/InventoryOptionsStorage.java      | 186 ++++
  .../storage/InventoryRequestTracker.java      |   7 +
  .../protocol/storage/InventoryTracker.java    |  47 ++
@@ -805,7 +819,8 @@ Keep current-owner validation on paths that actually count ingredients.
  .../NativeFurnaceOptionsPacketTest.java       | 214 +++++
  .../NativeRecipeConcreteCounterTest.java      | 165 ++++
  .../rewriter/NativeRecipePaletteTest.java     | 203 +++++
- .../PlayerRecipeAvailabilityTest.java         | 291 +++++++
+ .../PlayerRecipeAvailabilityTest.java         | 296 +++++++
+ ...egisteredPlayerRecipeAvailabilityTest.java | 257 ++++++
  .../ResolvedRecipeIngredientTest.java         | 283 +++++++
  .../storage/CookingRecipeBookTest.java        | 194 +++++
  .../protocol/storage/CraftingCursorTest.java  | 158 ++++
@@ -824,7 +839,7 @@ Keep current-owner validation on paths that actually count ingredients.
  .../types/model/FurnaceOptionsTypeTest.java   |  75 ++
  .../types/model/InventoryOptionsTypeTest.java |  46 +
  .../types/recipe/CraftingDataReaderTest.java  |  84 +-
- 87 files changed, 11746 insertions(+), 180 deletions(-)
+ 88 files changed, 12052 insertions(+), 180 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeAvailability.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeCatalog.java
@@ -867,6 +882,7 @@ Keep current-owner validation on paths that actually count ingredients.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeRecipeConcreteCounterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeRecipePaletteTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeAvailabilityTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/RegisteredPlayerRecipeAvailabilityTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ResolvedRecipeIngredientTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CookingRecipeBookTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingCursorTest.java
@@ -4084,7 +4100,7 @@ index 0b8c600e9..4fef2c18d 100644
              if (channels.contains(LocatorBarSnapshot.CHANNEL) && wrapper.user().has(PlayerWaypointTracker.class)) {
                  wrapper.user().get(PlayerWaypointTracker.class).sendSnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index bc3d20606..1a0f4b5ca 100644
+index bc3d20606..a8e92f7d8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -40,10 +40,14 @@ import net.raphimc.viabedrock.ViaBedrock;
@@ -4112,7 +4128,7 @@ index bc3d20606..1a0f4b5ca 100644
  import net.raphimc.viabedrock.protocol.model.ItemCookingProperties;
  import net.raphimc.viabedrock.protocol.model.ItemCooldown;
  import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
-@@ -69,16 +74,21 @@ import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
+@@ -69,20 +74,26 @@ import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
  import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
@@ -4134,7 +4150,12 @@ index bc3d20606..1a0f4b5ca 100644
  import java.util.HashSet;
  import java.util.Map;
  import java.util.Objects;
-@@ -104,6 +114,8 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+ import java.util.Set;
++import java.util.function.Supplier;
+ import java.util.logging.Level;
+ 
+ public class ItemRewriter extends StoredObject implements NetworkItemStackContext {
+@@ -104,6 +115,8 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
      private final Set<String> componentItems;
      private final Int2ObjectMap<IntSortedSet> blockItemValidBlockStates;
      private final Type<BedrockItem> itemType;
@@ -4143,7 +4164,7 @@ index bc3d20606..1a0f4b5ca 100644
      private final Type<BedrockItem> optionalItemType;
      private final Type<BedrockItem[]> itemArrayType;
      private final Type<BedrockItem> newItemType;
-@@ -190,6 +202,8 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -190,6 +203,8 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
                          this.items.getOrDefault("minecraft:shield", 0),
                          false,
                          this);
@@ -4152,7 +4173,7 @@ index bc3d20606..1a0f4b5ca 100644
          this.optionalItemType = new OptionalType<>(this.itemType);
          this.itemArrayType = new ArrayType<>(this.itemType, BedrockTypes.UNSIGNED_VAR_INT);
          this.newItemType =
-@@ -514,6 +528,14 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -514,6 +529,14 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
                  (definition, auxiliary) -> this.associatedBlock(blocks, definition, auxiliary));
      }
  
@@ -4167,7 +4188,7 @@ index bc3d20606..1a0f4b5ca 100644
      public BedrockItem createDefinitionItem(final NativeItemDefinitions.Definition<?> definition, final int metadata, final int amount) {
          final var blocks = this.user().get(BlockStateRewriter.class);
          return this.registry.createDefinitionItem(definition, metadata, amount,
-@@ -556,6 +578,86 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -556,6 +579,86 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
                  ? this.user().get(BlockStateRewriter.class).blockItemRecipeDescriptor(item.blockRuntimeId()) : null);
      }
  
@@ -4181,8 +4202,8 @@ index bc3d20606..1a0f4b5ca 100644
 +                });
 +    }
 +
-+    /** The owning recipe model supplies its admitted output candidates and retained selected stack. */
-+    public int playerRecipeAvailability(final List<NativeRecipeCounter.Candidate> candidates,
++    /** The recipe owner supplies a lazy output lookup and its retained selected stack. */
++    public int playerRecipeAvailability(final Supplier<List<NativeRecipeCounter.Candidate>> candidates,
 +                                        final BedrockItem output, final BedrockItem selectedOutput,
 +                                        final Container owner, final boolean filtering, final boolean includeCursor) {
 +        final var definition = output != null ? this.registry.definition(output) : null;
@@ -4190,7 +4211,7 @@ index bc3d20606..1a0f4b5ca 100644
 +            return 3;
 +        }
 +        return NativeRecipeCounter.availability(true, owner instanceof CraftingTableContainer, filtering,
-+                candidates, () -> this.user().get(InventoryTracker.class).craftingSources(owner, includeCursor),
++                candidates.get(), () -> this.user().get(InventoryTracker.class).craftingSources(owner, includeCursor),
 +                item -> {
 +                    final ItemRecipeKey key = this.recipeKey(item);
 +                    return key != null ? key.descriptorHash() : 0;
@@ -4254,7 +4275,7 @@ index bc3d20606..1a0f4b5ca 100644
      public boolean matchesRecipeItem(final String identifier, final int metadata, final BedrockItem item) {
          if (item == null) {
              return false;
-@@ -564,6 +666,37 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -564,6 +667,37 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
          return NativeRecipeDescriptor.resolveName(identifier, metadata, context).matchesStack(item, context, this::recipeDescriptor);
      }
  
@@ -4292,7 +4313,7 @@ index bc3d20606..1a0f4b5ca 100644
      public ItemRegistry getItemRegistry() {
          return this.registry;
      }
-@@ -586,6 +719,22 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -586,6 +720,22 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
          return NativeItemStackMatcher.matchesIdentity(query, candidate, blocks::blockState, blocks::restrictionBlocks);
      }
  
@@ -4315,7 +4336,7 @@ index bc3d20606..1a0f4b5ca 100644
      public boolean canMerge(final BedrockItem source, final BedrockItem destination) {
          if (destination == null || destination.isEmpty() || !this.registry.sameDefinition(source, destination)) {
              return false;
-@@ -626,6 +775,14 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -626,6 +776,14 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
          return this.itemType;
      }
  
@@ -4345,7 +4366,7 @@ index 4506fe070..2b1c6b934 100644
      @Override
      public @NonNull String toString() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
-index 73165b006..4620ac336 100644
+index 73165b006..1fe8e4873 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 @@ -9,6 +9,7 @@
@@ -4356,11 +4377,12 @@ index 73165b006..4620ac336 100644
  import com.viaversion.viaversion.api.connection.StoredObject;
  import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.minecraft.HolderSet;
-@@ -19,17 +20,42 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
+@@ -19,17 +20,43 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
  
  import net.raphimc.viabedrock.api.model.container.Container;
 +import net.raphimc.viabedrock.api.model.container.NativeRecipeDescriptor;
++import net.raphimc.viabedrock.api.model.container.NativeRecipeCounter;
 +import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 +import net.raphimc.viabedrock.api.util.Fnv1;
 +import net.raphimc.viabedrock.api.util.NativeStringMap;
@@ -4399,7 +4421,7 @@ index 73165b006..4620ac336 100644
  
      public CraftingDataTracker(final UserConnection user) {
          super(user);
-@@ -39,119 +65,364 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -39,119 +66,406 @@ public final class CraftingDataTracker extends StoredObject {
          return this.recipes;
      }
  
@@ -4465,6 +4487,42 @@ index 73165b006..4620ac336 100644
 +        return List.copyOf(result);
 +    }
 +
++    /**
++     * Count retained output recipes against the current native source collections.
++     * Search, unlock and Instabuild policies belong to the owning player collection.
++     */
++    public int playerRecipeAvailability(final BedrockItem output, final BedrockItem selectedOutput,
++                                        final Container owner, final boolean filtering, final boolean includeCursor) {
++        return this.user().get(ItemRewriter.class).playerRecipeAvailability(
++                () -> this.playerRecipeCandidates(output, owner), output, selectedOutput, owner, filtering, includeCursor);
++    }
++
++    private List<NativeRecipeCounter.Candidate> playerRecipeCandidates(final BedrockItem output, final Container owner) {
++        final List<NativeRecipeCounter.Candidate> candidates = new ArrayList<>();
++        for (final CraftingDataStorage data : this.outputCandidates(output, this.recipeContexts(owner))) {
++            final List<NativeRecipeDescriptor> positions = this.recipeIngredients(data);
++            final boolean requiresCraftingTable = data.recipe() instanceof ShapedRecipe shaped
++                    ? shaped.getWidth() >= 3 || shaped.getHeight() >= 3 : positions.size() >= 5;
++            candidates.add(new NativeRecipeCounter.Candidate(data.recipe().getPriority(), requiresCraftingTable, new NativeRecipeCounter.Recipe() {
++                @Override
++                public int ingredientCount() {
++                    return positions.size();
++                }
++
++                @Override
++                public boolean emptyIngredient(final int index) {
++                    return positions.get(index).isEmpty(CraftingDataTracker.this.recipeRegistry());
++                }
++
++                @Override
++                public boolean matchesIngredient(final int index, final BedrockItem item) {
++                    return CraftingDataTracker.this.matchesRetainedIngredient(positions.get(index), item);
++                }
++            }));
++        }
++        return List.copyOf(candidates);
++    }
++
 +    private static BedrockItem firstOutput(final Recipe recipe) {
 +        final List<BedrockItem> outputs = switch (recipe) {
 +            case ShapedRecipe shaped -> shaped.getResults();
@@ -4515,9 +4573,10 @@ index 73165b006..4620ac336 100644
 +            if (data.networkId() == 0 || identities.contains(identity) || networkIds.contains(data.networkId())) {
 +                continue;
 +            }
-+            final List<ItemDescriptor> inputs = switch (data.type()) {
-+                case SHAPED -> ((ShapedRecipe) data.recipe()).getIngredients();
-+                case SHAPELESS, USER_DATA_SHAPELESS -> ((ShapelessRecipe) data.recipe()).getIngredients();
++            final List<ItemDescriptor> inputs = switch (data.recipe()) {
++                case ShapedRecipe recipe -> recipe.getIngredients();
++                case ShapelessRecipe recipe -> recipe.getIngredients();
++                case SmithingRecipe recipe -> List.of(recipe.getTemplate(), recipe.getBaseIngredient(), recipe.getAdditionIngredient());
 +                default -> null;
 +            };
 +            if (inputs != null) {
@@ -4718,12 +4777,6 @@ index 73165b006..4620ac336 100644
          }
 -        return true;
 +        return false;
-+    }
-+
-+    static int[] matchShaped(final ShapedRecipe recipe,
-+            final BedrockItem[] inputs,
-+            final IngredientMatcher matches) {
-+        return matchShaped(recipe, inputs, 3, matches);
      }
  
 -    private boolean matchesShaped(final Container container, final ShapedRecipe recipe) {
@@ -4732,6 +4785,12 @@ index 73165b006..4620ac336 100644
 -        final int width = pattern[0].length;
 -        if (width > 3 || height > 3) {
 -            return false;
++    static int[] matchShaped(final ShapedRecipe recipe,
++            final BedrockItem[] inputs,
++            final IngredientMatcher matches) {
++        return matchShaped(recipe, inputs, 3, matches);
++    }
++
 +    static int[] matchShaped(final ShapedRecipe recipe,
 +            final BedrockItem[] inputs, final int gridWidth,
 +            final IngredientMatcher matches) {
@@ -4819,27 +4878,32 @@ index 73165b006..4620ac336 100644
  
 +    private boolean matchesRegisteredIngredient(final CraftingDataStorage data, final int index,
 +                                                final ItemDescriptor descriptor, final BedrockItem item) {
-+        final var items = this.user().get(ItemRewriter.class);
-+        return this.recipeIngredients(data).get(index).matchesSource(item, this.recipeRegistry(), items::recipeDescriptor)
++        return this.matchesRetainedIngredient(this.recipeIngredients(data).get(index), item)
 +                && (item.isEmpty() || item.amount() >= descriptor.amount());
++    }
++
++    private boolean matchesRetainedIngredient(final NativeRecipeDescriptor descriptor, final BedrockItem item) {
++        final var items = this.user().get(ItemRewriter.class);
++        final var registry = new NativeRecipeRegistry(items.getItemRegistry(), this.user().get(BlockStateRewriter.class));
++        return descriptor.matchesSource(item, registry, items::recipeDescriptor);
 +    }
 +
      private boolean matches(final ItemDescriptor descriptor, final BedrockItem item) {
          return descriptor.matchesItem(this.user(), item)
                  && (item.isEmpty() || item.amount() >= descriptor.amount());
-@@ -168,19 +439,17 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -168,19 +482,17 @@ public final class CraftingDataTracker extends StoredObject {
                  continue;
              }
              final ItemDescriptor descriptor = recipe.getIngredients().get(0);
 -            if (!(descriptor instanceof ItemDescriptor.ItemNameDescriptor ingredient)) {
--                continue;
--            }
--            final Integer bedrockId = rewriter.getItems().get(ingredient.fullName());
--            if (bedrockId == null) {
 +            final HolderSet inputs = this.javaIngredient(rewriter, descriptor);
 +            if (inputs == null || inputs.ids().length == 0) {
                  continue;
              }
+-            final Integer bedrockId = rewriter.getItems().get(ingredient.fullName());
+-            if (bedrockId == null) {
+-                continue;
+-            }
 -            final Item javaInput = rewriter.javaItem(new BedrockItem(bedrockId));
              final Item javaOutput = rewriter.javaItem(recipe.getResults().get(0));
 -            if (javaInput.isEmpty() || javaOutput.isEmpty()) {
@@ -4853,7 +4917,7 @@ index 73165b006..4620ac336 100644
          }
  
          final PacketWrapper packet =
-@@ -192,6 +461,207 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -192,6 +504,207 @@ public final class CraftingDataTracker extends StoredObject {
                      BedrockProtocol.MAPPINGS.getJavaSlotDisplayId("minecraft:item_stack"), entry.output());
          }
          packet.send(BedrockProtocol.class);
@@ -5061,7 +5125,7 @@ index 73165b006..4620ac336 100644
      }
  
      static void writeStonecutterRecipe(final PacketWrapper packet, final int inputId,
-@@ -203,4 +673,93 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -203,4 +716,93 @@ public final class CraftingDataTracker extends StoredObject {
  
      private record StonecutterEntry(int inputId, Item output) { }
  
@@ -9695,10 +9759,10 @@ index 000000000..8ecccb314
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeAvailabilityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeAvailabilityTest.java
 new file mode 100644
-index 000000000..49f0249e0
+index 000000000..ed9829fdd
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeAvailabilityTest.java
-@@ -0,0 +1,291 @@
+@@ -0,0 +1,296 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -9752,18 +9816,18 @@ index 000000000..49f0249e0
 +        final var candidate = candidate(items, List.of(new ItemRecipeKey(1, (short) 0)), 0, false, 0, new ArrayList<>());
 +        inventory.getArmorContainer().setItem(0, new BedrockItem(1));
 +        inventory.getOffhandContainer().setItem(0, new BedrockItem(1));
-+        assertEquals(3, items.playerRecipeAvailability(List.of(candidate), output, BedrockItem.empty(), context.owner, false, true));
++        assertEquals(3, items.playerRecipeAvailability(() -> List.of(candidate), output, BedrockItem.empty(), context.owner, false, true));
 +        inventory.getHudContainer().setItem(0, new BedrockItem(1));
-+        assertEquals(3, items.playerRecipeAvailability(List.of(candidate), output, BedrockItem.empty(), context.owner, false, false));
-+        assertEquals(1, items.playerRecipeAvailability(List.of(candidate), output, BedrockItem.empty(), context.owner, false, true));
-+        assertEquals(0, items.playerRecipeAvailability(List.of(candidate), output, BedrockItem.empty(), context.owner, true, true));
++        assertEquals(3, items.playerRecipeAvailability(() -> List.of(candidate), output, BedrockItem.empty(), context.owner, false, false));
++        assertEquals(1, items.playerRecipeAvailability(() -> List.of(candidate), output, BedrockItem.empty(), context.owner, false, true));
++        assertEquals(0, items.playerRecipeAvailability(() -> List.of(candidate), output, BedrockItem.empty(), context.owner, true, true));
 +        final var tableOnly = new NativeRecipeCounter.Candidate(0, true, candidate.recipe());
-+        assertEquals(3, items.playerRecipeAvailability(List.of(tableOnly), output, BedrockItem.empty(), context.owner, false, true));
-+        assertEquals(2, items.playerRecipeAvailability(List.of(tableOnly), output, new BedrockItem(1), context.owner, false, true));
-+        assertThrows(IllegalStateException.class, () -> items.playerRecipeAvailability(List.of(candidate), output, BedrockItem.empty(), context.owner.copy(), false, true));
++        assertEquals(3, items.playerRecipeAvailability(() -> List.of(tableOnly), output, BedrockItem.empty(), context.owner, false, true));
++        assertEquals(2, items.playerRecipeAvailability(() -> List.of(tableOnly), output, new BedrockItem(1), context.owner, false, true));
++        assertThrows(IllegalStateException.class, () -> items.playerRecipeAvailability(() -> List.of(candidate), output, BedrockItem.empty(), context.owner.copy(), false, true));
 +        final var table = context(true);
 +        table.owner.setItem(40, new BedrockItem(1));
-+        assertEquals(1, table.items.playerRecipeAvailability(List.of(tableOnly), output, BedrockItem.empty(), table.owner, false, false));
++        assertEquals(1, table.items.playerRecipeAvailability(() -> List.of(tableOnly), output, BedrockItem.empty(), table.owner, false, false));
 +    }
 +
 +    @Test
@@ -9806,13 +9870,13 @@ index 000000000..49f0249e0
 +        final var staleOwner = context.owner.copy();
 +        final var tableOnly = candidate(context.items, List.of(new ItemRecipeKey(1, (short) 0)),
 +                0, true, 0, new ArrayList<>());
-+        assertEquals(3, context.items.playerRecipeAvailability(List.of(), output, BedrockItem.empty(), staleOwner, false, true));
-+        assertEquals(3, context.items.playerRecipeAvailability(List.of(tableOnly), output, BedrockItem.empty(), staleOwner, false, true));
-+        assertEquals(2, context.items.playerRecipeAvailability(List.of(tableOnly), output, output, staleOwner, false, true));
-+        assertEquals(3, context.items.playerRecipeAvailability(List.of(tableOnly), BedrockItem.empty(), output, staleOwner, false, true));
++        assertEquals(3, context.items.playerRecipeAvailability(() -> List.of(), output, BedrockItem.empty(), staleOwner, false, true));
++        assertEquals(3, context.items.playerRecipeAvailability(() -> List.of(tableOnly), output, BedrockItem.empty(), staleOwner, false, true));
++        assertEquals(2, context.items.playerRecipeAvailability(() -> List.of(tableOnly), output, output, staleOwner, false, true));
++        assertEquals(3, context.items.playerRecipeAvailability(() -> List.of(tableOnly), BedrockItem.empty(), output, staleOwner, false, true));
 +        final var eligible = new NativeRecipeCounter.Candidate(0, false, tableOnly.recipe());
 +        assertThrows(IllegalStateException.class, () -> context.items.playerRecipeAvailability(
-+                List.of(eligible), output, BedrockItem.empty(), staleOwner, false, true));
++                () -> List.of(eligible), output, BedrockItem.empty(), staleOwner, false, true));
 +    }
 +
 +    @Test
@@ -9907,7 +9971,7 @@ index 000000000..49f0249e0
 +            }
 +            final var query = row.getAsJsonObject("query");
 +            final BedrockItem output = query.has("valid") && !query.get("valid").getAsBoolean() ? BedrockItem.empty() : item(query);
-+            final int actual = context.items.playerRecipeAvailability(candidates, output, item(row.getAsJsonObject("selected")),
++            final int actual = context.items.playerRecipeAvailability(() -> candidates, output, item(row.getAsJsonObject("selected")),
 +                    context.owner, row.get("filtering").getAsBoolean(), row.get("includeCursor").getAsBoolean());
 +            assertEquals(row.get("state").getAsInt(), actual, row::toString);
 +            final List<Integer> expectedVisits = new ArrayList<>();
@@ -9942,7 +10006,11 @@ index 000000000..49f0249e0
 +        });
 +    }
 +
-+    private static Context context(final boolean workbench) throws Exception {
++    static Context context(final boolean workbench) throws Exception {
++        return context(workbench, 0);
++    }
++
++    static Context context(final boolean workbench, final int identifierBase) throws Exception {
 +        final var user = mock(UserConnection.class);
 +        final var inventory = new InventoryTracker(user);
 +        when(user.get(InventoryTracker.class)).thenReturn(inventory);
@@ -9954,10 +10022,11 @@ index 000000000..49f0249e0
 +        when(user.get(BlockStateRewriter.class)).thenReturn(blocks);
 +        final var entries = new ItemEntry[4];
 +        for (int index = 0; index < entries.length; index++) {
-+            entries[index] = new ItemEntry("test:ordinary_" + (index + 1), index + 1, false, ItemVersion.Legacy, null);
++            entries[index] = new ItemEntry("test:ordinary_" + (index + 1), identifierBase + index + 1, false, ItemVersion.Legacy, null);
 +        }
 +        final var items = mock(ItemRewriter.class, CALLS_REAL_METHODS);
 +        doReturn(user).when(items).user();
++        when(user.get(ItemRewriter.class)).thenReturn(items);
 +        final var field = ItemRewriter.class.getDeclaredField("registry");
 +        field.setAccessible(true);
 +        field.set(items, new ItemRegistry(entries));
@@ -9987,7 +10056,270 @@ index 000000000..49f0249e0
 +        return value.has(name) ? value.get(name).getAsInt() : fallback;
 +    }
 +
-+    private record Context(InventoryTracker inventory, ItemRewriter items, Container owner) { }
++    record Context(InventoryTracker inventory, ItemRewriter items, Container owner) { }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/RegisteredPlayerRecipeAvailabilityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/RegisteredPlayerRecipeAvailabilityTest.java
+new file mode 100644
+index 000000000..d493b9a0d
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/RegisteredPlayerRecipeAvailabilityTest.java
+@@ -0,0 +1,257 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.StringTag;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.model.container.block.CraftingTableContainer;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ItemEntry;
++import net.raphimc.viabedrock.protocol.model.ItemRegistry;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
++import net.raphimc.viabedrock.protocol.model.recipe.Recipe;
++import net.raphimc.viabedrock.protocol.model.recipe.RecipeType;
++import net.raphimc.viabedrock.protocol.model.recipe.ShapedRecipe;
++import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
++import net.raphimc.viabedrock.protocol.model.recipe.SmithingRecipe;
++import net.raphimc.viabedrock.protocol.storage.CraftingDataStorage;
++import net.raphimc.viabedrock.protocol.storage.CraftingDataTracker;
++import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.io.InputStreamReader;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.UUID;
++import java.util.zip.GZIPInputStream;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.clearInvocations;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
++
++class RegisteredPlayerRecipeAvailabilityTest {
++
++    private static final int IDENTIFIER_BASE = 30000;
++
++    @Test
++    void retainedOwnersKeepFirstNameResolutionAndTagAdmission() throws Exception {
++        for (final ItemDescriptor late : List.of(new ItemDescriptor.ItemNameDescriptor("test:late", 0),
++                new ItemDescriptor.ItemTagDescriptor("test:late"))) {
++            final var context = PlayerRecipeAvailabilityTest.context(false, IDENTIFIER_BASE);
++            final var tracker = new CraftingDataTracker(context.items().user());
++            final var ingredients = List.of(name(1, 1), late);
++            final var original = recipe(RecipeType.SHAPED, 1, 2, 1, ingredients);
++            tracker.updateCraftingDataList(List.of(original), true);
++            context.inventory().getInventoryContainer().setItem(9, item(1));
++            assertEquals(1, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), context.owner(), false, true));
++
++            final var components = new CompoundTag();
++            components.put("item_tags", new ListTag<>(List.of(new StringTag("test:late"))));
++            final var data = new CompoundTag();
++            data.put("components", components);
++            final var registry = new ItemRegistry(new ItemEntry[]{
++                new ItemEntry("test:ordinary_1", IDENTIFIER_BASE + 1, false, ItemVersion.Legacy, null),
++                new ItemEntry("test:late", IDENTIFIER_BASE + 2, true, ItemVersion.DataDriven, data)
++            });
++            final var field = ItemRewriter.class.getDeclaredField("registry");
++            field.setAccessible(true);
++            field.set(context.items(), registry);
++            tracker.updateCraftingDataList(List.of(original), false);
++            assertEquals(1, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), context.owner(), false, true));
++            tracker.updateCraftingDataList(List.of(recipe(RecipeType.SHAPED, 2, 2, 1, ingredients)), true);
++            assertEquals(2, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), context.owner(), false, true));
++            context.inventory().getInventoryContainer().setItem(10, item(2));
++            assertEquals(1, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), context.owner(), false, true));
++        }
++    }
++
++    @Test
++    void countsPositionsAndRetainsFirstSourceEligibility() throws Exception {
++        final var context = PlayerRecipeAvailabilityTest.context(false, IDENTIFIER_BASE);
++        final var tracker = new CraftingDataTracker(context.items().user());
++        tracker.updateCraftingDataList(List.of(recipe(RecipeType.SHAPED, 1, 2, 1, List.of(name(1, 64), name(1, 0)))), true);
++        final var source = item(1);
++        context.inventory().getInventoryContainer().setItem(9, source);
++        assertEquals(2, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), context.owner(), false, true));
++        source.setAmount(2);
++        context.inventory().getInventoryContainer().setItem(9, source);
++        assertEquals(1, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), context.owner(), false, true));
++        final var tag = new CompoundTag();
++        tag.put("ench", new ListTag<>(CompoundTag.class));
++        source.setTag(tag);
++        context.inventory().getInventoryContainer().setItem(9, source);
++        assertEquals(3, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), context.owner(), false, true));
++        context.inventory().getHudContainer().setItem(0, new BedrockItem(IDENTIFIER_BASE + 1, (short) 0, (byte) 2));
++        assertEquals(3, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), context.owner(), false, false));
++        assertEquals(3, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), context.owner(), false, true));
++        context.inventory().getInventoryContainer().setItem(9, BedrockItem.empty());
++        assertEquals(1, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), context.owner(), false, true));
++    }
++
++    @Test
++    void skipsCandidateLookupForInvalidOutputAndSourceCaptureForSkippedRecipes() throws Exception {
++        final var context = PlayerRecipeAvailabilityTest.context(false, IDENTIFIER_BASE);
++        final var tracker = new CraftingDataTracker(context.items().user());
++        final var output = item(1);
++        assertEquals(3, tracker.playerRecipeAvailability(BedrockItem.empty(), output, null, false, true));
++        assertEquals(3, tracker.playerRecipeAvailability(output, BedrockItem.empty(), context.owner().copy(), false, true));
++        tracker.updateCraftingDataList(List.of(recipe(RecipeType.SHAPED, 1, 3, 1,
++                List.of(name(1, 1), new ItemDescriptor.InvalidDescriptor(), new ItemDescriptor.InvalidDescriptor()))), true);
++        assertEquals(3, tracker.playerRecipeAvailability(output, BedrockItem.empty(), context.owner().copy(), false, true));
++        assertEquals(2, tracker.playerRecipeAvailability(output, output, context.owner().copy(), false, true));
++        tracker.updateCraftingDataList(List.of(recipe(RecipeType.SHAPED, 2, 1, 1, List.of(name(1, 1)))), true);
++        assertThrows(IllegalStateException.class, () -> tracker.playerRecipeAvailability(
++                output, BedrockItem.empty(), context.owner().copy(), false, true));
++    }
++
++    @Test
++    void readsChangingWorkbenchContextsBeforeCountingRegisteredRecipes() throws Exception {
++        final var context = PlayerRecipeAvailabilityTest.context(true, IDENTIFIER_BASE);
++        final var user = context.items().user();
++        final var tracker = new CraftingDataTracker(user);
++        final var chunks = mock(ChunkTracker.class);
++        when(user.get(ChunkTracker.class)).thenReturn(chunks);
++        final var position = new BlockPosition(10, 64, -3);
++        final var owner = new CraftingTableContainer(user, (byte) 6, null, position);
++        context.inventory().setCurrentContainerClosed(false);
++        context.inventory().setCurrentContainer(owner);
++        final var custom = new CompoundTag();
++        custom.put("crafting_tags", new ListTag<>(List.of(new StringTag("test:custom"))));
++        final var customComponents = new CompoundTag();
++        customComponents.put("minecraft:crafting_table", custom);
++        final var emptyComponents = new CompoundTag();
++        emptyComponents.put("minecraft:crafting_table", new CompoundTag());
++        final var blocks = user.get(BlockStateRewriter.class);
++        when(blocks.blockComponents(7)).thenReturn(customComponents);
++        when(blocks.blockComponents(8)).thenReturn(emptyComponents);
++        final var customRecipe = new CraftingDataStorage(RecipeType.SHAPELESS, 2,
++                new ShapelessRecipe("test:custom", new UUID(0, 2), "test:custom", 0,
++                        List.of(name(2, 1)), List.of(item(1))), true);
++        tracker.updateCraftingDataList(List.of(recipe(RecipeType.SHAPELESS, 1, 1, 1, List.of(name(1, 1))), customRecipe), true);
++        context.inventory().getInventoryContainer().setItem(9, item(1));
++        when(chunks.getBlockState(position)).thenReturn(7);
++        assertEquals(3, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), owner, false, true));
++        context.inventory().getInventoryContainer().setItem(10, item(2));
++        assertEquals(1, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), owner, false, true));
++        when(chunks.getBlockState(position)).thenReturn(8);
++        assertEquals(3, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), owner, false, true));
++        when(chunks.getBlockState(position)).thenReturn(9);
++        assertEquals(1, tracker.playerRecipeAvailability(item(1), BedrockItem.empty(), owner, false, true));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_RETAINED_AVAILABILITY", matches = ".+")
++    void matchesOriginalConcreteFamiliesThroughRegisteredOwners() throws Exception {
++        try (var input = new InputStreamReader(new GZIPInputStream(Files.newInputStream(
++                Path.of(System.getenv("STACKANVIL_NATIVE_RETAINED_AVAILABILITY")))), StandardCharsets.UTF_8)) {
++            verify(JsonParser.parseReader(input).getAsJsonObject());
++        }
++    }
++
++    static int verify(final JsonObject fixture) throws Exception {
++        final var player = PlayerRecipeAvailabilityTest.context(false, IDENTIFIER_BASE);
++        final var table = PlayerRecipeAvailabilityTest.context(true, IDENTIFIER_BASE);
++        final var playerTracker = new CraftingDataTracker(player.items().user());
++        final var tableTracker = new CraftingDataTracker(table.items().user());
++        int count = 0;
++        for (final var element : fixture.getAsJsonArray("rows")) {
++            final var row = element.getAsJsonObject();
++            final boolean workbench = row.get("workbench").getAsBoolean();
++            final var context = workbench ? table : player;
++            final var tracker = workbench ? tableTracker : playerTracker;
++            for (int slot = 0; slot < 36; slot++) {
++                context.inventory().getInventoryContainer().setItem(slot, BedrockItem.empty());
++            }
++            context.inventory().getHudContainer().setItem(0, BedrockItem.empty());
++            for (int slot = 28; slot <= 31; slot++) {
++                context.inventory().getHudContainer().setItem(slot, BedrockItem.empty());
++            }
++            if (workbench) {
++                for (int slot = 32; slot <= 40; slot++) {
++                    context.owner().setItem(slot, BedrockItem.empty());
++                }
++            }
++            final var declaration = row.getAsJsonObject("recipe");
++            final List<ItemDescriptor> ingredients = new ArrayList<>();
++            for (final var input : declaration.getAsJsonArray("ingredients")) {
++                final var descriptor = input.getAsJsonObject();
++                ingredients.add(descriptor.has("empty") && descriptor.get("empty").getAsBoolean()
++                        ? new ItemDescriptor.InvalidDescriptor() : name(descriptor.get("id").getAsInt(), 1));
++            }
++            tracker.updateCraftingDataList(List.of(recipe(RecipeType.getByValue(declaration.get("family").getAsInt()),
++                    1, declaration.get("width").getAsInt(), declaration.get("height").getAsInt(), ingredients)), true);
++            final var sources = row.getAsJsonArray("sources");
++            for (int collection = 0; collection < sources.size(); collection++) {
++                final var slots = sources.get(collection).getAsJsonArray();
++                for (int slot = 0; slot < slots.size(); slot++) {
++                    final var item = item(slots.get(slot).getAsJsonObject());
++                    switch (collection) {
++                        case 0 -> {
++                            if (workbench) {
++                                context.owner().setItem(32 + slot, item);
++                            } else {
++                                context.inventory().getHudContainer().setItem(28 + slot, item);
++                            }
++                        }
++                        case 1 -> context.inventory().getInventoryContainer().setItem(slot, item);
++                        case 2 -> context.inventory().getInventoryContainer().setItem(9 + slot, item);
++                        case 3 -> context.inventory().getHudContainer().setItem(0, item);
++                        default -> throw new AssertionError("Unexpected fixture collection");
++                    }
++                }
++            }
++            assertEquals(row.get("state").getAsInt(), tracker.playerRecipeAvailability(item(row.getAsJsonObject("query")),
++                    item(row.getAsJsonObject("selected")), context.owner(), row.get("filtering").getAsBoolean(),
++                    row.get("includeCursor").getAsBoolean()), row::toString);
++            clearInvocations(context.items(), context.items().user(), context.items().user().get(InventoryRequestTracker.class),
++                    context.items().user().get(BlockStateRewriter.class));
++            count++;
++        }
++        assertTrue(count > 0);
++        return count;
++    }
++
++    private static ItemDescriptor name(final int id, final int amount) {
++        return new ItemDescriptor.ItemNameDescriptor("test:ordinary_" + id, 0, amount);
++    }
++
++    private static CraftingDataStorage recipe(final RecipeType type, final int id, final int width,
++                                              final int height, final List<ItemDescriptor> ingredients) {
++        final String name = "test:recipe_" + id;
++        final Recipe recipe = switch (type) {
++            case SHAPED, SHAPED_CHEMISTRY -> new ShapedRecipe(name, new UUID(0, id), "crafting_table", 0,
++                    width, height, ingredients, List.of(item(1)), false);
++            case SMITHING_TRANSFORM -> new SmithingRecipe(name, new UUID(0, id), "crafting_table", 0,
++                    ingredients.get(0), ingredients.get(1), ingredients.get(2), item(1));
++            default -> new ShapelessRecipe(name, new UUID(0, id), "crafting_table", 0, ingredients, List.of(item(1)));
++        };
++        return new CraftingDataStorage(type, id, recipe, true);
++    }
++
++    private static BedrockItem item(final int id) {
++        return id == 0 ? BedrockItem.empty() : new BedrockItem(IDENTIFIER_BASE + id);
++    }
++
++    private static BedrockItem item(final JsonObject value) {
++        final var item = item(value.get("id").getAsInt());
++        if (!item.isEmpty() && value.has("count")) {
++            item.setAmount(value.get("count").getAsInt());
++        }
++        return item;
++    }
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ResolvedRecipeIngredientTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ResolvedRecipeIngredientTest.java
