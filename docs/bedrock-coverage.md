@@ -10248,3 +10248,22 @@ The Microsoft-specific `I32` formatter diagnostic has no supported native result
 
 **Remaining work:** Complete registry and locale lifetime, installed player screen publication, controller navigation and visible parity remain unverified.
 This increment adds no new live gameplay capture. The inventory, movement, eating and locator reports remain open.
+
+## Retained player search queries (October 25, 2026)
+
+**Implemented:** A retained player search accepts query edits while keeping its installed substring or word-prefix policy.
+Explicit reinstallation captures current Instabuild again. String query APIs preserve native bytes through `NbtUtf8`.
+
+**Verified within scope:** All 160 original query-setter and stored-search controls match states and producer call counts.
+The original query setter, installer, normalization, search, unlock lookup, output matching and counter execute across ability and query changes.
+Both filter modes, empty text, NUL, formatting, malformed bytes and explicit reinstallation are covered.
+Model/collection backing, ordinary definitions, text/context/source interfaces, final collection notification and allocator/CRT/stream services remain supplied.
+Native temporaries balance per evaluation.
+
+Eight additional original setter controls establish that equal raw text preserves selection and sends no notification.
+Different raw text clears selection and notifies the search collection with argument zero, even when normalization produces the same text.
+The original selected-stack comparison, assignment, normalization and destruction execute. Dynamic string allocations retire after each control.
+Those selection and notification effects belong to the pending inventory model integration.
+
+**Remaining work:** Installed model ownership, full collection/controller lifetime, query-edit delivery and visible player publication remain unfinished.
+This increment does not resolve the original inventory, movement, eating or locator reports.

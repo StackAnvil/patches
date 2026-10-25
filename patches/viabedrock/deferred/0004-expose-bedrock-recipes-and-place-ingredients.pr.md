@@ -1095,3 +1095,22 @@ Integration tests cover live game-type changes, retained zero-count definitions,
 The shulker path calls the shared saved ItemStack loader and primary-name producer.
 Native controller/model lifetime and installed player screen publication remain unfinished.
 The inventory, movement, eating and locator reports remain open.
+
+## Retained query edits
+
+A retained player search now accepts replacement query text without recapturing its installed Instabuild policy.
+Creating a new search explicitly selects the current policy again.
+The String APIs preserve native query bytes through `NbtUtf8`, including malformed UTF-8.
+
+All 160 original query-setter and stored-callback controls match states and primary/secondary producer call counts.
+They cover ability changes, explicit reinstallation, both filter modes, primary and secondary matches, formatting, NUL, empty queries and malformed bytes.
+Original setter `1434154d0`, installer `14341c4c0`, normalization, stored search callbacks, unlock lookup, output matching and the counter execute.
+Parsed model/collection and ordinary-item backing, text/context/source interfaces, final collection notification and allocator/CRT/stream services remain supplied.
+Native temporary allocations balance across each evaluation.
+
+Eight further native setter controls establish raw-byte equality, selected-stack clearing and search-collection notification with argument zero.
+Equal raw text preserves selection and sends no notification.
+Different raw text clears selection and notifies, including changes with identical normalized text or content after NUL.
+The original selected-stack comparison, assignment, normalization and destruction execute; dynamic string allocations retire after each control.
+These model-owned selection and notification effects are evidence for the pending screen integration, not effects of the search-policy object.
+Complete model/controller lifetime, installed screen ownership and text-edit delivery remain unfinished.
