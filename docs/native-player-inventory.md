@@ -1901,7 +1901,8 @@ Existing item predicates, cooking expansion and Java recipe displays use the new
 
 The [coverage reference](bedrock-coverage.md#native-recipe-molang-context-october-25-2026) records original packet, compiler, frame and packaged comparisons.
 These checks extend the predicate path; they do not complete retained Tag/Molang payload ownership or the installed player evaluator.
-Additional native controls expose numeric embedded-assignment result differences in the shared evaluator.
-Those diagnostic cases remain outside the passing expression comparison.
+The shared [assignment-result follow-up](bedrock-coverage.md#native-molang-assignment-results-october-25-2026) now matches all 232 measured recipe-frame predicates.
+It separates the selected result slot from operand snapshots and closes the twelve earlier numeric assignment-result differences.
+Broader caller lifetime, value/cast behavior and complete VM parity remain unfinished.
 Native Tag index filtering and source-definition identity still need integration.
 The four original reports and all five goal areas remain open.

@@ -213,7 +213,8 @@ Host allocation, CRT operations, TLS, locks, and diagnostic boundaries remain su
 
 The parser rejects unparenthesized assignment chains before evaluation, matching all three tested native rejections.
 Parenthesized nested assignments remain admitted.
-Embedded assignment results remain incomplete because native store instructions retain accumulator state and some arithmetic instructions fuse constant results.
+At that milestone, embedded assignment results remained incomplete because native stores preserve a selected result independently of their assigned value.
+The assignment-result follow-up below fixes the measured store, branch and counted-loop cases.
 The [coverage ledger](../../../docs/bedrock-coverage.md#missing-molang-values-and-fault-propagation) records this separate gap and the full verification boundary.
 
 Source syntax and compiled runtime expressions now have separate boundaries.
@@ -304,6 +305,25 @@ Literal and identifier nodes do not retain grouping metadata.
 The existing parse API returns the same evaluation tree.
 A focused regression checks both grouping identity and tree equality.
 The [recipe coverage reference](../../../docs/bedrock-coverage.md#native-recipe-molang-context-october-25-2026) records the native admission comparisons and complete build checks.
+
+## Native assignment result slots
+
+Keep the selected native result separate from operand snapshots.
+Numeric constant temporary stores preserve that selection; variable reads can select a live slot.
+Copy values into operands and assignments so later writes retain the native mutation order.
+Preserve numeric constant folding, dynamic string comparisons and null-coalescing paths.
+Execute scopes as values, load zero on normal fallthrough and preserve counted-loop results through jumps.
+Evaluation groups own the result slot alongside temporary storage; the existing host budget remains unchanged.
+
+The original VM reference supplies 78 forms under three incoming results.
+All 231 admitted returns and 924 checks of temporary slot presence and values match the packaged core.
+The preceding core fails four targeted checks by value and differs on 131 aggregate checks.
+Separate genuine recipe frames match all 232 predicates, closing the twelve previously recorded differences.
+The historical billboard temporary check now includes the native size/UV prefix before direction.
+
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-molang-assignment-results-october-25-2026) records the complete build, artifact comparisons and supplied boundaries.
+The isolated VM control executes original TLS/global retirement but supplies frame and enclosing-context backing.
+Normal thread initialization, other caller reset boundaries, broader casts, arrays and complete native/client parity remain unfinished.
 
 ## Upstream prerequisites
 

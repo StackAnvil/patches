@@ -1,4 +1,4 @@
-From 6a627930afd23cc3d9c069011b829dd47c3b1551 Mon Sep 17 00:00:00 2001
+From 2506a584b27b5bd20ca0a5006cb591c7b70b5955 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(molang): share bounded native float evaluation
@@ -23,21 +23,47 @@ occurrences. Recipe compiler admission distinguishes grouped assignment
 arguments, while rendering consumers retain the same evaluation tree. Use
 identity membership so structurally equal expressions at different source
 positions cannot inherit each other's grouping.
+
+Track the native result slot independently of expression operand snapshots.
+Numeric constants embedded in temporary stores preserve that slot, while
+variable reads retain the selected storage identity. Copy values into
+operands and assignments so later writes cannot alter an earlier operand.
+Keep numeric constant expressions, including deterministic math, separate
+from dynamic evaluation. Constant getters do not change the enclosing slot.
+
+Execute scopes as values and reset their result on normal fallthrough.
+Preserve counted-loop results across break and continue, and clear the
+result on missing reads before null-coalescing recovery. Evaluation groups
+own this state independently of the existing host iteration budget.
+
+An original compiler/VM reference checks 231 admitted executions and 924
+temporary-slot presence/value checks across three explicit incoming numeric
+results. One rejected form supplies three separate admission controls. Original TLS and
+global retirement leave no allocations or held locks. This declared frame
+control does not construct an Actor, ItemInstance or Level. Genuine recipe
+frames separately verify the consumer behavior; broader caller lifetime,
+array iteration and complete native parity remain unfinished.
+
+Preserve the native billboard prefix in the temporary-variable reference
+check: size and UV programs run before direction and can mutate the same
+slots. A direction-only replay cannot use that full-component sample as
+its expected result.
 ---
  build.gradle                                  |   4 +-
  .../api/model/entity/CustomEntity.java        |  10 +-
  .../viabedrock/api/util/BedrockSineTable.java |  81 ++++
  .../api/util/BedrockTrigonometry.java         |  29 ++
- .../api/util/MoLangControlFlow.java           | 256 ++++++++++++
- .../viabedrock/api/util/MoLangEngine.java     | 128 ++++--
- .../viabedrock/api/util/MoLangMath.java       | 248 +++++++++++
- .../viabedrock/api/util/MoLangParser.java     | 380 +++++++++++++++++
+ .../api/util/MoLangControlFlow.java           | 407 ++++++++++++++++
+ .../viabedrock/api/util/MoLangEngine.java     | 129 ++++--
+ .../viabedrock/api/util/MoLangMath.java       | 248 ++++++++++
+ .../viabedrock/api/util/MoLangParser.java     | 380 +++++++++++++++
  .../META-INF/licenses/bedrock-sine-table.txt  |  26 ++
- .../META-INF/licenses/mochafloats.txt         |  24 ++
- .../api/util/BedrockTrigonometryTest.java     |  93 +++++
- .../viabedrock/api/util/MoLangEngineTest.java | 395 ++++++++++++++++++
+ .../META-INF/licenses/mochafloats.txt         |  24 +
+ .../api/util/BedrockTrigonometryTest.java     |  93 ++++
+ .../api/util/MoLangAssignmentResultTest.java  |  86 ++++
+ .../viabedrock/api/util/MoLangEngineTest.java | 437 ++++++++++++++++++
  .../viabedrock/api/util/MoLangMathTest.java   | 115 +++++
- 13 files changed, 1751 insertions(+), 38 deletions(-)
+ 14 files changed, 2031 insertions(+), 38 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/BedrockSineTable.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/MoLangControlFlow.java
@@ -46,6 +72,7 @@ positions cannot inherit each other's grouping.
  create mode 100644 src/main/resources/META-INF/licenses/bedrock-sine-table.txt
  create mode 100644 src/main/resources/META-INF/licenses/mochafloats.txt
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/BedrockTrigonometryTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MoLangAssignmentResultTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MoLangMathTest.java
 
@@ -209,10 +236,10 @@ index 000000000..cafca05f8
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangControlFlow.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangControlFlow.java
 new file mode 100644
-index 000000000..e6db915e2
+index 000000000..09d60817a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangControlFlow.java
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,407 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -226,6 +253,7 @@ index 000000000..e6db915e2
 +import org.redlance.mocha.parser.ast.CallExpression;
 +import org.redlance.mocha.parser.ast.ExecutionScopeExpression;
 +import org.redlance.mocha.parser.ast.Expression;
++import org.redlance.mocha.parser.ast.FloatExpression;
 +import org.redlance.mocha.parser.ast.IdentifierExpression;
 +import org.redlance.mocha.parser.ast.StatementExpression;
 +import org.redlance.mocha.parser.ast.StringExpression;
@@ -233,6 +261,7 @@ index 000000000..e6db915e2
 +import org.redlance.mocha.parser.ast.UnaryExpression;
 +import org.redlance.mocha.runtime.ExecutionContext;
 +import org.redlance.mocha.runtime.ExpressionInterpreter;
++import org.redlance.mocha.runtime.MolangInterpreter;
 +import org.redlance.mocha.runtime.Scope;
 +import org.redlance.mocha.runtime.value.ArrayValue;
 +import org.redlance.mocha.runtime.value.Function;
@@ -245,8 +274,10 @@ index 000000000..e6db915e2
 +import java.util.ArrayList;
 +import java.util.List;
 +import java.util.Locale;
++import java.util.Set;
++import java.util.function.Supplier;
 +
-+/** Compiles Molang jumps into host functions that unwind every nested expression frame. */
++/** Compiles native Molang result slots and control flow into bounded host evaluation. */
 +final class MoLangControlFlow {
 +
 +    private static final String READ = "\0viabedrock_read";
@@ -257,9 +288,20 @@ index 000000000..e6db915e2
 +    static final String CONTINUE = "\0viabedrock_continue";
 +    private static final String RETURN = "\0viabedrock_return";
 +    private static final String BREAK = "\0viabedrock_break";
++    private static final String LOAD = "\0viabedrock_load";
++    private static final String STORE = "\0viabedrock_store";
++    private static final String EXECUTE_SCOPE = "\0viabedrock_scope";
++    private static final Set<String> RANDOM_MATH = Set.of("random", "random_integer", "die_roll", "die_roll_integer");
++    private static final ObjectValue CONSTANT_MATH = MoLangMath.extend((ObjectValue) MolangInterpreter.standard().scope().get("math"));
 +    private int remaining = 16384;
 +
++    private MoLangControlFlow() {
++    }
++
 +    static List<Expression> lower(final List<Expression> expressions) throws IOException {
++        if (expressions.size() == 1 && constantNumber(expressions.getFirst(), 0)) {
++            return List.of(quiet(expressions.getFirst()));
++        }
 +        return lower(expressions, 0);
 +    }
 +
@@ -275,51 +317,145 @@ index 000000000..e6db915e2
 +        if (depth > 64) {
 +            throw new IOException("The Molang expression is too deeply nested");
 +        }
++        if (constantNumber(expression, depth)) {
++            return load(quiet(expression));
++        }
 +        if (expression instanceof UnaryExpression unary) {
 +            final Expression value = lower(unary.expression(), depth + 1);
-+            return unary.op() == UnaryExpression.Op.RETURN ? call(RETURN, List.of(value)) : new UnaryExpression(unary.op(), value);
++            return unary.op() == UnaryExpression.Op.RETURN ? call(RETURN, List.of(value)) : load(new UnaryExpression(unary.op(), value));
 +        } else if (expression instanceof StatementExpression statement) {
 +            return call(statement.op() == StatementExpression.Op.BREAK ? BREAK : CONTINUE, List.of());
 +        } else if (expression instanceof CallExpression function) {
 +            final List<Expression> arguments = new ArrayList<>();
++            final String control = function.function() instanceof IdentifierExpression identifier ? identifier.name().toLowerCase(Locale.ROOT) : "";
++            final boolean math = math(function.function());
 +            for (int index = 0; index < function.arguments().size(); index++) {
 +                final Expression argument = function.arguments().get(index);
-+                final boolean assignmentTarget = index == 0 && function.function() instanceof IdentifierExpression identifier
-+                    && identifier.name().equalsIgnoreCase("for_each");
-+                arguments.add(assignmentTarget ? target(argument, depth + 1) : lower(argument, depth + 1));
-+            }
-+            if (function.function() instanceof IdentifierExpression identifier) {
-+                if (identifier.name().equalsIgnoreCase("loop")) {
-+                    return call(LOOP, arguments);
-+                } else if (identifier.name().equalsIgnoreCase("for_each")) {
-+                    return call(FOR_EACH, arguments);
++                if (control.equals("for_each") && index == 0) {
++                    arguments.add(target(argument, depth + 1));
++                } else if ((control.equals("loop") && index == 1 || control.equals("for_each") && index == 2)
++                        && argument instanceof ExecutionScopeExpression body) {
++                    arguments.add(block(body, depth + 1));
++                } else if (!math && !control.equals("loop") && !control.equals("for_each") && (constantNumber(argument, depth + 1) || argument instanceof StringExpression)) {
++                    arguments.add(quiet(argument));
++                } else {
++                    arguments.add(lower(argument, depth + 1));
 +                }
 +            }
-+            return new CallExpression(lower(function.function(), depth + 1), List.copyOf(arguments));
-+        } else if (expression instanceof BinaryExpression binary) {
-+            final Expression left = binary.op() == BinaryExpression.Op.ASSIGN
-+                ? target(binary.left(), depth + 1) : lower(binary.left(), depth + 1);
-+            final Expression right = lower(binary.right(), depth + 1);
-+            if (binary.op() == BinaryExpression.Op.NULL_COALESCE) {
-+                return call(COALESCE, List.of(left, right));
++            if (control.equals("loop")) {
++                // A counted loop leaves the result pointer selected by its count or body.
++                return call(LOOP, arguments);
++            } else if (control.equals("for_each")) {
++                return load(call(FOR_EACH, arguments));
 +            }
++            return load(new CallExpression(callee(function.function(), depth + 1), List.copyOf(arguments)));
++        } else if (expression instanceof BinaryExpression binary) {
++            if (binary.op() == BinaryExpression.Op.ASSIGN) {
++                final Expression value = temporary(binary.left()) && constantNumber(binary.right(), depth + 1)
++                    ? quiet(binary.right()) : lower(binary.right(), depth + 1);
++                return call(STORE, List.of(target(binary.left(), depth + 1), value));
++            }
++            if (binary.op() == BinaryExpression.Op.NULL_COALESCE) {
++                return call(COALESCE, List.of(lower(binary.left(), depth + 1), lower(binary.right(), depth + 1)));
++            }
++            if (binary.op() == BinaryExpression.Op.CONDITIONAL) {
++                return new BinaryExpression(binary.op(), lower(binary.left(), depth + 1), lower(binary.right(), depth + 1));
++            }
++            final boolean inline = binary.op() != BinaryExpression.Op.AND && binary.op() != BinaryExpression.Op.OR;
++            final Expression left = inline && constantNumber(binary.left(), depth + 1) ? quiet(binary.left()) : lower(binary.left(), depth + 1);
++            final Expression right = inline && constantNumber(binary.right(), depth + 1) ? quiet(binary.right()) : lower(binary.right(), depth + 1);
 +            if (binary.op() == BinaryExpression.Op.EQ || binary.op() == BinaryExpression.Op.NEQ) {
 +                final Expression equality = call(EQUAL, List.of(left, right));
-+                return binary.op() == BinaryExpression.Op.EQ ? equality : new UnaryExpression(UnaryExpression.Op.LOGICAL_NEGATION, equality);
++                return load(binary.op() == BinaryExpression.Op.EQ ? equality : new UnaryExpression(UnaryExpression.Op.LOGICAL_NEGATION, equality));
 +            }
-+            return new BinaryExpression(binary.op(), left, right);
++            return load(new BinaryExpression(binary.op(), left, right));
 +        } else if (expression instanceof TernaryConditionalExpression ternary) {
 +            return new TernaryConditionalExpression(lower(ternary.condition(), depth + 1), lower(ternary.trueExpression(), depth + 1), lower(ternary.falseExpression(), depth + 1));
-+        } else if (expression instanceof ExecutionScopeExpression scope) {
-+            return new ExecutionScopeExpression(lower(scope.expressions(), depth + 1));
++        } else if (expression instanceof ExecutionScopeExpression body) {
++            return call(EXECUTE_SCOPE, List.of(block(body, depth + 1)));
 +        } else if (expression instanceof AccessExpression access) {
 +            final Expression object = lower(access.object(), depth + 1);
 +            return variable(access.object()) ? call(READ, List.of(object, new StringExpression(access.property())))
-+                : new AccessExpression(object, access.property());
++                : load(new AccessExpression(object, access.property()));
 +        } else if (expression instanceof ArrayAccessExpression array) {
-+            return new ArrayAccessExpression(lower(array.array(), depth + 1), lower(array.index(), depth + 1));
++            return load(new ArrayAccessExpression(lower(array.array(), depth + 1), lower(array.index(), depth + 1)));
++        } else if (expression instanceof StringExpression || expression instanceof IdentifierExpression identifier && identifier.name().equalsIgnoreCase("this")) {
++            return load(expression);
 +        }
 +        return expression;
++    }
++
++    private static ExecutionScopeExpression block(final ExecutionScopeExpression body, final int depth) throws IOException {
++        final List<Expression> expressions = new ArrayList<>(lower(body.expressions(), depth));
++        expressions.add(load(FloatExpression.ZERO));
++        return new ExecutionScopeExpression(List.copyOf(expressions));
++    }
++
++    private static Expression callee(final Expression expression, final int depth) throws IOException {
++        return expression instanceof AccessExpression access
++            ? new AccessExpression(lower(access.object(), depth), access.property()) : expression;
++    }
++
++    private static boolean temporary(final Expression expression) {
++        if (expression instanceof AccessExpression access) {
++            if (access.object() instanceof IdentifierExpression identifier) {
++                return identifier.name().equalsIgnoreCase("temp") || identifier.name().equalsIgnoreCase("t");
++            }
++            return temporary(access.object());
++        }
++        return false;
++    }
++
++    private static boolean math(final Expression expression) {
++        return expression instanceof AccessExpression access && access.object() instanceof IdentifierExpression identifier
++            && identifier.name().equalsIgnoreCase("math");
++    }
++
++    /** Numeric compiler constants can be embedded in temporary-store and operator payloads. */
++    private static boolean constantNumber(final Expression expression, final int depth) {
++        if (depth > 64) {
++            return false;
++        }
++        return switch (expression) {
++            case FloatExpression _ -> true;
++            case AccessExpression access -> math(access) && access.property().equalsIgnoreCase("pi");
++            case UnaryExpression unary -> unary.op() != UnaryExpression.Op.RETURN && constantNumber(unary.expression(), depth + 1);
++            case BinaryExpression binary -> binary.op() != BinaryExpression.Op.ASSIGN && binary.op() != BinaryExpression.Op.ARROW
++                && binary.op() != BinaryExpression.Op.NULL_COALESCE
++                && constantNumber(binary.left(), depth + 1) && constantNumber(binary.right(), depth + 1);
++            case TernaryConditionalExpression conditional -> constantNumber(conditional.condition(), depth + 1)
++                && constantNumber(conditional.trueExpression(), depth + 1) && constantNumber(conditional.falseExpression(), depth + 1);
++            case CallExpression function -> math(function.function())
++                && function.function() instanceof AccessExpression access
++                && !RANDOM_MATH.contains(access.property().toLowerCase(Locale.ROOT))
++                && CONSTANT_MATH.get(access.property()) instanceof Function
++                && function.arguments().stream().allMatch(argument -> constantNumber(argument, depth + 1));
++            default -> false;
++        };
++    }
++
++    /** Evaluate native numeric constants without changing the result pointer. */
++    private static Expression quiet(final Expression expression) {
++        return switch (expression) {
++            case BinaryExpression binary -> {
++                final Expression left = quiet(binary.left());
++                final Expression right = quiet(binary.right());
++                if (binary.op() == BinaryExpression.Op.EQ || binary.op() == BinaryExpression.Op.NEQ) {
++                    final Expression equality = call(EQUAL, List.of(left, right));
++                    yield binary.op() == BinaryExpression.Op.EQ ? equality : new UnaryExpression(UnaryExpression.Op.LOGICAL_NEGATION, equality);
++                }
++                yield new BinaryExpression(binary.op(), left, right);
++            }
++            case UnaryExpression unary -> new UnaryExpression(unary.op(), quiet(unary.expression()));
++            case TernaryConditionalExpression conditional -> new TernaryConditionalExpression(quiet(conditional.condition()),
++                quiet(conditional.trueExpression()), quiet(conditional.falseExpression()));
++            case CallExpression function -> new CallExpression(function.function(), function.arguments().stream().map(MoLangControlFlow::quiet).toList());
++            default -> expression;
++        };
++    }
++
++    private static Expression load(final Expression expression) {
++        return call(LOAD, List.of(expression));
 +    }
 +
 +    private static Expression target(final Expression expression, final int depth) throws IOException {
@@ -345,15 +481,41 @@ index 000000000..e6db915e2
 +        return new CallExpression(new IdentifierExpression(name), arguments);
 +    }
 +
-+    static Value evaluate(final Scope scope, final List<Expression> expressions) {
++    static Value evaluate(final Scope scope, final List<Expression> expressions, final Result result) {
 +        final MoLangControlFlow runtime = new MoLangControlFlow();
++        scope.set(LOAD, (Function<Object>) (_, arguments) -> {
++            final Value value = arguments.next().eval();
++            result.set(value);
++            return value;
++        });
 +        scope.set(READ, (Function<Object>) (_, arguments) -> {
 +            final Value object = arguments.next().eval();
 +            final String name = arguments.next().eval().getAsString();
 +            if (!(object instanceof ObjectValue binding)) {
++                result.set(NumberValue.zero());
 +                throw FlowSignal.UNDEFINED;
 +            }
-+            return requireProperty(binding, name);
++            final var property = binding.getProperty(name);
++            if (property == null) {
++                result.set(NumberValue.zero());
++                throw FlowSignal.UNDEFINED;
++            }
++            final Value value = property.value();
++            result.reference = () -> requireProperty(binding, name);
++            return value;
++        });
++        scope.set(STORE, (Function<Object>) (context, arguments) -> {
++            final AccessExpression target = (AccessExpression) arguments.next().expression();
++            final Value value = arguments.next().eval();
++            if (context.eval(target.object()) instanceof ObjectValue binding) {
++                binding.set(target.property(), value instanceof NumberValue && !Float.isFinite(value.getAsNumber()) ? NumberValue.zero() : value);
++            }
++            return result.value();
++        });
++        scope.set(EXECUTE_SCOPE, (Function<Object>) (context, arguments) -> {
++            @SuppressWarnings("unchecked")
++            final Function<Object> body = (Function<Object>) arguments.next().eval();
++            return body.evaluate(context);
 +        });
 +        scope.set(COALESCE, (Function<Object>) (_, arguments) -> {
 +            final Function.Argument left = arguments.next();
@@ -364,6 +526,7 @@ index 000000000..e6db915e2
 +                if (signal.kind != FlowKind.UNDEFINED) {
 +                    throw signal;
 +                }
++                result.set(NumberValue.zero());
 +                return right.eval();
 +            }
 +        });
@@ -386,7 +549,7 @@ index 000000000..e6db915e2
 +                // The native VM compares the float remainder with zero and subtracts one.
 +                remaining -= 1F;
 +            }
-+            return NumberValue.zero();
++            return result.value();
 +        });
 +        scope.set(FOR_EACH, (Function<Object>) (context, arguments) -> {
 +            final AccessExpression target = (AccessExpression) arguments.next().expression();
@@ -407,13 +570,16 @@ index 000000000..e6db915e2
 +        scope.readOnly(true);
 +        final ExpressionInterpreter<Void> evaluator = new ExpressionInterpreter<>(null, scope);
 +        evaluator.warnOnReflectiveFunctionUsage(false);
-+        Value result = NumberValue.zero();
++        Value value = NumberValue.zero();
 +        try {
 +            for (final Expression expression : expressions) {
-+                result = expression.visit(evaluator);
++                value = expression.visit(evaluator);
 +            }
-+            return result;
++            return value;
 +        } catch (final FlowSignal signal) {
++            if (signal.kind == FlowKind.UNDEFINED || signal.kind == FlowKind.LIMIT) {
++                result.set(NumberValue.zero());
++            }
 +            return signal.value;
 +        }
 +    }
@@ -444,7 +610,19 @@ index 000000000..e6db915e2
 +        }
 +    }
 +
-+    private MoLangControlFlow() {
++    /** Keep the selected variable slot live while expression operands receive value snapshots. */
++    static final class Result {
++
++        private Supplier<Value> reference = NumberValue::zero;
++
++        private void set(final Value value) {
++            this.reference = () -> value;
++        }
++
++        private Value value() {
++            return this.reference.get();
++        }
++
 +    }
 +
 +    private enum FlowKind {
@@ -470,10 +648,10 @@ index 000000000..e6db915e2
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-index 8f4c4f894..94300a4c2 100644
+index 8f4c4f894..ecb8edda1 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-@@ -17,60 +17,126 @@
+@@ -17,60 +17,127 @@
   */
  package net.raphimc.viabedrock.api.util;
  
@@ -540,7 +718,7 @@ index 8f4c4f894..94300a4c2 100644
 +    }
  
 -        return lastResult;
-+    /** Creates a caller-owned evaluation group whose expressions share temporary variables. */
++    /** Creates a caller-owned group sharing temporary variables and the VM result slot. */
 +    public static Evaluation createEvaluation(final Scope scope) {
 +        return new Evaluation(scope);
      }
@@ -596,6 +774,7 @@ index 8f4c4f894..94300a4c2 100644
 +    public static final class Evaluation {
 +
 +        private final Scope scope;
++        private final MoLangControlFlow.Result result = new MoLangControlFlow.Result();
 +
 +        private Evaluation(final Scope scope) {
 +            this.scope = scope.copy();
@@ -620,7 +799,7 @@ index 8f4c4f894..94300a4c2 100644
 +        }
 +
 +        public Value eval(final List<Expression> expressions) {
-+            return MoLangControlFlow.evaluate(this.scope.copy(), expressions);
++            return MoLangControlFlow.evaluate(this.scope.copy(), expressions, this.result);
 +        }
 +
 +        public Value eval(final List<Expression> expressions, final float current) {
@@ -1433,12 +1612,104 @@ index 000000000..dbf1f687a
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MoLangAssignmentResultTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MoLangAssignmentResultTest.java
+new file mode 100644
+index 000000000..a1378a626
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/util/MoLangAssignmentResultTest.java
+@@ -0,0 +1,86 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.util;
++
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++import org.redlance.mocha.runtime.MolangInterpreter;
++import org.redlance.mocha.runtime.value.ObjectValue;
++import org.redlance.mocha.runtime.value.NumberValue;
++import org.redlance.mocha.runtime.value.Value;
++
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.HashMap;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class MoLangAssignmentResultTest {
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_MOLANG_ASSIGNMENTS", matches = ".+")
++    void matchesNativeResultsAndTemporarySlotsWithAnExplicitIncomingResult() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_MOLANG_ASSIGNMENTS")))).getAsJsonObject();
++        assertTrue(fixture.getAsJsonArray("remainingAllocations").isEmpty());
++        assertTrue(fixture.getAsJsonObject("heldLocks").isEmpty());
++        assertFalse(fixture.getAsJsonArray("temporaryNames").isEmpty());
++        int compared = 0;
++        for (final var entry : fixture.getAsJsonArray("rows")) {
++            final var row = entry.getAsJsonObject();
++            if (!row.get("admitted").getAsBoolean()) {
++                continue; // Compiler rejection is a separate admission contract.
++            }
++            final var scope = MolangInterpreter.standard().scope();
++            final ObjectValue absent = name -> null;
++            scope.set("v", absent);
++            scope.set("variable", absent);
++            final var group = MoLangEngine.createEvaluation(scope);
++            group.eval("v.__seed=0;return " + row.get("initial").getAsFloat() + ";");
++            assertValue(row.getAsJsonObject("result"), group.eval(row.get("expression").getAsString()), row);
++            final Map<String, JsonObject> expected = new HashMap<>();
++            for (final var value : row.getAsJsonArray("temporaries")) {
++                final var slot = value.getAsJsonObject();
++                expected.put(slot.get("name").getAsString(), slot.getAsJsonObject("value"));
++            }
++            for (final var value : fixture.getAsJsonArray("temporaryNames")) {
++                final String name = value.getAsString();
++                final Value actual = group.eval(name + "??1234567");
++                if (expected.containsKey(name)) {
++                    assertValue(expected.get(name), actual, row);
++                } else {
++                    assertEquals(1234567, actual.getAsNumber(), () -> name + " in " + row);
++                }
++            }
++            compared++;
++        }
++        assertTrue(compared > 0);
++    }
++
++    private static void assertValue(final JsonObject expected, final Value actual, final JsonObject context) {
++        assertTrue(actual.isString() || actual instanceof NumberValue, context::toString);
++        assertEquals(expected.get("kind").getAsInt(), actual.isString() ? 1 : 0, context::toString);
++        final long data = actual.isString() ? stringHash(actual.getAsString()) : Integer.toUnsignedLong(Float.floatToRawIntBits(actual.getAsNumber()));
++        assertEquals(Long.parseUnsignedLong(expected.get("data").getAsString().substring(2), 16), data, context::toString);
++    }
++
++    private static long stringHash(final String value) {
++        final int terminator = value.indexOf('\0');
++        final String text = terminator < 0 ? value : value.substring(0, terminator);
++        if (text.isEmpty()) {
++            return 0;
++        }
++        long hash = 0xCBF29CE484222325L;
++        for (final byte element : text.getBytes(StandardCharsets.UTF_8)) {
++            hash = hash * 0x100000001B3L ^ Byte.toUnsignedLong(element);
++        }
++        return hash;
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
 new file mode 100644
-index 000000000..5c5b76653
+index 000000000..968a62a23
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
-@@ -0,0 +1,395 @@
+@@ -0,0 +1,437 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1466,6 +1737,40 @@ index 000000000..5c5b76653
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class MoLangEngineTest {
++
++    @Test
++    void preservesTheResultPointerWhenStoringNumericConstantsInTemporaries() throws Exception {
++        final var group = MoLangEngine.createEvaluation(scope());
++        assertEquals(0, group.eval("return (t.x=3);").getAsNumber());
++        assertEquals(7, group.eval("v.seed=0;return 7;").getAsNumber());
++        assertEquals(99, group.eval("99").getAsNumber());
++        assertEquals(7, group.eval("return (t.x=1+2);").getAsNumber());
++        assertEquals(3, group.eval("t.x").getAsNumber());
++        assertEquals(4, group.eval("return (t.x=4);").getAsNumber());
++        assertEquals(1, group.eval("return (t.x='a'=='a');").getAsNumber());
++    }
++
++    @Test
++    void snapshotsOperandsWhileKeepingTheSelectedVariableSlotLive() throws Exception {
++        final var group = MoLangEngine.createEvaluation(scope());
++        assertFalse(group.eval("t.x=2;return t.x==(t.x=3);").getAsBoolean());
++        assertFalse(group.eval("t.x=2;return (t.y=t.x)==(t.x=3);").getAsBoolean());
++        assertEquals(3, group.eval("t.x=2;return t.x+(1?(t.x=3):0);").getAsNumber());
++        assertEquals(3, group.eval("t.x").getAsNumber());
++    }
++
++    @Test
++    void preservesBranchAndLoopResultsAcrossScopesAndJumps() throws Exception {
++        final var group = MoLangEngine.createEvaluation(scope());
++        assertEquals(2, group.eval("loop(2,{break;});return (t.z=4);").getAsNumber());
++        assertEquals(2, group.eval("loop(2,{continue;});return (t.z=4);").getAsNumber());
++        assertEquals(0, group.eval("t.x=2;loop(2,{t.y=(t.z=3);});return t.y;").getAsNumber());
++        assertEquals(2, group.eval("t.x=2;loop(2,{t.y=(t.z=3);continue;});return t.y;").getAsNumber());
++        assertEquals(0, group.eval("t.x=2;return (t.y={t.z=3;});").getAsNumber());
++        assertEquals(3, group.eval("t.z").getAsNumber());
++        assertEquals(3, group.eval("t.x=0;t.x?2;return (t.x=3);").getAsNumber());
++        assertEquals(0, group.eval("t.y=t.missing??(t.x=3);return t.y;").getAsNumber());
++    }
 +
 +    @Test
 +    void retainsGroupingByOccurrenceWithoutChangingTheEvaluationTree() throws Exception {
@@ -1578,6 +1883,14 @@ index 000000000..5c5b76653
 +                nativeScope.set("variable", variables);
 +                nativeScope.set("v", variables);
 +                final var group = MoLangEngine.createEvaluation(nativeScope);
++                final var input = row.getAsJsonObject("input");
++                final var uv = input.getAsJsonObject("uv");
++                // Native billboard sampling executes these programs before direction.
++                for (final var fields : List.of(input.getAsJsonArray("size"), uv.getAsJsonArray("uv"), uv.getAsJsonArray("uv_size"))) {
++                    for (final var field : fields) {
++                        group.eval(field.getAsString());
++                    }
++                }
 +                final var expected = sample.getAsJsonObject().getAsJsonArray("direction");
 +                for (int axis = 0; axis < 3; axis++) {
 +                    assertEquals(expected.get(axis).getAsFloat(), group.eval(expressions.get(axis).getAsString()).getAsNumber(), expressions.toString());

@@ -814,7 +814,8 @@ Use the shared parser's occurrence-specific grouping metadata to validate assign
 The private original-executable controls cover packet-created predicates, compiler admission and genuine ItemInstance frame evaluation.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-recipe-molang-context-october-25-2026) records final counts, artifact checks, supplied boundaries and remaining limits.
 No native predicate or compiler answer is supplied by these controls.
-Additional genuine-frame controls expose numeric embedded-assignment result differences in the existing shared evaluator.
-Those diagnostic cases remain outside the passing expression corpus; complete expression parity is not claimed.
+The shared runtime follow-up closes the twelve measured assignment-result differences from the additional genuine-frame controls.
+All 67 recipe admission results and 232 predicates now match the packaged core.
+Broader caller lifetime, value/cast behavior and complete expression parity remain unfinished.
 Retained Tag/Molang descriptors, the version-filtered Tag index, source conversion and installed player publication also remain unfinished.
 No new live capture closes the original inventory, movement, eating or locator reports.

@@ -2914,10 +2914,11 @@ Saved screenshots show custom lobby models, the hanging cube, and hotbar icons.
 Overlapping labels and the Java tutorial toast remain visible.
 These complete saved-scene replays do not establish a fresh live-server join or native image and timing parity.
 
-**Remaining:** Embedded assignment results still need native accumulator lifecycle and compiler optimization behavior.
-Native ordinary store instructions retain the current result pointer, while a fused constant-arithmetic instruction writes a separate result.
-A controlled accumulator probe changes the returned result without changing the assigned value.
-Current Java evaluation returns the assigned value, so broader assignment-result parity is incomplete.
+**Historical limit:** Embedded assignment results still needed native result-pointer and compiler optimization behavior at this milestone.
+Native ordinary stores preserve the selected result, independently of the assigned value.
+Java then returned the assigned value.
+The [assignment-result follow-up](#native-molang-assignment-results-october-25-2026) fixes the measured store, branch and counted-loop cases.
+Broader caller lifetime and complete VM parity remain unfinished.
 The private contradictory assignment fixtures remain available for this work and are excluded from the verified validity comparison.
 An unsupported diagnostic boundary interrupted a `sqrt(-1)` reader probe, so that interruption does not establish its native result.
 
@@ -9920,9 +9921,9 @@ A third completed frame control adds six admitted programs and 24 predicates.
 The grouped tag-query cases confirm short-circuit side effects and dynamic string arguments.
 Three numeric cases expose the existing shared evaluator's assignment-result limitation: comparison, a math argument and a loop count.
 The native store preserves its current result pointer; Java returns the assigned value.
-The packaged diagnostic matches 220 of 232 total predicates, with zero admission differences and twelve value differences in those three programs.
-This control remains outside the verified 208-predicate comparison.
-Broader embedded-assignment semantics remain required before claiming complete expression parity.
+The initial packaged diagnostic matched 220 of 232 predicates, with twelve value differences in those three programs.
+The [assignment-result follow-up](#native-molang-assignment-results-october-25-2026) now matches all 232 predicates.
+Complete expression parity still requires broader caller and VM comparisons.
 
 A further reference decodes and registers 608 complete shaped-recipe packets with a nonempty ordinary ingredient and a varied secondary descriptor.
 Its matrix covers 19 secondary choices, four quantities and eight source distributions.
@@ -9959,3 +9960,68 @@ The native index's additional version byte participates in version-value compari
 No new installed capture ran.
 The E-key inventory background/scale, pearl/wind-charge rollback, endless eating and missing locator reports remain unresolved.
 All five compatibility goal areas remain active.
+
+
+## Native Molang assignment results (October 25, 2026)
+
+The shared evaluator now keeps the selected VM result separate from copied operand values.
+A numeric constant embedded in a temporary-store instruction changes the variable while preserving the selected result.
+A variable read can select that variable's live slot.
+Later writes then change the selected result, while earlier arithmetic operands retain their copied values.
+Constant strings and ordinary variable stores use different native instruction forms.
+
+Numeric constant folding also affects this contract.
+Arithmetic, numeric comparisons and deterministic constant math can become an embedded temporary-store value.
+They do not load a new result in that form.
+Standalone constant getters leave the enclosing result unchanged.
+String comparisons and null coalescing retain their dynamic instruction paths.
+Random functions remain dynamic.
+
+Scopes execute as values and load zero on normal fallthrough.
+Counted loops preserve the result selected by their count or body.
+A break or continue can skip the body's normal zero load.
+Missing reads clear the result before null-coalescing recovery.
+The existing host iteration budget remains unchanged.
+
+The new original compiler/VM reference covers 78 source forms across incoming numeric results zero, seven and minus 3.25.
+One form is rejected in all three controls.
+All 231 admitted returns and 924 checks of temporary slot presence and values match the packaged core, including numeric and string data.
+Four targeted packaged tests pass.
+The preceding packaged core fails all four by value and differs on 131 aggregate return or slot checks.
+The comparison uses its original embedded core, whose classes and assets matched the preceding standalone build.
+No linkage failure supplies that negative result.
+
+The isolated reference supplies zero-initialized VM/TLS backing and a borrowed enclosing context.
+The first attempt omitted that context and reached a native error path; it is excluded from the completed reference.
+Original compiler, emitted instructions, stores, VM TLS cleanup `140b10270` and registered global destructors execute unchanged.
+Final retirement leaves no allocations or held locks.
+This control does not perform normal thread initialization, PE TLS exit dispatch or Actor, ItemInstance and Level construction.
+No return value, assignment result or temporary-state answer is supplied.
+The target remains Bedrock 1.26.51.1, build 51061372, protocol 2193, at Molang version 13.
+
+Separate genuine ItemInstance-frame references now match all 67 admission results and 232 predicates.
+They close the twelve measured recipe assignment-result mismatches from the preceding milestone.
+All eight packaged recipe checks pass with thirteen implementation origins verified.
+Both the new and preceding cores retain all 4,864 packet-created ingredient predicate matches.
+Retained Tag/Molang counter ownership remains a separate unfinished contract.
+
+The historical temporary-variable check now executes size and UV programs before direction, matching the native billboard caller.
+Previously, its direction-only replay omitted mutations required by the full-component sample.
+The full build enables that reference, statement and constant-evaluation references, native angle controls, direction-reader samples, 133 expression declarations with 665 samples, and flipbook controls.
+
+All 106 core patches replay.
+The four-project build passes 2,975 tests with 152 optional skips and no failures or errors.
+ViaBedrock passes 1,840 tests with 79 optional skips; the add-on passes 1,112 with 73 skips.
+Both Checkstyle tasks pass.
+A final stricter scalar-type assertion also passes against source and the packaged core.
+
+All 1,527 core classes and 198 core assets match both embedded copies.
+All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,519 classes and all 198 assets remain byte-identical.
+Only the shared flow implementation, evaluation group and three build-identity classes change implementation bytes.
+Two other nested classes retain identical declarations and instructions despite metadata changes.
+The new result slot holder is the only added class.
+
+Normal entry/reset ownership in other native callers, broader value/cast behavior, array iteration and version gates still need comparison.
+No new installed capture or native image comparison ran for this milestone.
+The four original reports remain unresolved, and all five compatibility goal areas remain active.
