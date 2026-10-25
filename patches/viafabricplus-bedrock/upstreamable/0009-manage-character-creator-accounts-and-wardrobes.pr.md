@@ -1123,9 +1123,54 @@ A read-only observer records all four emotes during installed world-render sampl
 A screenshot also shows a wave.
 Three complete skin records load without rejection, and the remote-player renderer runs.
 This control has no native graphical baseline and does not establish full emote fidelity.
-Local emote selection and live skin changes through ViaProxy remain unfinished.
+Live skin changes through ViaProxy remain unfinished. The local control milestone follows.
 
 The direct-route regression also samples all four emotes and installs all three skin records without rejection.
 Its overall scene gate still fails on a missing camera-item texture model.
 The proxy scene gate passes.
 This mapping failure remains open and is not treated as an emote playback failure or a passing rendering result.
+
+
+## Local emote controls on direct and proxy connections
+
+The wheel now uses the same negotiated core actions on both routes.
+It waits for the current connection's world chat policy before it becomes available.
+Core supplies the native actor and account identity, so proxy clients need no local Bedrock tracker.
+The client retains immediate local animation and existing privacy checks.
+Movement, interaction, natural completion and account replacement send a stop for local Emoting state.
+Connection replacement clears pending local controls and policy.
+Live skin changes through ViaProxy remain separate work.
+
+
+Native announcement names travel with the world policy on the new context channel.
+Core resolves the local player by native unique ID because Java and native UUIDs can differ.
+It uses the connected account name until the native player-list entry arrives.
+Remote announcements use the retained native player-list name.
+The client clears these names with the connection.
+This preserves the existing playback wire format and avoids synthetic or empty Java profile names.
+
+
+## Local control verification
+
+The full four-project build passes 3,029 tests with 152 optional skips.
+Both core Checkstyle tasks pass, and all 104 core and 38 add-on patches replay.
+Seven focused tests pass against the distributable core JAR with verified implementation origins.
+Embedded core classes and resources match both consumers.
+
+Fresh direct and ViaProxy sessions use physical B-key and slot-key input against an isolated Bedrock 1.26.51.1 server.
+A declared fixture installs four bundled wheel choices without sending packets or starting animations.
+Both routes produce native server receipts, local world-render samples and correctly named announcements.
+Native input carries Emoting during playback and clears it after movement or natural completion.
+Outgoing packets use the connected actor ID and zero flags.
+The runtime JAR checksums match the verified build.
+
+These controls use a private display and silent software rendering.
+Account wardrobe assignment, purchases, full effect timing and native graphical comparisons remain outside these controls.
+The existing direct camera-item rendering gate remains failed and separate from these transport-only gameplay controls.
+
+
+The incoming proxy regression passes its full rendering gate with the same controlled peer fixture.
+All four bundled emotes reach world-render sampling across 73 observations.
+The remote announcement also uses the declared native player-list name.
+Peer placement and durations remain fixture inputs, and the peer remains partly submerged.
+This control does not establish native placement, pose or complete graphical parity.

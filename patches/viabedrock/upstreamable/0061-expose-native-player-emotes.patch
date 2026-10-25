@@ -1,4 +1,4 @@
-From cd364dbff6f87d6878b3bbbd86b2738c91ae2571 Mon Sep 17 00:00:00 2001
+From c4d56e8375edc0849bbe4a8354ec8fb97ac11365 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(players): expose native emotes to client integrations
@@ -25,26 +25,205 @@ Forward native world emote-chat muting in the existing payload flags so a
 ViaProxy client does not need access to the proxy's GameSessionStorage.
 Compare playback lengths unsigned before forwarding them, including values
 whose unsigned Bedrock representation has the Java sign bit set.
+
+Accept negotiated local emote controls through the Java connection. Keep
+advertised IDs and bounded playback state per user, choose actor and Xbox
+identity from that session, and clear Emoting on stop, expiry or capability
+withdrawal. Native packets retain zero outgoing flags. Send the world chat
+policy before advertising the action channel so local proxy announcements
+honor it without a local Bedrock tracker.
+
+Transport native announcement names alongside the world chat policy. Java
+profiles carry synthetic names, and the local Java UUID can differ from
+the native player-list UUID. Resolve the local entry by native unique ID
+and retain its connected-account name as the pre-list fallback. Keep the
+existing playback payload compatible while supplying this context only
+to clients that register its new channel.
 ---
- .../viabedrock/protocol/BedrockProtocol.java  |  2 +
- .../viabedrock/protocol/model/EmoteData.java  | 31 ++++++++
- .../protocol/packet/ClientPlayerPackets.java  |  5 ++
- .../protocol/packet/JoinPackets.java          |  3 +-
- .../protocol/packet/OtherPlayerPackets.java   | 27 +++++++
- .../protocol/packet/UnhandledPackets.java     |  2 -
- .../protocol/provider/EmoteProvider.java      | 74 +++++++++++++++++++
- .../protocol/storage/GameSessionStorage.java  |  9 +++
- .../protocol/types/BedrockTypes.java          |  1 +
- .../protocol/types/model/EmoteType.java       | 52 +++++++++++++
- .../protocol/provider/EmoteProviderTest.java  | 52 +++++++++++++
- .../protocol/types/model/EmoteTypeTest.java   | 49 ++++++++++++
- 12 files changed, 304 insertions(+), 3 deletions(-)
+ .../viabedrock/api/model/EmoteAction.java     | 150 ++++++++++++++++
+ .../viabedrock/protocol/BedrockProtocol.java  |   2 +
+ .../viabedrock/protocol/model/EmoteData.java  |  31 ++++
+ .../protocol/packet/ClientPlayerPackets.java  |   5 +
+ .../protocol/packet/JoinPackets.java          |   3 +-
+ .../protocol/packet/MultiStatePackets.java    |  18 ++
+ .../protocol/packet/OtherPlayerPackets.java   |  27 +++
+ .../protocol/packet/UnhandledPackets.java     |   2 -
+ .../protocol/provider/EmoteProvider.java      | 168 ++++++++++++++++++
+ .../protocol/storage/EmoteStorage.java        |  65 +++++++
+ .../protocol/storage/GameSessionStorage.java  |   9 +
+ .../protocol/types/BedrockTypes.java          |   1 +
+ .../protocol/types/model/EmoteType.java       |  52 ++++++
+ .../viabedrock/api/model/EmoteActionTest.java |  93 ++++++++++
+ .../protocol/provider/EmoteProviderTest.java  | 165 +++++++++++++++++
+ .../protocol/storage/EmoteStorageTest.java    |  45 +++++
+ .../protocol/types/model/EmoteTypeTest.java   |  49 +++++
+ 17 files changed, 882 insertions(+), 3 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/EmoteAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/EmoteData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/provider/EmoteProvider.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EmoteStorage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/types/model/EmoteType.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/EmoteActionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/provider/EmoteProviderTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/EmoteStorageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/model/EmoteTypeTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/EmoteAction.java b/src/main/java/net/raphimc/viabedrock/api/model/EmoteAction.java
+new file mode 100644
+index 000000000..125337d5b
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/EmoteAction.java
+@@ -0,0 +1,150 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Objects;
++import java.util.UUID;
++
++/** Client-owned emote controls. Actor and account identities always come from the connected session. */
++public sealed interface EmoteAction permits EmoteAction.Play, EmoteAction.Available, EmoteAction.Stop {
++
++    String CHANNEL = "viabedrock:emote_action_v1";
++    int MAX_EMOTES = 256;
++    long MAX_TICKS = 12000;
++    Type<EmoteAction> TYPE = new Type<>(EmoteAction.class) {
++        @Override
++        public EmoteAction read(final ByteBuf buffer) {
++            if (Types.VAR_INT.readPrimitive(buffer) != 1) {
++                throw new IllegalArgumentException("Unsupported emote action version");
++            }
++            final EmoteAction action = switch (Types.VAR_INT.readPrimitive(buffer)) {
++                case 0 -> new Play(Types.UUID.read(buffer), Types.VAR_LONG.readPrimitive(buffer));
++                case 1 -> {
++                    final int count = Types.VAR_INT.readPrimitive(buffer);
++                    if (count < 0 || count > MAX_EMOTES) {
++                        throw new IllegalArgumentException("Invalid emote list size");
++                    }
++                    final var emotes = new ArrayList<UUID>(count);
++                    for (int index = 0; index < count; index++) {
++                        emotes.add(Types.UUID.read(buffer));
++                    }
++                    yield new Available(emotes);
++                }
++                case 2 -> new Stop();
++                default -> throw new IllegalArgumentException("Unknown emote action");
++            };
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Unexpected emote action fields");
++            }
++            return action;
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final EmoteAction action) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, action.kind());
++            switch (action) {
++                case Play play -> {
++                    Types.UUID.write(buffer, play.emote());
++                    Types.VAR_LONG.writePrimitive(buffer, play.ticks());
++                }
++                case Available available -> {
++                    Types.VAR_INT.writePrimitive(buffer, available.emotes().size());
++                    for (final UUID emote : available.emotes()) {
++                        Types.UUID.write(buffer, emote);
++                    }
++                }
++                case Stop _ -> { }
++            }
++        }
++    };
++
++    int kind();
++
++    record Play(UUID emote, long ticks) implements EmoteAction {
++        @Override
++        public int kind() {
++            return 0;
++        }
++
++        public Play {
++            Objects.requireNonNull(emote);
++            if (Long.compareUnsigned(ticks, MAX_TICKS) > 0) {
++                throw new IllegalArgumentException("Invalid emote duration");
++            }
++        }
++    }
++
++    record Available(List<UUID> emotes) implements EmoteAction {
++        @Override
++        public int kind() {
++            return 1;
++        }
++
++        public Available {
++            emotes = List.copyOf(emotes);
++            if (emotes.size() > MAX_EMOTES) {
++                throw new IllegalArgumentException("Invalid emote list size");
++            }
++        }
++    }
++
++    record Stop() implements EmoteAction {
++        @Override
++        public int kind() {
++            return 2;
++        }
++    }
++
++    /** World policy needed before the client makes its optimistic local announcement. */
++    record Policy(boolean muteChat, UUID player, String name) {
++        public static final String CHANNEL = "viabedrock:emote_policy_v1";
++        public static final Type<Policy> TYPE = new Type<>(Policy.class) {
++            @Override
++            public Policy read(final ByteBuf buffer) {
++                if (Types.VAR_INT.readPrimitive(buffer) != 1) {
++                    throw new IllegalArgumentException("Unsupported emote policy version");
++                }
++                final var policy = new Policy(buffer.readBoolean(), Types.UUID.read(buffer), Types.STRING.read(buffer));
++                if (buffer.isReadable()) {
++                    throw new IllegalArgumentException("Unexpected emote policy fields");
++                }
++                return policy;
++            }
++
++            @Override
++            public void write(final ByteBuf buffer, final Policy policy) {
++                Types.VAR_INT.writePrimitive(buffer, 1);
++                buffer.writeBoolean(policy.muteChat());
++                Types.UUID.write(buffer, policy.player());
++                Types.STRING.write(buffer, policy.name());
++            }
++        };
++
++        public Policy {
++            Objects.requireNonNull(player);
++            Objects.requireNonNull(name);
++        }
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index cd70c4f43..aa4cef92d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -153,6 +332,56 @@ index 049f7a141..7856db150 100644
                  gameSession.setCommandsEnabled(commandsEnabled);
                  gameSession.setInventoryServerAuthoritative(inventoryServerAuthoritative);
                  gameSession.setBlockBreakingServerAuthoritative(blockBreakingServerAuthoritative);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index 029b26620..6fb2e914b 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -33,6 +33,8 @@ import net.raphimc.viabedrock.api.model.LocatorBarSnapshot;
+ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
+ import net.raphimc.viabedrock.api.model.NativeCustomEntityMessage;
+ import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.api.model.EmoteAction;
++import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
+ import net.raphimc.viabedrock.api.model.NativeActorBoundsMessage;
+ import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+@@ -139,6 +141,16 @@ public final class MultiStatePackets {
+     public static final PacketHandler CUSTOM_PAYLOAD_HANDLER = wrapper -> {
+         wrapper.cancel();
+         final String channel = Key.namespaced(wrapper.read(Types.STRING)); // channel
++        if (channel.equals(EmoteAction.CHANNEL)) {
++            if (EmoteProvider.actionsEnabled(wrapper.user())) {
++                try {
++                    EmoteProvider.handleAction(wrapper.user(), wrapper.read(EmoteAction.TYPE));
++                } catch (final IllegalArgumentException | IndexOutOfBoundsException malformed) {
++                    // Invalid controls cannot choose another actor or alter the current playback state.
++                }
++            }
++            return;
++        }
+         if (channel.equals(CommandBlockEdit.CHANNEL)) {
+             if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY) {
+                 try {
+@@ -153,6 +165,9 @@ public final class MultiStatePackets {
+         if (channel.equals("minecraft:unregister")) {
+             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
+             wrapper.user().get(ChannelStorage.class).removeChannels(channels);
++            if (channels.contains(EmoteProvider.CHANNEL) || channels.contains(EmoteAction.Policy.CHANNEL)) {
++                EmoteProvider.refreshActionCapability(wrapper.user());
++            }
+             if ((channels.contains(NativeActorMessage.CHANNEL) || channels.contains(NativeActorMessage.CURRENT_CHANNEL))
+                     && wrapper.user().has(EntityTracker.class)) {
+                 wrapper.user().get(EntityTracker.class).sendNativeActorSnapshots();
+@@ -162,6 +177,9 @@ public final class MultiStatePackets {
+         if (channel.equals("minecraft:register")) {
+             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
+             wrapper.user().get(ChannelStorage.class).addChannels(channels);
++            if (channels.contains(EmoteProvider.CHANNEL) || channels.contains(EmoteAction.Policy.CHANNEL)) {
++                EmoteProvider.refreshActionCapability(wrapper.user());
++            }
+             WorldPackets.sendNativeCommandCapability(wrapper.user());
+             if (channels.contains(LocatorBarSnapshot.CHANNEL) && wrapper.user().has(PlayerWaypointTracker.class)) {
+                 wrapper.user().get(PlayerWaypointTracker.class).sendSnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
 index a20ced888..01ccf2763 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
@@ -214,10 +443,10 @@ index 6c30923b5..4ac5e03f2 100644
          protocol.cancelClientbound(ClientboundBedrockPackets.EDU_URI_RESOURCE); // Not relevant (Education Edition)
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/EmoteProvider.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/EmoteProvider.java
 new file mode 100644
-index 000000000..d7d200ab1
+index 000000000..d78188d3c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/EmoteProvider.java
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,168 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -246,6 +475,16 @@ index 000000000..d7d200ab1
 +import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 +import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 +import java.util.UUID;
++import java.nio.charset.StandardCharsets;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import net.raphimc.viabedrock.api.model.EmoteAction;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.EmoteData;
++import net.raphimc.viabedrock.protocol.storage.AuthData;
++import net.raphimc.viabedrock.protocol.storage.EmoteStorage;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +
 +/** Client integrations may consume native emotes directly or through the versioned payload. */
 +public class EmoteProvider implements Provider {
@@ -257,6 +496,7 @@ index 000000000..d7d200ab1
 +        if (!user.get(ChannelStorage.class).hasChannel(CHANNEL)) {
 +            return null;
 +        }
++        sendPolicy(user, player);
 +        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user);
 +        packet.write(Types.STRING, CHANNEL);
 +        packet.write(Types.VAR_INT, VERSION);
@@ -266,7 +506,90 @@ index 000000000..d7d200ab1
 +    }
 +
 +    public boolean isEmoting(final UserConnection user) {
-+        return false;
++        final var state = user.get(EmoteStorage.class);
++        return state != null && state.isEmoting();
++    }
++
++    public static void refreshActionCapability(final UserConnection user) {
++        if (user.getProtocolInfo().getClientState() != State.PLAY) {
++            return;
++        }
++        final boolean enabled = user.get(ChannelStorage.class).hasChannel(CHANNEL)
++                && user.get(ChannelStorage.class).hasChannel(EmoteAction.Policy.CHANNEL);
++        if (enabled) {
++            if (!user.has(EmoteStorage.class)) {
++                user.put(new EmoteStorage());
++            }
++            sendPolicy(user, user.getProtocolInfo().getUuid());
++        } else {
++            user.remove(EmoteStorage.class);
++        }
++        final var packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user);
++        packet.write(Types.STRING, enabled ? "minecraft:register" : "minecraft:unregister");
++        packet.write(Types.REMAINING_BYTES, EmoteAction.CHANNEL.getBytes(StandardCharsets.UTF_8));
++        packet.send(BedrockProtocol.class);
++    }
++
++    private static void sendPolicy(final UserConnection user, final UUID player) {
++        if (!user.get(ChannelStorage.class).hasChannel(EmoteAction.Policy.CHANNEL)) {
++            return;
++        }
++        final var players = user.get(PlayerListStorage.class);
++        final var entities = user.get(EntityTracker.class);
++        final var local = entities == null ? null : entities.getClientPlayer();
++        final String name;
++        if (local != null && player.equals(local.javaUuid())) {
++            final var listed = players == null ? null : players.getPlayer(local.uniqueId());
++            final var auth = user.get(AuthData.class);
++            name = listed != null ? listed.value() : auth != null ? auth.getDisplayName() : "";
++        } else {
++            final var listed = players == null ? null : players.getPlayer(player);
++            name = listed == null ? "" : listed.value();
++        }
++        final var policy = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user);
++        policy.write(Types.STRING, EmoteAction.Policy.CHANNEL);
++        policy.write(EmoteAction.Policy.TYPE, new EmoteAction.Policy(user.get(GameSessionStorage.class).isEmoteChatMuted(), player, name));
++        policy.send(BedrockProtocol.class);
++    }
++
++    public static boolean actionsEnabled(final UserConnection user) {
++        return user.getProtocolInfo().getClientState() == State.PLAY
++                && user.get(ChannelStorage.class).hasChannel(CHANNEL)
++                && user.get(ChannelStorage.class).hasChannel(EmoteAction.Policy.CHANNEL) && user.has(EmoteStorage.class);
++    }
++
++    public static void handleAction(final UserConnection user, final EmoteAction action) {
++        if (!actionsEnabled(user)) {
++            return;
++        }
++        final var state = user.get(EmoteStorage.class);
++        switch (action) {
++            case EmoteAction.Stop _ -> state.stop();
++            case EmoteAction.Available available -> {
++                state.available(available.emotes());
++                final var entities = user.get(EntityTracker.class);
++                if (entities == null || entities.getClientPlayer() == null) {
++                    return;
++                }
++                final var packet = PacketWrapper.create(ServerboundBedrockPackets.EMOTE_LIST, user);
++                packet.write(BedrockTypes.UNSIGNED_VAR_LONG, entities.getClientPlayer().runtimeId());
++                packet.write(BedrockTypes.UUID_ARRAY, available.emotes().toArray(UUID[]::new));
++                packet.sendToServer(BedrockProtocol.class);
++            }
++            case EmoteAction.Play play -> {
++                final var entities = user.get(EntityTracker.class);
++                final var auth = user.get(AuthData.class);
++                if (!state.contains(play.emote()) || entities == null || entities.getClientPlayer() == null
++                        || !entities.getClientPlayer().isInitiallySpawned() || auth == null) {
++                    return;
++                }
++                final var packet = PacketWrapper.create(ServerboundBedrockPackets.EMOTE, user);
++                packet.write(BedrockTypes.EMOTE, new EmoteData(entities.getClientPlayer().runtimeId(),
++                        play.emote(), play.ticks(), auth.getXuid(), "", 0));
++                packet.sendToServer(BedrockProtocol.class);
++                state.play(play.ticks());
++            }
++        }
 +    }
 +
 +    public void play(final UserConnection user, final UUID player, final UUID emote, final long lengthTicks, final int flags) {
@@ -289,6 +612,77 @@ index 000000000..d7d200ab1
 +        }
 +        packet.write(Types.UUID_ARRAY, emotes);
 +        packet.send(BedrockProtocol.class);
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EmoteStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EmoteStorage.java
+new file mode 100644
+index 000000000..51f27bb5a
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EmoteStorage.java
+@@ -0,0 +1,65 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StorableObject;
++import java.util.List;
++import java.util.Set;
++import java.util.UUID;
++import java.util.function.LongSupplier;
++
++/** The connected client's advertised wheel and local playback state. */
++public final class EmoteStorage implements StorableObject {
++
++    private final LongSupplier clock;
++    private Set<UUID> available = Set.of();
++    private boolean active;
++    private long started;
++    private long duration;
++
++    public EmoteStorage() {
++        this(System::nanoTime);
++    }
++
++    EmoteStorage(final LongSupplier clock) {
++        this.clock = clock;
++    }
++
++    public void available(final List<UUID> emotes) {
++        this.available = Set.copyOf(emotes);
++    }
++
++    public boolean contains(final UUID emote) {
++        return this.available.contains(emote);
++    }
++
++    public void play(final long ticks) {
++        this.active = true;
++        this.started = this.clock.getAsLong();
++        this.duration = ticks * 50_000_000L;
++    }
++
++    public void stop() {
++        this.active = false;
++    }
++
++    public boolean isEmoting() {
++        return this.active && (this.duration == 0 || this.clock.getAsLong() - this.started < this.duration);
 +    }
 +
 +}
@@ -389,12 +783,111 @@ index 000000000..4b8637205
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/EmoteActionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/EmoteActionTest.java
+new file mode 100644
+index 000000000..b669c52b5
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/EmoteActionTest.java
+@@ -0,0 +1,93 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.Unpooled;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.List;
++import java.util.UUID;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class EmoteActionTest {
++
++    @Test
++    void roundTripsAllControlsAndOwnsTheAvailableList() {
++        final UUID emote = UUID.randomUUID();
++        final var ids = new ArrayList<>(List.of(emote));
++        final var available = new EmoteAction.Available(ids);
++        ids.clear();
++        assertEquals(List.of(emote), available.emotes());
++        assertThrows(UnsupportedOperationException.class, () -> available.emotes().clear());
++        for (final var action : List.of(new EmoteAction.Play(emote, 12000), available, new EmoteAction.Stop())) {
++            final var buffer = Unpooled.buffer();
++            try {
++                EmoteAction.TYPE.write(buffer, action);
++                assertEquals(action, EmoteAction.TYPE.read(buffer));
++                assertFalse(buffer.isReadable());
++            } finally {
++                buffer.release();
++            }
++        }
++    }
++
++    @Test
++    void rejectsMalformedControlsBeforeAllocationOrPlayback() {
++        final UUID emote = UUID.randomUUID();
++        assertThrows(IllegalArgumentException.class, () -> new EmoteAction.Play(emote, -1));
++        assertThrows(IllegalArgumentException.class, () -> new EmoteAction.Play(emote, 12001));
++        assertThrows(IllegalArgumentException.class, () -> new EmoteAction.Available(Collections.nCopies(257, emote)));
++        for (final int count : new int[]{-1, 257, Integer.MAX_VALUE}) {
++            final var buffer = Unpooled.buffer();
++            try {
++                Types.VAR_INT.writePrimitive(buffer, 1);
++                Types.VAR_INT.writePrimitive(buffer, 1);
++                Types.VAR_INT.writePrimitive(buffer, count);
++                assertThrows(IllegalArgumentException.class, () -> EmoteAction.TYPE.read(buffer));
++            } finally {
++                buffer.release();
++            }
++        }
++        final var buffer = Unpooled.buffer();
++        try {
++            buffer.writeByte(2).writeByte(2);
++            assertThrows(IllegalArgumentException.class, () -> EmoteAction.TYPE.read(buffer));
++            buffer.clear().writeByte(1).writeByte(3);
++            assertThrows(IllegalArgumentException.class, () -> EmoteAction.TYPE.read(buffer));
++            buffer.clear();
++            EmoteAction.TYPE.write(buffer, new EmoteAction.Stop());
++            buffer.writeByte(0);
++            assertThrows(IllegalArgumentException.class, () -> EmoteAction.TYPE.read(buffer));
++            buffer.clear().writeByte(1).writeByte(0);
++            assertThrows(IndexOutOfBoundsException.class, () -> EmoteAction.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void policyKeepsWorldMutingAndRejectsTrailingFields() {
++        final var buffer = Unpooled.buffer();
++        try {
++            for (final boolean muted : new boolean[]{false, true}) {
++                buffer.clear();
++                final var policy = new EmoteAction.Policy(muted, UUID.randomUUID(), "Native player");
++                EmoteAction.Policy.TYPE.write(buffer, policy);
++                assertEquals(policy, EmoteAction.Policy.TYPE.read(buffer));
++            }
++            buffer.clear();
++            EmoteAction.Policy.TYPE.write(buffer, new EmoteAction.Policy(true, UUID.randomUUID(), "Native player"));
++            buffer.writeByte(0);
++            assertThrows(IllegalArgumentException.class, () -> EmoteAction.Policy.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/provider/EmoteProviderTest.java b/src/test/java/net/raphimc/viabedrock/protocol/provider/EmoteProviderTest.java
 new file mode 100644
-index 000000000..3e1351e34
+index 000000000..735baf604
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/provider/EmoteProviderTest.java
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,165 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -407,6 +900,19 @@ index 000000000..3e1351e34
 +import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
 +import java.util.UUID;
++import java.util.List;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import net.raphimc.viabedrock.api.model.EmoteAction;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.EmoteData;
++import net.raphimc.viabedrock.protocol.storage.AuthData;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.EmoteStorage;
++import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import static org.junit.jupiter.api.Assertions.*;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 +import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
@@ -444,6 +950,157 @@ index 000000000..3e1351e34
 +                }
 +            }
 +        }
++    }
++
++    @Test
++    void negotiatedControlsUseOnlyTheConnectedActorAndAccount() {
++        final var user = mock(UserConnection.class);
++        final var channels = new ChannelStorage();
++        when(user.get(GameSessionStorage.class)).thenReturn(mock(GameSessionStorage.class));
++        final var state = new EmoteStorage();
++        final var entities = mock(EntityTracker.class);
++        final var player = mock(ClientPlayerEntity.class);
++        final var auth = mock(AuthData.class);
++        when(user.get(ChannelStorage.class)).thenReturn(channels);
++        when(user.get(EmoteStorage.class)).thenReturn(state);
++        when(user.has(EmoteStorage.class)).thenReturn(true);
++        when(user.get(EntityTracker.class)).thenReturn(entities);
++        when(user.get(AuthData.class)).thenReturn(auth);
++        final var info = mock(com.viaversion.viaversion.api.connection.ProtocolInfo.class);
++        when(user.getProtocolInfo()).thenReturn(info);
++        when(info.getClientState()).thenReturn(State.PLAY);
++        final UUID self = UUID.randomUUID();
++        when(info.getUuid()).thenReturn(self);
++        when(entities.getClientPlayer()).thenReturn(player);
++        when(player.runtimeId()).thenReturn(123L);
++        when(player.javaUuid()).thenReturn(self);
++        when(player.isInitiallySpawned()).thenReturn(true);
++        when(auth.getXuid()).thenReturn("connected-account");
++        final UUID emote = UUID.randomUUID();
++        final var provider = new EmoteProvider();
++        try (var packets = mockStatic(PacketWrapper.class)) {
++            EmoteProvider.handleAction(user, new EmoteAction.Available(List.of(emote)));
++            packets.verifyNoInteractions();
++            assertFalse(state.contains(emote));
++            channels.addChannels(List.of(EmoteProvider.CHANNEL, EmoteAction.Policy.CHANNEL));
++            EmoteProvider.handleAction(user, new EmoteAction.Play(emote, 120));
++            packets.verifyNoInteractions();
++            final var list = mock(PacketWrapper.class);
++            packets.when(() -> PacketWrapper.create(ServerboundBedrockPackets.EMOTE_LIST, user)).thenReturn(list);
++            EmoteProvider.handleAction(user, new EmoteAction.Available(List.of(emote)));
++            verify(list).write(BedrockTypes.UNSIGNED_VAR_LONG, 123L);
++            verify(list).write(BedrockTypes.UUID_ARRAY, new UUID[]{emote});
++            verify(list).sendToServer(BedrockProtocol.class);
++            final var play = mock(PacketWrapper.class);
++            packets.when(() -> PacketWrapper.create(ServerboundBedrockPackets.EMOTE, user)).thenReturn(play);
++            EmoteProvider.handleAction(user, new EmoteAction.Play(emote, 120));
++            verify(play).write(BedrockTypes.EMOTE, new EmoteData(123, emote, 120, "connected-account", "", 0));
++            verify(play).sendToServer(BedrockProtocol.class);
++            assertTrue(provider.isEmoting(user));
++            EmoteProvider.handleAction(user, new EmoteAction.Stop());
++            assertFalse(provider.isEmoting(user));
++            clearInvocations(play);
++            when(player.isInitiallySpawned()).thenReturn(false);
++            EmoteProvider.handleAction(user, new EmoteAction.Play(emote, 120));
++            verifyNoInteractions(play);
++            when(player.isInitiallySpawned()).thenReturn(true);
++            when(user.getProtocolInfo().getClientState()).thenReturn(State.CONFIGURATION);
++            EmoteProvider.handleAction(user, new EmoteAction.Play(emote, 120));
++            verifyNoInteractions(play);
++        }
++    }
++
++    @Test
++    void withdrawalClearsPlaybackAndAdvertisesOnlyTheActionChannel() {
++        final var user = mock(UserConnection.class);
++        final var channels = new ChannelStorage();
++        when(user.get(GameSessionStorage.class)).thenReturn(mock(GameSessionStorage.class));
++        when(user.get(ChannelStorage.class)).thenReturn(channels);
++        final var info = mock(com.viaversion.viaversion.api.connection.ProtocolInfo.class);
++        when(user.getProtocolInfo()).thenReturn(info);
++        when(info.getClientState()).thenReturn(State.PLAY);
++        final UUID self = UUID.randomUUID();
++        when(info.getUuid()).thenReturn(self);
++        final var entities = mock(EntityTracker.class);
++        final var player = mock(ClientPlayerEntity.class);
++        when(user.get(EntityTracker.class)).thenReturn(entities);
++        when(entities.getClientPlayer()).thenReturn(player);
++        when(player.javaUuid()).thenReturn(self);
++        when(player.uniqueId()).thenReturn(42L);
++        final var players = new PlayerListStorage();
++        final UUID nativeSelf = UUID.randomUUID();
++        final UUID remote = UUID.randomUUID();
++        players.addPlayer(nativeSelf, 42, "Native local");
++        players.addPlayer(remote, 43, "Native remote");
++        when(user.get(PlayerListStorage.class)).thenReturn(players);
++        try (var packets = mockStatic(PacketWrapper.class)) {
++            final var packet = mock(PacketWrapper.class);
++            packets.when(() -> PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user)).thenReturn(packet);
++            channels.addChannels(List.of(EmoteProvider.CHANNEL, EmoteAction.Policy.CHANNEL));
++            EmoteProvider.refreshActionCapability(user);
++            verify(packet).write(Types.STRING, "minecraft:register");
++            verify(packet).write(EmoteAction.Policy.TYPE, new EmoteAction.Policy(false, self, "Native local"));
++            verify(user).put(any(EmoteStorage.class));
++            when(user.get(GameSessionStorage.class).isEmoteChatMuted()).thenReturn(true);
++            new EmoteProvider().play(user, remote, UUID.randomUUID(), 20, 0);
++            verify(packet).write(EmoteAction.Policy.TYPE, new EmoteAction.Policy(true, remote, "Native remote"));
++            clearInvocations(packet);
++            channels.removeChannels(List.of(EmoteProvider.CHANNEL));
++            EmoteProvider.refreshActionCapability(user);
++            verify(packet).write(Types.STRING, "minecraft:unregister");
++            verify(user).remove(EmoteStorage.class);
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/EmoteStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/EmoteStorageTest.java
+new file mode 100644
+index 000000000..4d546ef8a
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/EmoteStorageTest.java
+@@ -0,0 +1,45 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import java.util.List;
++import java.util.UUID;
++import java.util.concurrent.atomic.AtomicLong;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class EmoteStorageTest {
++
++    @Test
++    void playbackExpiresStopsAndKeepsWheelOwnershipSeparate() {
++        final var clock = new AtomicLong(Long.MAX_VALUE - 100_000_000L);
++        final var state = new EmoteStorage(clock::get);
++        final UUID emote = UUID.randomUUID();
++        assertFalse(state.isEmoting());
++        assertFalse(state.contains(emote));
++        state.available(List.of(emote));
++        assertTrue(state.contains(emote));
++        state.play(4);
++        assertTrue(state.isEmoting());
++        clock.addAndGet(199_999_999L);
++        assertTrue(state.isEmoting());
++        clock.incrementAndGet();
++        assertFalse(state.isEmoting());
++        state.play(20);
++        state.available(List.of());
++        assertFalse(state.contains(emote));
++        assertTrue(state.isEmoting());
++        state.stop();
++        assertFalse(state.isEmoting());
++        state.play(0);
++        clock.addAndGet(1_000_000_000_000L);
++        assertTrue(state.isEmoting());
++        state.stop();
++        assertFalse(state.isEmoting());
 +    }
 +
 +}

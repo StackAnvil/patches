@@ -400,7 +400,7 @@ The sound-control change also passes the [complete main-branch CI build](https:/
 | S1 | Animated face composition and native tint blending | Unverified | Existing production paths need broader native face, channel, mask, and outfit comparisons. |
 | S2 | Complete local persona assembly | Incomplete | Resolve unavailable free assets and remaining geometry, layering, and animation sources. |
 | S3 | Classic geometry and animation formats | Incomplete | Complete inherited legacy sources, aliases, metadata, and inheritance comparisons. |
-| S4 | Emotes and animation fidelity | Incomplete | Incoming proxy playback reaches the installed renderer for four controlled bundled emotes. Complete local proxy selection, unavailable remote assets, events, effects, cancellation, platform filters and native visual comparisons. |
+| S4 | Emotes and animation fidelity | Incomplete | Incoming proxy playback reaches the installed renderer for four controlled bundled emotes. Direct and proxy wheel controls verify native sending, movement cancellation, expiry and announcement names. Complete unavailable remote assets, events, effects, other interruption modes, platform filters and native visual comparisons. |
 | S5 | Native first-person and held-item drawing | Incomplete | Classic and persona graphs submit their sampled hierarchy with authored scale, death roll, and raw-name transforms. Server costumes now select resolved hand-view surfaces in the sampled actor scope. Verify native costume placement, visible timing, and persona overlap, then complete other global transforms, held items, charging, equipment, and input timing. |
 | S6 | Complete incoming skin records through ViaProxy | Implemented | Complete records and local-avatar ownership pass isolated direct and proxy playback. Broader remote-player, lifecycle, and native visual comparisons remain required. |
 | D1 | Palettes, color channels, and limb editing | Unverified | Compare remaining palette options, asynchronous saves, and fresh native limb edits. |
@@ -10290,7 +10290,8 @@ A screenshot shows a wave, while three complete skin records load without reject
 The fixture supplies peer placement and emote durations. It is not an unchanged native capture.
 No native graphical comparison or complete emote fidelity is claimed.
 
-**Remaining:** Local emote selection and live skin changes through ViaProxy still need implementation.
+**Remaining:** Live skin changes through ViaProxy still need implementation.
+Local emote selection is covered by the later control milestone.
 The current skin-change request path requires a direct Bedrock connection.
 Broader skin composition, emote cancellation and effects, Iris rendering, interactions and original gameplay reports remain open.
 
@@ -10332,3 +10333,45 @@ The checks establish bounded server outcomes. They do not replace packet analysi
 Its available camera images cover block faces, the tripod entity and UI icons.
 This explains the absent source image in the direct conversion. Correct native item presentation still needs evidence.
 The direct rendering gate remains failed until the mapping is resolved.
+
+## Local emote controls on direct and proxy connections (October 25, 2026)
+
+**Implemented:** The emote wheel now sends available IDs, playback and cancellation through the same negotiated core controls on both routes.
+Core supplies the connected actor runtime ID and Xbox identity.
+Requests contain no actor or account identity fields.
+Playback requires a registered capability, an advertised ID and a spawned local player.
+The decoder bounds lists and durations and rejects unknown versions, actions and trailing fields.
+
+The client waits for the current connection's world chat policy before it enables the wheel.
+Announcements use native player-list names because Java profile names can be synthetic or empty.
+Local lookup uses the native unique ID, preserving names when the Java and native UUIDs differ.
+Core supplies the connected account name until the native player-list entry arrives.
+Remote playback receives native announcement names through the new context channel, preserving the existing playback format.
+Connection replacement clears the client context and pending controls.
+
+Per-connection state supplies the native Emoting input flag through ViaProxy.
+Movement, interaction, natural completion and account replacement send an explicit stop.
+Duration expiry and capability withdrawal also clear core playback state.
+Zero duration preserves the existing client behavior until cancellation.
+
+**Verification:** The full four-project build passes 3,029 tests with 152 optional skips.
+Both core Checkstyle tasks pass, and all 104 core and 38 add-on patches replay.
+Seven focused tests also pass against the distributable core JAR with verified production origins.
+Core classes and resources match both embedded consumers, and client classes match the add-on JAR.
+
+Fresh direct and ViaProxy sessions use physical B-key and slot-key input against an isolated Bedrock 1.26.51.1 server.
+The fixture installs four declared bundled wheel choices without sending packets or starting animation.
+Both routes produce native server emote receipts, local world-render samples and correctly named announcements.
+Native journals retain the connected actor ID, zero outgoing flags and Emoting input during playback.
+Movement clears Emoting before the declared duration ends. A second selection completes naturally and clears it again.
+These controls use a private display and silent software rendering.
+
+The incoming proxy regression also passes its full rendering gate.
+All four declared bundled emotes reach world-render sampling across 73 observations, and the remote announcement uses the native player-list name.
+The peer placement and emote durations remain fixture inputs. The peer remains partly submerged in the recorded scene.
+This does not establish native placement, pose or complete graphical parity.
+
+**Remaining:** Account wardrobe assignment, purchases and native graphical comparisons remain outside these controls.
+Emote effects, additional interruption modes, persona composition, platform filters and native pose comparisons remain incomplete.
+Live skin changes through ViaProxy remain unfinished.
+The direct camera-item rendering gate and original gameplay reports remain open.
