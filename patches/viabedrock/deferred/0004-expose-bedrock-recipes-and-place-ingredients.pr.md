@@ -731,3 +731,47 @@ The original palette methods store a borrowed Level token but do not read it.
 Full Level construction, negotiated or hashed palette delivery, the complete handler and installed player behavior remain unverified.
 Production implementation and resource files remain unchanged. No new live capture ran.
 See the [owned palette reference](../../../docs/bedrock-coverage.md#owned-runtime-palettes-for-recipe-results-october-25-2026).
+
+## Retained output index and candidate order (October 25, 2026)
+
+`CraftingDataTracker.outputCandidates` returns retained recipes before caller unlock or availability filters.
+It preserves the original per-output map traversal, station-context order and raw recipe-ID deduplication.
+Replacement keeps the existing map node position, including replacement from a different station.
+The output key retains the selected Item definition and auxiliary value.
+The complete original query `143249870` compares actual Item pointers, rather than their numeric IDs.
+The collision regression supplies typed retained definitions. A native collision caller remains outside that control.
+
+The map foundation belongs to the earlier registry patch.
+Item definition names keep FNV-1. Recipe string IDs use FNV-1a over UTF-8 bytes.
+The earlier 168 palette queries now compare exact candidate IDs and order through the real Java policies.
+
+The new `STACKANVIL_NATIVE_RECIPE_OUTPUT_INDEX` reference executes 528 complete native packets and 3,168 original output queries.
+All candidate IDs and orders match Java.
+It records capacities 8, 64, 512 and 1024, cross-station replacement, three global registration rejections and clearing.
+Inputs include case differences, Unicode, an embedded NUL, long IDs and rejected-ID reuse.
+Every packet also compares the actual native network-ID set.
+The Java reference uses real Item registry, result-construction and output-index policies over the same typed declarations.
+
+Original packet, recipe, Item, Block, TLS, static and CRT retirement completes without retained allocations or locks.
+Caller context strings and constructor inputs remain declared backing. Standard runtime services and valid byte I/O remain hosted.
+These ordinary results use zero runtime ID and a null world context.
+
+All 106 core patches replay. The four-project build passes 2,956 tests with 160 optional skips and no failures or errors.
+ViaBedrock passes 1,825 tests with 83 optional skips. Both Checkstyle tasks and repository offline validation pass.
+All five focused packaged tests pass, with implementation origins verified.
+The preceding core fails the typed definition-collision assertion.
+A deliberate FNV-1 recipe hash fails both native candidate-order references by value.
+The existing unlock reference shares fixed definition backing across independent trackers.
+It retains every native input and the 1 GiB test heap.
+
+All 1,524 core classes and 198 core assets match both embedded copies.
+Compiled client classes also match the add-on, including its Minecraft bridge.
+The new shared map replaces the private definition map.
+The comparison retains 1,505 byte-identical core classes and all 198 assets from the preceding core.
+Five existing implementations, ten nested classes and three build-identity classes change.
+Nine nested declarations and instruction sets remain identical.
+The output catalog changes only its generic map value type, with identical erased instructions.
+
+Full descriptor admission, Molang context, retained player evaluation, controller ownership and installed publication remain unfinished.
+No new live capture ran.
+See the [candidate reference](../../../docs/bedrock-coverage.md#retained-recipe-output-candidates-october-25-2026).

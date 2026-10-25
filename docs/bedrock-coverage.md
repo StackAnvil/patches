@@ -9803,3 +9803,51 @@ The focused stack run passes all 24 tests with no skips, plus both Checkstyle ta
 Production implementation and resource files remain unchanged.
 Full Level setup, hashed delivery, the complete packet handler and installed player publication remain unfinished.
 No new live capture ran, and the four original bug reports remain unresolved.
+
+## Retained recipe output candidates (October 25, 2026)
+
+Output lookup now returns retained recipes in the native index order before unlock or availability filters.
+The index uses the selected Item definition and auxiliary value as its bucket key.
+Numeric Item IDs alone cannot represent this contract for retained definitions that share an ID.
+The complete original query compares Item pointers before full stack matching.
+A typed collision regression checks the Java key contract. A native collision caller remains unverified.
+
+Each output bucket stores recipe IDs with native UTF-8 FNV-1a hashing and map traversal.
+A replacement keeps its existing node position, including replacements from another station.
+Lookup visits station contexts in caller order and removes repeated recipe IDs after matching.
+Unlock checks now consume this same candidate lookup.
+The shared map retains FNV-1 for Item definition names. The two hash functions remain explicit.
+
+The original native reference decodes and registers 528 complete recipe packets.
+It admits 525 recipes and rejects three conflicting identity or network-ID registrations.
+One clear operation retires the previous registry contents before subsequent registration.
+Every stage records the actual network-ID set, output bucket capacity and ordered members.
+The native buckets grow through capacities 8, 64, 512 and 1024.
+
+All 3,168 original output queries match Java candidate IDs and order.
+The inputs include Unicode, case differences, an embedded NUL, long IDs, station replacement and rejected-ID reuse.
+Repeated, reversed and empty context lists retain their measured behavior.
+The earlier 168 palette queries also match exact candidate order, in addition to their result values.
+
+Original packet, recipe, Item, Block, TLS, static and CRT retirement leaves no allocations or held locks.
+The target remains Bedrock 1.26.51.1, build 51061372, protocol 2193, with the recorded default Experiments and base-game version.
+The reference supplies typed constructor inputs, SSO context strings, valid byte I/O and standard runtime services.
+Ordinary apple outputs use runtime ID zero and a null world context.
+No ordering, registration or stack-matching answer is supplied.
+
+All 106 core patches replay. The four-project build passes 2,956 tests with 160 optional skips and no failures or errors.
+ViaBedrock passes 1,825 tests with 83 optional skips.
+All five focused packaged tests pass, with implementation origins verified.
+The preceding core fails the retained-definition collision assertion.
+A deliberate FNV-1 replacement for the recipe hash fails two candidate-order assertions.
+
+All 1,524 core classes and 198 core assets match both embedded copies.
+The client check matches all compiled classes, including its Minecraft bridge.
+Compared with the preceding core, 1,505 classes and all 198 assets remain byte-identical.
+The shared map replaces its private predecessor. Five existing implementations and three build-identity classes change.
+Nine changed nested classes retain identical declarations and instructions.
+The tenth changes only its output map's generic value type to an ordered list, with identical erased instructions.
+
+This candidate lookup does not complete the retained player evaluator or its screen publication.
+Descriptor admission, full Molang context, native controller ownership and installed player behavior remain unfinished.
+No new live capture ran, and the four original bug reports remain unresolved.

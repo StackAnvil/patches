@@ -883,3 +883,16 @@ Another 300 incoming results derive from omitted callbacks and the inspected nat
 Original backing, input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
 Armor, drop, specialized output and full controller behavior remain separate verification boundaries.
 See the [provider permission reference](../../../docs/native-player-inventory.md#provider-item-lock-permissions) for scope and fixture details.
+
+## Shared map traversal (October 25, 2026)
+
+`NativeStringMap` now owns the map traversal previously nested inside `NativeItemDefinitions`.
+The existing Item registry keeps its FNV-1 hash function and construction order.
+The shared class makes hashing explicit so recipe string IDs can use FNV-1a without changing definition semantics.
+The recipe patch owns that consumer, its typed definition keys and candidate lookup.
+All prior native definition comparisons remain enabled in the four-project build.
+That build passes 2,956 tests with 160 optional skips and no failures or errors.
+
+Original recipe controls record native map bucket counts of 8, 64, 512 and 1024.
+They also cover UTF-8 bytes, replacement without relocation and exact query traversal.
+The [candidate reference](../../../docs/bedrock-coverage.md#retained-recipe-output-candidates-october-25-2026) records those controls and their remaining boundaries.

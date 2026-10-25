@@ -1,4 +1,4 @@
-From 60f00aee15d25b655927c9464ced1cb8dfe4a385 Mon Sep 17 00:00:00 2001
+From 8167c982abbe6c6df46b8855451a43223a9ec007 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -627,6 +627,11 @@ planner. Standard native removal for that provider and incoming player
 storage do not install that filter. Existing merge, capacity and slot
 identity checks remain part of the plan. Keep player-slot, cursor, armor
 and other provider permission checks in their respective action adapters.
+
+Share the measured native string-map traversal with recipe output indexes.
+Keep the hash function explicit: constructed Item names use FNV-1, while
+recipe std::string IDs use FNV-1a. Moving the existing bucket growth,
+replacement and traversal policy does not change definition construction.
 ---
  Data Asset Sources.md                         |    33 +
  build.gradle                                  |     1 +
@@ -643,6 +648,7 @@ and other provider permission checks in their respective action adapters.
  .../container/block/HopperContainer.java      |    47 +
  .../container/dynamic/BundleContainer.java    |     2 +-
  .../definition/ItemDefinitions.java           |     5 -
+ .../viabedrock/api/util/NativeStringMap.java  |    75 +
  .../viabedrock/protocol/BedrockProtocol.java  |     3 +
  .../protocol/data/BedrockMappingData.java     |    15 +-
  .../protocol/model/BaseGameVersion.java       |    53 +
@@ -660,7 +666,7 @@ and other provider permission checks in their respective action adapters.
  .../protocol/model/ItemRegistry.java          |   156 +
  .../model/ItemStackingProperties.java         |    36 +
  .../model/LegacyItemStackingProperties.java   |    54 +
- .../protocol/model/NativeItemDefinitions.java |   366 +
+ .../protocol/model/NativeItemDefinitions.java |   309 +
  .../protocol/model/NativeItemName.java        |    78 +
  .../protocol/packet/HudPackets.java           |    51 +-
  .../protocol/packet/InteractionPackets.java   |     2 +-
@@ -702,7 +708,7 @@ and other provider permission checks in their respective action adapters.
  .../packet/NpcDialoguePacketTest.java         |   301 +-
  .../packet/WrittenBookUsePacketTest.java      |     1 +
  .../storage/NativeContainerUiStateTest.java   |    85 +
- 74 files changed, 34510 insertions(+), 362 deletions(-)
+ 75 files changed, 34528 insertions(+), 362 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BuiltinBlockNames.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemStacking.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSlots.java
@@ -712,6 +718,7 @@ and other provider permission checks in their respective action adapters.
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeStorageContainers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/Generic3x3Container.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/HopperContainer.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/NativeStringMap.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/BaseGameVersion.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/BuiltinItemAliases.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/BuiltinItemFactories.java
@@ -1510,6 +1517,87 @@ index 8a5a49326..f8282f25a 100644
          }
          this.items.put(identifier, itemDefinition);
      }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/util/NativeStringMap.java b/src/main/java/net/raphimc/viabedrock/api/util/NativeStringMap.java
+new file mode 100644
+index 000000000..dd4f77440
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/util/NativeStringMap.java
+@@ -0,0 +1,75 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.util;
++
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayDeque;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Objects;
++import java.util.function.ToLongFunction;
++
++/** MSVC unordered-map traversal for unique UTF-8 keys, with the caller's native hash function. */
++public final class NativeStringMap<V> {
++
++    private final Map<String, V> values = new HashMap<>();
++    private final ToLongFunction<byte[]> hash;
++    private Map<Integer, ArrayDeque<String>> buckets = new LinkedHashMap<>();
++    private int capacity = 8;
++
++    public NativeStringMap(final ToLongFunction<byte[]> hash) {
++        this.hash = Objects.requireNonNull(hash);
++    }
++
++    public V get(final String key) {
++        return this.values.get(key);
++    }
++
++    public void put(final String key, final V value) {
++        if (this.values.containsKey(key)) {
++            this.values.put(key, value);
++            return;
++        }
++        if (this.values.size() == this.capacity) {
++            final List<String> previous = this.keys();
++            this.capacity = Math.multiplyExact(this.capacity, this.capacity < 512 ? 8 : 2);
++            this.buckets = new LinkedHashMap<>();
++            previous.forEach(this::insert);
++        }
++        this.values.put(key, value);
++        this.insert(key);
++    }
++
++    public void remove(final String key) {
++        if (this.values.remove(key) != null) {
++            final int bucket = this.bucket(key);
++            final ArrayDeque<String> keys = this.buckets.get(bucket);
++            keys.remove(key);
++            if (keys.isEmpty()) {
++                this.buckets.remove(bucket);
++            }
++        }
++    }
++
++    public List<V> values() {
++        return this.keys().stream().map(this.values::get).toList();
++    }
++
++    private void insert(final String key) {
++        this.buckets.computeIfAbsent(this.bucket(key), ignored -> new ArrayDeque<>()).addFirst(key);
++    }
++
++    private int bucket(final String key) {
++        return (int) this.hash.applyAsLong(key.getBytes(StandardCharsets.UTF_8)) & (this.capacity - 1);
++    }
++
++    private List<String> keys() {
++        return this.buckets.values().stream().flatMap(ArrayDeque::stream).toList();
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index 4423aa368..dae6ee85a 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -2988,10 +3076,10 @@ index 000000000..2922971d7
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/NativeItemDefinitions.java b/src/main/java/net/raphimc/viabedrock/protocol/model/NativeItemDefinitions.java
 new file mode 100644
-index 000000000..64f2bdb8e
+index 000000000..0de2d0beb
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/NativeItemDefinitions.java
-@@ -0,0 +1,366 @@
+@@ -0,0 +1,309 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3001,9 +3089,9 @@ index 000000000..64f2bdb8e
 +
 +import com.viaversion.nbt.tag.CompoundTag;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
++import net.raphimc.viabedrock.api.util.Fnv1;
++import net.raphimc.viabedrock.api.util.NativeStringMap;
 +
-+import java.nio.charset.StandardCharsets;
-+import java.util.ArrayDeque;
 +import java.util.ArrayList;
 +import java.util.HashMap;
 +import java.util.LinkedHashMap;
@@ -3015,7 +3103,7 @@ index 000000000..64f2bdb8e
 +/** Constructor-owned definition identities and the independent native lookup tables. */
 +public final class NativeItemDefinitions<T> {
 +
-+    private final NameMap<Definition<T>> ordinary = new NameMap<>();
++    private final NativeStringMap<Definition<T>> ordinary = new NativeStringMap<>(Fnv1::fnv1_64);
 +    private final Map<String, Definition<T>> priority = new HashMap<>();
 +    private final Map<String, Definition<T>> fallback = new HashMap<>();
 +    private final Map<Integer, Definition<T>> numeric = new HashMap<>();
@@ -3297,63 +3385,6 @@ index 000000000..64f2bdb8e
 +            if (!NativeItemDefinitions.this.constructing) {
 +                throw new IllegalStateException("Definition construction is complete");
 +            }
-+        }
-+    }
-+
-+    /** MSVC unordered-map traversal for unique HashedString keys on the pinned native build. */
-+    private static final class NameMap<V> {
-+        private final Map<String, V> values = new HashMap<>();
-+        private Map<Integer, ArrayDeque<String>> buckets = new LinkedHashMap<>();
-+        private int capacity = 8;
-+
-+        V get(final String key) {
-+            return this.values.get(key);
-+        }
-+
-+        void put(final String key, final V value) {
-+            if (this.values.containsKey(key)) {
-+                this.values.put(key, value);
-+                return;
-+            }
-+            if (this.values.size() == this.capacity) {
-+                final List<String> previous = this.keys();
-+                this.capacity = Math.multiplyExact(this.capacity, this.capacity < 512 ? 8 : 2);
-+                this.buckets = new LinkedHashMap<>();
-+                previous.forEach(this::insert);
-+            }
-+            this.values.put(key, value);
-+            this.insert(key);
-+        }
-+
-+        void remove(final String key) {
-+            if (this.values.remove(key) != null) {
-+                final int bucket = this.bucket(key);
-+                final ArrayDeque<String> keys = this.buckets.get(bucket);
-+                keys.remove(key);
-+                if (keys.isEmpty()) {
-+                    this.buckets.remove(bucket);
-+                }
-+            }
-+        }
-+
-+        List<V> values() {
-+            return this.keys().stream().map(this.values::get).toList();
-+        }
-+
-+        private void insert(final String key) {
-+            this.buckets.computeIfAbsent(this.bucket(key), ignored -> new ArrayDeque<>()).addFirst(key);
-+        }
-+
-+        private int bucket(final String key) {
-+            long hash = 0xCBF29CE484222325L;
-+            for (final byte value : key.getBytes(StandardCharsets.UTF_8)) {
-+                hash = hash * 0x100000001B3L ^ Byte.toUnsignedLong(value);
-+            }
-+            return (int) hash & (this.capacity - 1);
-+        }
-+
-+        private List<String> keys() {
-+            return this.buckets.values().stream().flatMap(ArrayDeque::stream).toList();
 +        }
 +    }
 +
