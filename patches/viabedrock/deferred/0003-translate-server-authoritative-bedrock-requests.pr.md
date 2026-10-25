@@ -805,3 +805,71 @@ The complete core suite passes 1,735 tests with 85 optional skips. Checkstyle pa
 All nine retained packaged suites and the nonempty-component suite pass.
 All 1,514 core classes, three registry resources and unchanged Block auxiliary data match their embedded client and proxy copies.
 All 1,191 client classes match the tested add-on.
+
+
+## Saved NBT stack loading
+
+Saved items now use a shared NBT loader with separate ItemInstance and ItemStack constructor tails.
+Merchant offers use this loader without a second Block write that could restore cleared ownership.
+Block-entity item conversion also uses the shared path.
+
+The loader preserves typed admission.
+An existing `Name` field takes precedence over `id`, including an empty or mistyped `Name`.
+Without `Name`, the loader accepts a string ID or a short legacy ID.
+The pinned table contains 292 saved ID names and five legacy ID upgrades.
+This table is separate from current numeric Item ownership.
+`Damage` requires a short tag, and `Count` requires a byte tag.
+The byte count retains its unsigned value.
+
+Named lookup precedes numeric owner selection.
+The numeric owner's association supplies the fallback Block after initialization.
+An absent or mistyped `Block` field uses that association.
+A present compound instead follows serialized Block loading, which can return no Block.
+Exact legacy-group membership remains separate from registered Block-name lookup.
+Block selection can then rebind the Item before its post-load callback.
+
+The loader copies compound userdata, retains restrictions and reads the typed pickup flag.
+For measured durable definitions, the post-load callback migrates effective auxiliary damage into userdata only when its `Damage` key is absent.
+Wildcard normalization follows that callback.
+ItemInstance assignment preserves the loaded fields.
+ItemStack reconstructs its header, clears raw auxiliary for a retained Block and invalidates zero-count Item and Block ownership.
+Userdata, restrictions and the pickup flag survive that header invalidation.
+
+Two shared lookup corrections support this path.
+Restriction expansion selects exact legacy groups first, then uses normal registered lookup for individual Blocks.
+Thus `minecraft:stone` expands its group, while `Minecraft:Stone` resolves the individual stone Block.
+The earlier 116-case group fixture retains its explicitly supplied case-sensitive primary lookup.
+It does not represent the complete registry lookup.
+An empty alias callback result now preserves the original name and auxiliary value.
+The raw callback API remains unchanged.
+This distinction preserves a generic spawn egg when its metadata has no nonempty alias target.
+
+The original loader `14248e620` and constructors `14247f1f0` and `142483da0` execute against the complete native registry and Block converter.
+The target remains 1.26.51.1, build 51061372, protocol 2193, with default Experiments and base-game version 1.26.50.
+Four controls cover 819 baseline inputs, 1,319 expanded inputs, 33 empty-registry cases and 83 follow-up cases.
+These controls overlap.
+The expanded cases include durable definitions, books, potions and actual serialized Block tags.
+The follow-up covers malformed fields, unknown Block states, spawn eggs and mixed-case restrictions.
+Original game instructions remain unchanged.
+Original input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+The packaged core matches all 4,508 ItemInstance and ItemStack outputs and eleven exact group-membership observations.
+The comparison checks selected definitions, raw counts and auxiliary values, exact typed Block states, userdata, restrictions and pickup flags.
+The Java input NBT remains unchanged after conversion.
+Nine deliberate changes fail native value comparisons across typed admission, ownership, constructor tails, wildcard handling, pickup state and shared lookup behavior.
+Retained named, definition, network, component, recipe and matcher controls still pass.
+
+The four-project build passes 2,872 tests with 161 optional skips and no failures or errors.
+The core suite passes 1,741 tests with 84 optional skips. Checkstyle passes.
+All nine retained packaged suites and the nonempty-component suite pass.
+All 1,520 core classes and four registry resources match their embedded client and proxy copies.
+All 1,191 client classes match the tested add-on.
+The Block auxiliary data remains unchanged.
+
+These typed-input controls establish the measured saved constructors, including nonempty saved userdata.
+They do not establish complete wire admission, arbitrary versioned or custom Block loading, nonfinite data, or native weak-owner retirement.
+Ordinary named and network userdata admission remains outside these controls.
+Complete client/level setup, installed recipe availability, player screens and physical input remain unfinished.
+Some legacy actions still use `BedrockItem.isDifferent` to compare encoded fields.
+The 12 broad and 107 focused Block-state differences remain open.
+All five goal areas and the four original reports remain active.

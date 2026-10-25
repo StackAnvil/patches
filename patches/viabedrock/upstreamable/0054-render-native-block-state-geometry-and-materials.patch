@@ -1,4 +1,4 @@
-From 0eaf44658db67a569a3313c6669ee9ddd2487dc3 Mon Sep 17 00:00:00 2001
+From f817d50c6d2101f8c65b93b09949c220da805131 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -348,12 +348,20 @@ A registered custom archetype can have known ownership while its auxiliary
 converter is unverified. Keep that registration identity available without
 selecting a default state or treating missing conversion as an absent block.
 Use actual builtin palette block IDs and accepted custom BlockProperties.
+
+Keep exact legacy-group membership separate from individual Block lookup.
+The saved Item loader checks original HashedString group membership with
+142ae8d00 before rebinding a Block to an Item. Restriction expansion uses
+that same exact group selection, then the complete registry normalizes
+individual Block names. A full native saved-NBT control exposes the
+missing mixed-case fallback. Preserve the earlier group fixture's
+explicit case-sensitive primary lookup boundary independently.
 ---
  Data Asset Sources.md                         |   27 +
  .../chunk/blockstate/BlockItemDescriptor.java |   29 +
  .../blockstate/BlockItemDescriptors.java      |  141 +++
  .../api/chunk/blockstate/BlockItemStates.java |  134 ++
- .../chunk/blockstate/BlockRegistryNames.java  |  143 +++
+ .../chunk/blockstate/BlockRegistryNames.java  |  145 +++
  .../chunk/blockstate/RuntimeBlockPalette.java |   68 +
  .../api/model/CustomBlockCulling.java         |  206 +++
  .../api/model/CustomBlockFaceLighting.java    |   98 ++
@@ -374,7 +382,7 @@ Use actual builtin palette block IDs and accepted custom BlockProperties.
  .../protocol/packet/JoinPackets.java          |   31 +-
  .../protocol/packet/ResourcePackPackets.java  |   47 +-
  .../protocol/packet/VoxelShapePackets.java    |   35 +
- .../protocol/rewriter/BlockStateRewriter.java |  249 ++--
+ .../protocol/rewriter/BlockStateRewriter.java |  253 ++--
  .../rewriter/ResourcePackRewriter.java        |    2 +
  .../CustomBlockCullingCompiler.java           |  162 +++
  .../resourcepack/CustomBlockModel.java        |  587 +++++++++
@@ -391,7 +399,7 @@ Use actual builtin palette block IDs and accepted custom BlockProperties.
  .../bedrock/block_restriction_groups.json     |  549 ++++++++
  .../blockstate/BlockItemDescriptorsTest.java  |  119 ++
  .../chunk/blockstate/BlockItemStatesTest.java |  135 ++
- .../blockstate/BlockRegistryNamesTest.java    |  104 ++
+ .../blockstate/BlockRegistryNamesTest.java    |  107 ++
  .../blockstate/RuntimeBlockPaletteTest.java   |   61 +
  .../api/model/CustomBlockCullingTest.java     |   54 +
  .../api/model/CustomBlockLightingTest.java    |  171 +++
@@ -412,7 +420,7 @@ Use actual builtin palette block IDs and accepted custom BlockProperties.
  .../storage/CustomBlockPackStorageTest.java   |   31 +
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  230 ++++
- 63 files changed, 9469 insertions(+), 109 deletions(-)
+ 63 files changed, 9478 insertions(+), 109 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -828,10 +836,10 @@ index 000000000..492e3ed40
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNames.java b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNames.java
 new file mode 100644
-index 000000000..e1547ebd6
+index 000000000..f9ca37907
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNames.java
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,145 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -852,6 +860,7 @@ index 000000000..e1547ebd6
 +import java.util.Map;
 +import java.util.Set;
 +import java.util.TreeSet;
++import java.util.function.Function;
 +
 +/** Resolves native primary registrations before aliases and namespace fallback. */
 +public final class BlockRegistryNames {
@@ -879,6 +888,11 @@ index 000000000..e1547ebd6
 +            }
 +        }
 +        this.namespaces = java.util.Collections.unmodifiableSet(namespaces);
++    }
++
++    /** Legacy group names use their exact qualified spelling before individual Block lookup. */
++    public boolean isRestrictionGroup(final String identifier) {
++        return RESTRICTION_GROUPS.containsKey(identifier);
 +    }
 +
 +    public String resolve(final String identifier) {
@@ -911,36 +925,32 @@ index 000000000..e1547ebd6
 +        return null;
 +    }
 +
-+    /** Restriction strings use case-sensitive Minecraft qualification and expand groups before aliases. */
++    /** Exact legacy groups precede normal registered Block lookup, including its name normalization. */
 +    public Set<String> restrictionBlocks(final String[] identifiers) {
++        return this.restrictionBlocks(identifiers, this::resolve);
++    }
++
++    Set<String> restrictionBlocks(final String[] identifiers, final Function<String, String> lookup) {
 +        final Set<String> result = new HashSet<>();
 +        for (final String identifier : identifiers) {
 +            final String qualified = identifier.indexOf(':') >= 0 ? identifier : "minecraft:" + identifier;
 +            final List<String> group = RESTRICTION_GROUPS.get(qualified);
 +            if (group != null) {
 +                for (final String member : group) {
-+                    final String resolved = this.exact(member);
++                    final String resolved = lookup.apply(member);
 +                    if (resolved == null) {
 +                        break;
 +                    }
 +                    result.add(resolved);
 +                }
 +            } else {
-+                final String resolved = this.exact(qualified);
++                final String resolved = lookup.apply(qualified);
 +                if (resolved != null) {
 +                    result.add(resolved);
 +                }
 +            }
 +        }
 +        return Set.copyOf(result);
-+    }
-+
-+    private String exact(final String identifier) {
-+        if (this.primary.contains(identifier)) {
-+            return identifier;
-+        }
-+        final String alias = this.aliases.get(identifier);
-+        return alias != null && this.primary.contains(alias) ? alias : null;
 +    }
 +
 +    private static Map<String, List<String>> loadRestrictionGroups() {
@@ -2685,7 +2695,7 @@ index 000000000..9c9d66373
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-index 10854c61a..d59c3b700 100644
+index 10854c61a..9066fb749 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 @@ -17,23 +17,31 @@
@@ -2948,7 +2958,7 @@ index 10854c61a..d59c3b700 100644
              } else {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
                  final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
-@@ -186,10 +207,27 @@ public class BlockStateRewriter implements StorableObject {
+@@ -186,10 +207,31 @@ public class BlockStateRewriter implements StorableObject {
                  continue; // Dirty hack Mojang did in 1.12. Can be ignored safely as those values can't be used in chunk packets.
              }
  
@@ -2960,6 +2970,10 @@ index 10854c61a..d59c3b700 100644
 +        this.registryNames = new BlockRegistryNames(this.validBlockStates.keySet());
 +        this.blockItemStates = new BlockItemStates(bedrockBlockStates, this.registryNames, this.blockItemDescriptors,
 +                BedrockProtocol.MAPPINGS.getBedrockLegacyBlocks(), BedrockProtocol.MAPPINGS.getBedrockLegacyBlockStates());
++    }
++
++    public boolean isRestrictionGroup(final String identifier) {
++        return this.registryNames.isRestrictionGroup(identifier);
 +    }
 +
 +    public String registeredBlockIdentifier(final String identifier) {
@@ -2977,7 +2991,7 @@ index 10854c61a..d59c3b700 100644
      }
  
      public int bedrockId(final CompoundTag bedrockBlockStateTag) {
-@@ -206,11 +244,37 @@ public class BlockStateRewriter implements StorableObject {
+@@ -206,11 +248,37 @@ public class BlockStateRewriter implements StorableObject {
      }
  
      public int bedrockId(final BlockState bedrockBlockState) {
@@ -3017,7 +3031,7 @@ index 10854c61a..d59c3b700 100644
      }
  
      public int bedrockId(final int legacyBlockStateId) {
-@@ -233,6 +297,15 @@ public class BlockStateRewriter implements StorableObject {
+@@ -233,6 +301,15 @@ public class BlockStateRewriter implements StorableObject {
          };
      }
  
@@ -3033,7 +3047,7 @@ index 10854c61a..d59c3b700 100644
      public int waterlog(final int javaBlockStateId) {
          if (BedrockProtocol.MAPPINGS.getJavaPreWaterloggedBlockStates().contains(javaBlockStateId)) {
              return javaBlockStateId;
-@@ -250,4 +323,8 @@ public class BlockStateRewriter implements StorableObject {
+@@ -250,4 +327,8 @@ public class BlockStateRewriter implements StorableObject {
          return this.blockStateTags.get(bedrockBlockStateId);
      }
  
@@ -7747,10 +7761,10 @@ index 000000000..c9d8158b0
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNamesTest.java b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNamesTest.java
 new file mode 100644
-index 000000000..aa68bc10a
+index 000000000..5718411d7
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNamesTest.java
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,107 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7782,7 +7796,8 @@ index 000000000..aa68bc10a
 +        assertEquals(Set.of("minecraft:oak_log", "minecraft:spruce_log"), names.restrictionBlocks(new String[]{"log"}));
 +        assertEquals(Set.of("minecraft:oak_log", "minecraft:spruce_log", "minecraft:jungle_log", "pack:other"),
 +                names.restrictionBlocks(new String[]{"minecraft:log", "jungle_log", "alias", "pack:other", "alias"}));
-+        assertTrue(names.restrictionBlocks(new String[]{"LOG", "other", "MINECRAFT:oak_log", "missing"}).isEmpty());
++        assertEquals(Set.of("minecraft:log", "minecraft:oak_log"),
++                names.restrictionBlocks(new String[]{"LOG", "other", "MINECRAFT:oak_log", "missing"}));
 +    }
 +
 +    @Test
@@ -7799,7 +7814,9 @@ index 000000000..aa68bc10a
 +            final var row = value.getAsJsonObject();
 +            final Set<String> expected = new HashSet<>();
 +            row.getAsJsonArray("resolved").forEach(member -> expected.add(member.getAsString()));
-+            assertEquals(expected, names.restrictionBlocks(new String[]{row.get("input").getAsString()}), row::toString);
++            // This original group control supplies case-sensitive primary-name answers, not the complete registry lookup.
++            assertEquals(expected, names.restrictionBlocks(new String[]{row.get("input").getAsString()},
++                    name -> primary.contains(name) ? name : null), row::toString);
 +        }
 +    }
 +

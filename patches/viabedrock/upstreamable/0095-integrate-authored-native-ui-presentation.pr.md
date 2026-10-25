@@ -848,3 +848,18 @@ The owning inventory patch now also records [named and definition construction](
 It keeps the caller's upgrade flag and original definition association separate from numeric ownership.
 The packaged API matches 8,280 new and retained named/definition outputs.
 The registry foundation and its protocol data remain unchanged by this constructor update.
+
+
+## Empty alias results
+
+Normal lookup now retains the original parsed name and auxiliary when its alias callback returns an empty target.
+Original lookup `143483800` applies both rewritten fields only for a nonempty result.
+The raw alias callback API remains unchanged.
+A generic spawn egg with metadata one therefore retains its definition and metadata.
+Metadata ten still selects the chicken spawn egg with auxiliary zero.
+
+The complete [saved-NBT controls](../deferred/0003-translate-server-authoritative-bedrock-requests.pr.md#saved-nbt-stack-loading) expose this branch through actual registry construction.
+All 4,508 packaged constructor outputs match after the correction.
+A deliberate lookup mutation restores native value mismatches.
+The full four-project build passes 2,872 tests, including a focused named and canonical lookup regression.
+This change does not establish all userdata admission or native registry retirement behavior.
