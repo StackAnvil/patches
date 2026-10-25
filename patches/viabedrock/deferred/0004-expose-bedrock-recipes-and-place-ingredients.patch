@@ -1,4 +1,4 @@
-From 0a58dc54e7cfdb2392d4922c6cd58873fdd73e4e Mon Sep 17 00:00:00 2001
+From 837afe01ac3e37094b5d4ad172c1adf8e9bbeaf9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -107,25 +107,24 @@ cannot target a different payload after a clear/reload. Keep IDs stable
 for the same surviving registration, never recycle removed IDs, and copy
 ingredients and nested result data so callers cannot mutate that authority.
 
-Decode recipe result counts through the native signed-short conversion
-before storing their positive low byte. Counts 128 through 255 remain
-nonempty. Validate every result against the current native item ID table
+Decode recipe result counts through their native signed-short clamp from
+one through 64. Validate every result against the current native item ID table
 before claiming registration keys, including air, unknown IDs and empty
 counts. Keep ordinary inventory decoding separate from recipe results.
 
 Fresh probes execute the unchanged target duplicate guard, network-ID
 guard, shaped dimension guard, result validity/count paths and Multi
 factory dispatch. They cover 49 name cases, 72 network-mode cases, 217
-dimension cases, 43 output-state cases, all 65,536 wire counts, all 256
-stack counts and 142 Multi UUIDs. Initialized registry state, vector
+dimension cases, 43 output-state cases, all 65,536 ordinary network
+constructor count inputs, all 256 typed stack counts and 142 Multi UUIDs. Initialized registry state, vector
 boundaries, allocation boundaries and comparison seams remain supplied;
 full factory construction, item ownership and native visual parity are
 not established by these probes. The private fixture records those limits.
 
 Use the connection's native Item construction context for recipe results
 as well as inventory stacks. The result codec remains clientbound-only.
-Verify the complete signed-short count sweep through the native registry
-constructor, rather than a numeric-only stand-in. The stripped-wood grid
+The earlier complete signed-short sweep exercises ordinary network Item
+construction, not the CraftingData descriptor adapter. The stripped-wood grid
 regression constructs both wire auxiliary values 0 and 8 into canonical
 stack metadata 0 before comparing the default Block and another axis.
 
@@ -560,6 +559,25 @@ the same owned data and accepts immutable tag collections directly.
 Colliding definitions test expansion cardinality and displayed identity.
 These existing recipe consumers do not establish full native Molang
 compilation, typed wire admission or installed player-model publication.
+
+Keep CraftingData result decoding separate from inventory headers. Native
+NetworkItemInstanceDescriptorData always carries count, auxiliary, Block
+runtime ID and user data, even for IDs zero and negative one. Consume the
+complete header before returning an empty result, and clamp the signed
+count from one through 64 before constructing a result stack.
+
+Eleven protocol-2193 native packet controls execute original schema/binary
+loading, ingredient/result adapters, concrete Shaped construction, result
+materialization, full registration and output lookup. All eleven admit
+and match the apple source; descriptor and final stack counts agree.
+Original packet/recipe/Item/Block/TLS/static/CRT retirement leaves no
+allocations or held locks. Valid byte I/O and standard CRT/heap/sync are
+hosted; constructor-input and callback backing are declared. Ordinary
+apple outputs use a zero Block runtime ID and null world context. Three
+separate complete native packet reads establish full headers for zero,
+negative-one and unknown result IDs. These controls do not establish
+associated Block output conversion, nonzero palettes, full packet handler
+or installed player publication.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 +
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -598,7 +616,7 @@ compilation, typed wire admission or installed player-model publication.
  .../protocol/storage/InventoryTracker.java    |  47 ++
  .../storage/NativeCookingUiState.java         | 502 +++++++++++
  .../protocol/types/BedrockTypes.java          |   2 +
- .../types/item/BedrockRecipeResultType.java   |  23 +
+ .../types/item/BedrockRecipeResultType.java   |  47 ++
  .../types/model/FurnaceOptionsType.java       |  34 +
  .../types/model/InventoryOptionsType.java     |  35 +
  .../types/recipe/CraftingDataReader.java      |  66 +-
@@ -629,11 +647,11 @@ compilation, typed wire admission or installed player-model publication.
  .../storage/NativeCookingUiStateTest.java     | 625 ++++++++++++++
  .../storage/NativeRecipeOutputUnlockTest.java | 174 ++++
  ...NativeRecipeRegistrationReferenceTest.java | 104 +++
- .../item/BedrockRecipeResultTypeTest.java     | 106 +++
+ .../item/BedrockRecipeResultTypeTest.java     | 170 ++++
  .../types/model/FurnaceOptionsTypeTest.java   |  75 ++
  .../types/model/InventoryOptionsTypeTest.java |  46 +
  .../types/recipe/CraftingDataReaderTest.java  |  84 +-
- 72 files changed, 9702 insertions(+), 162 deletions(-)
+ 72 files changed, 9790 insertions(+), 162 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeAvailability.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeCatalog.java
@@ -5246,10 +5264,10 @@ index 6345518df..d23351ca1 100644
      public static final Type<EducationUriResource> EDUCATION_URI_RESOURCE = new EducationUriResourceType();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockRecipeResultType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockRecipeResultType.java
 new file mode 100644
-index 000000000..cfbb5390b
+index 000000000..47352290c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockRecipeResultType.java
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,47 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5257,14 +5275,38 @@ index 000000000..cfbb5390b
 + */
 +package net.raphimc.viabedrock.protocol.types.item;
 +
++import com.viaversion.viaversion.api.type.Type;
 +import io.netty.buffer.ByteBuf;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +
-+/** Recipe result stacks share the network decoder but cannot be sent to the server. */
-+public final class BedrockRecipeResultType extends BedrockItemType {
++/** CraftingData results keep their complete headers and clamp signed counts before Item construction. */
++public final class BedrockRecipeResultType extends Type<BedrockItem> {
++
++    private final int blockingId;
++    private final NetworkItemStackContext context;
 +
 +    public BedrockRecipeResultType(final int blockingId, final NetworkItemStackContext context) {
-+        super(blockingId, false, context);
++        super(BedrockItem.class);
++        this.blockingId = blockingId;
++        this.context = context;
++    }
++
++    @Override
++    public BedrockItem read(final ByteBuf buffer) {
++        final short id = BedrockTypes.VAR_INT.read(buffer).shortValue();
++        final byte amount = (byte) Math.clamp(buffer.readShortLE(), 1, 64);
++        final short metadata = BedrockTypes.UNSIGNED_VAR_INT.read(buffer).shortValue();
++        final int runtimeId = BedrockTypes.VAR_INT.read(buffer);
++        final ByteBuf userData = buffer.readSlice(BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
++        if (id == 0 || id == -1) {
++            return BedrockItem.empty();
++        }
++        final BedrockItem item = this.context.createNetworkItem(id, metadata, amount, runtimeId);
++        if (!item.isEmpty()) {
++            BedrockItemType.readUserData(userData, item, this.blockingId);
++        }
++        return item;
 +    }
 +
 +    @Override
@@ -11331,10 +11373,10 @@ index 000000000..427aa9a1c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/item/BedrockRecipeResultTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/item/BedrockRecipeResultTypeTest.java
 new file mode 100644
-index 000000000..33858de4e
+index 000000000..04c4db088
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/types/item/BedrockRecipeResultTypeTest.java
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,170 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -11343,6 +11385,21 @@ index 000000000..33858de4e
 +package net.raphimc.viabedrock.protocol.types.item;
 +
 +import com.google.gson.JsonParser;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.connection.ProtocolInfoImpl;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import net.raphimc.viabedrock.protocol.model.recipe.ShapedRecipe;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.storage.CraftingDataTracker;
++import net.raphimc.viabedrock.protocol.types.array.ArrayType;
++import net.raphimc.viabedrock.protocol.types.recipe.CraftingDataReader;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.HexFormat;
++import java.util.ArrayList;
++
 +import io.netty.buffer.ByteBuf;
 +import io.netty.buffer.Unpooled;
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
@@ -11354,14 +11411,9 @@ index 000000000..33858de4e
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeKey;
 +import net.raphimc.viabedrock.api.chunk.blockstate.BlockItemDescriptor;
 +import org.junit.jupiter.api.Test;
-+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
-+
-+import java.nio.file.Files;
-+import java.nio.file.Path;
-+import java.security.MessageDigest;
-+import java.util.HexFormat;
 +
 +import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
 +
 +class BedrockRecipeResultTypeTest {
 +
@@ -11383,10 +11435,10 @@ index 000000000..33858de4e
 +    };
 +
 +    @Test
-+    void decodesSignedWireCountsAndConstructsNativeBlockResults() {
++    void clampsSignedRecipeCountsBeforeConstructingBlockResults() {
 +        final int[][] counts = {
-+            {0, 0}, {1, 1}, {127, 127}, {128, 128}, {255, 255},
-+            {256, 0}, {257, 1}, {32767, 255}, {32768, 0}, {65535, 0}
++            {0, 1}, {1, 1}, {64, 64}, {65, 64}, {127, 64}, {128, 64}, {255, 64},
++            {256, 64}, {257, 64}, {32767, 64}, {32768, 1}, {65535, 1}
 +        };
 +        final var codec = new BedrockRecipeResultType(0, CONTEXT);
 +        final var buffer = Unpooled.buffer();
@@ -11395,10 +11447,10 @@ index 000000000..33858de4e
 +                writeResult(buffer, count[0]);
 +                final var item = codec.read(buffer);
 +                assertEquals(count[1], item.amount());
-+                assertEquals(count[1] == 0, item.isEmpty());
++                assertFalse(item.isEmpty());
 +                assertEquals(0, item.data());
-+                assertEquals(count[1] != 0, item.hasBlockState());
-+                assertEquals(count[1] != 0 ? 123 : 0, item.blockRuntimeId());
++                assertTrue(item.hasBlockState());
++                assertEquals(123, item.blockRuntimeId());
 +                assertFalse(buffer.isReadable());
 +                buffer.clear();
 +            }
@@ -11408,27 +11460,81 @@ index 000000000..33858de4e
 +    }
 +
 +    @Test
-+    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_RECIPE_REGISTRATION", matches = ".+")
-+    void matchesEveryNativeSignedWireCountConversion() throws Exception {
-+        final var root = Path.of(System.getenv("STACKANVIL_NATIVE_RECIPE_REGISTRATION"));
-+        final var fixture = JsonParser.parseString(Files.readString(root.resolve("recipe-result-count-reference.json"))).getAsJsonObject();
-+        final var digest = MessageDigest.getInstance("SHA-256");
++    void consumesCompleteHeadersForEmptyResultIds() {
 +        final var codec = new BedrockRecipeResultType(0, CONTEXT);
 +        final var buffer = Unpooled.buffer();
 +        try {
-+            for (int wire = 0; wire <= 0xFFFF; wire++) {
-+                writeResult(buffer, wire);
-+                final var item = codec.read(buffer);
-+                digest.update((byte) item.amount());
-+                assertEquals(item.amount() == 0, item.isEmpty());
++            for (final int id : new int[] {0, -1}) {
++                BedrockTypes.VAR_INT.write(buffer, id);
++                buffer.writeShortLE(64);
++                BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 3);
++                BedrockTypes.VAR_INT.write(buffer, 5);
++                BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 2);
++                buffer.writeShortLE(0);
++                writeResult(buffer, 2);
++                assertTrue(codec.read(buffer).isEmpty());
++                assertEquals(2, codec.read(buffer).amount());
 +                assertFalse(buffer.isReadable());
 +                buffer.clear();
 +            }
 +        } finally {
 +            buffer.release();
 +        }
-+        assertEquals(65536, fixture.get("cases").getAsInt());
-+        assertEquals(fixture.get("outputSha256").getAsString(), HexFormat.of().formatHex(digest.digest()));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_RECIPE_RESULTS", matches = ".+")
++    void matchesExecutedPacketResultConversionAndRegistration() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(
++                System.getenv("STACKANVIL_NATIVE_RECIPE_RESULTS")))).getAsJsonObject();
++        final var input = fixture.getAsJsonObject("wireResultItem");
++        final int identifier = input.get("identifier").getAsInt();
++        final var registry = new ItemRegistry(new ItemEntry[]{new ItemEntry(
++                input.get("name").getAsString(), identifier, false, ItemVersion.Legacy, null)});
++        final NetworkItemStackContext context = new NetworkItemStackContext() {
++            @Override
++            public BedrockItem createNetworkItem(final int id, final short metadata, final byte amount, final int runtimeId) {
++                return registry.createNetworkItem(id, metadata, amount, null, (definition, auxiliary) -> null);
++            }
++
++            @Override
++            public ItemRecipeKey recipeKey(final BedrockItem item) {
++                return registry.recipeKey(item, null);
++            }
++        };
++        final var items = mock(ItemRewriter.class);
++        when(items.recipeResultArrayType()).thenReturn(new ArrayType<>(
++                new BedrockRecipeResultType(0, context), BedrockTypes.UNSIGNED_VAR_INT));
++        when(items.itemIdentifier(any(BedrockItem.class))).thenAnswer(call -> registry.identifier((BedrockItem) call.getArgument(0)));
++        final var user = mock(UserConnection.class);
++        when(user.get(ItemRewriter.class)).thenReturn(items);
++        when(user.getProtocolInfo()).thenReturn(new ProtocolInfoImpl());
++        final var rows = fixture.getAsJsonArray("wireResultAdmission");
++        assertFalse(rows.isEmpty());
++        final var tracker = new CraftingDataTracker(user);
++        for (final var entry : rows) {
++            final var row = entry.getAsJsonObject();
++            final var buffer = Unpooled.wrappedBuffer(HexFormat.of().parseHex(row.get("wire").getAsString()));
++            try {
++                final var data = CraftingDataReader.read(new PacketWrapperImpl(0, buffer, user));
++                assertEquals(row.get("consumed").getAsInt(), buffer.readerIndex());
++                assertFalse(buffer.isReadable());
++                tracker.updateCraftingDataList(data.recipes(), data.clearRecipes());
++                assertEquals(row.get("admitted").getAsBoolean(), !tracker.getCraftingDataList().isEmpty());
++                final var expectedIds = new ArrayList<Integer>();
++                for (final var indexed : row.getAsJsonArray("indexedRecipes")) {
++                    expectedIds.add(indexed.getAsInt() + 100);
++                }
++                assertEquals(expectedIds, tracker.getCraftingDataList().stream().map(recipe -> recipe.networkId()).toList());
++                final var output = ((ShapedRecipe) tracker.getCraftingDataList().getLast().recipe()).getResults().getFirst();
++                assertEquals(row.get("descriptorAmount").getAsInt(), output.amount());
++                assertEquals(row.get("outputAmount").getAsInt(), output.amount());
++                assertEquals(row.get("outputAuxiliary").getAsInt(), output.data());
++                assertEquals(row.getAsJsonObject("outputDefinition").get("id").getAsInt(), (int) (short) output.identifier());
++            } finally {
++                buffer.release();
++            }
++        }
 +    }
 +
 +    private static void writeResult(final ByteBuf buffer, final int count) {
@@ -11575,7 +11681,7 @@ index 000000000..c03fe8ef5
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReaderTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReaderTest.java
-index 79f72bab5..f67616324 100644
+index 79f72bab5..0b6ab714e 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReaderTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReaderTest.java
 @@ -10,12 +10,25 @@ import com.viaversion.viaversion.connection.ProtocolInfoImpl;
@@ -11631,7 +11737,7 @@ index 79f72bab5..f67616324 100644
      }
  
 +    @Test
-+    void invalidOutputsCannotReserveRegistrationKeysAndHighByteCountsSurvive() {
++    void invalidOutputsCannotReserveRegistrationKeysAndResultCountsClamp() {
 +        final var items = mock(ItemRewriter.class);
 +        final var type = new BedrockRecipeResultType(0, NetworkItemStackFixtures.CONTEXT);
 +        when(items.recipeResultArrayType()).thenReturn(new ArrayType<>(type, BedrockTypes.UNSIGNED_VAR_INT));
@@ -11660,7 +11766,7 @@ index 79f72bab5..f67616324 100644
 +            buffer.writeBoolean(true);
 +            buffer.writeByte(0x5A);
 +            final var data = CraftingDataReader.read(new PacketWrapperImpl(0, buffer, user));
-+            assertEquals(List.of(128, 255, 255), data.recipes().stream()
++            assertEquals(List.of(64, 64, 64, 1, 64), data.recipes().stream()
 +                    .map(recipe -> ((ShapelessRecipe) recipe.recipe()).getResults().getFirst().amount()).toList());
 +            final var tracker = new CraftingDataTracker(user);
 +            tracker.updateCraftingDataList(data.recipes(), data.clearRecipes());

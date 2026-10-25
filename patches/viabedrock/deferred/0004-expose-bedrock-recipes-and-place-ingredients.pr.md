@@ -16,8 +16,7 @@ Presented books retain their original catalog and unlock revision.
 Surviving registrations keep their click IDs; replacements receive fresh IDs.
 An old Java click cannot target a different recipe after catalog replacement.
 
-Decode recipe counts through the target's signed-short conversion before storing the positive low byte.
-Counts 128 through 255 remain nonempty.
+Clamp signed-short recipe result counts from one through 64 before constructing the result stack.
 Validate every static result against the current item table before registration.
 Reject air, unknown item IDs and empty results without claiming registration keys.
 
@@ -25,7 +24,7 @@ Reject air, unknown item IDs and empty results without claiming registration key
 
 The target is Bedrock 1.26.51.1, build 51061372, protocol 2193.
 Fresh executable probes cover 49 station/name cases, 72 network-mode cases and 217 dimension cases.
-They also cover 43 output states, all 65,536 wire counts, all 256 stack counts and 142 dynamic UUIDs.
+They also cover 43 output states, all 65,536 inventory-constructor count inputs, all 256 stack counts and 142 dynamic UUIDs.
 
 The probes supply initialized registry state, vector boundaries and comparison seams.
 The dynamic probe supplies UUID constants from an earlier matching live snapshot.
@@ -51,9 +50,9 @@ These tests use Java cooking screens.
 The authored cooking catalog, input controls and client screen still need integration.
 Native images and complete route parity remain unverified.
 
-The shared network codec now owns signed-short count clamping for inventory items and recipe results alike.
-The recipe-only type retains its clientbound write guard and no longer duplicates count conversion.
-The codec patch records the fresh native constructor comparison and regression.
+Inventory network codecs retain their signed-short clamping and byte narrowing.
+CraftingData results use a separate descriptor conversion, with signed counts clamped from one through 64.
+The recipe-only decoder consumes complete headers, including result IDs zero and negative one, and retains its clientbound write guard.
 
 ## Block ingredient identity (October 22, 2026)
 
@@ -68,7 +67,7 @@ They produce canonical metadata 0, 1 and 2 for axes y, x and z.
 The fixture supplies a null-material vector and empty optional component ownership.
 It does not establish other builtin class constructors, runtime-ID assignment or visible parity.
 
-Recipe results now use the same connection constructor as inventory stacks and retain their clientbound write guard.
+Recipe results use the connection constructor after their separate count conversion and retain their clientbound write guard.
 The complete signed-short count sweep uses the registry constructor for all 65,536 inputs.
 Both wire auxiliary values 0 and 8 construct canonical metadata 0 before the production grid matcher checks the default and alternate axis.
 The full build and eleven inventory controls pass; the authored cooking catalog and native controls remain unfinished.
@@ -627,3 +626,40 @@ See [the tag ownership reference](../../../docs/native-player-inventory.md#defin
 Both new consumer regressions pass against the packaged core.
 Collapsing cooking enumeration to numeric owners fails the expansion cardinality assertion.
 All 138 focused packaged checks and the four-project build pass.
+
+## Native packet result conversion (October 25, 2026)
+
+CraftingData result descriptors always contain the complete header, including empty result IDs.
+Returning early for IDs zero and negative one left later packet fields misaligned.
+The dedicated result decoder consumes count, auxiliary value, Block runtime ID and user-data bytes before handling an empty result.
+
+The native result adapter clamps signed-short counts from one through 64.
+Zero and negative values become one. Values above 64 become 64.
+Inventory stack count narrowing remains separate.
+The earlier 65,536-count reference exercised the inventory constructor, without the recipe result adapter.
+It does not establish recipe packet count conversion.
+
+Eleven fresh complete native packet controls produce ordinary apple outputs.
+They execute schema and binary decoding, ingredient and result adapters, concrete recipe construction, result materialization, registration and output lookup.
+All eleven enter the output index and match the apple source.
+Descriptor and final ItemStack counts agree for every control.
+Original packet, recipe registry, Item, Block, TLS, static and CRT cleanup leaves no allocations or held locks.
+Three separate native packet controls consume complete headers for result IDs zero, negative one and 999.
+
+Valid byte I/O and standard CRT, heap and synchronization services remain hosted.
+Constructor-input and callback backing are declared. Ordinary results use zero Block runtime ID and a null world context.
+These controls do not establish associated Block result conversion, nonzero palettes, the complete packet handler, installed player publication or physical network delivery.
+
+All 106 ViaBedrock patches replay after this correction.
+The four-project build passes 2,947 tests with 160 optional skips and no failures or errors.
+ViaBedrock passes 1,816 tests with 83 optional skips.
+The final targeted run passes all 14 checks and both Checkstyle tasks.
+It compares cumulative Java registration IDs against every native output-index result.
+Repository offline validation and patch metadata checks pass.
+
+The packaged core passes 14 focused tests and all three complete-header packet comparisons.
+Four tests fail value assertions against the preceding packaged core.
+That core also fails to decode both empty-result packet controls. Implementation origins are verified.
+All 1,523 core classes match both embedded copies.
+Only the result decoder and three build-identity classes change; 1,519 classes and all 198 assets remain byte-identical.
+No new installed player capture ran for this correction.

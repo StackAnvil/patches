@@ -125,7 +125,7 @@ Core recipe registration keeps the first station/name pair and rejects zero or r
 Rejected entries do not reserve either key. Java grid limits apply after native catalog registration.
 Presented books retain their catalog and unlock revision. Replacement registrations receive fresh click IDs.
 Recipe models copy their ingredients and nested result data so callers cannot change a registered recipe.
-Recipe result decoding follows the native signed-short conversion and retains nonempty stack counts from 128 through 255.
+Recipe result decoding consumes complete headers and clamps signed-short output counts from one through 64.
 Every result must resolve to a registered non-air item before its recipe can claim registration keys.
 Executable fixtures cover the registration guards, dimensions, result validation, count conversion and dynamic-factory selection.
 These probes do not establish complete native factory construction, item ownership or visual parity.
@@ -9420,7 +9420,7 @@ The live run exits successfully and stops its private display normally. These co
 
 Both item decoders now clamp signed-short counts before unsigned-byte narrowing.
 Packet count 32769 previously became one item; it now becomes zero.
-Positive values retain native byte wrapping. Recipe results share this conversion and retain their clientbound write guard.
+Positive values retain native byte wrapping. CraftingData results use their own count conversion and retain their clientbound write guard.
 Counts 128 through 255 remain nonempty. The shared codec patch now owns the existing presence correction too.
 
 The byte-buffer regression fails before the correction.
@@ -9481,7 +9481,7 @@ Both runs stop their private displays normally. These controls use Java screens 
 Both network item codecs now pass raw auxiliary bits and runtime IDs to the connection constructor before loading user data.
 The constructor validates runtime Block ownership against the original Item, then resolves the associated Legacy only when necessary.
 It keeps exact runtime slots even when an archetype's canonical auxiliary descriptor remains unknown.
-Recipe results use the same constructor, and recipe matching consumes the constructed Item without reconstructing it.
+Recipe results apply their descriptor-specific count conversion before using the connection constructor. Recipe matching consumes the constructed Item without reconstructing it.
 
 Count invalidation clears Item and Block ownership and skips user-data loading.
 The native block-item constructor can reapply wildcard metadata after that invalidation; the implementation retains this detail.
@@ -9492,7 +9492,7 @@ Both Java decoder paths match 2,250 native parsed-header constructor results in 
 The comparison covers resolved Item ID, auxiliary metadata, count, Block presence, exact runtime slot, descriptor identity and hash.
 Both outgoing headers match 384 complete native descriptor-producer executions.
 Six further native empty-stack producer cases retain outer network IDs and produce no user-data bytes.
-The recipe-result count sweep runs through the registry constructor for all 65,536 signed-short inputs.
+The earlier 65,536-count sweep covers the inventory constructor. It does not execute the CraftingData result adapter.
 
 These fixtures execute Bedrock 1.26.51.1, build 51061372, with supplied registry/palette storage, warm auxiliary caches and runtime seams.
 They do not establish binary reader equivalence, actual item installation, specialized user-data loading, saved-NBT construction or all custom archetypes.
@@ -9689,3 +9689,39 @@ All three cooking controls and same-world reconnect pass.
 The run exits normally, stops its private display and removes the private observer mod.
 These observations verify publication and CPU resolution, not authored screen rendering or native action parity.
 Offline tooling checks, all 264 regressions and patch metadata validation pass.
+
+## CraftingData result headers and ownership (October 25, 2026)
+
+CraftingData result descriptors always contain count, auxiliary value, Block runtime ID and user-data bytes.
+Result IDs zero and negative one do not shorten that header.
+The result decoder now consumes those fields before returning an empty Item.
+This keeps the following UUID, recipe fields and arrays aligned.
+
+The native recipe adapter clamps the signed-short count from one through 64 before constructing the result ItemStack.
+Zero and negative values become one; values above 64 become 64.
+Inventory network headers retain their separate byte-narrowing behavior.
+The earlier 65,536-count constructor sweep did not execute this recipe adapter and cannot establish its count conversion.
+
+Eleven complete original native packet controls cover counts 0, 1, 64, 65, 127, 128, 255, 256, 32767, 32768 and 65535.
+Each executes schema registration, binary loading, ingredient/result conversion, concrete shaped-recipe construction and result materialization.
+All eleven enter the recipe output index and match the genuine apple source.
+The descriptor and final ItemStack counts agree in every case.
+Three separate packet controls establish complete headers for result IDs zero, negative one and 999.
+
+The constructor retains converted result descriptors separately from materialized result ItemStacks.
+The packet handler copies the former into its secondary result vector, then materializes the latter before registration.
+Earlier controls that supplied ready-made ItemStacks did not exercise this boundary.
+The new controls retain original packet, recipe registry, Item, Block, TLS, static and CRT cleanup, with no remaining allocations or held locks.
+
+The target remains Bedrock 1.26.51.1, build 51061372, protocol 2193, with default Experiments and base-game version 1.26.50.
+Valid byte I/O and standard CRT, heap and synchronization services remain hosted.
+Constructor-input and callback backing are declared.
+Ordinary apple outputs use zero Block runtime ID and a null world context.
+Associated Block result conversion, nonzero palettes, complete packet-handler execution, installed player publication and physical network delivery remain unverified here.
+
+All 106 core patches replay. The four-project build passes 2,947 tests, with 160 optional skips and no failures or errors.
+Fourteen focused packaged tests and all three complete-header packet comparisons pass.
+The cumulative Java registration IDs match every recorded native output-index result.
+Four value assertions and both empty-header packet controls fail against the preceding packaged core.
+All 1,523 core classes match both embedded copies; 1,519 classes and all 198 assets remain byte-identical to that preceding core.
+No new installed player capture ran for this correction.

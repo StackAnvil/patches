@@ -60,7 +60,7 @@ Both network item codecs now clamp their signed-short count before unsigned-byte
 For example, packet count 32769 previously became one item. It now becomes zero.
 Positive counts retain native byte wrapping, including 256 becoming zero and 257 becoming one.
 Counts 128 through 255 remain nonempty. Their existing presence correction now belongs to this shared codec foundation.
-Recipe results inherit this behavior from the shared decoder.
+CraftingData results use a separate descriptor adapter, with its own count conversion in the recipe patch.
 
 The byte-buffer regression fails before the correction and passes afterward.
 Both codecs match 264 fresh target-native constructor executions.
