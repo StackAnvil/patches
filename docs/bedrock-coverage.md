@@ -9885,3 +9885,77 @@ Recipes with only empty descriptors remain outside counter execution because the
 
 This reference does not connect retained recipes to player publication or complete descriptor families, Molang context or controller ownership.
 No installed capture ran. The four original bug reports and all five implementation areas remain open.
+
+
+## Native recipe Molang context (October 25, 2026)
+
+Recipe predicates now use the general shared expression engine with native recipe-specific admission and bindings.
+The loader explicitly selects query group `tags` at Molang version 13.
+Original registration assigns `query.any_tag` and `query.all_tags` to that group, and the remaining 317 bindings to `default`.
+Unavailable queries reject the whole expression, including inactive branches.
+A separate reference verifies rejection of 313 minimal call forms; it does not enumerate every possible argument form.
+The registration and loader evidence establishes the group boundary independently of those samples.
+
+The native predicate constructs a fresh default ItemInstance frame without an Actor or context-variable provider.
+Temporary values work locally, while missing temporary reads stop evaluation.
+Actor-variable writes do not create persistent storage; their assignment result remains available.
+`this` is zero.
+Bare tag queries are implicit calls returning false; explicit empty argument lists fail compilation.
+Native tag functions short-circuit and compare case-sensitive FNV-1 HashedString values, including C-string-prefix hashing.
+A final string result is read through the native result union's float view.
+These rules remain local to recipes, independently of rendering bindings and ordinary ItemTag string predicates.
+
+The original compiler profile checks 563 source forms, with 124 admitted and 439 rejected.
+It covers measured math signatures, namespace access, read-only targets, compound scopes and assignment argument boundaries.
+The math matrix checks 64 candidate names across six arities and bare access, rather than claiming an exhaustive function universe.
+Explicit grouping changes assignment admission beside commas and inside conditional arguments.
+The shared parser exposes occurrence-specific compound-node metadata without changing the expression tree used by rendering consumers.
+
+Two independently completed genuine-frame controls supply 61 expressions, 52 admitted payloads and 208 predicate evaluations.
+They execute the original compiler, frame setup, evaluator and query functions against constructed native Items.
+The initial Java comparison exposed absent-provider, bare-query and argument-admission mistakes; those mismatches were corrected.
+Compiler-only receipts are kept separate from these frame evaluations.
+
+A third completed frame control adds six admitted programs and 24 predicates.
+The grouped tag-query cases confirm short-circuit side effects and dynamic string arguments.
+Three numeric cases expose the existing shared evaluator's assignment-result limitation: comparison, a math argument and a loop count.
+The native store preserves its current result pointer; Java returns the assigned value.
+The packaged diagnostic matches 220 of 232 total predicates, with zero admission differences and twelve value differences in those three programs.
+This control remains outside the verified 208-predicate comparison.
+Broader embedded-assignment semantics remain required before claiming complete expression parity.
+
+A further reference decodes and registers 608 complete shaped-recipe packets with a nonempty ordinary ingredient and a varied secondary descriptor.
+Its matrix covers 19 secondary choices, four quantities and eight source distributions.
+All 4,864 concrete ingredient predicate results match the packaged Java descriptor path.
+The preceding packaged core reports 512 value mismatches without linkage failures.
+The original counter also records 1,056 rounds and 2,112 ingredient rows.
+Those mixed Tag/Molang counter rounds are not compared to the retained Java counter, whose owned descriptor integration remains unfinished.
+The control does not run an all-empty recipe through that counter.
+
+The target remains Bedrock 1.26.51.1, build 51061372, protocol 2193, with the recorded default Experiments and base-game version.
+Full packet and frame references retire original recipe, Item, Block, TLS, static and CRT ownership without remaining allocations or held locks.
+Compiler-only controls retire their own original global state and record cold intern-table allocation changes.
+The pinned UCRT supplies its actual math exports; host allocation, byte I/O, synchronization and normal runtime services remain supplied.
+Inputs use declared registry data, read-only source collections, runtime ID zero and null world context.
+No compiler admission, predicate or counting answer is supplied.
+These controls do not establish complete Level or client construction, arbitrary experiment/version contexts or live packet-handler lifetime.
+
+All 106 core patches replay, and the four-project build passes 2,963 tests with 160 optional skips and no failures or errors.
+ViaBedrock passes 1,832 tests with 83 optional skips.
+Both Checkstyle tasks and repository offline validation pass.
+All eight focused packaged expression checks pass, with ten implementation origins verified.
+The broader diagnostic's twelve differences remain separate from those passing checks.
+
+All 1,526 core classes and 198 core assets match both embedded copies.
+All 1,192 compiled client classes match the add-on, including its Minecraft bridge.
+Compared with the preceding core, 1,515 classes and all 198 assets remain byte-identical.
+Four existing implementations and three build-identity classes change.
+The parser's existing enum helper retains identical declarations and instructions despite metadata changes.
+The new recipe compiler, its enum helper and the parser syntax metadata replace the old literal-only parser.
+
+Existing item predicates, cooking expansion and Java recipe displays use the new compiler.
+Retained Tag/Molang payload ownership, version-filtered Tag index membership, source-definition conversion and player publication remain unfinished.
+The native index's additional version byte participates in version-value comparison; its nonzero producer behavior remains unverified.
+No new installed capture ran.
+The E-key inventory background/scale, pearl/wind-charge rollback, endless eating and missing locator reports remain unresolved.
+All five compatibility goal areas remain active.

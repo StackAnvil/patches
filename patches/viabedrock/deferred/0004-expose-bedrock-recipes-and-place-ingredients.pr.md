@@ -617,10 +617,11 @@ No new live inventory-screen capture ran for this change.
 
 ## Receiver-owned recipe tags
 
-Use the constructed definition's tags for existing tag predicates, restricted Molang tag predicates, cooking expansion and recipe displays.
+That milestone routes the constructed definition's tags into tag predicates, the then-restricted Molang parser, cooking expansion and recipe displays.
 Filter definitions before default-item construction, preserving its independent numeric owner and Block conversion.
 Focused collisions check expansion cardinality and displayed item identity.
-The restricted parser remains separate from native Molang compilation and wire descriptor admission.
+At that milestone, native Molang compilation and wire descriptor admission remained separate.
+The recipe expression follow-up below replaces the restricted parser.
 See [the tag ownership reference](../../../docs/native-player-inventory.md#definition-owned-item-tags).
 
 Both new consumer regressions pass against the packaged core.
@@ -793,3 +794,27 @@ Inputs remain typed ordinary apple sources and read-only collection backing, wit
 No matching, count, emptiness or grid answer is supplied.
 Full descriptor families, retained player evaluation and publication remain unfinished.
 See the [counter reference](../../../docs/bedrock-coverage.md#packet-created-recipe-counting-october-25-2026).
+
+
+## Native recipe expression context
+
+Replace the literal-only Molang tag parser with the shared parser and float evaluator.
+Keep recipe admission and bindings separate from Actor and rendering contexts.
+The actual native loader selects usage group `tags` at version 13.
+Original registration assigns exactly two of 319 bindings to that group: `any_tag` and `all_tags`.
+Reject other queries during compilation, including queries in inactive branches.
+
+Construct a fresh temporary frame with no writable Actor or context-variable provider.
+Preserve missing-temporary faults, zero `this`, implicit bare tag calls and rejection of explicit empty calls.
+Match case-sensitive FNV-1 HashedString values with native short-circuit argument evaluation.
+Preserve the native result union's float view for a final string value.
+Validate native math arities and read-only assignment targets before evaluation.
+Use the shared parser's occurrence-specific grouping metadata to validate assignment arguments without changing rendering consumers.
+
+The private original-executable controls cover packet-created predicates, compiler admission and genuine ItemInstance frame evaluation.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-recipe-molang-context-october-25-2026) records final counts, artifact checks, supplied boundaries and remaining limits.
+No native predicate or compiler answer is supplied by these controls.
+Additional genuine-frame controls expose numeric embedded-assignment result differences in the existing shared evaluator.
+Those diagnostic cases remain outside the passing expression corpus; complete expression parity is not claimed.
+Retained Tag/Molang descriptors, the version-filtered Tag index, source conversion and installed player publication also remain unfinished.
+No new live capture closes the original inventory, movement, eating or locator reports.

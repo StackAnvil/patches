@@ -1803,7 +1803,8 @@ This separate check does not establish full registry or client lifetime.
 
 Existing recipe predicates, cooking expansion and Java recipe displays now use receiver-owned tags.
 Expansion filters definitions before constructing matched default items, preserving the constructor's independent numeric and Block selection.
-The existing restricted Molang tag parser uses the same data; this does not establish complete native Molang compilation.
+At this milestone, the restricted Molang tag parser used the same data.
+The [recipe expression follow-up](#native-recipe-molang-context) replaces that parser with the shared expression engine.
 
 Wire descriptor admission, owned Tag/Molang payloads and installed player recipe publication remain unfinished.
 The authored E-key screen and all four original reports remain open.
@@ -1876,3 +1877,31 @@ Complete native cleanup, sixteen focused source tests and the packaged compariso
 The new optional test belongs to the owning recipe patch. Production behavior and artifacts remain unchanged.
 Full retained descriptor admission and player publication remain unfinished.
 See the [packet-created counter reference](bedrock-coverage.md#packet-created-recipe-counting-october-25-2026) for inputs and verification limits.
+
+
+## Native recipe Molang context
+
+Recipe predicates now compile general expressions through the shared Molang engine instead of a literal-only tag parser.
+The native recipe loader selects the `tags` query group at Molang version 13.
+Original registration places only `query.any_tag` and `query.all_tags` in that group; the other 317 bindings belong to `default`.
+An unavailable query rejects the whole expression, including an inactive branch.
+Do not substitute a zero-valued Actor query.
+
+Each predicate uses a fresh ItemInstance frame without an Actor or context-variable provider.
+Temporary values remain local to that evaluation; an unset temporary read stops evaluation.
+Actor-variable assignments return their value but do not create persistent storage in this frame.
+`this` is zero.
+Bare tag queries are implicit calls that return false, while explicit empty argument lists fail compilation.
+Tag arguments short-circuit and compare native case-sensitive HashedString values.
+A string result uses the native result union's float view, independently of ordinary string coercion.
+
+Compiler admission also checks native math signatures, read-only targets and assignment argument syntax.
+The shared parser exposes explicit compound-node grouping without changing rendering evaluation trees or bindings.
+Existing item predicates, cooking expansion and Java recipe displays use the new recipe compiler.
+
+The [coverage reference](bedrock-coverage.md#native-recipe-molang-context-october-25-2026) records original packet, compiler, frame and packaged comparisons.
+These checks extend the predicate path; they do not complete retained Tag/Molang payload ownership or the installed player evaluator.
+Additional native controls expose numeric embedded-assignment result differences in the shared evaluator.
+Those diagnostic cases remain outside the passing expression comparison.
+Native Tag index filtering and source-definition identity still need integration.
+The four original reports and all five goal areas remain open.

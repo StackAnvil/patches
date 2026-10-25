@@ -1,4 +1,4 @@
-From 315743f1b9cd808a8d76f5cf660f23803b051ef4 Mon Sep 17 00:00:00 2001
+From 6a627930afd23cc3d9c069011b829dd47c3b1551 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(molang): share bounded native float evaluation
@@ -17,6 +17,12 @@ expression-reader/compiler fixture verifies 26 admission cases. Symbol
 registries execute unchanged; allocation, CRT operations, diagnostics and
 service availability remain supplied boundaries. Resource resolution,
 world context and visible native parity are outside that fixture.
+
+Expose immutable syntax metadata for explicitly parenthesized expression
+occurrences. Recipe compiler admission distinguishes grouped assignment
+arguments, while rendering consumers retain the same evaluation tree. Use
+identity membership so structurally equal expressions at different source
+positions cannot inherit each other's grouping.
 ---
  build.gradle                                  |   4 +-
  .../api/model/entity/CustomEntity.java        |  10 +-
@@ -25,13 +31,13 @@ world context and visible native parity are outside that fixture.
  .../api/util/MoLangControlFlow.java           | 256 ++++++++++++
  .../viabedrock/api/util/MoLangEngine.java     | 128 ++++--
  .../viabedrock/api/util/MoLangMath.java       | 248 +++++++++++
- .../viabedrock/api/util/MoLangParser.java     | 345 ++++++++++++++++
+ .../viabedrock/api/util/MoLangParser.java     | 380 +++++++++++++++++
  .../META-INF/licenses/bedrock-sine-table.txt  |  26 ++
  .../META-INF/licenses/mochafloats.txt         |  24 ++
  .../api/util/BedrockTrigonometryTest.java     |  93 +++++
- .../viabedrock/api/util/MoLangEngineTest.java | 384 ++++++++++++++++++
- .../viabedrock/api/util/MoLangMathTest.java   | 115 ++++++
- 13 files changed, 1705 insertions(+), 38 deletions(-)
+ .../viabedrock/api/util/MoLangEngineTest.java | 395 ++++++++++++++++++
+ .../viabedrock/api/util/MoLangMathTest.java   | 115 +++++
+ 13 files changed, 1751 insertions(+), 38 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/BedrockSineTable.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/MoLangControlFlow.java
@@ -881,10 +887,10 @@ index 000000000..875d51eca
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java
 new file mode 100644
-index 000000000..ea3292b7a
+index 000000000..045f04a9c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java
-@@ -0,0 +1,345 @@
+@@ -0,0 +1,380 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -910,7 +916,10 @@ index 000000000..ea3292b7a
 +
 +import java.io.IOException;
 +import java.util.ArrayList;
++import java.util.Collections;
++import java.util.IdentityHashMap;
 +import java.util.List;
++import java.util.Set;
 +import java.util.regex.Pattern;
 +
 +/** Builds Mocha expressions with assignment precedence and modern nested Molang conditionals. */
@@ -924,6 +933,7 @@ index 000000000..ea3292b7a
 +            Pattern.compile("(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?[fF](?![\\w.])");
 +    private final MolangLexer lexer;
 +    private final String source;
++    private final Set<Expression> parenthesized = Collections.newSetFromMap(new IdentityHashMap<>());
 +    private int depth;
 +    private boolean complex;
 +    private TokenKind previous;
@@ -934,6 +944,11 @@ index 000000000..ea3292b7a
 +    }
 +
 +    public static List<Expression> parse(final String source) throws IOException {
++        return parseSyntax(source).expressions();
++    }
++
++    /** Retain compound-node grouping for consumers whose admission rules depend on it. */
++    public static Syntax parseSyntax(final String source) throws IOException {
 +        final String expression = numericSuffixes(source);
 +        try (MolangLexer lexer = MolangLexer.lexer(expression)) {
 +            lexer.next();
@@ -947,14 +962,14 @@ index 000000000..ea3292b7a
 +            }
 +            if (!parser.complex && !expressions.isEmpty()
 +                    && expressions.getFirst() instanceof UnaryExpression unary && unary.op() == UnaryExpression.Op.RETURN) {
-+                return List.of(FloatExpression.ZERO);
++                return new Syntax(List.of(FloatExpression.ZERO), parser.parenthesized);
 +            }
 +            if (parser.complex) {
 +                final List<Expression> body = new ArrayList<>(expressions);
 +                body.add(FloatExpression.ZERO);
-+                return List.copyOf(body);
++                return new Syntax(body, parser.parenthesized);
 +            }
-+            return expressions;
++            return new Syntax(expressions, parser.parenthesized);
 +        }
 +    }
 +
@@ -1132,6 +1147,9 @@ index 000000000..ea3292b7a
 +            case LPAREN -> {
 +                final Expression value = this.expression(0);
 +                this.expect(TokenKind.RPAREN);
++                if (!(value instanceof FloatExpression || value instanceof StringExpression || value instanceof IdentifierExpression)) {
++                    this.parenthesized.add(value);
++                }
 +                yield value;
 +            }
 +            case LBRACE -> {
@@ -1227,6 +1245,29 @@ index 000000000..ea3292b7a
 +            result.append(current);
 +        }
 +        return result.toString();
++    }
++
++    public static final class Syntax {
++
++        private final List<Expression> expressions;
++        private final Set<Expression> parenthesized;
++
++        private Syntax(final List<Expression> expressions, final Set<Expression> parenthesized) {
++            this.expressions = List.copyOf(expressions);
++            final Set<Expression> copy = Collections.newSetFromMap(new IdentityHashMap<>());
++            copy.addAll(parenthesized);
++            this.parenthesized = Collections.unmodifiableSet(copy);
++        }
++
++        public List<Expression> expressions() {
++            return this.expressions;
++        }
++
++        /** Literal and identifier nodes do not retain grouping metadata. */
++        public boolean isParenthesized(final Expression expression) {
++            return this.parenthesized.contains(expression);
++        }
++
 +    }
 +
 +}
@@ -1394,10 +1435,10 @@ index 000000000..dbf1f687a
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
 new file mode 100644
-index 000000000..478afb2e2
+index 000000000..5c5b76653
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
-@@ -0,0 +1,384 @@
+@@ -0,0 +1,395 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1408,6 +1449,7 @@ index 000000000..478afb2e2
 +import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 +import org.redlance.mocha.parser.ParseException;
++import org.redlance.mocha.parser.ast.CallExpression;
 +import com.google.gson.JsonParser;
 +import org.redlance.mocha.runtime.Scope;
 +import org.redlance.mocha.runtime.value.MutableObjectBinding;
@@ -1424,6 +1466,16 @@ index 000000000..478afb2e2
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class MoLangEngineTest {
++
++    @Test
++    void retainsGroupingByOccurrenceWithoutChangingTheEvaluationTree() throws Exception {
++        final var syntax = MoLangParser.parseSyntax("first(v.a=1,(v.a=1));");
++        final var call = (CallExpression) syntax.expressions().getFirst();
++        assertEquals(call.arguments().getFirst(), call.arguments().getLast());
++        assertFalse(syntax.isParenthesized(call.arguments().getFirst()));
++        assertTrue(syntax.isParenthesized(call.arguments().getLast()));
++        assertEquals(MoLangParser.parse("first(v.a=1,(v.a=1));"), syntax.expressions());
++    }
 +
 +    @Test
 +    void resolvesDottedResourceAliasesAsOneNameWithoutChangingNumericExpressions() throws Exception {

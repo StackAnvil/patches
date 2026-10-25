@@ -294,6 +294,17 @@ Both downstream bundles retain all 1,246 core files byte-for-byte, excluding the
 Reviewed artifact replacements preserve 32 unrelated files per project and retain private rollback copies under `.stackanvil/research/fishing-feedback/crt/build-rollback/`.
 No service restarts or new live-server joins occur in this verification.
 
+## Explicit compound-expression grouping
+
+Expose immutable parser syntax metadata alongside the existing expression list.
+Recipe admission distinguishes grouped assignment values beside commas and inside conditional arguments.
+Keep that consumer policy separate from the shared rendering evaluator.
+Identity-based membership distinguishes structurally equal compound nodes at different source positions.
+Literal and identifier nodes do not retain grouping metadata.
+The existing parse API returns the same evaluation tree.
+A focused regression checks both grouping identity and tree equality.
+The [recipe coverage reference](../../../docs/bedrock-coverage.md#native-recipe-molang-context-october-25-2026) records the native admission comparisons and complete build checks.
+
 ## Upstream prerequisites
 
 - [viabedrock patch](../../viabedrock/upstreamable/0000-adopt-java-25-language-baseline.pr.md): Adopt Java 25 before the float interpreter runtime.
