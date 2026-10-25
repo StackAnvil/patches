@@ -560,3 +560,22 @@ The existing primitive extractor and output-index controls retain their declared
 The complete four-project build passes 2,866 tests with 162 optional skips and no failures or errors.
 All retained packaged comparisons pass.
 Installed recipe availability, NBT outer-loader admission and complete native screen/action behavior remain unfinished.
+
+## Player and workbench default layouts
+
+Project saved layout zero and positive out-of-range values through the native constructor default.
+Both native defaults show the recipe pane, independently of Java's previous visibility.
+Keep the raw saved values when filtering changes, and project the other screen's layout when menu ownership changes.
+Negative layouts retain the previous Java visibility as an explicit compatibility fallback.
+The independent native profile that forces a layout remains outside this projection.
+
+The recorded 1.26.51.1 constructor slice and registered layout getters provide 1,480 ordinary nonnegative cases.
+The optional `STACKANVIL_NATIVE_PLAYER_LAYOUTS` comparison checks both prior Java visibility states, for 2,960 comparisons.
+A focused packet regression also checks raw-value retention, filter changes and the two independent layouts.
+Both new tests fail against the preceding packaged core and pass after the correction, with implementation origins verified.
+The [layout reference](../../../docs/native-player-inventory.md#java-projection-of-default-layouts) records scope and limits.
+This does not implement the authored player screen or resolve the original background report.
+
+The complete four-project build passes 2,927 tests with 161 optional skips and no failures or errors.
+Checkstyle and repository offline validation pass.
+All 1,522 core classes match both embedded copies, all 1,191 client classes match the tested add-on, and all 198 assets remain unchanged.

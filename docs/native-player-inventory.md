@@ -97,6 +97,29 @@ Each case then executes sixteen original property getters, for 55,552 getter cal
 The reference supplies model-filter updates and initial collection refresh. It disables the separate restricted-tab policy.
 Full construction, restricted-tab availability, device delivery and visible pixels remain unverified.
 
+### Java projection of default layouts
+
+The Java recipe-book projection now opens for saved layout zero and positive values greater than three.
+The native constructor replaces these values with layout two or three, both of which show the recipe pane.
+Previously, Java retained its previous visibility and could keep the pane closed.
+This applies independently to player inventory and the crafting table.
+Filter changes preserve both raw saved layouts and the saved tabs.
+
+Negative values do not select a native layout binding.
+The Java compatibility projection retains its previous visibility for those unsupported values.
+It does not claim to reproduce their native screen result.
+The independent profile that forces a default layout remains outside this projection.
+
+The recorded constructor slice and registered getters provide 1,480 ordinary nonnegative controls.
+Both previous Java visibility states match, for 2,960 comparisons.
+The packaged regression also checks incoming options, filter changes and switching between the two saved layouts.
+These checks concern Java recipe-pane visibility. They do not establish authored player-screen or pixel parity.
+
+The complete four-project build passes 2,927 tests with 161 optional skips and no failures or errors.
+Checkstyle and repository offline validation pass.
+All 1,522 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+All 198 assets remain unchanged from the collection-priority build.
+
 ### Logical item and recipe collections
 
 The original initializer at `0x1431bd020` constructs 67 collection names.
