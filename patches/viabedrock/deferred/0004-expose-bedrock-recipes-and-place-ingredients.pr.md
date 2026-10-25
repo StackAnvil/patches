@@ -1033,3 +1033,35 @@ Both Checkstyle tasks pass, and all 104 core patches replay.
 The tests also cover live ability and unlock changes, stale ownership, selected output and lazy context lookup.
 This entry point does not yet connect the collections to the player screen.
 Search name production, search policy integration, controller behavior and the original four live reports remain open.
+
+## Player search policy
+
+`CraftingDataTracker.playerRecipeSearch` retains the Instabuild mode selected when the owner installs a search callback.
+Its availability method reads current rules, unlocks, recipe contexts and ingredients.
+Primary names and secondary descriptions remain lazy definition-owned inputs.
+The shared Unicode5.0 matcher supplies substring or word-prefix matching for the installed mode.
+
+Empty normalized queries skip output validity and text production.
+Non-Instabuild searches hide locked outputs when limited crafting is enabled or the query is empty.
+Other paths count ingredients after the search, including misses.
+Partial non-Instabuild results require candidates that all fit the current grid.
+A matching non-Instabuild search reads unlock state again after name production.
+
+All 2,384 original installed-search callback cases match the retained Java path and its primary/secondary producer call counts.
+The controls cover mixed grid requirements, missing and partial inputs, locks, limited crafting, filters, selected output and ability changes after installation.
+The original installer, search, formatting, normalization, unlock predicate, output query, concrete matcher and counter execute.
+Names, secondary descriptions, game type, enum/model backing, sources, contexts and output getters remain supplied boundaries.
+Temporary allocations balance per evaluation.
+
+Three further original query controls distinguish ordinary stacks, constructor-created empty stacks and retained defined stacks whose count becomes zero.
+The constructor clears identity at zero count. A retained defined stack can still match the output index and unlock query.
+The first Java fixture retained identity for both states and failed. Its construction was corrected.
+Shared catalog identity and query behavior remain unchanged.
+Nine targeted tests pass, two earlier optional fixtures skip, and both Checkstyle tasks pass.
+All 104 core patches replay.
+
+The native factory snapshot identifies seven secondary-description targets across 1,949 definitions.
+Inspection shows common enchantment descriptions and specialized effect or container descriptions. These are not second ordinary names.
+This increment verifies policy composition with supplied text producers.
+Specialized description production, full model/controller lifetime and installed player screen publication still need work.
+The original four live reports remain open.

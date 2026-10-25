@@ -543,3 +543,7 @@ The deferred crafting consumer uses the same algorithm for ingredient cardinalit
 Keep the Microsoft STL license beside the extracted implementation.
 Existing cooking-order tests pass. The consuming patch compares large pair sorts against complete original counter executions.
 This extraction does not install the player availability evaluator or change screen admission.
+
+The shared recipe search exposes normalized-query emptiness to its player policy consumer.
+An empty normalized query skips text production and differs from a failed output-validity check.
+The existing formatter and Unicode5.0 search algorithms remain shared.
