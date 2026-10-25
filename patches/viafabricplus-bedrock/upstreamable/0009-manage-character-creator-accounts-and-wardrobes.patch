@@ -1,4 +1,4 @@
-From 717eda3c2a20a1005300a2b626340b4ce85d8a7f Mon Sep 17 00:00:00 2001
+From f21ffa62ac695ecedec394bf41ac7abe258a86e7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(appearance): manage Character Creator accounts and
@@ -11,13 +11,24 @@ particles at each attachment sample, even without another body render.
 Keep the sampled locator pose and unrelated graph inputs. Reject a
 changed native actor lifetime before reading its metadata, while retaining
 the existing registry-only path after actor removal with the same owner.
+
+Register the core's existing versioned emote channel on the actual Fabric
+play listener. Route remote playback and available-emote lists into the
+same asset, animation, sound and particle runtime used by direct emotes.
+Track the Minecraft network connection separately from the optional local
+ViaBedrock connection, since a ViaProxy client has no local Bedrock tracker.
+Reject delayed requests from retired connections and resolve announcement
+names through the Java player list when no local Bedrock list exists.
+Bound list and unsigned duration decoding before allocating entries or
+starting playback. This adds incoming proxy playback; local proxy emote
+selection and live skin changes remain separate work.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |    3 +
+ .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockAppearanceStore.java    |  186 +-
  .../appearance/BedrockCharacterProfiles.java  | 1527 +++++++++++++++++
  .../appearance/BedrockClassicAssets.java      |   77 +
  .../appearance/BedrockClassicSkinPack.java    |  123 +-
- .../appearance/BedrockEmotePlayback.java      |  461 +++++
+ .../appearance/BedrockEmotePlayback.java      |  503 ++++++
  .../bedrock/appearance/BedrockEmotes.java     |  167 ++
  .../BedrockMarketplaceTransactions.java       |  253 +++
  .../appearance/BedrockOwnedSkinPacks.java     |  162 ++
@@ -32,6 +43,7 @@ the existing registry-only path after actor removal with the same owner.
  .../appearance/BedrockPersonaModel.java       |  442 +++++
  .../appearance/BedrockPersonaProfile.java     |  216 +++
  .../appearance/BedrockPersonaTint.java        |  325 ++++
+ .../appearance/NativeEmotePayload.java        |   78 +
  .../ViaFabricPlusEmoteProvider.java           |   40 +
  .../appearance/ViaFabricPlusSkinProvider.java |   16 +-
  .../render/MixinAvatarAnimationRenderer.java  |   35 +
@@ -76,8 +88,9 @@ the existing registry-only path after actor removal with the same owner.
  .../appearance/BedrockPersonaProfileTest.java |   92 +
  .../appearance/BedrockPersonaTintTest.java    |  280 +++
  .../BedrockPlayerAnimationsTest.java          |   90 +
+ .../appearance/NativeEmotePayloadTest.java    |  103 ++
  .../render/BedrockActorQuerySnapshotTest.java |   89 +
- 65 files changed, 14276 insertions(+), 107 deletions(-)
+ 67 files changed, 14500 insertions(+), 107 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicAssets.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
@@ -95,6 +108,7 @@ the existing registry-only path after actor removal with the same owner.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaProfile.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaTint.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeEmotePayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusEmoteProvider.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonBobbing.java
@@ -130,10 +144,11 @@ the existing registry-only path after actor removal with the same owner.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaProfileTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaTintTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerAnimationsTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/NativeEmotePayloadTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorQuerySnapshotTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 3c2c94f..248173e 100644
+index 3c2c94f..b7ef01c 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 @@ -51,6 +51,8 @@ import com.viaversion.viafabricplus.bedrock.settings.BedrockSettings;
@@ -145,7 +160,15 @@ index 3c2c94f..248173e 100644
  import org.apache.logging.log4j.LogManager;
  import org.apache.logging.log4j.Logger;
  
-@@ -119,6 +121,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -70,6 +72,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+ 
+     @Override
+     public void onPreSettingsLoading() {
++        com.viaversion.viafabricplus.bedrock.appearance.BedrockEmotePlayback.register();
+         PayloadTypeRegistry.clientboundPlay().register(NativeSkinPayload.TYPE, NativeSkinPayload.CODEC);
+         // Capture the listener identity at INIT. Fabric Context.player() returns the current client player.
+         ClientPlayConnectionEvents.INIT.register((listener, client) ->
+@@ -119,6 +122,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          new ViaFabricPlusViaBedrockPlatform();
          Via.getManager().getProviders().use(NettyPipelineProvider.class, new ViaFabricPlusNettyPipelineProvider());
          Via.getManager().getProviders().use(SkinProvider.class, new ViaFabricPlusSkinProvider());
@@ -2325,10 +2348,10 @@ index 5f35a0d..ae57bf7 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
 new file mode 100644
-index 0000000..2d121cb
+index 0000000..4af27ed
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
-@@ -0,0 +1,461 @@
+@@ -0,0 +1,503 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2347,6 +2370,10 @@ index 0000000..2d121cb
 +
 +import net.minecraft.client.KeyMapping;
 +import net.minecraft.client.Minecraft;
++import net.minecraft.network.Connection;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 +import net.minecraft.network.chat.ComponentSerialization;
 +import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
 +import net.raphimc.viabedrock.api.util.TextUtil;
@@ -2384,6 +2411,7 @@ index 0000000..2d121cb
 +    private static List<String> wheel = List.of("", "", "", "");
 +    private static BedrockAuthManager account;
 +    private static volatile UserConnection connection;
++    private static Connection networkConnection;
 +    private static long generation;
 +    private static boolean loading;
 +    private static boolean failed;
@@ -2393,21 +2421,48 @@ index 0000000..2d121cb
 +
 +    private BedrockEmotePlayback() {}
 +
++    public static void register() {
++        PayloadTypeRegistry.clientboundPlay().register(NativeEmotePayload.TYPE, NativeEmotePayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++                ClientPlayNetworking.registerReceiver(NativeEmotePayload.TYPE, (payload, context) -> client.execute(() -> {
++                    if (client.getConnection() != listener) return;
++                    synchronizeConnection();
++                    switch (payload.message()) {
++                        case NativeEmotePayload.Play play -> queue(new Pending(listener.getConnection(), null,
++                                play.player(), play.emote(), System.nanoTime(), play.ticks(), play.flags()));
++                        case NativeEmotePayload.Available available -> AVAILABLE.put(available.player(), available.emotes());
++                    }
++                })));
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> {
++            if (networkConnection == listener.getConnection()) clearConnection(null, null);
++        });
++    }
++
++    private static void synchronizeConnection() {
++        final var listener = Minecraft.getInstance().getConnection();
++        final Connection network = listener == null ? null : listener.getConnection();
++        final UserConnection current = ViaFabricPlus.api().userConnection();
++        if (network != networkConnection || current != connection) clearConnection(network, current);
++    }
++
++    private static void clearConnection(final Connection network, final UserConnection current) {
++        BedrockSoundPlayback.stop();
++        BedrockParticlePlayback.stop();
++        PLAYING.clear();
++        AVAILABLE.clear();
++        REQUESTS.clear();
++        ANNOUNCEMENTS.clear();
++        connection = current;
++        networkConnection = network;
++        PENDING.clear();
++        lastAdvertised = null;
++        localEmoting = false;
++    }
++
 +    public static void tick() {
 +        final Minecraft minecraft = Minecraft.getInstance();
-+        final UserConnection current = ViaFabricPlus.api().userConnection();
-+        if (current != connection) {
-+            BedrockSoundPlayback.stop();
-+            BedrockParticlePlayback.stop();
-+            PLAYING.clear();
-+            AVAILABLE.clear();
-+            REQUESTS.clear();
-+            ANNOUNCEMENTS.clear();
-+            connection = current;
-+            PENDING.clear();
-+            lastAdvertised = null;
-+            localEmoting = false;
-+        }
++        synchronizeConnection();
++        final UserConnection current = connection;
 +        final BedrockAuthManager selected = ViaFabricPlusBedrock.impl().account().get();
 +        if (selected != account) {
 +            BedrockSoundPlayback.stop();
@@ -2645,7 +2700,12 @@ index 0000000..2d121cb
 +            final UUID emote,
 +            final long ticks,
 +            final int flags) {
-+        final Pending pending = new Pending(user, player, emote, System.nanoTime(), ticks, flags);
++        synchronizeConnection();
++        if (user != connection || networkConnection == null) return;
++        queue(new Pending(networkConnection, user, player, emote, System.nanoTime(), ticks, flags));
++    }
++
++    private static void queue(final Pending pending) {
 +        if (loading) {
 +            if (PENDING.size() == 32) PENDING.removeFirst();
 +            PENDING.addLast(pending);
@@ -2653,7 +2713,7 @@ index 0000000..2d121cb
 +    }
 +
 +    private static void receive(final Pending pending) {
-+        if (pending.user() != connection) return;
++        if (pending.owner() != networkConnection || pending.user() != null && pending.user() != connection) return;
 +        final var advertised = AVAILABLE.get(pending.player());
 +        if (advertised != null && !advertised.contains(pending.emote())) return;
 +        final var local = Minecraft.getInstance().player;
@@ -2668,7 +2728,8 @@ index 0000000..2d121cb
 +                                        .execute(
 +                                                () -> {
 +                                                    if (request != generation
-+                                                            || pending.user() != connection
++                                                            || pending.owner() != networkConnection
++                                                            || pending.user() != null && pending.user() != connection
 +                                                            || !java.util.Objects.equals(
 +                                                                    REQUESTS.get(pending.player()),
 +                                                                    pending.received())) return;
@@ -2694,13 +2755,16 @@ index 0000000..2d121cb
 +            final int flags) {
 +        final Minecraft minecraft = Minecraft.getInstance();
 +        if ((flags & MUTE_EMOTE_CHAT) != 0
-+                || user.get(GameSessionStorage.class).isEmoteChatMuted()
++                || user != null && user.get(GameSessionStorage.class).isEmoteChatMuted()
 +                || ViaFabricPlusBedrock.impl().settings().muteEmoteChat().isActive()
 +                || !minecraft.computeChatAbilities().canReceivePlayerMessages()
 +                || minecraft.isBlocked(player)) return;
-+        final var listed = user.get(PlayerListStorage.class).getPlayer(player);
++        final var listed = user == null ? null : user.get(PlayerListStorage.class).getPlayer(player);
++        final var listener = minecraft.getConnection();
++        final var javaPlayer = listener == null ? null : listener.getPlayerInfo(player);
 +        final String name;
 +        if (listed != null) name = listed.value();
++        else if (javaPlayer != null) name = javaPlayer.getProfile().name();
 +        else if (minecraft.player != null && minecraft.player.getUUID().equals(player))
 +            name = minecraft.player.getName().getString();
 +        else return;
@@ -2723,7 +2787,8 @@ index 0000000..2d121cb
 +
 +    public static void available(
 +            final UserConnection user, final UUID player, final UUID[] emotes) {
-+        if (user != connection) return;
++        synchronizeConnection();
++        if (user != connection || networkConnection == null) return;
 +        AVAILABLE.put(player, List.of(emotes));
 +    }
 +
@@ -2776,7 +2841,7 @@ index 0000000..2d121cb
 +            List<BedrockCharacterProfiles.WardrobeItem> items, List<String> wheel) {}
 +
 +    private record Pending(
-+            UserConnection user, UUID player, UUID emote, long received, long ticks, int flags) {}
++            Connection owner, UserConnection user, UUID player, UUID emote, long received, long ticks, int flags) {}
 +
 +    private record Playing(
 +            UUID id,
@@ -5907,6 +5972,90 @@ index 0000000..1444a38
 +
 +    private static int channel(final float value) {
 +        return (int) (Math.min(1, Math.max(0, value)) * 255);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeEmotePayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeEmotePayload.java
+new file mode 100644
+index 0000000..f93847f
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeEmotePayload.java
+@@ -0,0 +1,78 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.UUID;
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
++
++/** The core's existing versioned emote transport, including bounded available-emote lists. */
++public record NativeEmotePayload(Message message) implements CustomPacketPayload {
++    public static final Type<NativeEmotePayload> TYPE = new Type<>(Identifier.parse(EmoteProvider.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeEmotePayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> write(buffer, payload.message), buffer -> new NativeEmotePayload(read(buffer)));
++
++    static Message read(final ByteBuf buffer) {
++        if (Types.VAR_INT.readPrimitive(buffer) != EmoteProvider.VERSION) throw new IllegalArgumentException("Unknown emote payload version");
++        final int kind = Types.VAR_INT.readPrimitive(buffer);
++        final UUID player = Types.UUID.read(buffer);
++        return switch (kind) {
++            case 0 -> new Play(player, Types.UUID.read(buffer), Types.VAR_LONG.readPrimitive(buffer), buffer.readUnsignedByte());
++            case 1 -> {
++                final int count = Types.VAR_INT.readPrimitive(buffer);
++                if (count < 0 || count > 256) throw new IllegalArgumentException("Invalid available-emote count");
++                final var emotes = new ArrayList<UUID>(count);
++                for (int index = 0; index < count; index++) emotes.add(Types.UUID.read(buffer));
++                yield new Available(player, emotes);
++            }
++            default -> throw new IllegalArgumentException("Unknown emote payload kind");
++        };
++    }
++
++    static void write(final ByteBuf buffer, final Message message) {
++        Types.VAR_INT.writePrimitive(buffer, EmoteProvider.VERSION);
++        Types.VAR_INT.writePrimitive(buffer, message instanceof Play ? 0 : 1);
++        Types.UUID.write(buffer, message.player());
++        switch (message) {
++            case Play play -> {
++                Types.UUID.write(buffer, play.emote);
++                Types.VAR_LONG.writePrimitive(buffer, play.ticks);
++                buffer.writeByte(play.flags);
++            }
++            case Available available -> {
++                Types.VAR_INT.writePrimitive(buffer, available.emotes.size());
++                for (final UUID emote : available.emotes) Types.UUID.write(buffer, emote);
++            }
++        }
++    }
++
++    @Override
++    public Type<NativeEmotePayload> type() { return TYPE; }
++
++    sealed interface Message permits Play, Available {
++        UUID player();
++    }
++
++    record Play(UUID player, UUID emote, long ticks, int flags) implements Message {
++        Play {
++            if (Long.compareUnsigned(ticks, 12000) > 0 || flags < 0 || flags > 255) throw new IllegalArgumentException("Invalid emote playback");
++        }
++    }
++
++    record Available(UUID player, List<UUID> emotes) implements Message {
++        Available {
++            emotes = List.copyOf(emotes);
++            if (emotes.size() > 256) throw new IllegalArgumentException("Invalid available-emote count");
++        }
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusEmoteProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusEmoteProvider.java
@@ -15483,6 +15632,115 @@ index 0000000..0825679
 +        assertSame(server, animations.firstPerson(server, false));
 +        assertNull(animations.firstPerson(null, false));
 +        assertNull(animations.firstPerson(server, true));
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/NativeEmotePayloadTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/NativeEmotePayloadTest.java
+new file mode 100644
+index 0000000..f8e433d
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/NativeEmotePayloadTest.java
+@@ -0,0 +1,103 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.UUID;
++import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeEmotePayloadTest {
++    @Test
++    void decodesTheCorePlaybackWireAndPreservesUnsignedFlags() {
++        final UUID player = UUID.randomUUID();
++        final UUID emote = UUID.randomUUID();
++        for (final long ticks : new long[]{0, 20, 12000}) {
++            final ByteBuf wire = header(0, player);
++            final ByteBuf encoded = Unpooled.buffer();
++            try {
++                Types.UUID.write(wire, emote);
++                Types.VAR_LONG.writePrimitive(wire, ticks);
++                wire.writeByte(255);
++                final var decoded = NativeEmotePayload.read(wire);
++                assertEquals(new NativeEmotePayload.Play(player, emote, ticks, 255), decoded);
++                assertFalse(wire.isReadable());
++                NativeEmotePayload.write(encoded, decoded);
++                wire.readerIndex(0);
++                assertEquals(wire, encoded);
++            } finally {
++                wire.release();
++                encoded.release();
++            }
++        }
++    }
++
++    @Test
++    void copiesAvailableListsAndRejectsBoundsBeforeReadingEntries() {
++        final UUID player = UUID.randomUUID();
++        final var emotes = new ArrayList<UUID>();
++        for (int index = 0; index < 256; index++) emotes.add(UUID.randomUUID());
++        final var expected = new NativeEmotePayload.Available(player, emotes);
++        final ByteBuf wire = header(1, player);
++        try {
++            Types.UUID_ARRAY.write(wire, emotes.toArray(UUID[]::new));
++            assertEquals(expected, NativeEmotePayload.read(wire));
++            assertFalse(wire.isReadable());
++            emotes.clear();
++            assertEquals(256, expected.emotes().size());
++            assertThrows(UnsupportedOperationException.class, () -> expected.emotes().clear());
++        } finally {
++            wire.release();
++        }
++        for (final int count : new int[]{-1, 257, Integer.MAX_VALUE}) {
++            final ByteBuf invalid = header(1, player);
++            try {
++                Types.VAR_INT.writePrimitive(invalid, count);
++                assertThrows(IllegalArgumentException.class, () -> NativeEmotePayload.read(invalid));
++            } finally {
++                invalid.release();
++            }
++        }
++    }
++
++    @Test
++    void rejectsInvalidPlaybackAndUnknownProtocolShapes() {
++        final UUID player = UUID.randomUUID();
++        for (final long ticks : new long[]{-1, Long.MIN_VALUE, 12001}) {
++            final ByteBuf invalid = header(0, player);
++            try {
++                Types.UUID.write(invalid, UUID.randomUUID());
++                Types.VAR_LONG.writePrimitive(invalid, ticks);
++                invalid.writeByte(0);
++                assertThrows(IllegalArgumentException.class, () -> NativeEmotePayload.read(invalid));
++            } finally {
++                invalid.release();
++            }
++        }
++        final ByteBuf unknown = header(2, player);
++        try {
++            assertThrows(IllegalArgumentException.class, () -> NativeEmotePayload.read(unknown));
++        } finally {
++            unknown.release();
++        }
++        final ByteBuf version = Unpooled.buffer();
++        try {
++            Types.VAR_INT.writePrimitive(version, EmoteProvider.VERSION + 1);
++            assertThrows(IllegalArgumentException.class, () -> NativeEmotePayload.read(version));
++        } finally {
++            version.release();
++        }
++    }
++
++    private static ByteBuf header(final int kind, final UUID player) {
++        final ByteBuf buffer = Unpooled.buffer();
++        Types.VAR_INT.writePrimitive(buffer, EmoteProvider.VERSION);
++        Types.VAR_INT.writePrimitive(buffer, kind);
++        Types.UUID.write(buffer, player);
++        return buffer;
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorQuerySnapshotTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorQuerySnapshotTest.java

@@ -19,3 +19,10 @@ Retain the existing StartGame mute-emote-chat boolean in `GameSessionStorage`. C
 The [Mojang LevelSettings schema](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.24/types/level-settings/) includes this field. Inspection of the target Bedrock 1.26.51.1 local announcement path confirms the world policy gate. Incoming emote flag bit 2 independently suppresses remote announcements. The target outgoing packet constructor retains zero flags.
 
 The replayed full stack passes its build, Checkstyle, and tests. A running add-on client verifies world muting, incoming flags, animation playback while muted, and local echo suppression using a mock connection. Live native multiplayer announcement comparison remains pending.
+
+## Proxy announcement policy
+
+The proxy payload includes the native world chat-muting policy in its existing mute flag.
+The client still applies its own chat preference and privacy checks.
+Packet flags remain intact when the world does not mute emote announcements.
+A provider regression covers capability negotiation and both world policies across ordinary and high-bit flags.

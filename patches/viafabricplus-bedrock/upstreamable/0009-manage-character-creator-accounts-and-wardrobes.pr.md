@@ -1101,3 +1101,31 @@ The existing locator pose and unrelated graph inputs remain available.
 A changed native lifetime retires the binding before metadata can come from another owner.
 Actor removal with the same retained registry owner keeps its existing path.
 See the [shared runtime evidence](0008-share-native-actor-and-resource-runtime.pr.md#fresh-common-particle-actor-inputs) for tested queries, native boundaries, and remaining limits.
+
+## Incoming emotes through ViaProxy
+
+The core already publishes a versioned emote channel, but the add-on did not register a receiver.
+The add-on now registers playback and available-emote messages on the actual Fabric play listener.
+Both routes use the existing emote asset, animation, sound and particle runtime.
+Network ownership remains separate from the optional local ViaBedrock connection.
+Delayed requests from retired connections cannot start playback in a later session.
+Proxy announcements resolve names through the Java player list and preserve the world mute flag.
+
+The decoder bounds available lists before allocation and rejects unknown versions, message kinds and invalid unsigned durations.
+Tests cover the existing core wire format, immutable lists, bounds and flags.
+All 104 core patches and 38 add-on patches replay.
+The four-project build passes 3,023 tests with 152 optional skips and no failures.
+Both core Checkstyle tasks pass.
+
+A controlled proxy replay combines a recorded protocol-2193 bootstrap with one declared peer and four bundled emotes.
+It copies the recorded skin and supplies declared emote durations.
+A read-only observer records all four emotes during installed world-render sampling.
+A screenshot also shows a wave.
+Three complete skin records load without rejection, and the remote-player renderer runs.
+This control has no native graphical baseline and does not establish full emote fidelity.
+Local emote selection and live skin changes through ViaProxy remain unfinished.
+
+The direct-route regression also samples all four emotes and installs all three skin records without rejection.
+Its overall scene gate still fails on a missing camera-item texture model.
+The proxy scene gate passes.
+This mapping failure remains open and is not treated as an emote playback failure or a passing rendering result.

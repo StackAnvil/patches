@@ -400,7 +400,7 @@ The sound-control change also passes the [complete main-branch CI build](https:/
 | S1 | Animated face composition and native tint blending | Unverified | Existing production paths need broader native face, channel, mask, and outfit comparisons. |
 | S2 | Complete local persona assembly | Incomplete | Resolve unavailable free assets and remaining geometry, layering, and animation sources. |
 | S3 | Classic geometry and animation formats | Incomplete | Complete inherited legacy sources, aliases, metadata, and inheritance comparisons. |
-| S4 | Emotes and animation fidelity | Incomplete | Complete unavailable remote assets, events, effects, platform filters, timing, rotations, and scale comparisons. |
+| S4 | Emotes and animation fidelity | Incomplete | Incoming proxy playback reaches the installed renderer for four controlled bundled emotes. Complete local proxy selection, unavailable remote assets, events, effects, cancellation, platform filters and native visual comparisons. |
 | S5 | Native first-person and held-item drawing | Incomplete | Classic and persona graphs submit their sampled hierarchy with authored scale, death roll, and raw-name transforms. Server costumes now select resolved hand-view surfaces in the sampled actor scope. Verify native costume placement, visible timing, and persona overlap, then complete other global transforms, held items, charging, equipment, and input timing. |
 | S6 | Complete incoming skin records through ViaProxy | Implemented | Complete records and local-avatar ownership pass isolated direct and proxy playback. Broader remote-player, lifecycle, and native visual comparisons remain required. |
 | D1 | Palettes, color channels, and limb editing | Unverified | Compare remaining palette options, asynchronous saves, and fresh native limb edits. |
@@ -10267,3 +10267,35 @@ Those selection and notification effects belong to the pending inventory model i
 
 **Remaining work:** Installed model ownership, full collection/controller lifetime, query-edit delivery and visible player publication remain unfinished.
 This increment does not resolve the original inventory, movement, eating or locator reports.
+
+## Gameplay, packs and incoming proxy emotes (October 25, 2026)
+
+**Priority:** Pack behavior, interactions, niche mechanics, emotes and skins remain explicit requirements alongside movement, inventory, cameras and rendering.
+Crafting research is parked while work returns to player-visible behavior.
+
+**Fresh gameplay controls:** Java 26.3 through ViaProxy joins Bedrock 1.26.51.1 and passes movement, golden-apple consumption and boat controls.
+The boat remains mounted across 51 samples and moves 13.45 blocks without a large position step.
+The custom-block texture passes initial loading, unchanged-pack cache reuse and conversion after a pack change.
+An initial run used an older server that rejected the fixture format. That environment failure is not evidence of a production pack defect.
+These controls do not reproduce the intermittent pearl/wind-charge rollback or endless-eating reports.
+
+**Fixed:** The core already forwards emote events through a negotiated channel, but the add-on lacked its receiver.
+Incoming proxy emotes now reach the same playback runtime as direct emotes.
+The receiver preserves available lists, bounds decoded values and rejects playback from a retired connection.
+Proxy announcements use Java player names and retain the native world chat-muting policy.
+
+**Runtime evidence:** A controlled replay retains a recorded protocol-2193 bootstrap and adds a stationary peer with a copied skin and four bundled emotes.
+A read-only observer records all four during installed world-render sampling through ViaProxy.
+A screenshot shows a wave, while three complete skin records load without rejection.
+The fixture supplies peer placement and emote durations. It is not an unchanged native capture.
+No native graphical comparison or complete emote fidelity is claimed.
+
+**Remaining:** Local emote selection and live skin changes through ViaProxy still need implementation.
+The current skin-change request path requires a direct Bedrock connection.
+Broader skin composition, emote cancellation and effects, Iris rendering, interactions and original gameplay reports remain open.
+
+**Direct-route regression:** All four emotes reach world-render sampling, and all three skin records install without rejection.
+The broader direct scene gate fails on `viabedrock:item/item_textures/items/camera`.
+The proxy scene gate passes with the same controlled journal.
+The missing camera texture's cause and visible impact still need investigation.
+The rendering gate remains failed for that direct scene.
