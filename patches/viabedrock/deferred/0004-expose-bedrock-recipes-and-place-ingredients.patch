@@ -1,4 +1,4 @@
-From da4b169ad33034d0862d42409e1e255385ffb46c Mon Sep 17 00:00:00 2001
+From a145b97a3637565b333a5906b548c41e568ae61d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -502,6 +502,15 @@ parsing and metadata fallback callbacks. Deferred descriptors still select
 wildcard aliases on their earlier raw-name path, before ordinary lookup.
 Complete live definition ownership, block construction and installed
 availability remain integration work.
+
+Use definition-pointer construction for cooking defaults and output-index
+registration. The native extractor 146989830 and registration caller
+14324d432 pass the original Item to 14247ead0, so numeric lookup must not
+replace that Item before its associated Block is selected. Preserve the
+existing primitive fixtures' declared empty aliases and warm Block caches.
+Regression controls cover a named definition whose numeric owner has a
+different association and count-one output registration without mutating
+the original result.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 +
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -546,7 +555,7 @@ availability remain integration work.
  .../types/recipe/CraftingDataReader.java      |  66 +-
  .../api/model/NativeFurnaceOptionsTest.java   |  57 ++
  .../CookingRecipeAvailabilityTest.java        |  94 +++
- .../container/CookingRecipeInputsTest.java    | 184 ++++
+ .../container/CookingRecipeInputsTest.java    | 204 +++++
  .../container/CookingRecipeSourcesTest.java   | 146 ++++
  .../container/CraftingOutputPlanTest.java     |  84 ++
  .../container/CraftingPlacementTest.java      | 161 ++++
@@ -555,6 +564,7 @@ availability remain integration work.
  .../container/NativeRecipeCounterTest.java    |  66 ++
  .../container/NativeRecipeDescriptorTest.java | 308 +++++++
  .../player/InventoryContainerTest.java        | 131 +++
+ .../model/RecipeOutputConstructionTest.java   |  52 ++
  .../model/recipe/MolangTagQueryTest.java      |  53 ++
  .../model/recipe/RecipeOwnershipTest.java     |  52 ++
  .../packet/FurnaceOptionsPacketTest.java      | 162 ++++
@@ -573,7 +583,7 @@ availability remain integration work.
  .../types/model/FurnaceOptionsTypeTest.java   |  75 ++
  .../types/model/InventoryOptionsTypeTest.java |  46 +
  .../types/recipe/CraftingDataReaderTest.java  |  84 +-
- 70 files changed, 9201 insertions(+), 162 deletions(-)
+ 71 files changed, 9273 insertions(+), 162 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeAvailability.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeCatalog.java
@@ -604,6 +614,7 @@ availability remain integration work.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/NativeRecipeDescriptorTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainerTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/RecipeOutputConstructionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQueryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/recipe/RecipeOwnershipTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/FurnaceOptionsPacketTest.java
@@ -797,7 +808,7 @@ index 000000000..781b06e86
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeInputs.java b/src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeInputs.java
 new file mode 100644
-index 000000000..0c823d9de
+index 000000000..d38c61156
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeInputs.java
 @@ -0,0 +1,53 @@
@@ -844,8 +855,8 @@ index 000000000..0c823d9de
 +        }
 +        final List<BedrockItem> result = new ArrayList<>();
 +        for (final var definition : definitions) {
-+            // No runtime candidate: the shared native constructor resolves this Item's default association.
-+            final var input = items.createNetworkItem(definition.id(), (short) 0, (byte) 1, 0);
++            // Preserve the descriptor Item while the native definition constructor resolves its default association.
++            final var input = items.createDefinitionItem(definition, 0, 1);
 +            if (!input.isEmpty()) {
 +                result.add(input);
 +            }
@@ -3322,7 +3333,7 @@ index 0b8c600e9..4fef2c18d 100644
              if (channels.contains(LocatorBarSnapshot.CHANNEL) && wrapper.user().has(PlayerWaypointTracker.class)) {
                  wrapper.user().get(PlayerWaypointTracker.class).sendSnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index d7d82025c..d84da5012 100644
+index 5191eba1c..08a1b81e0 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -39,10 +39,13 @@ import com.viaversion.viaversion.util.Key;
@@ -3341,7 +3352,7 @@ index d7d82025c..d84da5012 100644
  import net.raphimc.viabedrock.api.resourcepack.definition.ItemDefinitions;
  import net.raphimc.viabedrock.api.util.TextUtil;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
-@@ -56,6 +59,7 @@ import net.raphimc.viabedrock.protocol.model.NativeRecipeRegistry;
+@@ -57,6 +60,7 @@ import net.raphimc.viabedrock.protocol.model.NativeRecipeRegistry;
  import net.raphimc.viabedrock.protocol.model.ItemNameContext;
  import net.raphimc.viabedrock.protocol.model.ItemStackHeader;
  import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeKey;
@@ -3349,7 +3360,7 @@ index d7d82025c..d84da5012 100644
  import net.raphimc.viabedrock.protocol.model.ItemCookingProperties;
  import net.raphimc.viabedrock.protocol.model.ItemCooldown;
  import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
-@@ -65,16 +69,21 @@ import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
+@@ -66,16 +70,21 @@ import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
  import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
@@ -3371,7 +3382,7 @@ index d7d82025c..d84da5012 100644
  import java.util.HashSet;
  import java.util.Map;
  import java.util.Objects;
-@@ -100,6 +109,8 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -101,6 +110,8 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
      private final Set<String> componentItems;
      private final Int2ObjectMap<IntSortedSet> blockItemValidBlockStates;
      private final Type<BedrockItem> itemType;
@@ -3380,7 +3391,7 @@ index d7d82025c..d84da5012 100644
      private final Type<BedrockItem> optionalItemType;
      private final Type<BedrockItem[]> itemArrayType;
      private final Type<BedrockItem> newItemType;
-@@ -185,6 +196,8 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -186,6 +197,8 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
                          this.items.getOrDefault("minecraft:shield", 0),
                          false,
                          this);
@@ -3389,7 +3400,7 @@ index d7d82025c..d84da5012 100644
          this.optionalItemType = new OptionalType<>(this.itemType);
          this.itemArrayType = new ArrayType<>(this.itemType, BedrockTypes.UNSIGNED_VAR_INT);
          this.newItemType =
-@@ -510,6 +523,70 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -527,6 +540,70 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
                  ? this.user().get(BlockStateRewriter.class).blockItemRecipeDescriptor(item.blockRuntimeId()) : null);
      }
  
@@ -3460,7 +3471,7 @@ index d7d82025c..d84da5012 100644
      public boolean matchesRecipeItem(final String identifier, final int metadata, final BedrockItem item) {
          if (item == null) {
              return false;
-@@ -518,6 +595,21 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -535,6 +612,21 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
          return NativeRecipeDescriptor.resolveName(identifier, metadata, context).matchesStack(item, context, this::recipeKey);
      }
  
@@ -3482,7 +3493,7 @@ index d7d82025c..d84da5012 100644
      public ItemRegistry getItemRegistry() {
          return this.registry;
      }
-@@ -540,6 +632,21 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -557,6 +649,21 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
          return NativeItemStackMatcher.matchesIdentity(query, candidate, blocks::blockState, blocks::restrictionBlocks);
      }
  
@@ -3498,13 +3509,13 @@ index d7d82025c..d84da5012 100644
 +    /** Registration reconstructs a count-one key, including associated-block resolution and metadata normalization. */
 +    public RecipeOutputKey recipeOutputRegistrationKey(final BedrockItem output) {
 +        final RecipeOutputKey key = this.recipeOutputKey(output);
-+        return key != null ? this.recipeOutputKey(this.createNetworkItem(output.identifier(), key.metadata(), (byte) 1, 0)) : null;
++        return key != null ? this.recipeOutputKey(this.createDefinitionItem(this.registry.definition(output), key.metadata(), 1)) : null;
 +    }
 +
      public boolean canMerge(final BedrockItem source, final BedrockItem destination) {
          if (destination == null || destination.isEmpty() || !this.registry.sameDefinition(source, destination)) {
              return false;
-@@ -580,6 +687,14 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
+@@ -597,6 +704,14 @@ public class ItemRewriter extends StoredObject implements NetworkItemStackContex
          return this.itemType;
      }
  
@@ -5525,10 +5536,10 @@ index 000000000..c4cb65b87
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/CookingRecipeInputsTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/CookingRecipeInputsTest.java
 new file mode 100644
-index 000000000..b196e1b90
+index 000000000..8b5b27f48
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/CookingRecipeInputsTest.java
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,204 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5636,6 +5647,26 @@ index 000000000..b196e1b90
 +                assertEquals(0, inputs.getFirst().blockRuntimeId());
 +            }
 +        }
++    }
++
++    @Test
++    void namedDefinitionKeepsItsAssociationWhenNumericOwnershipDiffers() throws Exception {
++        final String name = "test:block_collision";
++        final String blockName = "minecraft:stone";
++        final var registry = new ItemRegistry(new ItemEntry[]{new ItemEntry(name, 4, false, ItemVersion.Legacy, null)});
++        final var user = user(registry, Map.of(name, new ItemCookingProperties(false, blockName, false)));
++        final var blocks = user.get(BlockStateRewriter.class);
++        final var state = blockState(blockName, "y");
++        when(blocks.blockItemState(eq(blockName), anyShort())).thenReturn(state);
++        when(blocks.registeredRuntimeId(state)).thenReturn(11);
++        when(blocks.blockItemNumericId(11)).thenReturn(1);
++        when(blocks.blockItemRecipeDescriptor(11)).thenReturn(new BlockItemDescriptor(1, (short) 0));
++        final var input = CookingRecipeInputs.expand(user, new ItemDescriptor.ItemNameDescriptor(name, 3)).getFirst();
++        assertSame(registry.definition(1), input.definition());
++        assertEquals(1, input.amount());
++        assertEquals(0, input.data());
++        assertEquals(11, input.blockRuntimeId());
++        assertTrue(input.hasBlockState());
 +    }
 +
 +    @Test
@@ -7204,6 +7235,64 @@ index 000000000..fbc7a40e4
 +        public ItemDescriptor withAmount(final int amount) {
 +            return this;
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/RecipeOutputConstructionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/RecipeOutputConstructionTest.java
+new file mode 100644
+index 000000000..6e7828446
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/RecipeOutputConstructionTest.java
+@@ -0,0 +1,52 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.chunk.blockstate.BlockItemDescriptor;
++import net.raphimc.viabedrock.api.model.BedrockBlockState;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class RecipeOutputConstructionTest {
++
++    @Test
++    void registrationConstructsFromTheOutputDefinitionBeforeNumericSelection() throws Exception {
++        final var components = new CompoundTag();
++        components.putString("minecraft:block", "minecraft:stone");
++        final var data = new CompoundTag();
++        data.put("components", components);
++        final var registry = new ItemRegistry(new ItemEntry[]{new ItemEntry("test:block_collision", 4, false, ItemVersion.Legacy, data)});
++        final var user = mock(UserConnection.class);
++        final var items = mock(ItemRewriter.class, CALLS_REAL_METHODS);
++        final var field = ItemRewriter.class.getDeclaredField("registry");
++        field.setAccessible(true);
++        field.set(items, registry);
++        doReturn(user).when(items).user();
++        final var blocks = mock(BlockStateRewriter.class);
++        when(user.get(BlockStateRewriter.class)).thenReturn(blocks);
++        final var state = mock(BedrockBlockState.class);
++        when(blocks.blockItemState(eq("minecraft:stone"), anyShort())).thenReturn(state);
++        when(blocks.registeredRuntimeId(state)).thenReturn(11);
++        when(blocks.blockItemNumericId(11)).thenReturn(1);
++        when(blocks.blockItemRecipeDescriptor(11)).thenReturn(new BlockItemDescriptor(1, (short) 0));
++        final var source = registry.definition("test:block_collision");
++        final var output = new BedrockItem(source, (short) 0, (byte) 9);
++        assertEquals(4, items.recipeOutputKey(output).identifier());
++        final var registered = items.recipeOutputRegistrationKey(output);
++        assertEquals(1, registered.identifier());
++        assertEquals(0, registered.metadata());
++        assertSame(source, output.definition());
++        assertEquals(9, output.amount());
 +    }
 +
 +}
@@ -9032,7 +9121,7 @@ index 000000000..b5ad79344
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
 new file mode 100644
-index 000000000..ef5c094dd
+index 000000000..07c3331fd
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/FurnaceRecipeRequestTest.java
 @@ -0,0 +1,797 @@
@@ -9791,8 +9880,8 @@ index 000000000..ef5c094dd
 +            new ItemEntry("minecraft:air", 30007, false, ItemVersion.Legacy, null)});
 +        when(items.getItemRegistry()).thenReturn(registry);
 +        when(items.cookingProperties(any())).thenReturn(ItemCookingProperties.NONE);
-+        when(items.createNetworkItem(anyInt(), anyShort(), anyByte(), anyInt())).thenAnswer(call -> registry.createNetworkItem(
-+                call.getArgument(0), call.getArgument(1), call.getArgument(2), null, (definition, auxiliary) -> null));
++        when(items.createDefinitionItem(any(), anyInt(), anyInt())).thenAnswer(call -> registry.createDefinitionItem(
++                call.getArgument(0), call.getArgument(1), call.getArgument(2), (definition, auxiliary) -> null));
 +        when(items.recipeKey(any())).thenAnswer(call -> registry.recipeKey(call.getArgument(0), null));
 +        when(items.maxStackSize(any())).thenReturn(64);
 +        when(items.canMerge(any(), any())).thenAnswer(call -> NativeItemStacking.canMerge(
@@ -9835,7 +9924,7 @@ index 000000000..ef5c094dd
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeCookingUiStateTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeCookingUiStateTest.java
 new file mode 100644
-index 000000000..65e7a857a
+index 000000000..3797b7c5d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeCookingUiStateTest.java
 @@ -0,0 +1,625 @@
@@ -10420,8 +10509,8 @@ index 000000000..65e7a857a
 +            case 5 -> new ItemCookingProperties(false, "test:block", false);
 +            default -> ItemCookingProperties.NONE;
 +        });
-+        when(items.createNetworkItem(anyInt(), anyShort(), anyByte(), anyInt())).thenAnswer(call -> registry.createNetworkItem(
-+                call.getArgument(0), call.getArgument(1), call.getArgument(2), null, (definition, auxiliary) -> null));
++        when(items.createDefinitionItem(any(), anyInt(), anyInt())).thenAnswer(call -> registry.createDefinitionItem(
++                call.getArgument(0), call.getArgument(1), call.getArgument(2), (definition, auxiliary) -> null));
 +        when(items.recipeKey(any())).thenAnswer(call -> registry.recipeKey(call.getArgument(0), null));
 +        when(items.matchesRecipeStack(any(), any())).thenAnswer(call -> registry.recipeKey(call.getArgument(0), null)
 +                .matches(registry.recipeKey(call.getArgument(1), null), _ -> null));

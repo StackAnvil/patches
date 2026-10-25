@@ -1,4 +1,4 @@
-From aca4234a49b19a5ada9a740b98386f22bfd44703 Mon Sep 17 00:00:00 2001
+From 16b1cd10be986b1dff4a46b21968a11b057c83eb Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -560,6 +560,18 @@ Keep the earlier warm-cache/empty-alias primitive fixture explicitly
 separate from the complete builtin-registry control. Wire admission,
 nonempty userdata, registry retirement and complete client/level context
 remain separate verification requirements.
+
+Separate named-string, definition-pointer and network stack construction. The
+original Item selects its associated Block before numeric initialization can
+choose a colliding owner. Only the ordinary named-string constructor disables
+canonical upgrade. Preserve wide count and auxiliary values until the native
+branch narrows them, including the exact int wildcard check after count
+invalidation and numeric-zero raw headers.
+
+The original 1.26.51.1 constructors 14247ebe0 and 14247ead0 agree across
+2,304 named and 1,536 direct-definition controls with the real registry and
+Block metadata converter. The earlier 4,440 named controls also agree. These
+controls establish header construction, not NBT outer-loader admission.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
@@ -603,8 +615,8 @@ remain separate verification requirements.
  .../protocol/model/BuiltinItemFactories.java  |   25 +-
  .../protocol/model/ItemCookingProperties.java |   58 +
  .../model/ItemDefinitionProperties.java       |    8 +
- .../protocol/model/ItemRegistry.java          |   63 +
- .../protocol/model/ItemStackHeader.java       |   82 +
+ .../protocol/model/ItemRegistry.java          |   77 +
+ .../protocol/model/ItemStackHeader.java       |  117 ++
  .../protocol/model/NativeRecipeRegistry.java  |   68 +
  .../protocol/model/recipe/ItemDescriptor.java |   14 +-
  .../protocol/model/recipe/ItemRecipeKey.java  |   63 +
@@ -614,7 +626,7 @@ remain separate verification requirements.
  .../protocol/packet/JoinPackets.java          |    2 +-
  .../protocol/packet/MultiStatePackets.java    |   34 +-
  .../protocol/packet/WorldPackets.java         |   12 +
- .../protocol/rewriter/ItemRewriter.java       |  213 ++-
+ .../protocol/rewriter/ItemRewriter.java       |  230 ++-
  .../rewriter/item/BundleItemRewriter.java     |   58 +-
  .../storage/CraftedItemSynchronization.java   |  128 ++
  .../protocol/storage/CraftingDataTracker.java |  206 +++
@@ -646,6 +658,7 @@ remain separate verification requirements.
  .../protocol/model/ItemRegistryTest.java      |  223 ++-
  .../protocol/model/ItemStackHeaderTest.java   |   67 +
  .../LegacyItemStackingPropertiesTest.java     |  104 ++
+ .../model/NamedItemConstructionTest.java      |   77 +
  .../model/NativeRecipeRegistryTest.java       |  100 ++
  .../model/recipe/ItemRecipeKeyTest.java       |   91 +
  .../packet/BundleSelectionPacketTest.java     |  225 +++
@@ -679,7 +692,7 @@ remain separate verification requirements.
  .../item/NetworkItemConstructionTest.java     |  171 ++
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 118 files changed, 16834 insertions(+), 975 deletions(-)
+ 119 files changed, 16977 insertions(+), 975 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
@@ -731,6 +744,7 @@ remain separate verification requirements.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemRegistryComponentUpdatesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemStackHeaderTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/LegacyItemStackingPropertiesTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/NamedItemConstructionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/NativeRecipeRegistryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKeyTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/BundleSelectionPacketTest.java
@@ -8013,7 +8027,7 @@ index 3ccc218c0..424f9cba9 100644
          return this.stacking;
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
-index adbb54e9c..491bcbb9e 100644
+index adbb54e9c..6fcb06465 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
 @@ -6,12 +6,15 @@
@@ -8049,7 +8063,7 @@ index adbb54e9c..491bcbb9e 100644
      public String identifier(final int id) {
          final var definition = this.definitions.numeric(id);
          return definition != null ? definition.identifier() : null;
-@@ -127,6 +140,56 @@ public final class ItemRegistry {
+@@ -127,6 +140,70 @@ public final class ItemRegistry {
          return BuiltinItemAliases.rewrite(query);
      }
  
@@ -8065,7 +8079,21 @@ index adbb54e9c..491bcbb9e 100644
 +    public BedrockItem createNetworkItem(final int identifier, final short metadata, final byte amount,
 +                                         final ItemStackHeader.Block runtimeBlock,
 +                                         final BiFunction<NativeItemDefinitions.Definition<?>, Short, ItemStackHeader.Block> associatedBlock) {
-+        final ItemStackHeader header = ItemStackHeader.fromNetwork(identifier, metadata, amount, runtimeBlock, associatedBlock, this::definition, this::canonicalDefinition);
++        return construct(ItemStackHeader.fromNetwork(identifier, metadata, amount, runtimeBlock, associatedBlock,
++                this::definition, this::canonicalDefinition));
++    }
++
++    public BedrockItem createDefinitionItem(final NativeItemDefinitions.Definition<?> definition, final int metadata, final int amount,
++                                             final BiFunction<NativeItemDefinitions.Definition<?>, Short, ItemStackHeader.Block> associatedBlock) {
++        return construct(ItemStackHeader.fromDefinition(definition, metadata, amount, associatedBlock, this::definition, this::canonicalDefinition));
++    }
++
++    public BedrockItem createNamedItem(final String name, final int metadata, final int amount,
++                                        final BiFunction<NativeItemDefinitions.Definition<?>, Short, ItemStackHeader.Block> associatedBlock) {
++        return construct(ItemStackHeader.fromNamed(this.lookup(name, metadata), amount, associatedBlock, this::definition, this::canonicalDefinition));
++    }
++
++    private static BedrockItem construct(final ItemStackHeader header) {
 +        if (header == null) {
 +            return BedrockItem.empty();
 +        }
@@ -8108,10 +8136,10 @@ index adbb54e9c..491bcbb9e 100644
          return definition != null ? NativeItemNames.customName(data, definition.receiver().writtenBook()) : null;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemStackHeader.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemStackHeader.java
 new file mode 100644
-index 000000000..4faf04cd5
+index 000000000..3b63b6485
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemStackHeader.java
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,117 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -8144,54 +8172,89 @@ index 000000000..4faf04cd5
 +        if (item == null) {
 +            return null;
 +        }
++        final int quantity = Byte.toUnsignedInt(amount);
 +        if (runtimeBlock != null && runtimeBlock.runtimeId != 0) {
-+            final var candidate = initialize(runtimeBlock.resolveItem(lookup), (short) 0, amount, runtimeBlock, associatedBlock, canonical);
++            final var candidate = initialize(runtimeBlock.numericItemId, (short) 0, quantity, runtimeBlock, true, associatedBlock, lookup, canonical);
 +            if (candidate != null && candidate.amount != 0 && candidate.identifier() == (identifier & 0xFFFF)) {
 +                return candidate;
 +            }
 +        }
-+        final Block block = associatedBlock.apply(item, metadata);
-+        final boolean blockConstructor = block != null && (short) item.id() <= 255;
-+        final var selected = blockConstructor ? block.resolveItem(lookup) : item;
-+        final var result = initialize(selected, metadata, amount, block, associatedBlock, canonical);
++        return construct(item, metadata, quantity, true, associatedBlock, lookup, canonical);
++    }
++
++    /** The definition-pointer constructor enables canonical upgrade for an ordinary Item. */
++    public static ItemStackHeader fromDefinition(final NativeItemDefinitions.Definition<?> definition, final int metadata, final int amount,
++                                                  final BiFunction<NativeItemDefinitions.Definition<?>, Short, Block> associatedBlock,
++                                                  final IntFunction<NativeItemDefinitions.Definition<?>> lookup,
++                                                  final BiFunction<NativeItemDefinitions.Definition<?>, Short, NativeItemDefinitions.Definition<?>> canonical) {
++        return construct(definition, metadata, amount, true, associatedBlock, lookup, canonical);
++    }
++
++    /** Named lookup preserves its wide auxiliary until the class-specific constructor selects its branch. */
++    public static ItemStackHeader fromNamed(final NativeItemDefinitions.Lookup<?> named, final int amount,
++                                             final BiFunction<NativeItemDefinitions.Definition<?>, Short, Block> associatedBlock,
++                                             final IntFunction<NativeItemDefinitions.Definition<?>> lookup,
++                                             final BiFunction<NativeItemDefinitions.Definition<?>, Short, NativeItemDefinitions.Definition<?>> canonical) {
++        return construct(named.definition(), named.auxiliary(), amount, false, associatedBlock, lookup, canonical);
++    }
++
++    private static ItemStackHeader construct(final NativeItemDefinitions.Definition<?> definition, final int metadata, final int amount,
++                                              final boolean upgradeOrdinary,
++                                              final BiFunction<NativeItemDefinitions.Definition<?>, Short, Block> associatedBlock,
++                                              final IntFunction<NativeItemDefinitions.Definition<?>> lookup,
++                                              final BiFunction<NativeItemDefinitions.Definition<?>, Short, NativeItemDefinitions.Definition<?>> canonical) {
++        if (definition == null) {
++            return null;
++        }
++        // Association belongs to the original definition, before numeric initialization selects its own Item.
++        final Block block = associatedBlock.apply(definition, (short) metadata);
++        final boolean blockConstructor = block != null && definition.id() <= 255;
++        final Integer identifier = blockConstructor ? block.numericItemId : Integer.valueOf(definition.id());
++        final var result = initialize(identifier, (short) metadata, amount, block,
++                block != null || upgradeOrdinary, associatedBlock, lookup, canonical);
 +        if (result == null) {
 +            return null;
 +        }
-+        // The BlockLegacy constructor reapplies its wildcard after initialization and count invalidation.
++        // The BlockLegacy constructor compares the original int, then reapplies its wildcard after count invalidation.
 +        return blockConstructor && metadata == Short.MAX_VALUE
 +                ? new ItemStackHeader(result.definition, Short.MAX_VALUE, result.amount, result.block) : result;
 +    }
 +
-+    private static ItemStackHeader initialize(final NativeItemDefinitions.Definition<?> selected, final short metadata,
-+                                               final byte amount, final Block block,
++    private static ItemStackHeader initialize(final Integer identifier, final short metadata, final int amount, final Block block,
++                                               final boolean upgrade,
 +                                               final BiFunction<NativeItemDefinitions.Definition<?>, Short, Block> associatedBlock,
++                                               final IntFunction<NativeItemDefinitions.Definition<?>> lookup,
 +                                               final BiFunction<NativeItemDefinitions.Definition<?>, Short, NativeItemDefinitions.Definition<?>> canonical) {
-+        if (selected == null) {
++        if (identifier == null) {
++            return null;
++        }
++        final var selected = lookup.apply(identifier & 0xFFFF);
++        if (selected == null && (short) identifier.intValue() != 0) {
 +            return null;
 +        }
 +        short auxiliary = block != null ? 0 : (short) Math.max(0, metadata);
-+        final Short queryAuxiliary = block != null ? block.canonicalAuxiliary : Short.valueOf(auxiliary);
-+        final var replacement = canonical.apply(selected, queryAuxiliary);
-+        final var definition = replacement != null ? replacement : selected;
++        var definition = selected;
 +        Block resolvedBlock = block;
-+        if (definition != selected) {
-+            final Block replacementBlock = associatedBlock.apply(definition, Short.MAX_VALUE);
-+            if (replacementBlock != null) {
-+                resolvedBlock = replacementBlock;
++        if (selected != null && upgrade) {
++            final Short queryAuxiliary = block != null ? block.canonicalAuxiliary : Short.valueOf(auxiliary);
++            final var replacement = canonical.apply(selected, queryAuxiliary);
++            if (replacement != null && replacement != selected) {
++                final Block replacementBlock = associatedBlock.apply(replacement, Short.MAX_VALUE);
++                if (replacementBlock != null) {
++                    resolvedBlock = replacementBlock;
++                }
++                definition = replacement;
++                auxiliary = 0;
 +            }
-+            auxiliary = 0;
 +        }
-+        return amount == 0 ? new ItemStackHeader(null, (short) 0, (byte) 0, null)
-+                : new ItemStackHeader(definition, auxiliary, amount, resolvedBlock);
++        final byte quantity = (byte) Math.max(0, amount);
++        // Numeric zero can retain raw count and auxiliary without a resolved Item. Count invalidation still clears both.
++        return quantity == 0 ? new ItemStackHeader(null, (short) 0, (byte) 0, null)
++                : new ItemStackHeader(definition, auxiliary, quantity, resolvedBlock);
 +    }
 +
 +    /** Runtime IDs identify exact palette slots. Canonical auxiliary belongs to that actual Block. */
-+    public record Block(int runtimeId, Integer numericItemId, Short canonicalAuxiliary) {
-+
-+        private NativeItemDefinitions.Definition<?> resolveItem(final IntFunction<NativeItemDefinitions.Definition<?>> lookup) {
-+            return this.numericItemId != null ? lookup.apply(this.numericItemId) : null;
-+        }
-+    }
++    public record Block(int runtimeId, Integer numericItemId, Short canonicalAuxiliary) { }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/NativeRecipeRegistry.java b/src/main/java/net/raphimc/viabedrock/protocol/model/NativeRecipeRegistry.java
@@ -10405,7 +10468,7 @@ index 85cdb3dee..a98ad8137 100644
  
                      final BlockEntity javaBlockEntity = BlockEntityRewriter.toJava(wrapper.user(), chunkTracker.getBlockState(bedrockBlockEntity.position()), bedrockBlockEntity);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index a50d42a33..d7d82025c 100644
+index a50d42a33..5191eba1c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -35,10 +35,12 @@ import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
@@ -10421,12 +10484,13 @@ index a50d42a33..d7d82025c 100644
  import net.raphimc.viabedrock.api.model.NativeItemStacking;
  import net.raphimc.viabedrock.api.model.NativeItemStackData;
  import net.raphimc.viabedrock.api.resourcepack.definition.ItemDefinitions;
-@@ -48,9 +50,13 @@ import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
+@@ -48,9 +50,14 @@ import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
  import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
  import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomItemTags;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.ItemEntry;
  import net.raphimc.viabedrock.protocol.model.ItemRegistry;
++import net.raphimc.viabedrock.protocol.model.NativeItemDefinitions;
 +import net.raphimc.viabedrock.protocol.model.NativeRecipeRegistry;
  import net.raphimc.viabedrock.protocol.model.ItemNameContext;
 -import net.raphimc.viabedrock.protocol.model.ItemEntry;
@@ -10436,7 +10500,7 @@ index a50d42a33..d7d82025c 100644
  import net.raphimc.viabedrock.protocol.model.ItemCooldown;
  import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
  import net.raphimc.viabedrock.protocol.model.ItemArmorData;
-@@ -63,16 +69,19 @@ import net.raphimc.viabedrock.protocol.storage.MapTracker;
+@@ -63,16 +70,19 @@ import net.raphimc.viabedrock.protocol.storage.MapTracker;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  import net.raphimc.viabedrock.protocol.types.array.ArrayType;
@@ -10457,7 +10521,7 @@ index a50d42a33..d7d82025c 100644
  
      private final ItemRegistry registry;
  
-@@ -96,6 +105,8 @@ public class ItemRewriter extends StoredObject {
+@@ -96,6 +106,8 @@ public class ItemRewriter extends StoredObject {
      private final Type<BedrockItem> newItemType;
      private final Type<BedrockItem> optionalNewItemType;
      private final Type<BedrockItem[]> newItemArrayType;
@@ -10466,7 +10530,7 @@ index a50d42a33..d7d82025c 100644
  
      static {
          // TODO: Add missing item nbt rewriters
-@@ -131,7 +142,7 @@ public class ItemRewriter extends StoredObject {
+@@ -131,7 +143,7 @@ public class ItemRewriter extends StoredObject {
          this.registry = new ItemRegistry(itemEntries, blockStateRewriter::registeredBlockIdentifier);
          this.items = this.registry.ids();
          this.componentItems = this.registry.componentItems();
@@ -10475,7 +10539,7 @@ index a50d42a33..d7d82025c 100644
              if (itemEntry.componentData() != null
                      && itemEntry.componentData().get("components") instanceof CompoundTag components) {
                  this.animationData.put(itemEntry.identifier(), ItemAnimationData.fromNetworkComponents(components));
-@@ -142,8 +153,10 @@ public class ItemRewriter extends StoredObject {
+@@ -142,8 +154,10 @@ public class ItemRewriter extends StoredObject {
                      this.cooldowns.put(itemEntry.identifier(), cooldown);
                  }
              }
@@ -10487,7 +10551,7 @@ index a50d42a33..d7d82025c 100644
          blockItems.removeIf(identifier -> !this.items.containsKey(identifier));
  
          this.blockItemValidBlockStates = new Int2ObjectOpenHashMap<>(blockItems.size());
-@@ -152,22 +165,37 @@ public class ItemRewriter extends StoredObject {
+@@ -152,22 +166,37 @@ public class ItemRewriter extends StoredObject {
              if (validBlockStates == null) {
                  final String[] components = identifier.split(":", 2);
                  if (components[1].startsWith("item.")) {
@@ -10530,7 +10594,7 @@ index a50d42a33..d7d82025c 100644
      }
  
      public Item javaItem(final BedrockItem bedrockItem) {
-@@ -177,13 +205,18 @@ public class ItemRewriter extends StoredObject {
+@@ -177,13 +206,18 @@ public class ItemRewriter extends StoredObject {
  
          final String identifier = this.registry.identifier(bedrockItem);
          if (identifier == null) {
@@ -10551,7 +10615,7 @@ index a50d42a33..d7d82025c 100644
          if (blockItemMappings != null) {
              final BlockState displayState;
              if (bedrockItem.hasBlockState()) {
-@@ -196,9 +229,13 @@ public class ItemRewriter extends StoredObject {
+@@ -196,9 +230,13 @@ public class ItemRewriter extends StoredObject {
              javaItemMapping = displayState != null ? blockItemMappings.get(displayState) : null;
          } else {
              final int meta = bedrockItem.data() & 0xFFFF;
@@ -10567,7 +10631,7 @@ index a50d42a33..d7d82025c 100644
                  if (newBlockItemMappings != null) {
                      final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(bedrockItem.identifier());
                      javaItemMapping = validBlockStates != null && !validBlockStates.isEmpty()
-@@ -207,7 +244,8 @@ public class ItemRewriter extends StoredObject {
+@@ -207,7 +245,8 @@ public class ItemRewriter extends StoredObject {
                      javaItemMapping = null;
                  }
              } else {
@@ -10577,7 +10641,7 @@ index a50d42a33..d7d82025c 100644
                  if (metaItemMappings != null) {
                      if (!metaItemMappings.containsKey(meta)) {
                          if ((metaItemMappings.size() != 1 || meta != 0)
-@@ -241,8 +279,10 @@ public class ItemRewriter extends StoredObject {
+@@ -241,8 +280,10 @@ public class ItemRewriter extends StoredObject {
              }
              javaItem = new StructuredItem(javaItemMapping.id(), bedrockItem.amount(), data);
          } else {
@@ -10590,7 +10654,7 @@ index a50d42a33..d7d82025c 100644
              final StructuredDataContainer data = ProtocolConstants.createStructuredDataContainer();
  
              if (itemDefinition != null) {
-@@ -260,13 +300,21 @@ public class ItemRewriter extends StoredObject {
+@@ -260,13 +301,21 @@ public class ItemRewriter extends StoredObject {
                      data.set(StructuredDataKey.ITEM_MODEL, CustomItemTextureResourceRewriter.getItemModel(itemDefinition.iconComponent()));
                      data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomItemTextureResourceRewriter.getCustomModelData("0"));
                  } else {
@@ -10614,7 +10678,7 @@ index a50d42a33..d7d82025c 100644
          }
  
          if (ordinaryNameKey != null) {
-@@ -290,8 +338,12 @@ public class ItemRewriter extends StoredObject {
+@@ -290,8 +339,12 @@ public class ItemRewriter extends StoredObject {
  
          final CompoundTag bedrockTag = bedrockItem.tag();
          if (bedrockTag != null) {
@@ -10629,7 +10693,7 @@ index a50d42a33..d7d82025c 100644
              }
              final String customName = this.registry.customName(identifier, bedrockTag);
              if (customName != null) {
-@@ -306,6 +358,8 @@ public class ItemRewriter extends StoredObject {
+@@ -306,6 +359,8 @@ public class ItemRewriter extends StoredObject {
              ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
          }
  
@@ -10638,7 +10702,7 @@ index a50d42a33..d7d82025c 100644
          javaItem.dataContainer().set(StructuredDataKey.USE_EFFECTS, this.useModifiers(bedrockItem).javaComponent());
  
          CustomAttachableResourceRewriter.applyItemModel(this.user().get(ResourcePackStorage.class), identifier, javaItem);
-@@ -321,7 +375,8 @@ public class ItemRewriter extends StoredObject {
+@@ -321,7 +376,8 @@ public class ItemRewriter extends StoredObject {
              return null;
          }
          final CompoundTag javaTag = new CompoundTag();
@@ -10648,7 +10712,7 @@ index a50d42a33..d7d82025c 100644
          javaTag.put("id", new StringTag(javaId));
          javaTag.put("count", new IntTag(javaItem.amount()));
          if (javaItem.tag() != null) {
-@@ -335,28 +390,31 @@ public class ItemRewriter extends StoredObject {
+@@ -335,28 +391,31 @@ public class ItemRewriter extends StoredObject {
              return null;
          }
  
@@ -10691,7 +10755,7 @@ index a50d42a33..d7d82025c 100644
      }
  
      public Item[] javaItems(final BedrockItem[] bedrockItems) {
-@@ -368,7 +426,33 @@ public class ItemRewriter extends StoredObject {
+@@ -368,7 +427,33 @@ public class ItemRewriter extends StoredObject {
      }
  
      public BedrockItem bedrockItem(final Item javaItem) {
@@ -10726,7 +10790,7 @@ index a50d42a33..d7d82025c 100644
      }
  
      public BedrockItem[] bedrockItems(final Item[] javaItems) {
-@@ -391,8 +475,51 @@ public class ItemRewriter extends StoredObject {
+@@ -391,8 +476,67 @@ public class ItemRewriter extends StoredObject {
          return this.registry.identifier(item);
      }
  
@@ -10742,17 +10806,33 @@ index a50d42a33..d7d82025c 100644
 +        final BlockStateRewriter blocks = this.user().get(BlockStateRewriter.class);
 +        final ItemStackHeader.Block runtime = runtimeId != 0 && blocks.blockState(runtimeId) != null
 +                ? this.stackBlock(blocks, runtimeId) : null;
-+        return this.registry.createNetworkItem(identifier, metadata, amount, runtime, (definition, auxiliary) -> {
-+            final String associatedName = this.registry.associatedBlock(definition);
-+            if (associatedName == null) {
-+                return null;
-+            }
-+            final var state = blocks.blockItemState(associatedName, auxiliary);
-+            if (state == null) {
-+                throw new IllegalArgumentException("Missing native auxiliary conversion for associated block " + associatedName);
-+            }
-+            return this.stackBlock(blocks, blocks.registeredRuntimeId(state));
-+        });
++        return this.registry.createNetworkItem(identifier, metadata, amount, runtime,
++                (definition, auxiliary) -> this.associatedBlock(blocks, definition, auxiliary));
++    }
++
++    public BedrockItem createDefinitionItem(final NativeItemDefinitions.Definition<?> definition, final int metadata, final int amount) {
++        final var blocks = this.user().get(BlockStateRewriter.class);
++        return this.registry.createDefinitionItem(definition, metadata, amount,
++                (selected, auxiliary) -> this.associatedBlock(blocks, selected, auxiliary));
++    }
++
++    public BedrockItem createNamedItem(final String name, final int metadata, final int amount) {
++        final var blocks = this.user().get(BlockStateRewriter.class);
++        return this.registry.createNamedItem(name, metadata, amount,
++                (selected, auxiliary) -> this.associatedBlock(blocks, selected, auxiliary));
++    }
++
++    private ItemStackHeader.Block associatedBlock(final BlockStateRewriter blocks, final NativeItemDefinitions.Definition<?> definition,
++                                                  final short auxiliary) {
++        final String associatedName = this.registry.associatedBlock(definition);
++        if (associatedName == null) {
++            return null;
++        }
++        final var state = blocks.blockItemState(associatedName, auxiliary);
++        if (state == null) {
++            throw new IllegalArgumentException("Missing native auxiliary conversion for associated block " + associatedName);
++        }
++        return this.stackBlock(blocks, blocks.registeredRuntimeId(state));
 +    }
 +
 +    private ItemStackHeader.Block stackBlock(final BlockStateRewriter blocks, final int runtimeId) {
@@ -10780,7 +10860,7 @@ index a50d42a33..d7d82025c 100644
      }
  
      /** Match network-loaded stack queries while their connection registry remains current. */
-@@ -438,6 +565,17 @@ public class ItemRewriter extends StoredObject {
+@@ -438,6 +582,17 @@ public class ItemRewriter extends StoredObject {
          return properties == null ? 0 : properties.maximum();
      }
  
@@ -10798,7 +10878,7 @@ index a50d42a33..d7d82025c 100644
      public Type<BedrockItem> itemType() {
          return this.itemType;
      }
-@@ -462,10 +600,13 @@ public class ItemRewriter extends StoredObject {
+@@ -462,10 +617,13 @@ public class ItemRewriter extends StoredObject {
          return this.newItemArrayType;
      }
  
@@ -15575,6 +15655,89 @@ index 000000000..f05fad85f
 +        } finally {
 +            buffer.release();
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/NamedItemConstructionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/NamedItemConstructionTest.java
+new file mode 100644
+index 000000000..199ae39db
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/NamedItemConstructionTest.java
+@@ -0,0 +1,77 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
++import org.junit.jupiter.api.Test;
++
++import java.util.function.BiFunction;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class NamedItemConstructionTest {
++
++    @Test
++    void namedAndDefinitionConstructorsKeepTheirDifferentOrdinaryUpgradeFlags() {
++        final var registry = new ItemRegistry(new ItemEntry[]{new ItemEntry("minecraft:charcoal", 257, false, ItemVersion.Legacy, null),
++            new ItemEntry("test:coal_collision", 304, false, ItemVersion.Legacy, null)});
++        final var named = registry.createNamedItem("test:coal_collision", 1, 1, (definition, auxiliary) -> null);
++        final var direct = registry.createDefinitionItem(registry.definition("test:coal_collision"), 1, 1, (definition, auxiliary) -> null);
++        assertSame(registry.definition("minecraft:coal"), named.definition());
++        assertEquals(1, named.data());
++        assertSame(registry.definition("minecraft:charcoal"), direct.definition());
++        assertEquals(257, direct.identifier());
++        assertEquals(0, direct.data());
++        assertNotSame(registry.definition(257), direct.definition());
++    }
++
++    @Test
++    void sourceAssociationPrecedesNumericSelectionAndWideWildcardComparison() {
++        final var components = new CompoundTag();
++        components.putString("minecraft:block", "minecraft:stone");
++        final var data = new CompoundTag();
++        data.put("components", components);
++        final var registry = new ItemRegistry(new ItemEntry[]{new ItemEntry("test:block", 4, false, ItemVersion.Legacy, data)});
++        final var source = registry.definition("test:block");
++        assertNotSame(source, registry.definition(4));
++        final var block = new ItemStackHeader.Block(11, 1, (short) 0);
++        final BiFunction<NativeItemDefinitions.Definition<?>, Short, ItemStackHeader.Block> association = (definition, auxiliary) -> {
++            assertSame(source, definition);
++            return block;
++        };
++        final var direct = registry.createDefinitionItem(source, 0, 1, association);
++        final var named = registry.createNamedItem("test:block", 0, 1, association);
++        assertSame(registry.definition(1), direct.definition());
++        assertEquals(direct, named);
++        assertEquals(11, direct.blockRuntimeId());
++        assertEquals(0, registry.createDefinitionItem(source, 65536 + Short.MAX_VALUE, 1, association).data());
++        final var invalidated = registry.createDefinitionItem(source, Short.MAX_VALUE, 256, association);
++        assertTrue(invalidated.isEmpty());
++        assertEquals(Short.MAX_VALUE, invalidated.data());
++        assertFalse(invalidated.hasBlockState());
++    }
++
++    @Test
++    void numericZeroRetainsRawFieldsUntilCountInvalidation() {
++        final var registry = new ItemRegistry(new ItemEntry[]{new ItemEntry("minecraft:air", 0, false, ItemVersion.None, null)});
++        final var raw = registry.createNamedItem("minecraft:air", 65537, 257, (definition, auxiliary) -> null);
++        assertTrue(raw.isEmpty());
++        assertNull(raw.definition());
++        assertEquals(1, raw.data());
++        assertEquals(1, raw.amount());
++        final var wrapped = registry.createNamedItem("minecraft:air", 1, 256, (definition, auxiliary) -> null);
++        assertEquals(0, wrapped.amount());
++        assertEquals(0, wrapped.data());
++        final var negative = registry.createNamedItem("minecraft:air", 1, -1, (definition, auxiliary) -> null);
++        assertEquals(0, negative.amount());
++        assertEquals(0, negative.data());
++        final var missing = registry.createNamedItem("test:missing", 1, 257, (definition, auxiliary) -> null);
++        assertEquals(0, missing.amount());
++        assertEquals(0, missing.data());
 +    }
 +
 +}

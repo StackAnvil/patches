@@ -540,4 +540,23 @@ The shared constructor preserves canonical definition identity, and full stack q
 Primitive fixtures declare their warm block caches, ordinary definitions and empty alias tables explicitly.
 Their native counter and output-index expectations remain unchanged.
 The separate complete registry control compares the packaged constructor and ItemRewriter against original native functions.
-Installed recipe availability and complete named/NBT construction remain unfinished.
+Installed recipe availability and NBT outer-loader admission remain unfinished.
+
+
+## Definition-based default construction
+
+Cooking input expansion now uses the selected descriptor Item for default construction.
+Output-index registration uses the retained output Item for its count-one construction.
+Both resolve the original definition's associated Block before numeric initialization can select a colliding owner.
+The original cooking extractor `146989830` and registration call at `14324d432` use definition-pointer constructor `14247ead0`.
+
+The [shared constructor control](0003-translate-server-authoritative-bedrock-requests.pr.md#named-and-definition-stack-construction) matches 2,304 named and 1,536 definition constructions.
+All 4,440 earlier named outputs also match the packaged API.
+The targeted consumer run passes 39 tests and Checkstyle.
+Both packaged consumer regressions reject numeric-construction mutations by value.
+The output mutation fixture explicitly supplies both competing Block conversions; these remain declared unit interfaces.
+The existing primitive extractor and output-index controls retain their declared empty aliases and warm Block caches.
+
+The complete four-project build passes 2,866 tests with 162 optional skips and no failures or errors.
+All retained packaged comparisons pass.
+Installed recipe availability, NBT outer-loader admission and complete native screen/action behavior remain unfinished.

@@ -995,8 +995,8 @@ This control does not execute complete client/level setup or establish custom-ar
 A broader control covers 4,440 named stacks, 1,987 numeric initializations, 1,920 zero-runtime network constructors and 20,685 block selections.
 Named lookup and numeric ownership match throughout that control.
 That control exposed five missing positive-count coal-to-charcoal conversions at auxiliary one.
-The canonical network construction section records their correction. Complete named and NBT construction remain unfinished.
-A private network-header projection also differs for air ID zero. That projection does not establish complete production named construction.
+The canonical network construction section records their correction. At that checkpoint, complete named and NBT construction remained unfinished.
+A private network-header projection also differs for air ID zero. The named and definition construction section below adds the proper named API comparison.
 
 The broad control differs on 12 block selections. A focused range finds 107 differences across barrel, jigsaw, glow lichen, campfire and tube coral.
 The earlier server sweep queried Script API `ItemStack.matches`; it did not directly read the legacy converter's selected block pointer.
@@ -1043,7 +1043,7 @@ No replacement auxiliary or missing-block answer substitutes for that context.
 The earlier primitive fixture retains its declared warm cache and empty alias tables, separately from the complete registry control.
 
 This evidence does not establish complete wire admission, negotiated nonzero runtime palettes, nonempty userdata or native registry retirement.
-The private network-header projection remains separate from a production named or NBT constructor.
+The private network-header projection remains separate from the named API added below and from NBT outer-loader admission.
 Some legacy actions still compare encoded fields through `BedrockItem.isDifferent`.
 Mixed raw snapshots, complete player screens, physical input and native pixels remain unfinished.
 The 12 broad and 107 focused block-state differences remain open, and the auxiliary data remains unchanged.
@@ -1053,4 +1053,55 @@ The four-project build passes 2,861 tests with 162 optional skips and no failure
 The complete core suite passes 1,730 tests with 85 optional skips. Checkstyle passes.
 All retained packaged comparison suites pass.
 All 1,514 core classes and three registry resources match the embedded client and proxy copies.
+All 1,191 client classes match the tested add-on.
+
+## Named and definition stack construction
+
+The shared constructor now separates named strings, definition pointers and network input.
+Each path resolves the original Item's associated Block before numeric initialization selects its owner.
+For an ordinary Item, named-string construction disables canonical upgrade; definition-pointer and network construction enable it.
+Associated-Block paths enable upgrade in all three cases.
+
+Named lookup parses the saved name and applies its metadata rewrite before construction.
+Direct definition input keeps the existing constructed name through canonical lookup.
+The constructor keeps signed 32-bit count and auxiliary values until the native branch narrows them.
+Negative counts clamp to zero before byte conversion.
+The BlockLegacy wildcard check compares the original integer with 32767, including after count invalidation.
+The wider value 98303 narrows to the same short but does not select that wildcard branch.
+Numeric zero can retain raw count and Block fields without a resolved Item.
+The actual native air definition has an associated Air Block, which remains part of this comparison.
+
+The original named-string constructor `14247ebe0` and definition-pointer constructor `14247ead0` execute against the complete registry and actual Block metadata converter.
+The control supplies 25 typed ItemData declarations, eight counts and sixteen auxiliary values.
+It includes charcoal remapped to apple's numeric ID, original associations that differ from numeric owners, and constructed `tile.` names.
+The target remains 1.26.51.1, build 51061372, protocol 2193, with default Experiments and base-game version 1.26.50.
+Original instructions remain unchanged, and complete input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+The packaged ItemRewriter matches all 2,304 named and 1,536 definition constructions.
+It also matches all 4,440 named outputs from the earlier complete control.
+These comparisons check the selected definition, raw count, auxiliary and exact typed runtime Block state.
+They replace the earlier network-header projection as evidence for the named API.
+The projection remains a separate caller and does not become a network admission failure.
+
+Cooking input expansion now passes the selected descriptor definition to the shared default constructor.
+Output-index registration passes the output's retained definition to its count-one constructor.
+The original cooking extractor `146989830` and output-registration call at `14324d432` use this definition-pointer path.
+Focused regressions reject numeric-owner substitution before association and confirm that registration preserves the original output.
+Primitive extractor fixtures retain their declared ordinary definitions, empty aliases and warm Block caches.
+They remain separate from the complete registry controls.
+
+Five deliberate constructor changes fail native value comparisons: incorrect named or direct upgrade flags, early owner substitution, early wildcard narrowing and negative-count wrapping.
+Both consumer regressions also reject their previous numeric-construction paths.
+Retained network identity, registry, component, recipe and matcher controls still pass.
+
+These results establish the tested construction paths, without establishing NBT outer-loader admission or installed recipe availability.
+Complete client/level setup, negotiated nonzero runtime palettes, nonempty userdata and native registry retirement remain unverified here.
+Some legacy actions still use `BedrockItem.isDifferent` to compare encoded fields.
+The 12 broad and 107 focused Block-state differences remain open, and the auxiliary data remains unchanged.
+All five goal areas and the four original reports remain active.
+
+The four-project build passes 2,866 tests with 162 optional skips and no failures or errors.
+The complete core suite passes 1,735 tests with 85 optional skips. Checkstyle passes.
+All nine retained packaged suites and the nonempty-component suite pass.
+All 1,514 core classes, three registry resources and unchanged Block auxiliary data match their embedded client and proxy copies.
 All 1,191 client classes match the tested add-on.

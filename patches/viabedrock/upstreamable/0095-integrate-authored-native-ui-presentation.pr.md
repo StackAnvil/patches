@@ -842,3 +842,9 @@ Native weak ownership after registry retirement remains unfinished.
 
 The owning inventory patch records the complete network constructor control and packaged comparisons.
 The four-project build passes 2,861 tests with 162 optional skips. Checkstyle passes.
+
+
+The owning inventory patch now also records [named and definition construction](../deferred/0003-translate-server-authoritative-bedrock-requests.pr.md#named-and-definition-stack-construction).
+It keeps the caller's upgrade flag and original definition association separate from numeric ownership.
+The packaged API matches 8,280 new and retained named/definition outputs.
+The registry foundation and its protocol data remain unchanged by this constructor update.
