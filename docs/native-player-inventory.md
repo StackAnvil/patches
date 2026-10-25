@@ -1818,3 +1818,45 @@ The comparison retains 1,486 byte-identical core classes and 196 unchanged asset
 Twenty-one other classes retain identical declarations and instruction disassembly despite compiler metadata changes.
 Only the factory and registry assets change; their existing metadata remains semantically unchanged after removing the new tag fields.
 No new live inventory or animation capture ran for this milestone.
+
+## Native ingredient payload ownership
+
+Native ingredient emptiness and matching have separate contracts.
+A Molang payload can report an empty representative and still match a constructed Item.
+Candidate acquisition must preserve that distinction.
+
+The parser control executes the original global constructors and all 319 query bindings.
+It retains native initialization guards, callback selectors and security-cookie checks.
+The loaded UCRT supplies its original math and string code.
+Seven expressions execute 56 predicates against genuine constructed definitions.
+Constants and tag queries produce distinct matching results, while all seven wrappers report empty.
+Descriptor, Item, registry, Block, TLS, static and CRT cleanup completes without remaining allocations or held locks.
+These controls declare typed inputs; they do not establish packet decoding or complete client lifetime.
+
+A separate ownership control executes the actual ingredient vector adapter and recipe base constructor.
+Thirty cases cover six expressions and five unsigned ingredient counts, including zero and 65,535.
+The adapter clones each present payload and preserves count bits.
+The constructor moves that vector into the shaped recipe owner.
+Original recipe, payload and global retirement completes without remaining allocations or held locks.
+Other constructor fields remain declared inputs; this control does not establish recipe registry admission.
+
+A further control executes complete registration and output lookup for nine typed shaped recipes with a 1 × 1 grid.
+It covers Empty, Name, present and missing Tag descriptors, plus five Molang inputs.
+All nine reach the output index, including recipes whose ingredients report empty or match none of the tested sources.
+Thirty-six source comparisons execute the original concrete recipe matcher against genuine constructed Items.
+Complete recipe, Item, Block, TLS, static and CRT retirement leaves no allocations or held locks.
+The control declares typed recipe inputs and does not execute all-empty ingredient counting.
+
+Tag descriptor admission also depends on the registry index, independently of a definition's owned tag vector.
+The default registry control observes 89 tag sets, 1,171 entries and 765 distinct tagged definitions.
+The original index builder also checks version and flag fields.
+Those default counts do not establish index membership under other contexts.
+An unfiltered scan of definition tags cannot replace that index.
+
+Source conversion can retain a Block-derived descriptor when its representative matches the source's numeric ID.
+Otherwise it falls back to the retained source definition.
+Future Tag and Molang matching must retain the resulting definition identity alongside its ID and auxiliary value.
+The existing ordinary and alias comparisons remain numeric.
+
+Complete wire decoding, other concrete recipe classes, owned Tag/Molang integration and installed player recipe publication remain unfinished.
+These controls do not close the E-key inventory, movement, eating or locator reports.
