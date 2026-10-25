@@ -1188,3 +1188,16 @@ Project `ItemRecipeKey` from that value for numeric comparisons and cache groupi
 Preserve the native Block-derived conversion and numeric fallback lookup rules.
 The owning recipe patch uses the selected receiver for retained Molang predicates.
 See the [retained counter reference](../../../docs/bedrock-coverage.md#retained-molang-recipe-counting-october-25-2026).
+
+
+## Versioned Item Tag index
+
+Retain constructor minimum versions and index all owned definitions that satisfy the active connection version.
+Keep component replacements independent of built-in name-based minima.
+Keep owned tags intact when a minimum excludes their receiver from the index.
+An empty context retains native zero-version behavior, while wildcard contexts bypass the minimum comparison.
+
+The pinned data adds 299 initial factory minima and 540 Block minima.
+Eight original registry controls compare 15,672 definition minima, 676 Tag sets and 7,765 member references.
+Full nested scope destruction and original final cleanup leave no allocations or held locks.
+See the [versioned Tag reference](../../../docs/bedrock-coverage.md#versioned-tag-admission-october-25-2026) for supplied contexts and remaining limits.

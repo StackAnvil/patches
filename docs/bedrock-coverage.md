@@ -10068,3 +10068,72 @@ All 1,192 compiled client classes match the add-on.
 Compared with the preceding core, 1,509 classes and all 198 assets remain byte-identical.
 Seven further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
 The retained counter adapter intentionally changes its lambda target from the numeric key to the complete source descriptor.
+
+
+## Versioned Tag admission, October 25, 2026
+
+Tag admission now uses the native version-filtered index over owned Item definitions.
+The source conversion and numeric grouping key remain separate from that index.
+A retained Tag matches the converted receiver's tag vector, while index enumeration controls its emptiness.
+An air-only index can admit a Tag with an empty representative.
+The shared decoded-ingredient factory also preserves lazy Name resolution and compiled Molang payloads.
+
+The registry uses the active connection base-game version during construction.
+Default contexts use the native zero-version state, and wildcard contexts bypass the minimum comparison.
+Pinned constructor data supplies 299 factory minima and 540 Block minima.
+Component replacements keep their new constructor's minimum rather than using the old built-in name's minimum.
+The index retains owned receivers independently of the surviving numeric owner.
+
+The target is Bedrock 1.26.51.1/build 51061372, protocol 2193.
+The native control constructs eight fresh Item registries after complete original Item and Block initialization.
+Original `141e20730` parses each version, and full `143480dc0` registration executes the `14347dc90` index builder.
+No minimum, index membership or admission answer is supplied.
+
+| Registry version input | Tag sets | Member references |
+| --- | ---: | ---: |
+| Empty string | 77 | 705 |
+| `*` | 89 | 1,171 |
+| `1.14.0` | 78 | 708 |
+| `1.16.0` | 82 | 803 |
+| `1.20.0` | 86 | 999 |
+| `1.21.50` | 86 | 1,070 |
+| `1.26.10` | 89 | 1,138 |
+| `1.26.50` | 89 | 1,171 |
+
+All 15,672 constructed minimum versions, 676 Tag sets and 7,765 member references match the production model.
+The comparison preserves exact receiver membership, rather than counts alone.
+The fixed constructed Block catalog uses base-game version 1.26.50 and default Experiments.
+Each registry receives the same original typed ItemData vector from the versioned cross-implementation fixture.
+This does not establish the pinned native server packet baseline.
+This isolates registry version behavior and does not establish a complete older-version client or Level.
+
+The first diagnostic run stopped at final cleanup with one retained registry control block.
+Scope reset `143489bc0` restores the previous registry but does not retire its saved weak reference.
+Full destructor `143489b50` performs both operations.
+The corrected run uses that destructor and restores enclosing registry reference counts after every context.
+Original input, registry, Item, Block, TLS, static and CRT retirement leaves no allocations or held locks.
+The failed diagnostic remains private and does not support cleanup claims.
+
+The retained counter comparison now covers all 608 complete packet cases from the existing mixed reference.
+All 4,864 predicates, 1,056 rounds and 2,112 ingredient rows match, including exact amounts and source locations.
+The earlier 89,252-call Tag control compares the concrete payload matcher against its declared selected definition.
+It does not run wire admission or source conversion, so the Java comparison now uses that same layer.
+
+These controls cover observed numeric, empty and wildcard registry contexts under the pinned profile.
+All captured definition minima and parsed registry contexts have discriminator zero.
+Unknown discriminator producers, arbitrary custom/versioned Block loading, other recipe families and all-empty counting remain outside this increment.
+Production recipe registration and installed player publication do not yet retain the complete recipe model.
+No new live capture closes the inventory, movement, eating or locator reports.
+
+All four projects build with 2,986 passing tests, 152 optional skips and no failures or errors.
+Nineteen packaged checks pass with twelve implementation origins verified.
+The eight packaged wire-admission projections match the observed native index and traced nonempty-index loader guard.
+The preceding core differs on five projected values without linkage failures.
+These projections are not additional original-executable payload runs.
+All 4,864 existing packet predicates still match the packaged wire path.
+
+All 1,530 core classes and 198 core assets match both embedded copies.
+All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,500 classes and 196 assets remain byte-identical.
+Fourteen further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
+Only the two registry/factory JSON assets change, and their earlier data remains equal after removal of the new minimum-version fields.

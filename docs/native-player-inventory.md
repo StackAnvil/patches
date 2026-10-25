@@ -1937,3 +1937,35 @@ Original conversion and Molang matching select the current numeric owner indepen
 Original cleanup leaves no outstanding allocations or held locks.
 The borrowed header does not own its copied references, and the control does not establish its construction or retained lifetime.
 No new live capture closes the inventory, movement, eating or locator reports.
+
+
+## Versioned Tag admission and retained wire ingredients
+
+The registry now retains constructor minimum versions and builds its Tag index from all owned definitions.
+It uses the active connection base-game version, including parsed empty and wildcard values.
+The pinned data includes 299 initial factory minima and 540 Block minima.
+New component and legacy definitions keep their own constructor defaults instead of inheriting a minimum from their names.
+Version filtering preserves each definition's owned tag vector.
+Numeric ID collisions do not remove owned receivers from the index.
+
+Tag payload admission requires a nonempty index entry.
+An admitted payload retains its name and matches the converted receiver's own tags independently of later index membership.
+Index enumeration controls emptiness, including an admitted index that contains only air definitions.
+The shared wire factory retains lazy Name, Empty, Tag and compiled Molang payloads for each decoded ingredient position.
+The existing wire Tag consumer now uses the index guard and converted receiver.
+
+Eight fresh native registries cover empty, wildcard and six numeric version contexts under the same constructed Block catalog.
+All 15,672 minimum versions, 676 Tag sets and 7,765 member references match the model.
+The complete mixed-packet counter now compares all 608 cases, 4,864 predicates, 1,056 rounds and 2,112 ingredient rows.
+The earlier 89,252-call reference still matches the concrete Tag payload layer, which receives a selected definition directly.
+See the [versioned Tag reference](bedrock-coverage.md#versioned-tag-admission-october-25-2026) for lifecycle and context boundaries.
+
+The first diagnostic run retained a registry control block because the harness called scope reset without the saved-reference destructor.
+The corrected run executes full native scope destruction and restores enclosing registry reference counts after every context.
+Original registry, Item, Block, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+These controls use a fixed Block catalog and declared typed registry inputs.
+They do not establish older client construction, arbitrary versioned Blocks or unknown version-discriminator producers.
+Current captured constructor minima and parsed contexts all have the native discriminator set to zero.
+Production recipe registration and installed player publication still need the complete retained model.
+Other recipe families, all-empty counting and the original reported live bugs remain unfinished.

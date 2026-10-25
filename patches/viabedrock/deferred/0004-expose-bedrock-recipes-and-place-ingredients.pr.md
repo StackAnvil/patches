@@ -854,3 +854,30 @@ All 1,192 compiled client classes match the add-on.
 Compared with the preceding core, 1,509 classes and all 198 assets remain byte-identical.
 Seven further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
 The retained counter adapter intentionally changes its lambda target from the numeric key to the complete source descriptor.
+
+
+## Retained Tag admission
+
+Use the versioned registry index to admit Tag payloads.
+Keep index-based emptiness separate from matching against the converted receiver's owned tags.
+Preserve air-only index behavior and retain lazy Name, Empty, Tag and Molang values through one decoded-ingredient factory.
+The existing wire Tag consumer now uses that index guard and converted receiver.
+
+The mixed counter reference now compares all 608 packet cases: 4,864 predicates, 1,056 rounds and 2,112 ingredient rows.
+The earlier 89,252-call Tag reference still compares the concrete payload matcher at its actual supplied-definition boundary.
+Eight registry controls also compare exact versioned index membership.
+See the [coverage ledger](../../../docs/bedrock-coverage.md#versioned-tag-admission-october-25-2026) for the corrected native scope teardown and context limits.
+Installed retained recipe publication, other recipe families and all-empty counting remain unfinished.
+
+All four projects build with 2,986 passing tests, 152 optional skips and no failures or errors.
+Nineteen packaged checks pass with twelve implementation origins verified.
+The eight packaged wire-admission projections match the observed native index and traced nonempty-index loader guard.
+The preceding core differs on five projected values without linkage failures.
+These projections are not additional original-executable payload runs.
+All 4,864 existing packet predicates still match the packaged wire path.
+
+All 1,530 core classes and 198 core assets match both embedded copies.
+All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,500 classes and 196 assets remain byte-identical.
+Fourteen further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
+Only the two registry/factory JSON assets change, and their earlier data remains equal after removal of the new minimum-version fields.
