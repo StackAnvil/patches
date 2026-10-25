@@ -1,4 +1,4 @@
-From 304dac990bb2c287ec532c7361aa0665b758bc17 Mon Sep 17 00:00:00 2001
+From 60f00aee15d25b655927c9464ced1cb8dfe4a385 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -616,6 +616,17 @@ returns an empty target. Native lookup 143483800 applies rewritten names
 and metadata only for a nonempty result. The raw callback getter remains
 unchanged. Full saved-NBT construction exposes the generic spawn-egg
 case that otherwise loses its existing Item definition.
+
+Preserve the typed unsigned item-lock byte through the native getter
+contract14247fc00. Do not normalize unknown byte values or coerce other
+NBT number types into a lock. Different source and incoming provider
+filters interpret this byte independently.
+
+Remove the blanket lock exception from the container_items count-one
+planner. Standard native removal for that provider and incoming player
+storage do not install that filter. Existing merge, capacity and slot
+identity checks remain part of the plan. Keep player-slot, cursor, armor
+and other provider permission checks in their respective action adapters.
 ---
  Data Asset Sources.md                         |    33 +
  build.gradle                                  |     1 +
@@ -625,7 +636,7 @@ case that otherwise loses its existing Item definition.
  .../api/model/container/ChestContainer.java   |     3 +-
  .../container/NativeContainerActionSlots.java |    75 +
  .../NativeContainerLegacyActions.java         |   130 +
- .../container/NativeContainerTransfer.java    |    73 +
+ .../container/NativeContainerTransfer.java    |    63 +
  .../container/NativeItemStackMatcher.java     |    48 +
  .../container/NativeStorageContainers.java    |    49 +
  .../container/block/Generic3x3Container.java  |    47 +
@@ -635,7 +646,7 @@ case that otherwise loses its existing Item definition.
  .../viabedrock/protocol/BedrockProtocol.java  |     3 +
  .../protocol/data/BedrockMappingData.java     |    15 +-
  .../protocol/model/BaseGameVersion.java       |    53 +
- .../protocol/model/BedrockItem.java           |    22 +-
+ .../protocol/model/BedrockItem.java           |    29 +-
  .../protocol/model/BuiltinItemAliases.java    |   136 +
  .../protocol/model/BuiltinItemFactories.java  |    89 +
  .../protocol/model/BuiltinItemName.java       |   245 +
@@ -673,8 +684,8 @@ case that otherwise loses its existing Item definition.
  .../viabedrock/data/bedrock/potion_names.json |   193 +
  .../api/model/NativeItemNamesTest.java        |    62 +
  .../api/model/NativeItemStackingTest.java     |   149 +
- .../NativeContainerLegacyActionsTest.java     |   290 +
- .../NativeContainerTransferTest.java          |    90 +
+ .../NativeContainerLegacyActionsTest.java     |   323 +
+ .../NativeContainerTransferTest.java          |   115 +
  .../container/NativeItemStackMatcherTest.java |   191 +
  .../resourcepack/ui/HudActionbarUiTest.java   |   108 +
  .../api/resourcepack/ui/HudTitleUiTest.java   |   176 +
@@ -691,7 +702,7 @@ case that otherwise loses its existing Item definition.
  .../packet/NpcDialoguePacketTest.java         |   301 +-
  .../packet/WrittenBookUsePacketTest.java      |     1 +
  .../storage/NativeContainerUiStateTest.java   |    85 +
- 74 files changed, 34455 insertions(+), 362 deletions(-)
+ 74 files changed, 34510 insertions(+), 362 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BuiltinBlockNames.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemStacking.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerActionSlots.java
@@ -1188,10 +1199,10 @@ index 000000000..54ee49d7f
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerTransfer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerTransfer.java
 new file mode 100644
-index 000000000..6c6f6c7fe
+index 000000000..7542acf11
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeContainerTransfer.java
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,63 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1199,7 +1210,6 @@ index 000000000..6c6f6c7fe
 + */
 +package net.raphimc.viabedrock.api.model.container;
 +
-+import com.viaversion.nbt.tag.ByteTag;
 +import java.util.function.BiPredicate;
 +import java.util.function.IntPredicate;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
@@ -1216,7 +1226,6 @@ index 000000000..6c6f6c7fe
 +        if (source.isEmpty()) {
 +            return null;
 +        }
-+        requireUnlocked(source);
 +        // Native combined provider order is hotbar 0..8, then inventory 9..35.
 +        for (final boolean merge : new boolean[] {true, false}) {
 +            for (int slot = 0; slot < inventory.length; slot++) {
@@ -1228,18 +1237,10 @@ index 000000000..6c6f6c7fe
 +                        || destination.amount() >= maximumStackSize : !destination.isEmpty()) {
 +                    continue;
 +                }
-+                requireUnlocked(destination);
 +                return new Plan(slot, source.copy(), destination.copy());
 +            }
 +        }
 +        return null;
-+    }
-+
-+    private static void requireUnlocked(final BedrockItem item) {
-+        if (item.tag() != null && item.tag().get("minecraft:item_lock") instanceof ByteTag value
-+                && value.asByte() != 0) {
-+            throw new IllegalArgumentException("Native locked-item transfer permission is not supported");
-+        }
 +    }
 +
 +    private NativeContainerTransfer() { }
@@ -1631,10 +1632,18 @@ index 000000000..2979ba81d
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java b/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
-index a17eab494..6260a6dff 100644
+index a17eab494..ae063a53a 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
-@@ -31,6 +31,7 @@ import java.util.Objects;
+@@ -17,6 +17,7 @@
+  */
+ package net.raphimc.viabedrock.protocol.model;
+ 
++import com.viaversion.nbt.tag.ByteTag;
+ import com.viaversion.nbt.tag.CompoundTag;
+ import com.viaversion.nbt.tag.ListTag;
+ import com.viaversion.nbt.tag.ShortTag;
+@@ -31,6 +32,7 @@ import java.util.Objects;
  public class BedrockItem implements Item {
  
      private int id;
@@ -1642,7 +1651,7 @@ index a17eab494..6260a6dff 100644
      private short data;
      private byte amount;
      private CompoundTag tag;
-@@ -64,6 +65,16 @@ public class BedrockItem implements Item {
+@@ -64,6 +66,16 @@ public class BedrockItem implements Item {
          this.netId = netId;
      }
  
@@ -1659,7 +1668,7 @@ index a17eab494..6260a6dff 100644
      public static BedrockItem empty() {
          return new BedrockItem(0, (short) 0, (byte) 0);
      }
-@@ -84,6 +95,7 @@ public class BedrockItem implements Item {
+@@ -84,6 +96,7 @@ public class BedrockItem implements Item {
      @Override
      public void setIdentifier(final int identifier) {
          this.id = identifier % 65536;
@@ -1667,7 +1676,20 @@ index a17eab494..6260a6dff 100644
      }
  
      @Override
-@@ -191,7 +203,7 @@ public class BedrockItem implements Item {
+@@ -124,6 +137,12 @@ public class BedrockItem implements Item {
+         this.tag = tag;
+     }
+ 
++    /** The native lock getter preserves every unsigned byte value and ignores other tag types. */
++    public int itemLockMode() {
++        return this.tag != null && this.tag.get("minecraft:item_lock") instanceof ByteTag mode
++                ? Byte.toUnsignedInt(mode.asByte()) : 0;
++    }
++
+     public int enchantmentLevel(final Enchant_Type enchantment) {
+         if (this.isEmpty() || this.tag == null || !(this.tag.get("ench") instanceof ListTag<?> enchantments)) {
+             return 0;
+@@ -191,7 +210,7 @@ public class BedrockItem implements Item {
  
      @Override
      public boolean isEmpty() {
@@ -1676,7 +1698,7 @@ index a17eab494..6260a6dff 100644
      }
  
      public boolean isDifferent(final BedrockItem o) {
-@@ -203,7 +215,9 @@ public class BedrockItem implements Item {
+@@ -203,7 +222,9 @@ public class BedrockItem implements Item {
  
      @Override
      public BedrockItem copy() {
@@ -1687,7 +1709,7 @@ index a17eab494..6260a6dff 100644
      }
  
      @Override
-@@ -215,12 +229,12 @@ public class BedrockItem implements Item {
+@@ -215,12 +236,12 @@ public class BedrockItem implements Item {
              return false;
          }
          final BedrockItem that = (BedrockItem) o;
@@ -33654,10 +33676,10 @@ index 000000000..75b7dbfbd
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerLegacyActionsTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerLegacyActionsTest.java
 new file mode 100644
-index 000000000..88dd3e3f2
+index 000000000..dc7913194
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerLegacyActionsTest.java
-@@ -0,0 +1,290 @@
+@@ -0,0 +1,323 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -33697,6 +33719,39 @@ index 000000000..88dd3e3f2
 +import static org.mockito.Mockito.*;
 +
 +final class NativeContainerLegacyActionsTest {
++
++    @Test
++    void transfersLockedMenuItemsWithBalancedTypedStateAndPreservesFailedSends() {
++        for (final int mode : new int[]{1, 2, 127, 128, 255}) {
++            final var fixture = new Fixture();
++            final var source = named(4);
++            source.tag().putByte("minecraft:item_lock", (byte) mode);
++            final var destination = named(3);
++            destination.setTag(source.tag().copy());
++            fixture.menu.setItem(9, source);
++            fixture.inventory.setItem(0, destination);
++            assertThrows(IllegalStateException.class, () -> fixture.actions.autoPlaceOne(9, item -> 64,
++                    NativeContainerLegacyActionsTest::matches, transaction -> {
++                        throw new IllegalStateException("Transport failed");
++                    }));
++            assertEquals(source, fixture.menu.getItem(9));
++            assertEquals(destination, fixture.inventory.getItem(0));
++            final var sent = new AtomicReference<BedrockInventoryTransaction>();
++            assertTrue(fixture.actions.autoPlaceOne(9, item -> 64, NativeContainerLegacyActionsTest::matches, sent::set));
++            final var debit = sent.get().actions().get(0);
++            final var credit = sent.get().actions().get(1);
++            assertEquals(4, debit.fromItem().amount());
++            assertEquals(3, debit.toItem().amount());
++            assertEquals(3, credit.fromItem().amount());
++            assertEquals(4, credit.toItem().amount());
++            assertEquals(mode, debit.toItem().itemLockMode());
++            assertEquals(mode, credit.toItem().itemLockMode());
++            assertEquals(3, fixture.menu.getItem(9).amount());
++            assertEquals(4, fixture.inventory.getItem(0).amount());
++            assertEquals(4, source.amount());
++            assertEquals(3, destination.amount());
++        }
++    }
 +
 +    @Test
 +    void sendsBalancedNormalTransactionAndReadsCorrectionsWithoutWaitingForModernResponses() {
@@ -33950,10 +34005,10 @@ index 000000000..88dd3e3f2
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerTransferTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerTransferTest.java
 new file mode 100644
-index 000000000..53926519c
+index 000000000..6940c1d3c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeContainerTransferTest.java
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,115 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -34035,6 +34090,31 @@ index 000000000..53926519c
 +        assertEquals(1, separate.destinationSlot());
 +        assertEquals(4, source.amount());
 +        assertEquals(60, inventory[0].amount());
++    }
++
++    @Test
++    void movesLockedMenuItemsIntoCompatiblePlayerStorageWithoutChangingTheInputs() {
++        final var properties = new ComponentItemStackingProperties(64, null, false, false);
++        for (final int mode : new int[]{1, 2, 127, 128, 255}) {
++            final var source = item(4);
++            final var tag = new CompoundTag();
++            tag.putByte("minecraft:item_lock", (byte) mode);
++            source.setTag(tag);
++            final var inventory = BedrockItem.emptyArray(36);
++            inventory[0] = source.copy();
++            inventory[0].setAmount(3);
++            final var plan = NativeContainerTransfer.plan(source, inventory, 64,
++                    (from, to) -> NativeItemStacking.canMerge(from, to, properties, BedrockItem::data, values -> Set.of()),
++                    slot -> true);
++            assertNotNull(plan);
++            assertEquals(0, plan.destinationSlot());
++            assertEquals(3, plan.sourceAfter().amount());
++            assertEquals(4, plan.destinationAfter().amount());
++            assertEquals(mode, plan.sourceAfter().itemLockMode());
++            assertEquals(mode, plan.destinationAfter().itemLockMode());
++            assertEquals(4, source.amount());
++            assertEquals(3, inventory[0].amount());
++        }
 +    }
 +
 +    private static BedrockItem item(final int count) {

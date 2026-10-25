@@ -1206,7 +1206,7 @@ The targeted inventory, bundle, response and native stacking run passes all 39 t
 
 Crafting outputs, merchant and specialized workstation consumers still have separate encoded-field comparisons that need caller-specific audits.
 Legacy offhand and cursor acknowledgments also retain their existing stale-state checks.
-Complete native controller delivery, locked-item permissions and live wire/server acceptance remain separate requirements.
+Complete native controller delivery, remaining locked-item permissions and live wire/server acceptance remain separate requirements.
 All five goal areas and the four original reports remain active.
 
 
@@ -1217,3 +1217,63 @@ All 198 core asset resources match the previous validated JAR exactly.
 Apart from the Container implementation and three build-identity classes, the remaining 1,516 core classes are unchanged.
 This preserves the prior constructor, registry, recipe and component evidence through exact artifact comparison.
 Their separate packaged suites were not rerun for this consumer-only change.
+
+
+## Provider item-lock permissions
+
+Ordinary actions now distinguish removal permission from incoming permission.
+Player hotbar, inventory and offhand removal reject typed byte lock mode `1`.
+Other byte values, including `2` and unknown unsigned values, do not trigger that removal filter.
+Generic storage and cursor removal omit this filter.
+Generic storage incoming callbacks reject every nonzero byte lock mode.
+Player and cursor incoming providers omit that callback.
+
+The lock getter reads only `minecraft:item_lock` with the NBT byte type.
+It preserves unsigned values from zero through 255 and ignores other tag types.
+The shared count-one planner no longer rejects locked menu items before these provider rules apply.
+Both authority adapters retain typed lock state, counts and their existing identity checks.
+The legacy adapter leaves tracked slots unchanged after a failed send.
+
+Pickup, shift-click, hotbar swaps and pickup-all check removal permission before prediction.
+Pickup, swaps and drag retain incoming permission checks.
+Rejected allowed actions restore the lock state with the item snapshot.
+The checks preserve existing slot routing and destination order.
+
+The original backing constructor `147c96d60` and standard installer `1431afb60` register nine measured provider roles.
+The source method `147c98300`, installed incoming callbacks and getter `14247fc00` execute without instruction changes.
+The target remains 1.26.51.1, build 51061372, protocol 2193, with default Experiments and base-game version 1.26.50.
+The control uses the complete native registry and saved ItemStack constructor.
+Its declared storage interface supplies 36 slots and the current constructed item.
+The ordinary provider context has wire type zero.
+
+Eighty typed inputs cover absent userdata, byte values, mistyped tags, wrong key case and four counts.
+All 17,280 source decisions, 240 incoming callback executions and 80 getter results match Java.
+Another 300 incoming results follow omitted callbacks and the separately inspected native default branch.
+Those 300 results are derived defaults, not callback executions.
+The provider roles include generic storage, combined inventory, hotbar, inventory, offhand, cursor, barrel, shulker and dynamic storage.
+Original backing, input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+Two failed fixture attempts remain archived privately.
+The first lacked a storage cleanup interface.
+The second registered interface addresses without their scoped execution hooks.
+The successful control installs all three scoped storage callbacks and checks positive source results before accepting its output.
+It also observes the original backing destructor and its storage unsubscribe call.
+
+Armor removal needs the native actor mode and curse-binding context.
+World drops, bundles, specialized outputs, complete destination capacity and full controller delivery need separate caller controls.
+These permission checks do not establish wire or live server acceptance.
+All five goal areas and the four original reports remain active.
+
+
+The final four-project build passes 2,890 tests with 161 optional skips and no failures or errors.
+The core suite passes 1,759 tests with 84 optional skips. Checkstyle passes.
+All 1,520 core classes match their embedded add-on and proxy copies.
+All 1,191 client classes match the tested add-on.
+All 198 core asset resources match the archived saved-NBT milestone, including the unchanged Block auxiliary data.
+The remaining 1,506 core classes are byte-identical to that archive.
+Changed classes stay within Container, NativeContainerTransfer, BedrockItem, their nested classes and build identity.
+
+The packaged JAR passes all 30 permission, ordinary-action and authority-adapter tests with verified implementation origins.
+Seven deliberate permission regressions fail value assertions.
+Player-inventory shift-click and hotbar swaps isolate source removal from menu incoming rules.
+The retained native merge matrix still checks 3,024 Java action decisions from 756 original predicate cases.

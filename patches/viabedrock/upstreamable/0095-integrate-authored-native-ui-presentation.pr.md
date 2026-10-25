@@ -863,3 +863,23 @@ All 4,508 packaged constructor outputs match after the correction.
 A deliberate lookup mutation restores native value mismatches.
 The full four-project build passes 2,872 tests, including a focused named and canonical lookup regression.
 This change does not establish all userdata admission or native registry retirement behavior.
+
+
+## Typed item locks and count-one storage actions
+
+`BedrockItem.itemLockMode` retains the unsigned native byte getter contract.
+Only an exact `minecraft:item_lock` byte tag supplies a mode.
+Other tag types and absent fields return zero.
+
+The shared ordinary storage planner no longer rejects all locked items.
+The native generic-storage source and incoming player provider omit those lock filters.
+Both authority adapters preserve item tags and balance one-item transfers.
+A legacy send failure leaves both tracked slots unchanged.
+The authoritative plan retains source and destination network identities without mutating storage.
+
+The complete native backing control covers nine provider roles and 80 typed saved ItemStacks.
+Java matches 17,280 original source decisions, 240 incoming callback executions and 80 getter results.
+Another 300 incoming results derive from omitted callbacks and the inspected native default branch.
+Original backing, input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+Armor, drop, specialized output and full controller behavior remain separate verification boundaries.
+See the [provider permission reference](../../../docs/native-player-inventory.md#provider-item-lock-permissions) for scope and fixture details.
