@@ -1549,7 +1549,7 @@ Native route builder `144e1dfa0` lists armor, offhand and main inventory destina
 For main inventory sources, it lists armor, offhand and hotbar destinations.
 Equipment routes depend on separate workbench and profile flags.
 The ordinary Java player inventory now keeps both equipment ranges instead of selecting one empty armor slot or a shield-only offhand slot.
-Existing global occupied-merge and empty-slot passes remain unchanged.
+Quick move now applies those ranges in logical collection order, as described in the collection-order reference below.
 Static route construction does not establish complete native transfer ordering or controller execution.
 Crafting outputs, workbench profile combinations and physical controller navigation remain separate boundaries.
 
@@ -1612,3 +1612,55 @@ This control verifies the tested Java/ViaProxy/Bedrock path, including occupied 
 It does not establish native controller construction, complete transfer ordering, direct joins, client-authoritative legacy acceptance or delayed rejection recovery.
 The affected WildFFA session, server pack and mod configuration remain unreproduced.
 All four original reports and all five broader goal areas remain open.
+
+## Player destination collection ordering
+
+Quick move now completes each destination collection before visiting the next.
+It merges occupied stacks first, then fills admissible empty slots within that collection.
+An existing stack in later inventory no longer takes priority over earlier empty armor or offhand equipment.
+For three hotbar pumpkins and two matching inventory pumpkins, one enters the head slot and two merge into inventory.
+For six hotbar arrows and a matching inventory stack, the arrows enter the earlier offhand destination.
+
+The shared planner groups consecutive slots by container identity and full collection name.
+Split Java ranges for combined inventory remain one logical destination, so their occupied merges still precede empty placement.
+Distinct workstation collections remain separate even when they share a container object.
+Slot traversal, permission checks, capacity, prediction snapshots and response handling retain their existing contracts.
+
+The native player constructor installs adapter `14340cf80`, whose vtable `14e8808a0` dispatches offset `0x78` to `1434116e0`.
+Ordinary sources reach `1433eb800`, `1433e9e90` and destination planner `1433eab10`.
+Callback `144e4be80` supplies the all-count value `2147483647`; `144e4bf10` supplies count one.
+The complete planner runs 24 controls with one-item, exact-count and all-count descriptors.
+Six of nine all-count physical plans differ from the previous packaged Java implementation.
+The new optional comparison checks all nine all-count plans against the shared Java quick-move path.
+Three focused regressions cover armor priority, offhand priority and combined-inventory fragment grouping.
+
+The control executes original collection-name initialization `1431bd020`, base model construction `1433e3ac0`, view construction and registration, backing policies and destination planning.
+Read-only backend and collection-root interfaces supply names, roles, counts, offsets and stored ItemStack pointers.
+The collection-root slot check executes the original method from the actual armor, offhand and inventory class tables.
+An empty supplied observer map supports original model retirement.
+Model, view, backing, input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+Foreign strong and weak pins return to their baseline.
+No native permission, merge, capacity, Item lookup or Block lookup answer is supplied.
+
+The comparison checks ordered physical destinations after normalizing Java's combined inventory and native view offsets.
+It does not establish native wire-role encoding, controller-produced routes, physical native button binding, mutation or complete root/backend construction.
+The authored player screen, full Actor/Level delivery and arbitrary workstation routes remain unfinished.
+All four original reports and all five broader goal areas remain open.
+
+The four-project collection-order build passes 2,925 tests with 161 optional skips and no failures or errors.
+The core passes 1,794 tests with 84 optional skips. Checkstyle and offline validation pass; all 105 patches replay.
+The packaged core passes 82 repository checks plus the private 40-mode comparison.
+Forty-seven deliberate regressions fail value assertions with verified implementation origins, including global-pass ordering and split combined-inventory grouping.
+All 1,522 core classes match the embedded add-on and proxy copies; all 1,191 client classes match the tested build.
+All 198 assets remain byte-identical to the offhand build, including factory and Block auxiliary metadata.
+The implementation adds one private destination-group record.
+Of the 1,521 prior core classes, 1,510 remain byte-identical; seven changed nested classes retain matching declarations and instruction disassembly.
+
+A new live control uses these collection-order artifacts through Java 26.3, ViaProxy and Bedrock 1.26.51.1.
+Four physical pickup/place actions create the two existing inventory stacks.
+Physical shift-click then equips one pumpkin and merges two into the existing stack, leaving four in inventory.
+The next shift-click puts six arrows in offhand while the existing inventory stack remains at two.
+All six requests receive successful responses; the pumpkin request contains ordered Place counts one and two, and the arrow request contains count six.
+Client and core states match after reconciliation, and the final native close is acknowledged.
+Installed artifact and embedded-class checks pass, the driver completes normally, and all processes started by the run retire.
+This server-authoritative control verifies those final states, not frame-by-frame native prediction, direct joins, legacy authority or complete native controller parity.

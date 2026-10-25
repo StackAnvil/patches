@@ -1103,7 +1103,7 @@ Use the selected definition's native offhand flag and measured builtin metadata 
 Retain typed common properties, installed component values and wearable finalization across updates.
 Validate empty-slot capacity before incoming placement.
 Keep full armor and offhand destination ranges for ordinary player quick move.
-The existing global merge and empty passes remain unchanged.
+Preserve merge-before-empty order within each logical collection, including combined-inventory fragments.
 
 Four original protocol-2193 controls compare 64,872 full destination decisions and 64,872 installed callbacks across 4,086 inputs.
 Each control completes original backing, input, registry, TLS, static and CRT cleanup without allocations or held locks.
@@ -1134,3 +1134,29 @@ The driver completes normally, the final native close is acknowledged, and all p
 This server-authoritative control retains Java's ordinary player screen at 854 by 480 and GUI scale two.
 It does not verify the legacy adapter, complete native controller ordering, direct joins, delayed recovery or the affected WildFFA session.
 See [the live offhand boundaries](../../../docs/native-player-inventory.md#live-offhand-action-controls).
+
+## Destination collection priority
+
+Run occupied merges and empty placement within each logical destination collection before visiting the next.
+Later inventory merges cannot bypass earlier empty armor or offhand slots.
+Keep split combined-inventory ranges together by container identity and full collection name, while retaining their traversal order.
+
+The original model/planner control executes 24 quantity cases and complete native cleanup.
+Six of nine all-count physical plans differ from the previous packaged implementation.
+The coupled Java comparison checks those nine plans; three regressions cover equipment priority and combined-inventory grouping.
+Read-only backend/root interfaces supply metadata and stored stacks; original policies and the actual class slot-check method execute.
+Foreign pins return to baseline, and native model/view/backing/input/registry/TLS/static/CRT cleanup leaves no allocations or held locks.
+Physical destinations are normalized across Java's combined inventory and native view offsets.
+Native wire-role encoding, complete controller/root construction and physical native button binding remain separate boundaries.
+See [the collection-order reference](../../../docs/native-player-inventory.md#player-destination-collection-ordering).
+
+The collection-order build passes 2,925 tests with 161 optional skips, including the nine-case original-planner comparison.
+The packaged core passes 82 repository checks plus the private 40-mode comparison.
+All 47 deliberate regressions fail value assertions with verified origins.
+All 1,522 embedded core classes and 1,191 client classes match the tested artifacts; all 198 assets remain unchanged from the offhand build.
+
+A new physical Java/ViaProxy/Bedrock control creates existing inventory stacks and exercises both priority cases.
+Shift-click places one pumpkin in armor before merging two into inventory, and routes six arrows to offhand before the later inventory merge.
+All six fixture and shift-click requests receive successful responses.
+Final client/core state, native close acknowledgment, installed artifacts and process cleanup pass verification.
+These server-authoritative final states do not establish frame-by-frame native prediction, legacy authority or complete controller parity.
