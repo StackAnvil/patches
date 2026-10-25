@@ -1577,3 +1577,38 @@ Eleven changed nested classes retain matching declarations and instruction disas
 
 Forty-five deliberate permission, action, capacity, identity and component-reader regressions fail value assertions.
 Each mutant also passes implementation-origin checks.
+
+## Live offhand action controls
+
+A new private Java 26.3 control uses the offhand build artifacts through ViaProxy and Bedrock 1.26.51.1.
+The server negotiates server-authoritative inventory.
+The client has ViaFabricPlus and the StackAnvil Bedrock add-on installed, with no additional client mod JARs.
+Its viewport is 854 by 480 at Java GUI scale two.
+Physical E-key input opens Java's ordinary player inventory, whose background remains visible.
+The authored native player screen is still unfinished.
+
+Twenty-four physical controls include 21 accepted actions and three refusals.
+All 21 requests receive matching successful Bedrock responses.
+Arrows enter an empty offhand slot, merge from six to ten items, and return to inventory.
+Physical shift-click routes ten arrows from the hotbar to offhand.
+A totem also completes placement, removal and return.
+Apple placement in offhand makes no request and preserves the cursor stack.
+
+Typed slot-locked arrows refuse hotbar pickup and offhand removal.
+Inventory-locked arrows permit the tested pickup, offhand placement, removal and return.
+Server commands create the typed-lock fixtures, including the two offhand states.
+Client and core observations retain the expected counts and cursor state after each refusal.
+These end-to-end refusals do not independently locate every refusal in the client or core.
+The packaged tests verify core admission separately.
+
+The installed add-on matches the built distribution artifact.
+All 1,521 embedded core classes match the built core and distribution proxy copies.
+The harness launches the explicit distribution proxy path; it does not independently record the running proxy's complete bytes.
+Passive observers record screen, cursor, equipment, request and response state without supplying policy decisions or invoking inventory actions.
+The final physical E-key close receives its native acknowledgment.
+The integration driver completes normally, and all processes started by the run retire.
+
+This control verifies the tested Java/ViaProxy/Bedrock path, including occupied arrow merges and the observed shift-click destination.
+It does not establish native controller construction, complete transfer ordering, direct joins, client-authoritative legacy acceptance or delayed rejection recovery.
+The affected WildFFA session, server pack and mod configuration remain unreproduced.
+All four original reports and all five broader goal areas remain open.

@@ -1121,3 +1121,16 @@ All 1,521 embedded core classes and 1,191 client classes match the tested artifa
 Only the eight measured offhand flags change among 198 core assets; prior factory and Block auxiliary metadata remain unchanged.
 All 105 patches replay, and Checkstyle and offline validation pass.
 Forty-five deliberate regressions fail value assertions with verified implementation origins.
+
+## Live offhand actions
+
+The offhand build artifacts complete 24 physical Java inventory controls through ViaProxy and Bedrock 1.26.51.1.
+All 21 accepted requests receive successful responses.
+Arrows enter and merge in offhand, physical shift-click routes arrows there, and totems complete placement and removal.
+Apple placement and typed slot-locked removal make no request; inventory-locked transfers remain permitted.
+The installed add-on and all 1,521 embedded core classes match the built artifacts.
+The driver completes normally, the final native close is acknowledged, and all processes started by the run retire.
+
+This server-authoritative control retains Java's ordinary player screen at 854 by 480 and GUI scale two.
+It does not verify the legacy adapter, complete native controller ordering, direct joins, delayed recovery or the affected WildFFA session.
+See [the live offhand boundaries](../../../docs/native-player-inventory.md#live-offhand-action-controls).
