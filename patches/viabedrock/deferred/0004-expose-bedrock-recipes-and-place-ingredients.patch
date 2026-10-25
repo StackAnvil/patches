@@ -1,4 +1,4 @@
-From e256264af2ea3d37124fda83afabed5fa623de0a Mon Sep 17 00:00:00 2001
+From 3ac89ee18feeb76a586e6494a091a5b29967663c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -728,6 +728,14 @@ original cleanup without allocations or held locks. Nondefault builtin
 state overrides, arbitrary component admission and full model/Level lifetime
 remain outside these references. Unpositioned Java player inventory uses
 the fallback; native model position initialization remains unverified.
+
+Capture inventory sources only when a candidate passes the concrete grid
+requirement. Capture them again before each eligible count. The original
+1.26.51.1 evaluator at 0x143439420 performs no source-vector reads for an
+invalid output, an absent candidate or a skipped table-only recipe. Its
+first complete candidate stops later reads. Twenty-eight original controls
+record 91 vector reads over 26 counter calls with balanced temporaries.
+Keep current-owner validation on paths that actually count ingredients.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 +
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -738,7 +746,7 @@ the fallback; native model position initialization remains unverified.
  .../model/container/CraftingPlacement.java    | 229 +++++
  .../container/FurnaceRecipePlacement.java     | 221 +++++
  .../NativeCookingRecipeSelection.java         | 205 +++++
- .../model/container/NativeRecipeCounter.java  | 198 +++++
+ .../model/container/NativeRecipeCounter.java  | 202 +++++
  .../container/NativeRecipeDescriptor.java     |  60 +-
  .../block/CraftingTableContainer.java         | 100 ++-
  .../container/block/FurnaceContainer.java     | 209 +++++
@@ -797,7 +805,7 @@ the fallback; native model position initialization remains unverified.
  .../NativeFurnaceOptionsPacketTest.java       | 214 +++++
  .../NativeRecipeConcreteCounterTest.java      | 165 ++++
  .../rewriter/NativeRecipePaletteTest.java     | 203 +++++
- .../PlayerRecipeAvailabilityTest.java         | 247 ++++++
+ .../PlayerRecipeAvailabilityTest.java         | 291 +++++++
  .../ResolvedRecipeIngredientTest.java         | 283 +++++++
  .../storage/CookingRecipeBookTest.java        | 194 +++++
  .../protocol/storage/CraftingCursorTest.java  | 158 ++++
@@ -816,7 +824,7 @@ the fallback; native model position initialization remains unverified.
  .../types/model/FurnaceOptionsTypeTest.java   |  75 ++
  .../types/model/InventoryOptionsTypeTest.java |  46 +
  .../types/recipe/CraftingDataReaderTest.java  |  84 +-
- 87 files changed, 11698 insertions(+), 180 deletions(-)
+ 87 files changed, 11746 insertions(+), 180 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeAvailability.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeCatalog.java
@@ -1999,10 +2007,10 @@ index 000000000..acfb4b9b6
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounter.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounter.java
 new file mode 100644
-index 000000000..69787e6b9
+index 000000000..fe8741721
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounter.java
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,202 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2021,6 +2029,7 @@ index 000000000..69787e6b9
 +import java.util.Map;
 +import java.util.Objects;
 +import java.util.function.BooleanSupplier;
++import java.util.function.Supplier;
 +import java.util.function.ToIntFunction;
 +
 +/** Native ingredient availability rounds, independent of placement and stack request authority. */
@@ -2124,9 +2133,12 @@ index 000000000..69787e6b9
 +        }
 +    }
 +
-+    /** Evaluate already admitted output candidates, independently of placement capacity and authority. */
++    /**
++     * Evaluate admitted output candidates, independently of placement capacity and authority.
++     * Capture sources separately for each eligible candidate, as the native counter does.
++     */
 +    public static int availability(final boolean validOutput, final boolean workbench, final boolean filtering,
-+                                   final List<Candidate> candidates, final List<Source> sources,
++                                   final List<Candidate> candidates, final Supplier<List<Source>> sources,
 +                                   final ToIntFunction<BedrockItem> descriptorHash, final BooleanSupplier selectedOutput) {
 +        if (!validOutput) {
 +            return 3;
@@ -2136,7 +2148,7 @@ index 000000000..69787e6b9
 +            if (candidate.requiresCraftingTable && !workbench) {
 +                continue;
 +            }
-+            final Result result = count(candidate.recipe, sources, descriptorHash);
++            final Result result = count(candidate.recipe, sources.get(), descriptorHash);
 +            if (result.count > 0) {
 +                return filtering ? 0 : 1;
 +            }
@@ -4072,7 +4084,7 @@ index 0b8c600e9..4fef2c18d 100644
              if (channels.contains(LocatorBarSnapshot.CHANNEL) && wrapper.user().has(PlayerWaypointTracker.class)) {
                  wrapper.user().get(PlayerWaypointTracker.class).sendSnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index bc3d20606..10ce44339 100644
+index bc3d20606..1a0f4b5ca 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -40,10 +40,14 @@ import net.raphimc.viabedrock.ViaBedrock;
@@ -4178,7 +4190,7 @@ index bc3d20606..10ce44339 100644
 +            return 3;
 +        }
 +        return NativeRecipeCounter.availability(true, owner instanceof CraftingTableContainer, filtering,
-+                candidates, this.user().get(InventoryTracker.class).craftingSources(owner, includeCursor),
++                candidates, () -> this.user().get(InventoryTracker.class).craftingSources(owner, includeCursor),
 +                item -> {
 +                    final ItemRecipeKey key = this.recipeKey(item);
 +                    return key != null ? key.descriptorHash() : 0;
@@ -9683,10 +9695,10 @@ index 000000000..8ecccb314
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeAvailabilityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeAvailabilityTest.java
 new file mode 100644
-index 000000000..5169e32b7
+index 000000000..49f0249e0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeAvailabilityTest.java
-@@ -0,0 +1,247 @@
+@@ -0,0 +1,291 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -9723,6 +9735,7 @@ index 000000000..5169e32b7
 +import java.util.Arrays;
 +import java.util.List;
 +import java.util.Set;
++import java.util.concurrent.atomic.AtomicInteger;
 +import java.util.zip.GZIPInputStream;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -9762,25 +9775,68 @@ index 000000000..5169e32b7
 +        final var second = candidate(context.items, List.of(new ItemRecipeKey(1, (short) 0)), 2, false, 1, visits);
 +        final var sources = List.of(new NativeRecipeCounter.Source(
 +                ContainerEnumName.InventoryContainer, List.of(new BedrockItem(1))));
-+        assertEquals(1, NativeRecipeCounter.availability(true, false, false, List.of(second, first), sources,
++        assertEquals(1, NativeRecipeCounter.availability(true, false, false, List.of(second, first), () -> sources,
 +                item -> context.items.recipeKey(item).descriptorHash(), () -> {
 +                    throw new AssertionError("Unexpected selected-output query");
 +                }));
 +        assertEquals(List.of(0, 1), visits);
 +        visits.clear();
-+        assertEquals(2, NativeRecipeCounter.availability(true, false, true, List.of(first), sources,
++        assertEquals(2, NativeRecipeCounter.availability(true, false, true, List.of(first), () -> sources,
 +                item -> context.items.recipeKey(item).descriptorHash(), () -> {
 +                    throw new AssertionError("Unexpected selected-output query");
 +                }));
 +        assertEquals(List.of(0), visits);
 +        visits.clear();
-+        assertEquals(3, NativeRecipeCounter.availability(false, true, false, List.of(first), sources,
++        assertEquals(3, NativeRecipeCounter.availability(false, true, false, List.of(first),
++                () -> {
++                    throw new AssertionError("Unexpected source capture");
++                },
 +                ignored -> {
 +                    throw new AssertionError("Unexpected hash query");
 +                }, () -> {
 +                    throw new AssertionError("Unexpected selected-output query");
 +                }));
 +        assertTrue(visits.isEmpty());
++    }
++
++    @Test
++    void skipsSourceCaptureWhenNoCandidateCanUseThePlayerGrid() throws Exception {
++        final var context = context(false);
++        final var output = new BedrockItem(1);
++        final var staleOwner = context.owner.copy();
++        final var tableOnly = candidate(context.items, List.of(new ItemRecipeKey(1, (short) 0)),
++                0, true, 0, new ArrayList<>());
++        assertEquals(3, context.items.playerRecipeAvailability(List.of(), output, BedrockItem.empty(), staleOwner, false, true));
++        assertEquals(3, context.items.playerRecipeAvailability(List.of(tableOnly), output, BedrockItem.empty(), staleOwner, false, true));
++        assertEquals(2, context.items.playerRecipeAvailability(List.of(tableOnly), output, output, staleOwner, false, true));
++        assertEquals(3, context.items.playerRecipeAvailability(List.of(tableOnly), BedrockItem.empty(), output, staleOwner, false, true));
++        final var eligible = new NativeRecipeCounter.Candidate(0, false, tableOnly.recipe());
++        assertThrows(IllegalStateException.class, () -> context.items.playerRecipeAvailability(
++                List.of(eligible), output, BedrockItem.empty(), staleOwner, false, true));
++    }
++
++    @Test
++    void capturesFreshSourcesForEachEligibleCandidateUntilTheFirstCompleteRecipe() throws Exception {
++        final var context = context(false);
++        final var visits = new ArrayList<Integer>();
++        final var ingredients = List.of(new ItemRecipeKey(1, (short) 0));
++        final var first = candidate(context.items, ingredients, 0, false, 0, visits);
++        final var second = candidate(context.items, ingredients, 1, false, 1, visits);
++        final var third = candidate(context.items, ingredients, 2, false, 2, visits);
++        final var skipped = new NativeRecipeCounter.Candidate(-1, true, first.recipe());
++        final var captures = new AtomicInteger();
++        final var available = List.of(new NativeRecipeCounter.Source(
++                ContainerEnumName.InventoryContainer, List.of(new BedrockItem(1))));
++        assertEquals(1, NativeRecipeCounter.availability(true, false, false,
++                List.of(third, second, skipped, first), () -> switch (captures.incrementAndGet()) {
++                    case 1 -> List.of();
++                    case 2 -> available;
++                    default -> throw new AssertionError("Unexpected source capture");
++                }, item -> context.items.recipeKey(item).descriptorHash(), () -> {
++                    throw new AssertionError("Unexpected selected-output query");
++                }));
++        assertEquals(2, captures.get());
++        assertEquals(List.of(0, 1), visits);
 +    }
 +
 +    @Test

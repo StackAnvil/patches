@@ -942,3 +942,24 @@ All 1,532 core classes and 198 assets match both embedded copies. All 1,192 comp
 Compared with the preceding core, 1,513 classes and all 198 assets remain byte-identical.
 Eleven further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
 The only added class is the typed crafting context. The native UI patch changes only exported hunk context.
+
+## Recipe source acquisition
+
+Capture inventory sources separately for each eligible recipe candidate.
+Skip source capture for an invalid output, an empty candidate list or a table-only candidate outside a workbench.
+Stop capture after the first complete recipe. Keep current-owner validation when a candidate needs ingredient counting.
+
+Twenty-eight original evaluator controls record 91 source-vector reads over 26 counter calls.
+They execute the original output lookup, priority sort, grid requirements and counter, with balanced temporary allocations.
+Source-model vectors, ordinary definitions, context, registry services and CRT calls remain supplied boundaries.
+These controls do not establish installed player inventory or controller behavior.
+
+A production regression reproduces a stale-owner exception before this change, even when there are no candidates.
+The new tests cover skipped candidates, selected-output fallback, fresh captures and stopping after a complete recipe.
+
+All four projects build with 2,995 passing tests, 152 optional skips and no failures or errors.
+Both Checkstyle tasks pass. All 104 core patches and all 38 add-on patches replay.
+The packaged core passes all five availability checks, including the 1,344-case original evaluator fixture.
+The preceding release passes the same fixture and existing source checks, but fails the new stale-owner regression without linkage errors.
+All 1,532 core classes, 198 core assets and 39 CubeConverter classes match both packaged consumers.
+All 1,193 compiled client classes match the add-on JAR.
