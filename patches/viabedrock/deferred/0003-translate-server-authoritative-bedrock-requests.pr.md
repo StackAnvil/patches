@@ -959,7 +959,7 @@ The second registered interface addresses without their scoped execution hooks.
 The successful control installs all three scoped storage callbacks and checks positive source results before accepting its output.
 It also observes the original backing destructor and its storage unsubscribe call.
 
-Armor removal needs the native actor mode and curse-binding context.
+The armor-removal extension below separately covers actor mode and Curse of Binding.
 World drops, bundles, specialized outputs, complete destination capacity and full controller delivery need separate caller controls.
 These permission checks do not establish wire or live server acceptance.
 All five goal areas and the four original reports remain active.
@@ -977,3 +977,66 @@ The packaged JAR passes all 30 permission, ordinary-action and authority-adapter
 Seven deliberate permission regressions fail value assertions.
 Player-inventory shift-click and hotbar swaps isolate source removal from menu incoming rules.
 The retained native merge matrix still checks 3,024 Java action decisions from 756 original predicate cases.
+
+
+## Armor source permission
+
+Ordinary armor removal now checks the registered native armor source policy.
+Typed byte lock mode `1` blocks removal before the creative bypass.
+Other byte modes do not trigger this filter.
+Native player mode `Creative` bypasses Curse of Binding.
+Player mode `Default` inherits that bypass only from a creative world mode.
+`Undefined` and other modes do not inherit the bypass.
+The general Java display-mode conversion remains unchanged.
+
+Other cases reject the first matching Curse of Binding entry only when its typed short level is positive.
+Zero, negative and mistyped levels do not activate binding.
+The enchantment ID uses its unsigned low byte after typed short admission.
+Duplicate entries retain their first-match order.
+The existing enchantment-level helper remains unchanged.
+
+The original backing constructor and standard installer register armor callback `1431bb690`.
+That callback and source method `147c98300` execute against the complete native registry and original saved ItemStack construction.
+The target remains 1.26.51.1, build 51061372, protocol 2193, with default Experiments and base-game version 1.26.50.
+The declared armor storage supplies four slots with the current constructed item.
+The native range follows that backing capacity.
+The supplied actor interface contains the game-type sparse component and a fallback mode virtual service.
+Original actor getter `14253dc40` executes against those inputs.
+
+The control covers 129 typed ItemStacks and 40 actor-mode states.
+Java matches all 103,200 original source decisions.
+The native control also executes 5,160 registered callbacks and observes 129 lock and binding-presence pairs.
+Forty original actor getter results establish the mode inputs.
+The nonempty Java items match every observed binding-presence result.
+Zero-count saved stacks retain header byte one but clear Item ownership, so source admission rejects them.
+Original backing, input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+Two failed fixture attempts remain archived privately and supply no expected decisions.
+One incorrectly expected the zero-count header byte to clear.
+The other supplied player-storage capacity instead of armor-storage capacity.
+The final control uses the measured header contract and four-slot armor backing.
+
+Non-compound enchantment-list elements remain outside this control.
+Static native code selects a null element receiver and immediately reads that receiver in the typed getter.
+The reference records these two unexecuted cases without assigning a native boolean result.
+
+Action regressions cover pickup, shift-click and hotbar swaps through actual Java request prediction.
+They distinguish `Default` from `Undefined`, preserve slot locks in creative mode and restore rejected armor removal after a mode change.
+The fixtures supply cached mode fields and suppress independent attribute transport.
+Armor incoming-slot validation, world drops, direct creative edits and full destination policy remain separate callers.
+Complete Actor, Level and controller construction, physical input and live server acceptance remain unfinished.
+All five goal areas and the four original reports remain active.
+
+
+The four-project build passes 2,893 tests with 161 optional skips and no failures or errors.
+The core suite passes 1,762 tests with 84 optional skips. Checkstyle passes.
+All 1,520 core classes match their embedded add-on and proxy copies.
+All 1,191 client classes match the tested add-on.
+All 198 core asset resources match the previous provider-policy milestone, including the unchanged Block auxiliary data.
+Only ArmorContainer and three build-identity classes differ from that artifact.
+The remaining 1,516 core classes are byte-identical, including the prior provider, merge and enchantment implementations.
+
+The packaged JAR passes all 33 permission, ordinary-action and authority-adapter tests with verified implementation origins.
+Seven deliberate armor regressions fail value assertions.
+These controls detect a missing policy, incorrect lock modes, incorrect inherited modes, negative-level handling and reversed duplicate order.
+Prior provider and merge mutation evidence remains supported by byte-identical implementation classes and unchanged data.
