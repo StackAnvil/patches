@@ -10176,3 +10176,48 @@ Compared with the preceding core, 1,508 classes and all 198 assets remain byte-i
 Sixteen further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
 The synthetic recipe-type switch changes only its mapping order for the three crafting types.
 The only new class is the matcher interface that preserves ingredient-position identity through grid assignment.
+
+## Native recipe block contexts (October 25, 2026)
+
+**Implemented:** Shared block definitions retain resolved custom-state component snapshots before Java resource-pack and visual-carrier admission.
+Runtime-state lookup preserves registered owner identity and returns an isolated copy.
+The crafting consumer reads the current block at its owning screen's position for grid matching and exposes those contexts to output lookup.
+An existing empty crafting component produces an empty context list. An absent component uses `crafting_table`.
+Ordered tags, duplicates, empty strings and strict typed field defaults remain unchanged.
+Native grid size and table name remain data fields, without new layout behavior.
+
+**Verified within scope:** Original initializer `146ecda80`, context producer `14341bf10` and component getter `142a6c4f0` execute eighteen controls.
+They cover state-before-legacy selection, absent and empty components, duplicate, long and Unicode strings, position delivery and copied output ownership.
+The reference supplies typed component arrays, live shared-reference backing and Dimension/BlockSource virtual getters.
+Original temporary and global destruction leaves no tracked allocations or held locks.
+The first diagnostic stopped at an inherited supplied-context hook. The corrected harness removes that hook and executes the original producer.
+The failed diagnostic does not support context or cleanup claims.
+
+Original `149661900` reads twelve typed NBT field controls.
+Strict Int and String getters retain their native defaults. List elements retain order and use empty strings for non-string tags.
+The reference supplies typed tree/list/string backing and type virtuals, including one heterogeneous list outside normal wire NBT.
+Original vector destruction and an explicit original CRT free retire the adapter's tracked allocations.
+This control does not establish schema admission, network decoding or complete component ownership.
+
+A separate complete original Block/Item initialization checks 1,379 unique constructed BlockLegacy definitions through `142a6c4f0`.
+None exposes this component through legacy lookup with an empty state override.
+Complete original Item, Block, TLS, static and CRT cleanup leaves no allocations or held locks.
+The declared registry inputs and wrapper Block header do not establish nondefault state components, arbitrary custom admission or full Level/client lifetime.
+
+**Remaining work:** Native model-position initialization and complete component admission still need verification.
+Unpositioned Java player inventory uses the fallback. Existing Java grid assignment and quantity behavior remain separate compatibility rules.
+Retained player availability, all-empty counter handling and installed player/controller publication remain unfinished.
+No new live capture closes the inventory, movement, eating or locator reports.
+
+All 106 ViaBedrock patches replay, and all four projects build.
+The full run passes 2,993 tests with 152 optional skips and no failures or errors.
+ViaBedrock passes 1,858 tests with 79 optional skips. Both Checkstyle tasks and repository offline validation pass.
+Twenty-six packaged checks pass with fifteen implementation origins verified, including all twelve typed component controls.
+The separate wire predicate path still matches all 4,864 results.
+Four workbench projections match the measured context rules. The preceding packaged core differs on three values without linkage failures.
+These projections supply world-state and component backing. They do not establish complete native grid or installed player/controller behavior.
+
+All 1,532 core classes and 198 assets match both embedded copies. All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,513 classes and all 198 assets remain byte-identical.
+Eleven further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
+The only added class is the typed crafting context. The native UI patch changes only exported hunk context.

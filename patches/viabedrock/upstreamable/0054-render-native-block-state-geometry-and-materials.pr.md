@@ -528,3 +528,14 @@ The packaged core matches eleven original group-membership observations and the 
 Native comparisons reject folded group keys and case-sensitive individual fallback.
 The [inventory reference](../../../docs/native-player-inventory.md#saved-nbt-stack-loading) records the complete controls, build results and remaining limits.
 The 12 broad and 107 focused legacy-converter state differences remain open. Auxiliary data remains unchanged.
+
+## Shared component snapshots
+
+Resolve custom-state component overlays before Java resource-pack loading or visual-carrier admission.
+Retain snapshots by registered state identity, and return copies through runtime-state lookup.
+Visual and gameplay consumers then read the same component data.
+Recipe field interpretation and workbench matching remain in the later crafting patch.
+The [recipe context reference](../../../docs/bedrock-coverage.md#native-recipe-block-contexts-october-25-2026) records its native controls and remaining admission limits.
+
+Full-stack validation replays all 106 ViaBedrock patches and builds all four projects with 2,993 passing tests and 152 optional skips.
+Both Checkstyle tasks and repository offline validation pass. This does not establish a standalone upstream build for this patch.

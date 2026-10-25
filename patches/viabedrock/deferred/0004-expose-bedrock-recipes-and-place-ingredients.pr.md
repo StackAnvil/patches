@@ -912,3 +912,33 @@ Compared with the preceding core, 1,508 classes and all 198 assets remain byte-i
 Sixteen further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
 The synthetic recipe-type switch changes only its mapping order for the three crafting types.
 The only new class is the matcher interface that preserves ingredient-position identity through grid assignment.
+
+## Native block recipe contexts
+
+Use the current block at the owning screen's position to select workbench recipe contexts.
+Read shared component snapshots from the earlier block-definition patch. Keep recipe-specific typed fields and matching in this patch.
+Preserve an empty component separately from an absent component, along with tag order, duplicates and empty strings.
+The same owner-context API supplies retained output-candidate lookup.
+Grid size and table name remain data fields. They do not establish new native layout or grid behavior.
+
+Eighteen original producer controls cover state-before-legacy selection, fallback, copied output strings and position delivery.
+Twelve original typed NBT controls establish field defaults and list-element behavior.
+A complete original registry control checks 1,379 constructed BlockLegacy definitions without finding this legacy component.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-recipe-block-contexts-october-25-2026) records supplied interfaces and cleanup boundaries.
+
+Java production tests exercise changing workbench states, custom station matching, explicit-empty rejection, fallback and ordered output candidates.
+Native model-position initialization, arbitrary component admission, complete native grid behavior and installed player publication remain unverified.
+Unpositioned Java player inventory uses the fallback. The four original live reports remain unresolved.
+
+All 106 ViaBedrock patches replay, and all four projects build.
+The full run passes 2,993 tests with 152 optional skips and no failures or errors.
+ViaBedrock passes 1,858 tests with 79 optional skips. Both Checkstyle tasks and repository offline validation pass.
+Twenty-six packaged checks pass with fifteen implementation origins verified, including all twelve typed component controls.
+The separate wire predicate path still matches all 4,864 results.
+Four workbench projections match the measured context rules. The preceding packaged core differs on three values without linkage failures.
+These projections supply world-state and component backing. They do not establish complete native grid or installed player/controller behavior.
+
+All 1,532 core classes and 198 assets match both embedded copies. All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,513 classes and all 198 assets remain byte-identical.
+Eleven further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
+The only added class is the typed crafting context. The native UI patch changes only exported hunk context.

@@ -1997,3 +1997,36 @@ The declared model, output getter and ordinary definition backing remain supplie
 
 Java still rejects all-empty counting explicitly. This is a safety divergence from the observed native repeated rounds.
 Installed player recipe publication, other recipe families and the four original reports remain unfinished.
+
+## Recipe contexts from the current block
+
+Workbench matching now reads component data for the current block at the owning screen's position.
+A custom `minecraft:crafting_table` component supplies its ordered recipe tags.
+An existing component with no tags produces no recipe contexts. Only an absent component uses the native `crafting_table` fallback.
+Tag order, duplicate tags and empty strings remain unchanged.
+The owning-context API also supplies inputs for retained output-candidate lookup.
+Installed player recipe publication does not yet consume that complete path.
+
+The block-definition foundation retains one component snapshot per registered custom state, independently of Java resource-pack loading and visual-carrier admission.
+Visual compilation reads the same snapshot. The public runtime-state lookup returns a copy and preserves state-owner identity.
+State permutations can replace the complete crafting component, including replacement with an empty component.
+The recipe consumer reads strict Int, String and List fields through `NativeCraftingContext`.
+Wrong list element types produce empty strings, as the original typed field adapter does.
+Grid size and table name remain data fields; they do not complete native layout or grid behavior.
+
+The original context producer `14341bf10` matches eighteen controls with supplied state and legacy component backing.
+It prefers a nonnull state component, then its legacy component, then the fallback.
+An empty component prevents fallback. The producer copies its output strings and restores the supplied live shared-reference counts.
+Original initializer `146ecda80` supplies the fallback value. Original global destruction and temporary cleanup leave no tracked allocations or held locks.
+Dimension and BlockSource getters, typed component arrays and model positions remain supplied interfaces.
+
+Original typed field adapter `149661900` supplies twelve further controls for `grid_size`, `table_name` and `crafting_tags`.
+These controls declare typed NBT backing rather than decode network bytes or construct complete component owners.
+A separate complete registry control checks 1,379 constructed BlockLegacy definitions through the original component getter.
+None exposes this legacy component. Original Item, Block, TLS, static and CRT cleanup leaves no allocations or held locks.
+That control does not enumerate nondefault state overrides or establish arbitrary custom component admission.
+
+An unpositioned Java player inventory uses the fallback.
+Native model-position initialization, complete component admission and installed player/controller publication remain unverified.
+The existing Java grid assignment and quantity rules remain separate compatibility behavior.
+The four original live reports remain unresolved.
