@@ -1,0 +1,433 @@
+From 505f12e3d31121f3fa462efa276c588287f7c6b6 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 07:35:46 +0100
+Subject: [PATCH] fix(abilities): honor native ability layer priority
+
+Resolve each ability from the highest numbered declaring layer. Explicit
+false and zero values own the result; a lower layer must not override them.
+Share the ownership lookup between boolean and float consumers so standard
+Java ability flags, speed values and native model inputs agree.
+
+Normalize out-of-range serialized layer IDs to Base and retain the latest
+entry for a repeated layer. Native packet application clears absent fields
+when a later entry replaces that layer, rather than retaining its first row.
+
+Write local flight prediction to Base, matching native flight setters, so a
+quick stop before server acknowledgment still sees the pending start. Keep
+game-mode fallback values in CustomCache and preserve higher-layer ownership.
+Use an explicit layer accessor for both producers.
+
+Evidence: Bedrock 1.26.51.1/build51061372/protocol2193. Original predicate
+1434358a0 reads ability index 11 (Instabuild) through actor component lookup
+1401d1930. The walk-speed selection at 144762726..1447627a1 uses index 14.
+Both scan six layer slots from 5 down to 0. The native ability-name table at
+1517ea2b0 identifies their indices. Serialized application 140c4d650 maps
+layer IDs directly to those slots, normalizes IDs above 5 to 1, and applies
+every entry through 1401d1010 and its original 140cd0cc0 reader. Flight
+setters 14d38ada0/14d38ae20 write the Base Flying field at +174/+178; this
+setter evidence is static decompilation, not a full actor execution.
+
+Compare 729 complete Instabuild getter cases, 1,305 original walk-speed slices
+and 112 complete serialized applications, including actual sparse actor
+lookup and per-entry field replacement. The application control observes
+an explicit void actor-change notification boundary; actor/Level lifetime,
+real game mode delivery and physical flight remain separate verification.
+The inventory predicate is Instabuild, independently of creative mode;
+full player recipe evaluator and authored-screen integration remain open.
+---
+ .../api/model/entity/ClientPlayerEntity.java  |   3 +-
+ .../protocol/model/PlayerAbilities.java       |  47 ++--
+ .../protocol/packet/ClientPlayerPackets.java  |   3 +-
+ .../types/model/PlayerAbilitiesType.java      |   6 +-
+ .../protocol/model/PlayerAbilitiesTest.java   | 237 ++++++++++++++++++
+ 5 files changed, 271 insertions(+), 25 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/PlayerAbilitiesTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+index dcae62809..532186d8c 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+@@ -35,6 +35,7 @@ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.enums.Direction;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.AbilitiesIndex;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.SerializedAbilitiesData_SerializedAbilitiesLayer;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
+@@ -607,7 +608,7 @@ public class ClientPlayerEntity extends PlayerEntity {
+             vehicles.invalidate(this);
+         }
+ 
+-        final PlayerAbilities.AbilitiesLayer abilitiesLayer = this.abilities.getOrCreateCacheLayer();
++        final PlayerAbilities.AbilitiesLayer abilitiesLayer = this.abilities.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.CustomCache);
+         switch (this.javaGameMode) {
+             case CREATIVE -> {
+                 abilitiesLayer.setAbility(AbilitiesIndex.Invulnerable, true);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/PlayerAbilities.java b/src/main/java/net/raphimc/viabedrock/protocol/model/PlayerAbilities.java
+index 7cbb2afe8..2b63b6b70 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/model/PlayerAbilities.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/PlayerAbilities.java
+@@ -20,13 +20,19 @@ package net.raphimc.viabedrock.protocol.model;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.AbilitiesIndex;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.SerializedAbilitiesData_SerializedAbilitiesLayer;
+ 
++import java.util.Arrays;
++import java.util.Comparator;
+ import java.util.EnumMap;
+ import java.util.EnumSet;
++import java.util.List;
+ import java.util.Map;
+ import java.util.Set;
+ 
+ public record PlayerAbilities(long entityUniqueId, byte playerPermission, byte commandPermission, Map<SerializedAbilitiesData_SerializedAbilitiesLayer, AbilitiesLayer> abilityLayers) {
+ 
++    private static final List<SerializedAbilitiesData_SerializedAbilitiesLayer> LAYER_PRIORITY = Arrays.stream(SerializedAbilitiesData_SerializedAbilitiesLayer.values())
++            .sorted(Comparator.comparingInt(SerializedAbilitiesData_SerializedAbilitiesLayer::getValue).reversed()).toList();
++
+     public PlayerAbilities(final long entityUniqueId, final byte playerPermission, final byte commandPermission) {
+         this(entityUniqueId, playerPermission, commandPermission, new EnumMap<>(SerializedAbilitiesData_SerializedAbilitiesLayer.class));
+ 
+@@ -40,32 +46,35 @@ public record PlayerAbilities(long entityUniqueId, byte playerPermission, byte c
+     }
+ 
+     public boolean getBooleanValue(final AbilitiesIndex ability) {
+-        for (SerializedAbilitiesData_SerializedAbilitiesLayer layer : SerializedAbilitiesData_SerializedAbilitiesLayer.values()) {
+-            final AbilitiesLayer abilitiesLayer = this.abilityLayers.get(layer);
+-            if (abilitiesLayer != null && abilitiesLayer.abilitiesSet().contains(ability)) {
+-                return abilitiesLayer.abilityValues().contains(ability);
+-            }
+-        }
+-        return false;
++        final AbilitiesLayer layer = this.layer(ability);
++        return layer != null && layer.abilityValues().contains(ability);
+     }
+ 
+     public float getFloatValue(final AbilitiesIndex ability) {
+-        for (SerializedAbilitiesData_SerializedAbilitiesLayer layer : SerializedAbilitiesData_SerializedAbilitiesLayer.values()) {
+-            final AbilitiesLayer abilitiesLayer = this.abilityLayers.get(layer);
+-            if (abilitiesLayer != null && abilitiesLayer.abilitiesSet().contains(ability)) {
+-                return switch (ability) {
+-                    case WalkSpeed -> abilitiesLayer.walkSpeed();
+-                    case FlySpeed -> abilitiesLayer.flySpeed();
+-                    case VerticalFlySpeed -> abilitiesLayer.verticalFlySpeed();
+-                    default -> throw new IllegalArgumentException("Ability " + ability + " is not a float value");
+-                };
++        final AbilitiesLayer layer = this.layer(ability);
++        if (layer == null) {
++            return 0F;
++        }
++        return switch (ability) {
++            case WalkSpeed -> layer.walkSpeed();
++            case FlySpeed -> layer.flySpeed();
++            case VerticalFlySpeed -> layer.verticalFlySpeed();
++            default -> throw new IllegalArgumentException("Ability " + ability + " is not a float value");
++        };
++    }
++
++    private AbilitiesLayer layer(final AbilitiesIndex ability) {
++        for (final var priority : LAYER_PRIORITY) {
++            final AbilitiesLayer layer = this.abilityLayers.get(priority);
++            if (layer != null && layer.abilitiesSet().contains(ability)) {
++                return layer;
+             }
+         }
+-        return 0F;
++        return null;
+     }
+ 
+-    public AbilitiesLayer getOrCreateCacheLayer() {
+-        return this.abilityLayers.computeIfAbsent(SerializedAbilitiesData_SerializedAbilitiesLayer.CustomCache, layer -> new PlayerAbilities.AbilitiesLayer(EnumSet.noneOf(AbilitiesIndex.class), EnumSet.noneOf(AbilitiesIndex.class), 0F, 0F, 0F));
++    public AbilitiesLayer getOrCreateLayer(final SerializedAbilitiesData_SerializedAbilitiesLayer layer) {
++        return this.abilityLayers.computeIfAbsent(layer, key -> new PlayerAbilities.AbilitiesLayer(EnumSet.noneOf(AbilitiesIndex.class), EnumSet.noneOf(AbilitiesIndex.class), 0F, 0F, 0F));
+     }
+ 
+     public record AbilitiesLayer(Set<AbilitiesIndex> abilitiesSet, Set<AbilitiesIndex> abilityValues, float walkSpeed, float flySpeed, float verticalFlySpeed) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index abe574edb..2b7629f4d 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -53,6 +53,7 @@ import net.raphimc.viabedrock.protocol.data.enums.Direction;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.AbilitiesIndex;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransaction_Type;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.SerializedAbilitiesData_SerializedAbilitiesLayer;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.*;
+@@ -828,7 +829,7 @@ public final class ClientPlayerPackets {
+             final byte flags = wrapper.read(Types.BYTE); // flags
+             final boolean flying = (flags & AbilitiesFlag.FLYING.getBit()) != 0;
+             if (flying != clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Flying)) {
+-                clientPlayer.abilities().getOrCreateCacheLayer().setAbility(AbilitiesIndex.Flying, flying);
++                clientPlayer.abilities().getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.Base).setAbility(AbilitiesIndex.Flying, flying);
+                 clientPlayer.addAuthInputData(flying ? PlayerAuthInputData.StartFlying : PlayerAuthInputData.StopFlying);
+             }
+         });
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/model/PlayerAbilitiesType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/model/PlayerAbilitiesType.java
+index 218679ba9..639ef4eb4 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/model/PlayerAbilitiesType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/model/PlayerAbilitiesType.java
+@@ -44,15 +44,13 @@ public class PlayerAbilitiesType extends Type<PlayerAbilities> {
+         final int layerCount = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(buffer);
+         final Map<SerializedAbilitiesData_SerializedAbilitiesLayer, PlayerAbilities.AbilitiesLayer> abilityLayers = new EnumMap<>(SerializedAbilitiesData_SerializedAbilitiesLayer.class);
+         for (int i = 0; i < layerCount; i++) {
+-            final SerializedAbilitiesData_SerializedAbilitiesLayer layer = SerializedAbilitiesData_SerializedAbilitiesLayer.getByValue(buffer.readUnsignedShortLE(), SerializedAbilitiesData_SerializedAbilitiesLayer.CustomCache);
++            final SerializedAbilitiesData_SerializedAbilitiesLayer layer = SerializedAbilitiesData_SerializedAbilitiesLayer.getByValue(buffer.readUnsignedShortLE(), SerializedAbilitiesData_SerializedAbilitiesLayer.Base);
+             final Set<AbilitiesIndex> abilitiesSet = EnumUtil.getEnumSetFromBitmask(AbilitiesIndex.class, buffer.readUnsignedIntLE(), AbilitiesIndex::getValue);
+             final Set<AbilitiesIndex> abilityValues = EnumUtil.getEnumSetFromBitmask(AbilitiesIndex.class, buffer.readUnsignedIntLE(), AbilitiesIndex::getValue);
+             final float flySpeed = buffer.readFloatLE();
+             final float verticalFlySpeed = buffer.readFloatLE();
+             final float walkSpeed = buffer.readFloatLE();
+-            if (!abilityLayers.containsKey(layer)) {
+-                abilityLayers.put(layer, new PlayerAbilities.AbilitiesLayer(abilitiesSet, abilityValues, walkSpeed, flySpeed, verticalFlySpeed));
+-            }
++            abilityLayers.put(layer, new PlayerAbilities.AbilitiesLayer(abilitiesSet, abilityValues, walkSpeed, flySpeed, verticalFlySpeed));
+         }
+ 
+         return new PlayerAbilities(entityUniqueId, playerPermission, commandPermission, abilityLayers);
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/PlayerAbilitiesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/PlayerAbilitiesTest.java
+new file mode 100644
+index 000000000..62663aaa4
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/PlayerAbilitiesTest.java
+@@ -0,0 +1,237 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.protocol.remapper.PacketHandler;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.AbilitiesIndex;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.SerializedAbilitiesData_SerializedAbilitiesLayer;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
++import net.raphimc.viabedrock.protocol.packet.ClientPlayerPackets;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import net.raphimc.viabedrock.protocol.types.model.PlayerAbilitiesType;
++import org.junit.jupiter.api.Test;
++import org.mockito.ArgumentCaptor;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++import static org.mockito.Mockito.*;
++
++class PlayerAbilitiesTest {
++
++    @Test
++    void highestDeclaringLayerOwnsEachBooleanIncludingExplicitFalse() {
++        final var abilities = decode(List.of(
++                new Layer(0, bit(AbilitiesIndex.Instabuild), bit(AbilitiesIndex.Instabuild), 0, 0, 0),
++                new Layer(1, bit(AbilitiesIndex.Instabuild) | bit(AbilitiesIndex.MayFly), bit(AbilitiesIndex.Instabuild) | bit(AbilitiesIndex.MayFly), 0, 0, 0),
++                new Layer(5, bit(AbilitiesIndex.MayFly), 0, 0, 0, 0),
++                new Layer(3, bit(AbilitiesIndex.Instabuild), 0, 0, 0, 0)));
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.MayFly));
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.Flying));
++        abilities.abilityLayers().remove(SerializedAbilitiesData_SerializedAbilitiesLayer.Commands);
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++        abilities.abilityLayers().get(SerializedAbilitiesData_SerializedAbilitiesLayer.Base).setAbility(AbilitiesIndex.Instabuild, false);
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++        abilities.abilityLayers().remove(SerializedAbilitiesData_SerializedAbilitiesLayer.Base);
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++    }
++
++    @Test
++    void eachFloatUsesItsOwnHighestOwnerWithoutFallingThroughZero() {
++        final int allSpeeds = bit(AbilitiesIndex.FlySpeed) | bit(AbilitiesIndex.WalkSpeed) | bit(AbilitiesIndex.VerticalFlySpeed);
++        final var abilities = decode(List.of(
++                new Layer(4, bit(AbilitiesIndex.FlySpeed) | bit(AbilitiesIndex.WalkSpeed), 0, 0, 0, 0x7FC00001),
++                new Layer(1, allSpeeds, 0, 0x3DCCCCCD, 0x3F800000, 0x3D4CCCCD),
++                new Layer(5, bit(AbilitiesIndex.VerticalFlySpeed), 0, 0, 0x80000000, 0)));
++        assertEquals(0, Float.floatToRawIntBits(abilities.getFloatValue(AbilitiesIndex.FlySpeed)));
++        assertEquals(0x7FC00001, Float.floatToRawIntBits(abilities.getFloatValue(AbilitiesIndex.WalkSpeed)));
++        assertEquals(0x80000000, Float.floatToRawIntBits(abilities.getFloatValue(AbilitiesIndex.VerticalFlySpeed)));
++        abilities.abilityLayers().remove(SerializedAbilitiesData_SerializedAbilitiesLayer.Editor);
++        assertEquals(0x3DCCCCCD, Float.floatToRawIntBits(abilities.getFloatValue(AbilitiesIndex.FlySpeed)));
++    }
++
++    @Test
++    void laterEntriesReplaceTheirLayerAndUnknownLayersAddressBase() {
++        for (final int invalid : new int[]{6, 65535}) {
++            final var abilities = decode(List.of(
++                    new Layer(1, bit(AbilitiesIndex.Instabuild), bit(AbilitiesIndex.Instabuild), 0, 0, 0),
++                    new Layer(invalid, bit(AbilitiesIndex.WalkSpeed), 0, 0, 0, 0x3DCCCCCD)));
++            assertEquals(1, abilities.abilityLayers().size());
++            final var base = abilities.abilityLayers().get(SerializedAbilitiesData_SerializedAbilitiesLayer.Base);
++            assertNotNull(base);
++            assertFalse(base.abilitiesSet().contains(AbilitiesIndex.Instabuild));
++            assertFalse(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++            assertEquals(0x3DCCCCCD, Float.floatToRawIntBits(abilities.getFloatValue(AbilitiesIndex.WalkSpeed)));
++        }
++        final var duplicate = decode(List.of(
++                new Layer(3, bit(AbilitiesIndex.Instabuild), bit(AbilitiesIndex.Instabuild), 0, 0, 0),
++                new Layer(3, 0, 0, 0, 0, 0)));
++        assertFalse(duplicate.getBooleanValue(AbilitiesIndex.Instabuild));
++    }
++
++    @Test
++    void actualJavaAbilitiesPacketUsesTheResolvedLayers() {
++        final var user = mock(UserConnection.class);
++        final var info = mock(ProtocolInfo.class);
++        when(user.getProtocolInfo()).thenReturn(info);
++        when(info.getServerState()).thenReturn(State.CONFIGURATION);
++        final var player = new ClientPlayerEntity(user, 8, UUID.randomUUID(), new PlayerAbilities(7, (byte) 1, (byte) 0));
++        final int flags = bit(AbilitiesIndex.Instabuild) | bit(AbilitiesIndex.MayFly) | bit(AbilitiesIndex.Flying) | bit(AbilitiesIndex.Invulnerable);
++        final var abilities = decode(List.of(
++                new Layer(1, flags | bit(AbilitiesIndex.FlySpeed) | bit(AbilitiesIndex.WalkSpeed), flags, 0x3DCCCCCD, 0, 0x3DCCCCCD),
++                new Layer(4, bit(AbilitiesIndex.Instabuild) | bit(AbilitiesIndex.Flying) | bit(AbilitiesIndex.FlySpeed), 0, 0, 0, 0),
++                new Layer(5, bit(AbilitiesIndex.MayFly) | bit(AbilitiesIndex.Invulnerable), 0, 0, 0, 0)));
++        final var packet = new PacketWrapperImpl(ClientboundPackets26_3.PLAYER_ABILITIES, null, user);
++        try (var transport = mockStatic(PacketFactory.class)) {
++            player.setAbilities(abilities, packet);
++        }
++        assertEquals((byte) 0, packet.get(Types.BYTE, 0));
++        assertEquals(0, Float.floatToRawIntBits(packet.get(Types.FLOAT, 0)));
++        assertEquals(0x3DCCCCCD, Float.floatToRawIntBits(packet.get(Types.FLOAT, 1)));
++    }
++
++    @Test
++    void flightInputUpdatesBaseAndKeepsQuickStopBeforeServerAcknowledgment() throws Exception {
++        final var user = mock(UserConnection.class);
++        final var tracker = mock(EntityTracker.class);
++        when(user.get(EntityTracker.class)).thenReturn(tracker);
++        final var abilities = new PlayerAbilities(7, (byte) 1, (byte) 0);
++        final var base = abilities.abilityLayers().get(SerializedAbilitiesData_SerializedAbilitiesLayer.Base);
++        base.setAbility(AbilitiesIndex.MayFly, true);
++        final var player = new ClientPlayerEntity(user, 8, UUID.randomUUID(), abilities);
++        when(tracker.getClientPlayer()).thenReturn(player);
++        final var protocol = mock(BedrockProtocol.class);
++        ClientPlayerPackets.register(protocol);
++        final var handler = ArgumentCaptor.forClass(PacketHandler.class);
++        verify(protocol).registerServerbound(eq(ServerboundPackets26_3.PLAYER_ABILITIES), isNull(), handler.capture());
++        final var start = new PacketWrapperImpl(ServerboundPackets26_3.PLAYER_ABILITIES, null, user);
++        start.write(Types.BYTE, (byte) 2);
++        start.resetReader();
++        handler.getValue().handle(start);
++        final boolean startedFlying = abilities.getBooleanValue(AbilitiesIndex.Flying);
++        final boolean baseStartedFlying = base.abilityValues().contains(AbilitiesIndex.Flying);
++        final boolean startRequested = player.authInputData().contains(PlayerAuthInputData.StartFlying);
++        player.authInputData().clear();
++        final var stop = new PacketWrapperImpl(ServerboundPackets26_3.PLAYER_ABILITIES, null, user);
++        stop.write(Types.BYTE, (byte) 0);
++        stop.resetReader();
++        handler.getValue().handle(stop);
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.StopFlying));
++        assertTrue(startedFlying);
++        assertTrue(baseStartedFlying);
++        assertTrue(startRequested);
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.Flying));
++        assertFalse(base.abilityValues().contains(AbilitiesIndex.Flying));
++    }
++
++    @Test
++    void decodedLayersMatchOriginalPredicatesAndPacketApplications() throws Exception {
++        final String fixture = System.getenv("STACKANVIL_NATIVE_ABILITY_LAYERS");
++        assumeTrue(fixture != null);
++        final Path directory = Path.of(fixture);
++        final var booleans = JsonParser.parseString(Files.readString(directory.resolve("native-instabuild.json"))).getAsJsonObject();
++        for (final var value : booleans.getAsJsonArray("rows")) {
++            final var row = value.getAsJsonObject();
++            final var states = row.getAsJsonArray("layers");
++            final var layers = new ArrayList<Layer>();
++            for (int index = 0; index < states.size(); index++) {
++                final int state = states.get(index).getAsInt();
++                if (state >= 0) {
++                    layers.add(new Layer(index, bit(AbilitiesIndex.Instabuild), state << AbilitiesIndex.Instabuild.getValue(), 0, 0, 0));
++                }
++            }
++            assertEquals(row.get("result").getAsBoolean(), decode(layers).getBooleanValue(AbilitiesIndex.Instabuild), row::toString);
++        }
++        final var floats = JsonParser.parseString(Files.readString(directory.resolve("native-walk-speed.json"))).getAsJsonObject();
++        for (final var value : floats.getAsJsonArray("rows")) {
++            final var row = value.getAsJsonObject();
++            final var states = row.getAsJsonArray("layers");
++            final var layers = new ArrayList<Layer>();
++            for (int index = 0; index < states.size(); index++) {
++                if (!states.get(index).isJsonNull()) {
++                    layers.add(new Layer(index, bit(AbilitiesIndex.WalkSpeed), 0, 0, 0, (int) states.get(index).getAsLong()));
++                }
++            }
++            assertEquals((int) row.get("result").getAsLong(), Float.floatToRawIntBits(decode(layers).getFloatValue(AbilitiesIndex.WalkSpeed)), row::toString);
++        }
++        final var packets = JsonParser.parseString(Files.readString(directory.resolve("native-layer-packets.json"))).getAsJsonObject();
++        for (final var value : packets.getAsJsonArray("rows")) {
++            final var row = value.getAsJsonObject();
++            final var layers = new ArrayList<Layer>();
++            for (final var input : row.getAsJsonArray("entries")) {
++                final var entry = input.getAsJsonObject();
++                layers.add(new Layer(entry.get("layer").getAsInt(), entry.get("set").getAsInt(),
++                        entry.has("values") ? entry.get("values").getAsInt() : 0,
++                        entry.has("fly") ? (int) entry.get("fly").getAsLong() : 0,
++                        entry.has("vertical") ? (int) entry.get("vertical").getAsLong() : 0,
++                        entry.has("walk") ? (int) entry.get("walk").getAsLong() : 0));
++            }
++            final var decoded = decode(layers);
++            assertEquals(row.get("result").getAsBoolean(), decoded.getBooleanValue(AbilitiesIndex.Instabuild), row::toString);
++            for (int index = 0; index < 6; index++) {
++                final var expected = row.getAsJsonArray("layers").get(index).getAsJsonObject();
++                final var actual = decoded.abilityLayers().get(SerializedAbilitiesData_SerializedAbilitiesLayer.getByValue(index));
++                assertEquals(expected.get("type").getAsInt() != 1, actual != null && actual.abilitiesSet().contains(AbilitiesIndex.Instabuild), row::toString);
++                assertEquals(expected.get("walkType").getAsInt() != 1, actual != null && actual.abilitiesSet().contains(AbilitiesIndex.WalkSpeed), row::toString);
++                if (expected.get("type").getAsInt() != 1) {
++                    assertEquals(expected.get("value").getAsInt() != 0, actual.abilityValues().contains(AbilitiesIndex.Instabuild), row::toString);
++                }
++                if (expected.get("walkType").getAsInt() != 1) {
++                    assertEquals((int) expected.get("walk").getAsLong(), Float.floatToRawIntBits(actual.walkSpeed()), row::toString);
++                }
++            }
++        }
++    }
++
++    private static int bit(final AbilitiesIndex ability) {
++        return 1 << ability.getValue();
++    }
++
++    private static PlayerAbilities decode(final List<Layer> layers) {
++        final var buffer = Unpooled.buffer();
++        try {
++            buffer.writeLongLE(7);
++            buffer.writeByte(1);
++            buffer.writeByte(0);
++            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, layers.size());
++            for (final var layer : layers) {
++                buffer.writeShortLE(layer.index);
++                buffer.writeIntLE(layer.set);
++                buffer.writeIntLE(layer.values);
++                buffer.writeIntLE(layer.fly);
++                buffer.writeIntLE(layer.vertical);
++                buffer.writeIntLE(layer.walk);
++            }
++            final var decoded = new PlayerAbilitiesType().read(buffer);
++            assertFalse(buffer.isReadable());
++            return decoded;
++        } finally {
++            buffer.release();
++        }
++    }
++
++    private record Layer(int index, int set, int values, int fly, int vertical, int walk) { }
++
++}
+-- 
+2.56.0

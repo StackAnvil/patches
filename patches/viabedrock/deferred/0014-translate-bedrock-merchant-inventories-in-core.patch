@@ -1,4 +1,4 @@
-From f0c42f6dfa61d40704757df31e736301dd165c41 Mon Sep 17 00:00:00 2001
+From 1ad21037b0c1a98788d6648fb70fecf0096c3d14 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(trading): translate Bedrock merchant inventories in core
@@ -23,6 +23,12 @@ Return trade inputs and the cursor before sending ContainerClose, as the
 native client does. Serialize each return behind inventory responses so
 new destination stack IDs are known before the next transfer. Closing
 rejects further trade clicks; a full inventory drops only the overflow.
+
+Use the shared saved ItemStack loader for merchant offers, including its
+Block selection and header reconstruction. A separate Block write after
+loading would bypass missing-state admission and restore a Block after
+zero-count invalidation. Keep the complete NBT conversion in its inventory
+owner and remove the duplicate merchant decoder.
 ---
  .../api/model/container/Container.java        |   7 +-
  .../api/model/container/InputContainer.java   | 122 ++++++
@@ -31,7 +37,7 @@ rejects further trade clicks; a full inventory drops only the overflow.
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../viabedrock/protocol/model/TradeOffer.java | 109 ++++++
  .../protocol/packet/InventoryPackets.java     |  11 +
- .../protocol/packet/TradePackets.java         | 174 +++++++++
+ .../protocol/packet/TradePackets.java         | 164 ++++++++
  .../storage/InventoryRequestTracker.java      |  37 ++
  .../protocol/storage/InventoryTracker.java    |  19 +
  .../container/InventoryPlacementTest.java     | 130 +++++++
@@ -39,7 +45,7 @@ rejects further trade clicks; a full inventory drops only the overflow.
  .../protocol/model/TradeOfferTest.java        | 108 ++++++
  .../protocol/packet/TradePacketTest.java      | 171 ++++++++
  .../storage/InventoryRequestTrackerTest.java  |   7 +-
- 15 files changed, 1496 insertions(+), 5 deletions(-)
+ 15 files changed, 1486 insertions(+), 5 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/InputContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/InventoryPlacement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/entity/MerchantContainer.java
@@ -51,10 +57,10 @@ rejects further trade clicks; a full inventory drops only the overflow.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/TradePacketTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-index 10ad6b7de..8fc2c95b6 100644
+index b80bc1d1b..002de401d 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-@@ -718,7 +718,6 @@ public abstract class Container {
+@@ -702,7 +702,6 @@ public abstract class Container {
          return action == null ? List.of() : List.of(action);
      }
  
@@ -62,7 +68,7 @@ index 10ad6b7de..8fc2c95b6 100644
      protected List<QuickMoveRange> quickMoveRanges(final short javaSlot, final SlotRef source) {
          final InventoryTracker inventoryTracker = this.user.get(InventoryTracker.class);
          final InventoryContainer inventory = inventoryTracker.getInventoryContainer();
-@@ -1217,10 +1216,12 @@ public abstract class Container {
+@@ -1204,10 +1203,12 @@ public abstract class Container {
          }
      }
  
@@ -75,8 +81,8 @@ index 10ad6b7de..8fc2c95b6 100644
 +        public QuickMoveRange { }
 +    }
  
-     private static final class QuickCraftState {
-         private final int mode;
+     private record QuickMoveDestination(Container container, FullContainerName name, List<Integer> slots) { }
+ 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/InputContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/InputContainer.java
 new file mode 100644
 index 000000000..528da4133
@@ -878,7 +884,7 @@ index 000000000..ea4d95614
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index 1f9574928..3c527af0a 100644
+index c5034dc05..fc7f71be9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -79,6 +79,7 @@ import net.raphimc.viabedrock.api.model.container.NativeStorageContainers;
@@ -889,7 +895,7 @@ index 1f9574928..3c527af0a 100644
  import net.raphimc.viabedrock.api.model.container.HorseContainer;
  import net.raphimc.viabedrock.api.model.container.block.*;
  import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
-@@ -414,6 +415,11 @@ public final class InventoryPackets {
+@@ -415,6 +416,11 @@ public final class InventoryPackets {
                          return;
                      }
  
@@ -901,7 +907,7 @@ index 1f9574928..3c527af0a 100644
                      if (inventoryTracker.isAnyScreenOpen()) {
                          ViaBedrock.getPlatform()
                                  .getLogger()
-@@ -1277,6 +1283,11 @@ public final class InventoryPackets {
+@@ -1278,6 +1284,11 @@ public final class InventoryPackets {
                                          inventoryTracker.setCurrentContainerClosed(false);
                                          return;
                                      }
@@ -915,10 +921,10 @@ index 1f9574928..3c527af0a 100644
                      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/TradePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/TradePackets.java
 new file mode 100644
-index 000000000..3b7f3d813
+index 000000000..cc516ae80
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/TradePackets.java
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,164 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -944,7 +950,6 @@ index 000000000..3b7f3d813
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.TradeOffer;
-+import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 +import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 +import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 +import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
@@ -982,7 +987,7 @@ index 000000000..3b7f3d813
 +            }
 +            final List<TradeOffer> offers;
 +            try {
-+                offers = TradeOffer.read(update.data(), tag -> readItem(wrapper.user(), tag));
++                offers = TradeOffer.read(update.data(), wrapper.user().get(ItemRewriter.class)::bedrockItemStack);
 +            } catch (final IllegalArgumentException exception) {
 +                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Could not read Bedrock trade offers", exception);
 +                wrapper.cancel();
@@ -1027,15 +1032,6 @@ index 000000000..3b7f3d813
 +                PacketFactory.sendJavaContainerSetContent(wrapper.user(), merchant);
 +            }
 +        });
-+    }
-+
-+    private static BedrockItem readItem(final UserConnection user, final CompoundTag tag) {
-+        final BedrockItem item = user.get(ItemRewriter.class).bedrockItemStack(tag);
-+        final CompoundTag block = tag.getCompoundTag("Block");
-+        if (block != null) {
-+            item.setBlockRuntimeId(user.get(BlockStateRewriter.class).bedrockId(block));
-+        }
-+        return item;
 +    }
 +
 +    public static void sendOffers(final UserConnection user, final MerchantContainer merchant) {
@@ -1170,7 +1166,7 @@ index 8544e1ab3..829f807a6 100644
  
          @Override
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
-index 6ea6cdaa1..0765fcb10 100644
+index 0d2acb867..ba2d1499e 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
 @@ -30,6 +30,8 @@ import net.raphimc.viabedrock.api.model.container.Container;
@@ -1182,7 +1178,7 @@ index 6ea6cdaa1..0765fcb10 100644
  import net.raphimc.viabedrock.api.model.container.dynamic.BundleContainer;
  import net.raphimc.viabedrock.api.model.container.player.ArmorContainer;
  import net.raphimc.viabedrock.api.model.container.player.HudContainer;
-@@ -310,6 +312,18 @@ public class InventoryTracker extends StoredObject {
+@@ -308,6 +310,18 @@ public class InventoryTracker extends StoredObject {
              screens.tick(System.nanoTime());
          }
          this.user().get(InventoryRequestTracker.class).tick();
@@ -1201,7 +1197,7 @@ index 6ea6cdaa1..0765fcb10 100644
          if (this.currentContainer != null && this.currentContainer.position() != null) {
              if (this.currentContainer.type() == ContainerType.INVENTORY) {
                  return;
-@@ -498,6 +512,11 @@ public class InventoryTracker extends StoredObject {
+@@ -496,6 +510,11 @@ public class InventoryTracker extends StoredObject {
      }
  
      private void forceCloseCurrentContainer() {

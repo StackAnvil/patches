@@ -1,5 +1,21 @@
 Register form, NPC, HUD and inventory presentation channels over the [shared UI program](0095-share-native-ui-programs-and-resources.pr.md). Preserve packet ordering and authoritative inventory behavior.
 
+## Registry name lookup ownership
+
+The shared ItemRegistry foundation owns saved-name parsing, exact alias getters and metadata fallback callbacks.
+Recipe consumers use these APIs after this patch applies. The recipe patch retains descriptor resolution and ingredient counting.
+The move preserves the verified implementation and its required protocol asset.
+
+Original target 1.26.51.1 controls cover 2,501 parses, 22,917 metadata rewrites and 2,127 alias getters.
+The foundation passes all three tests with those references before the recipe patch applies. Main and test Checkstyle checks pass.
+Full replay passes all four builds with 2,862 tests, 163 optional skips and no failures or errors.
+All eight retained packaged comparison suites pass. Registry assets and all 1,498 core classes match both embedded copies.
+Unsupported callback indices retain their explicit Java preconditions. These guards do not establish normal native rejection or complete wire admission.
+
+Populated captures distinguish the priority name map from a DataDriven constructor class.
+Both secondary name maps, raw staging keys, definition lifetimes and numeric owners remain separate model requirements.
+The runtime now models the recorded populated factory ownership and late block producer. Complete recipe evaluation in the installed client remains unfinished.
+
 ## Purpose
 
 Resolve server form layouts from the accepted Bedrock resource-pack stack. Keep templates, variables, bindings, textures and response indices together in ViaBedrock core.
@@ -755,3 +771,128 @@ Progressive frame delivery, actual availability evaluation and the full player c
 The final four-project build passes 2,838 tests with 163 optional skips and no failures or errors.
 All 1,468 core classes and the factory table match the embedded add-on and proxy copies; all 1,191 client classes match the tested add-on.
 The final packaged core retains all 11,332 prior comparisons and matches the 309 new catalog/collection case and flow steps.
+
+## Constructed registry ownership
+
+The runtime now constructs definitions before it assigns network IDs.
+It retains raw staging keys, definition identities, spare allocations and the constructor counter.
+Ordered component readers update the actual receiver after the staging drain.
+Late block registration uses current numeric and named owners before it creates a block item.
+
+Names and numeric IDs have separate owners.
+Two names can retain the same ID. The final native map traversal selects the numeric owner.
+Consumers now request that owner explicitly instead of inverting a one-to-one map.
+The registry retains builtins absent from the packet, so packet receipt uses a separate session flag.
+Network declarations remain immutable packet snapshots, separate from constructed definitions.
+
+Pinned target 1.26.51.1, build 51061372, protocol 2193 controls provide 36,310 comparisons.
+The production engine matches construction order, receiver identity, retained allocations, counters, lookup results and numeric ownership.
+All three controls also match the production bootstrap names, IDs and numeric owners.
+The block producer uses 1,379 original block inputs and executed slab predicates.
+Expected post-registration results do not supply its registration decisions.
+
+The controls cover the recorded builtin context and empty component data.
+They do not establish complete custom-block, experiment or version-dependent construction.
+The component controls below add the measured nonempty branches.
+Class-specific ItemStack output and complete caller admission still need coupled native coverage.
+The recipe registry interfaces, installed player screen and physical input remain unfinished.
+All four original reports and all five goal areas remain active.
+
+The complete four-project build passes 2,851 tests with 163 optional skips and no failures or errors.
+Checkstyle passes. All nine packaged comparison suites pass, including the new construction checks.
+Native comparisons reject both FNV-1a hashing and named-definition eviction after a numeric collision.
+All 1,513 core classes and three registry resources match their embedded add-on and proxy copies.
+All 1,191 client classes match the tested add-on.
+The test worker uses a 1 GB heap for the complete construction fixtures.
+
+## Coupled component updates
+
+Two additional original controls add 8,540 packaged comparisons across 22 typed ItemData declarations.
+They execute nonempty component readers inside complete registry construction and late block registration.
+The controls distinguish omitted components, missing fields, malformed selectors, mismatched owners and replacement flags 0, 1 and 255.
+
+Component updates use exact raw names after constructor selection and the staging drain.
+A canonical definition can exist while an uppercase or unqualified update key misses it.
+Readers follow the definition that survives the staging drain, including builtin ComponentItems selected by a Legacy declaration.
+Twelve receivers also match native stacking, legacy durability, associated block, food-predicate and block-placer observations.
+The property getters use a genuinely constructed empty ItemStack.
+
+Both controls use the existing default Experiments and base-game version 1.26.50 context in native build 51061372, protocol 2193.
+Original input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+These results do not establish all component types, custom blocks, other version/experiment contexts or class-specific ItemStack output.
+Complete caller admission, recipe contexts, installed player screens and physical input remain unfinished.
+
+The optional regression belongs to the inventory consumer patch because it also compares cooking properties.
+The complete ViaBedrock suite passes 1,721 tests with 86 optional skips and no failures or errors.
+Checkstyle passes. Packaged comparisons reject normalized update keys and flag resets after invalid selectors.
+Runtime sources, resources and build configuration match the previously verified four-project build exactly.
+
+## Constructed stack identity
+
+Constructed stacks retain their selected definition independently of numeric ownership.
+Copies retain that definition, and explicit identifier changes clear the selection.
+Container snapshot equality distinguishes definitions with the same encoded fields.
+Merge admission compares definition objects, while full stack queries compare names and IDs.
+The existing parsed name reaches canonical lookup without another saved-name parse.
+
+Stacking properties follow the retained receiver.
+Priority lookup and metadata-independent aliases can establish selection without an unmodeled Block auxiliary.
+Metadata-dependent lookup requires that missing context.
+Native weak ownership after registry retirement remains unfinished.
+
+The owning inventory patch records the complete network constructor control and packaged comparisons.
+The four-project build passes 2,861 tests with 162 optional skips. Checkstyle passes.
+
+
+The owning inventory patch now also records [named and definition construction](../deferred/0003-translate-server-authoritative-bedrock-requests.pr.md#named-and-definition-stack-construction).
+It keeps the caller's upgrade flag and original definition association separate from numeric ownership.
+The packaged API matches 8,280 new and retained named/definition outputs.
+The registry foundation and its protocol data remain unchanged by this constructor update.
+
+
+## Empty alias results
+
+Normal lookup now retains the original parsed name and auxiliary when its alias callback returns an empty target.
+Original lookup `143483800` applies both rewritten fields only for a nonempty result.
+The raw alias callback API remains unchanged.
+A generic spawn egg with metadata one therefore retains its definition and metadata.
+Metadata ten still selects the chicken spawn egg with auxiliary zero.
+
+The complete [saved-NBT controls](../deferred/0003-translate-server-authoritative-bedrock-requests.pr.md#saved-nbt-stack-loading) expose this branch through actual registry construction.
+All 4,508 packaged constructor outputs match after the correction.
+A deliberate lookup mutation restores native value mismatches.
+The full four-project build passes 2,872 tests, including a focused named and canonical lookup regression.
+This change does not establish all userdata admission or native registry retirement behavior.
+
+
+## Typed item locks and count-one storage actions
+
+`BedrockItem.itemLockMode` retains the unsigned native byte getter contract.
+Only an exact `minecraft:item_lock` byte tag supplies a mode.
+Other tag types and absent fields return zero.
+
+The shared ordinary storage planner no longer rejects all locked items.
+The native generic-storage source and incoming player provider omit those lock filters.
+Both authority adapters preserve item tags and balance one-item transfers.
+A legacy send failure leaves both tracked slots unchanged.
+The authoritative plan retains source and destination network identities without mutating storage.
+
+The complete native backing control covers nine provider roles and 80 typed saved ItemStacks.
+Java matches 17,280 original source decisions, 240 incoming callback executions and 80 getter results.
+Another 300 incoming results derive from omitted callbacks and the inspected native default branch.
+Original backing, input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+Armor, drop, specialized output and full controller behavior remain separate verification boundaries.
+See the [provider permission reference](../../../docs/native-player-inventory.md#provider-item-lock-permissions) for scope and fixture details.
+
+## Shared map traversal (October 25, 2026)
+
+`NativeStringMap` now owns the map traversal previously nested inside `NativeItemDefinitions`.
+The existing Item registry keeps its FNV-1 hash function and construction order.
+The shared class makes hashing explicit so recipe string IDs can use FNV-1a without changing definition semantics.
+The recipe patch owns that consumer, its typed definition keys and candidate lookup.
+All prior native definition comparisons remain enabled in the four-project build.
+That build passes 2,956 tests with 160 optional skips and no failures or errors.
+
+Original recipe controls record native map bucket counts of 8, 64, 512 and 1024.
+They also cover UTF-8 bytes, replacement without relocation and exact query traversal.
+The [candidate reference](../../../docs/bedrock-coverage.md#retained-recipe-output-candidates-october-25-2026) records those controls and their remaining boundaries.

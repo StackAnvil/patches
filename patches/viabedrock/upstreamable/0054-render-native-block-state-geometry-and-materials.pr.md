@@ -454,15 +454,16 @@ This API prepares native Item construction without assigning a fake auxiliary va
 
 ## Item restriction groups (October 22, 2026)
 
-Item restrictions now use a separate case-sensitive lookup path.
-The target 1.26.51.1 registry expands 58 builtin groups before exact primary names and aliases.
+Item restrictions select case-sensitive legacy groups before individual Block lookup.
+The target 1.26.51.1 registry expands 58 builtin groups.
+The original group fixture supplies exact primary lookup; the complete registry uses normal Block-name lookup after group selection.
 A missing member stops its group, while earlier members remain present.
 The resolver deduplicates canonical registered block identities.
-These rules differ from ordinary block-name lookup, which retains its folding and namespace fallback.
+Group selection remains separate from ordinary block-name lookup, which retains its folding and namespace fallback.
 
 The original target initializer, description constructors, registry installer and restriction resolver supply the builtin metadata.
 Java matches all 116 qualified and unqualified builtin resolution cases.
-A regression also covers primary/group collisions, partial groups, aliases, duplicates and case-sensitive lookup.
+A regression also covers primary/group collisions, partial groups, aliases, duplicates and mixed-case individual lookup.
 Native factory installation and pointer-hash collisions remain unverified.
 The optional comparison reads `STACKANVIL_NATIVE_RESTRICTION_GROUPS`.
 
@@ -497,3 +498,44 @@ A fresh default-OpenGL Galaxite run reaches spawn and completes a 30-second play
 The accepted server packs produce no mapping, geometry-conversion, or Java model-loading errors.
 Forced software Vulkan and a later longer run disconnect before spawn.
 The [survey follow-up](../../../docs/lobby-survey.md#galaxite-block-conversion-follow-up-22-october) records the validation limits and broader audit.
+
+
+## Registered block item ownership
+
+Retain the registered BlockLegacy numeric item identity independently of auxiliary-state conversion.
+Builtin palette block IDs and accepted custom BlockProperties supply this identity.
+Named recipe fallback can use the identity while a custom archetype's auxiliary converter remains unverified.
+The full production context matches all 1,379 original registered block inputs from target 1.26.51.1, build 51061372, protocol 2193.
+
+Direct legacy-converter observations differ from the earlier Script API item-matching sweep for five block families.
+A full client/level setup and caller-path comparison remains necessary before auxiliary data changes.
+This change preserves the existing auxiliary data.
+
+
+## Saved Item group membership
+
+Expose exact legacy-group membership independently of individual Block-name resolution.
+The saved Item loader uses this predicate before rebinding its loaded Block to an Item.
+A primary Block name alone does not establish legacy-group membership.
+
+The complete saved-NBT controls also correct restriction fallback.
+Exact groups expand first; individual Blocks then use normal registered lookup, including name folding.
+`minecraft:stone` expands seven members, while `Minecraft:Stone` resolves one stone Block.
+`MineCraft:Planks` resolves oak planks rather than expanding the six-member group.
+The earlier 116-case fixture retains its declared case-sensitive primary lookup through an explicit test interface.
+
+The packaged core matches eleven original group-membership observations and the restrictions in all 4,508 saved constructor comparisons.
+Native comparisons reject folded group keys and case-sensitive individual fallback.
+The [inventory reference](../../../docs/native-player-inventory.md#saved-nbt-stack-loading) records the complete controls, build results and remaining limits.
+The 12 broad and 107 focused legacy-converter state differences remain open. Auxiliary data remains unchanged.
+
+## Shared component snapshots
+
+Resolve custom-state component overlays before Java resource-pack loading or visual-carrier admission.
+Retain snapshots by registered state identity, and return copies through runtime-state lookup.
+Visual and gameplay consumers then read the same component data.
+Recipe field interpretation and workbench matching remain in the later crafting patch.
+The [recipe context reference](../../../docs/bedrock-coverage.md#native-recipe-block-contexts-october-25-2026) records its native controls and remaining admission limits.
+
+Full-stack validation replays all 106 ViaBedrock patches and builds all four projects with 2,993 passing tests and 152 optional skips.
+Both Checkstyle tasks and repository offline validation pass. This does not establish a standalone upstream build for this patch.

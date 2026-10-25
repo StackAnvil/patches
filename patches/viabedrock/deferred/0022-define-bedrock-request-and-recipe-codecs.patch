@@ -1,4 +1,4 @@
-From 06da6ba513f31ba0a34cb0abf5dd9c86e7e2d507 Mon Sep 17 00:00:00 2001
+From cd702cbc191bba92ef43baaf832da1438170f013 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): define Bedrock request and recipe codecs
@@ -11,8 +11,8 @@ Retain all dynamic multi-recipe UUIDs and their server-assigned network IDs. Bed
 
 Decode both network stack count headers with native signed-short clamping
 before unsigned-byte narrowing. Values such as 32769 otherwise become one
-item instead of an empty stack. This applies to inventory items as well as
-recipe results.
+item instead of an empty stack. This applies to the inventory network headers. CraftingData results have
+their own descriptor conversion in the recipe patch.
 
 The byte-buffer regression fails before this correction. Both codecs match
 264 fresh executions of the unchanged target-native parsed ItemStack
@@ -25,6 +25,24 @@ parity.
 Keep unsigned-byte presence in the same codec foundation: counts 128 to
 255 are nonempty. Fold the existing later recipe-patch correction here
 so request and recipe consumers share these invariants from the start.
+
+Read CraftingData descriptors as string maps, not a closed variant. Native
+protocol-2193 packet decoding selects tags before name before item_tag,
+keeps the last duplicate value and ignores unknown keys. Molang predicates
+use the tags key and the packet context's fixed version 13. The wire carries
+a separate auxiliary value and count, not a per-descriptor Molang version.
+Reject model versions that this packet context cannot represent.
+
+Enforce the native ingredient count range from zero through 64. Complete
+native packet decoding accepts zero, one and 64 and rejects negative one,
+65 and 300. Preserve the separate StackRequest descriptor format.
+
+Twenty-three complete target-native CraftingData byte controls cover these
+fields, precedence and count bounds. Original schema registration, binary
+and descriptor decoding, packet/error retirement and static cleanup run;
+only valid read-only byte I/O and standard CRT/heap/synchronization services
+are hosted. The controls use empty result vectors and declared registry
+backing, not physical network delivery, concrete admission or installed UI.
 ---
  .../generated/InventorySourceType.java        |   2 +-
  .../generated/ItemStackRequestActionType.java |  22 +-
@@ -55,14 +73,14 @@ so request and recipe consumers share these invariants from the start.
  .../protocol/types/item/BedrockItemType.java  |   2 +-
  .../item/NetworkItemStackDescriptorType.java  |   2 +-
  .../types/recipe/CraftingDataReader.java      | 175 ++++++++++++++
- .../recipe/NetworkItemDescriptorType.java     |  87 +++++++
+ .../recipe/NetworkItemDescriptorType.java     | 101 ++++++++
  .../types/inventory/ItemStackCodecTest.java   | 227 ++++++++++++++++++
  .../ItemStackRequestResultTypeTest.java       |  55 +++++
  .../types/item/NetworkItemCountTest.java      |  87 +++++++
  .../types/recipe/CraftingDataReaderTest.java  |  85 +++++++
- .../recipe/NetworkItemDescriptorTypeTest.java |  98 ++++++++
+ .../recipe/NetworkItemDescriptorTypeTest.java | 144 +++++++++++
  .../generator/BedrockDataEnumGenerator.java   |   6 +
- 36 files changed, 2246 insertions(+), 17 deletions(-)
+ 36 files changed, 2306 insertions(+), 17 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestInfo.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestSlotInfo.java
@@ -1922,10 +1940,10 @@ index 000000000..535f52d1c
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorType.java
 new file mode 100644
-index 000000000..77a71331b
+index 000000000..a485cb826
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorType.java
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,101 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -1950,6 +1968,7 @@ index 000000000..77a71331b
 +import io.netty.buffer.ByteBuf;
 +
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.MolangVersion;
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +
 +public class NetworkItemDescriptorType extends Type<ItemDescriptor> {
@@ -1960,56 +1979,69 @@ index 000000000..77a71331b
 +
 +    @Override
 +    public ItemDescriptor read(final ByteBuf buffer) {
-+        final int variant = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
-+        final ItemDescriptor descriptor = switch (variant) {
-+            case 0 -> {
-+                BedrockTypes.VAR_INT.read(buffer); // empty descriptor aux value
-+                yield new ItemDescriptor.InvalidDescriptor();
++        final long fields = Integer.toUnsignedLong(BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
++        String expression = null;
++        String name = null;
++        String tag = null;
++        for (long field = 0; field < fields; field++) {
++            final String key = BedrockTypes.STRING.read(buffer);
++            final String value = BedrockTypes.STRING.read(buffer);
++            switch (key) {
++                case "tags" -> expression = value;
++                case "name" -> name = value;
++                case "item_tag" -> tag = value;
++                default -> { }
 +            }
-+            case 1 -> switch (BedrockTypes.STRING.read(buffer)) {
-+                case "name" -> new ItemDescriptor.ItemNameDescriptor(
-+                        BedrockTypes.STRING.read(buffer), BedrockTypes.VAR_INT.read(buffer));
-+                case "molang" -> new ItemDescriptor.MolangDescriptor(
-+                        BedrockTypes.STRING.read(buffer), buffer.readShortLE());
-+                case "item_tag" -> {
-+                    final String tag = BedrockTypes.STRING.read(buffer);
-+                    BedrockTypes.VAR_INT.read(buffer); // item tag aux value
-+                    yield new ItemDescriptor.ItemTagDescriptor(tag);
-+                }
-+                default -> throw new IllegalArgumentException("Unknown recipe ingredient subtype");
-+            };
-+            default -> throw new IllegalArgumentException(
-+                    "Unknown recipe ingredient variant: " + variant);
-+        };
-+        return descriptor.withAmount(BedrockTypes.VAR_INT.read(buffer));
++        }
++        final int auxiliary = BedrockTypes.VAR_INT.read(buffer);
++        final ItemDescriptor descriptor;
++        if (expression != null) {
++            descriptor = new ItemDescriptor.MolangDescriptor(expression, MolangVersion.Latest.getValue());
++        } else if (name != null) {
++            descriptor = new ItemDescriptor.ItemNameDescriptor(name, auxiliary);
++        } else if (tag != null) {
++            descriptor = new ItemDescriptor.ItemTagDescriptor(tag);
++        } else {
++            descriptor = new ItemDescriptor.InvalidDescriptor();
++        }
++        final int amount = BedrockTypes.VAR_INT.read(buffer);
++        validateAmount(amount);
++        return descriptor.withAmount(amount);
 +    }
 +
 +    @Override
 +    public void write(final ByteBuf buffer, final ItemDescriptor value) {
++        validateAmount(value.amount());
++        if (value instanceof ItemDescriptor.MolangDescriptor molang
++                && molang.molangVersion() != MolangVersion.Latest.getValue()) {
++            throw new IllegalArgumentException("CraftingData uses the current Molang version");
++        }
 +        BedrockTypes.UNSIGNED_VAR_INT.write(
 +                buffer, value instanceof ItemDescriptor.InvalidDescriptor ? 0 : 1);
 +        switch (value.getType()) {
 +            case ITEM_NAME -> {
-+                final var descriptor = (ItemDescriptor.ItemNameDescriptor) value;
 +                BedrockTypes.STRING.write(buffer, "name");
-+                BedrockTypes.STRING.write(buffer, descriptor.fullName());
-+                BedrockTypes.VAR_INT.write(buffer, descriptor.auxValue());
++                BedrockTypes.STRING.write(buffer, ((ItemDescriptor.ItemNameDescriptor) value).fullName());
 +            }
 +            case MOLANG -> {
-+                final var descriptor = (ItemDescriptor.MolangDescriptor) value;
-+                BedrockTypes.STRING.write(buffer, "molang");
-+                BedrockTypes.STRING.write(buffer, descriptor.tagExpression());
-+                buffer.writeShortLE(descriptor.molangVersion());
++                BedrockTypes.STRING.write(buffer, "tags");
++                BedrockTypes.STRING.write(buffer, ((ItemDescriptor.MolangDescriptor) value).tagExpression());
 +            }
 +            case ITEM_TAG -> {
 +                BedrockTypes.STRING.write(buffer, "item_tag");
-+                BedrockTypes.STRING.write(
-+                        buffer, ((ItemDescriptor.ItemTagDescriptor) value).itemTag());
-+                BedrockTypes.VAR_INT.write(buffer, (int) Short.MAX_VALUE);
++                BedrockTypes.STRING.write(buffer, ((ItemDescriptor.ItemTagDescriptor) value).itemTag());
 +            }
-+            case INVALID -> BedrockTypes.VAR_INT.write(buffer, (int) Short.MAX_VALUE);
++            case INVALID -> { }
 +        }
++        BedrockTypes.VAR_INT.write(buffer,
++                value instanceof ItemDescriptor.ItemNameDescriptor named ? named.auxValue() : (int) Short.MAX_VALUE);
 +        BedrockTypes.VAR_INT.write(buffer, value.amount());
++    }
++
++    private static void validateAmount(final int amount) {
++        if (amount < 0 || amount > 64) {
++            throw new IllegalArgumentException("CraftingData ingredient counts must be between zero and 64");
++        }
 +    }
 +
 +}
@@ -2493,10 +2525,10 @@ index 000000000..79f72bab5
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorTypeTest.java
 new file mode 100644
-index 000000000..f90b5ec8e
+index 000000000..43ab7701b
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorTypeTest.java
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,144 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -2519,7 +2551,11 @@ index 000000000..f90b5ec8e
 +import io.netty.buffer.ByteBuf;
 +import io.netty.buffer.Unpooled;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +import org.junit.jupiter.api.Test;
++
++import java.util.HexFormat;
++import java.util.Map;
 +
 +import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 +import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -2545,11 +2581,22 @@ index 000000000..f90b5ec8e
 +    }
 +
 +    @Test
-+    void encodesMolangIngredientAndLargeCount() {
++    void encodesMolangIngredientWithContextVersionAndMaximumCount() {
 +        this.assertWire(
-+                new ItemDescriptor.MolangDescriptor("q", 2, 300),
-+                new byte[] {1, 6, 'm', 'o', 'l', 'a', 'n', 'g', 1, 'q', 2, 0,
-+                            (byte) 0xD8, 4});
++                new ItemDescriptor.MolangDescriptor("1", 13, 64),
++                new byte[] {1, 4, 't', 'a', 'g', 's', 1, '1', (byte) 0xFE, (byte) 0xFF, 3,
++                            (byte) 0x80, 1});
++    }
++
++    @Test
++    void rejectsMolangVersionsThatThePacketContextCannotRepresent() {
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            assertThrows(IllegalArgumentException.class, () -> this.type.write(buffer,
++                    new ItemDescriptor.MolangDescriptor("1", 2)));
++        } finally {
++            buffer.release();
++        }
 +    }
 +
 +    @Test
@@ -2559,22 +2606,53 @@ index 000000000..f90b5ec8e
 +    }
 +
 +    @Test
-+    void rejectsUnknownDescriptorVariant() {
++    void rejectsTruncatedDescriptorMaps() {
 +        final ByteBuf buffer = Unpooled.wrappedBuffer(new byte[] {2});
 +        try {
-+            assertThrows(IllegalArgumentException.class, () -> this.type.read(buffer));
++            assertThrows(IndexOutOfBoundsException.class, () -> this.type.read(buffer));
 +        } finally {
 +            buffer.release();
 +        }
 +    }
 +
 +    @Test
-+    void rejectsUnknownDescriptorSubtype() {
-+        final ByteBuf buffer = Unpooled.wrappedBuffer(new byte[] {1, 3, 'b', 'a', 'd'});
-+        try {
-+            assertThrows(IllegalArgumentException.class, () -> this.type.read(buffer));
-+        } finally {
-+            buffer.release();
++    void readsNativeDescriptorMapsWithPrecedenceAndLastDuplicateValues() {
++        // Complete protocol-2193 native packet reads produced these ingredient frames.
++        final Map<String, ItemDescriptor> cases = Map.of(
++                "02046e616d650f746573743a696e6772656469656e74086974656d5f74616708746573743a746167feff0302", new ItemDescriptor.ItemNameDescriptor("test:ingredient", Short.MAX_VALUE),
++                "02086974656d5f74616708746573743a746167046e616d650f746573743a696e6772656469656e74feff0302", new ItemDescriptor.ItemNameDescriptor("test:ingredient", Short.MAX_VALUE),
++                "03046e616d650f746573743a696e6772656469656e74086974656d5f74616708746573743a74616704746167730131feff0302", new ItemDescriptor.MolangDescriptor("1", 13),
++                "0304746167730131086974656d5f74616708746573743a746167046e616d650f746573743a696e6772656469656e74feff0302", new ItemDescriptor.MolangDescriptor("1", 13),
++                "020474616773013004746167730131feff0302", new ItemDescriptor.MolangDescriptor("1", 13),
++                "020474616773013104746167730130feff0302", new ItemDescriptor.MolangDescriptor("0", 13),
++                "010c746573743a756e6b6e6f776e06756e75736564feff0302", new ItemDescriptor.InvalidDescriptor(),
++                "01066d6f6c616e670131feff0302", new ItemDescriptor.InvalidDescriptor());
++        for (final var entry : cases.entrySet()) {
++            final ByteBuf buffer = Unpooled.wrappedBuffer(HexFormat.of().parseHex(entry.getKey()));
++            try {
++                assertEquals(entry.getValue(), this.type.read(buffer));
++                assertEquals(0, buffer.readableBytes());
++            } finally {
++                buffer.release();
++            }
++        }
++    }
++
++    @Test
++    void rejectsCountsOutsideTheNativeRecipeRange() {
++        for (final int amount : new int[] {-1, 65, 300}) {
++            final ByteBuf input = Unpooled.buffer();
++            final ByteBuf output = Unpooled.buffer();
++            try {
++                input.writeBytes(new byte[] {1, 4, 'n', 'a', 'm', 'e', 1, 'x', 0});
++                BedrockTypes.VAR_INT.write(input, amount);
++                assertThrows(IllegalArgumentException.class, () -> this.type.read(input));
++                assertThrows(IllegalArgumentException.class, () -> this.type.write(output,
++                        new ItemDescriptor.ItemNameDescriptor("x", 0, amount)));
++            } finally {
++                input.release();
++                output.release();
++            }
 +        }
 +    }
 +

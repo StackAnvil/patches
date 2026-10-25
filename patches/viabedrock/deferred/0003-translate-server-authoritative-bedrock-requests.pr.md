@@ -646,3 +646,558 @@ All 104 core and 38 client patches replayed. Its six item-definition checks ran 
 The packaged reader passes the same six tests, with five production class origins verified against the current core JAR.
 All 1,419 core classes match both packaged copies. All 1,139 production client classes match the add-on.
 Tooling, offline tests, and patch metadata checks pass.
+
+## Coupled component updates
+
+Two additional original controls add 8,540 packaged comparisons across 22 typed ItemData declarations.
+They execute nonempty component readers inside complete registry construction and late block registration.
+The controls distinguish omitted components, missing fields, malformed selectors, mismatched owners and replacement flags 0, 1 and 255.
+
+Component updates use exact raw names after constructor selection and the staging drain.
+A canonical definition can exist while an uppercase or unqualified update key misses it.
+Readers follow the definition that survives the staging drain, including builtin ComponentItems selected by a Legacy declaration.
+Twelve receivers also match native stacking, legacy durability, associated block, food-predicate and block-placer observations.
+The property getters use a genuinely constructed empty ItemStack.
+
+Both controls use the existing default Experiments and base-game version 1.26.50 context in native build 51061372, protocol 2193.
+Original input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+These results do not establish all component types, custom blocks, other version/experiment contexts or class-specific ItemStack output.
+Complete caller admission, recipe contexts, installed player screens and physical input remain unfinished.
+
+The optional regression belongs to the inventory consumer patch because it also compares cooking properties.
+The complete ViaBedrock suite passes 1,721 tests with 86 optional skips and no failures or errors.
+Checkstyle passes. Packaged comparisons reject normalized update keys and flag resets after invalid selectors.
+Runtime sources, resources and build configuration match the previously verified four-project build exactly.
+
+
+## Constructed recipe context
+
+Named recipe matching now retains constructed definitions and their receiver-owned block associations.
+Numeric collisions do not replace the selected recipe definition with the numeric owner.
+Recipe-source matching retains typed guards before deferred lookup.
+Descriptor comparison leaves source admission to its manual or automatic caller.
+
+The adapter uses normal saved-name lookup for recipe names and narrows the requested auxiliary value to a signed short first.
+Complex-alias representatives use normal named lookup with auxiliary zero.
+Alias members use parsed direct lookup without metadata rewriting.
+Block fallback uses registered BlockLegacy numeric ownership independently of auxiliary conversion or archetype support.
+The descriptor and source guards now precede recipe consumers in the inventory patch.
+
+An original native control supplies 24 typed ItemData declarations under target 1.26.51.1, build 51061372, protocol 2193.
+It constructs the global block/state registry and complete ItemRegistry with default Experiments and base-game version 1.26.50.
+Original named descriptor construction, lazy resolution, repeated emptiness checks and deleting destructors execute.
+All 540 resolved recipes match the packaged adapter's kinds, selected/representative names and IDs, auxiliary values and emptiness results.
+All 1,379 registered block numeric identities also match.
+Native comparisons reject numeric-owner substitution and direct alias-representative lookup.
+Input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+This control does not execute complete client/level setup or establish custom-archetype, registry-retirement or installed availability behavior.
+
+A broader control covers 4,440 named stacks, 1,987 numeric initializations, 1,920 zero-runtime network constructors and 20,685 block selections.
+Named lookup and numeric ownership match throughout that control.
+That control exposed five missing positive-count coal-to-charcoal conversions at auxiliary one.
+The canonical network construction section records their correction. At that checkpoint, complete named and NBT construction remained unfinished.
+A private network-header projection also differs for air ID zero. The named and definition construction section below adds the proper named API comparison.
+
+The broad control differs on 12 block selections. A focused range finds 107 differences across barrel, jigsaw, glow lichen, campfire and tube coral.
+The earlier server sweep queried Script API `ItemStack.matches`; it did not directly read the legacy converter's selected block pointer.
+The Script API path and complete client/level cache setup need comparison before the legacy-conversion data changes.
+These observations remain separate caller contexts. The existing auxiliary data remains unchanged.
+
+The four-project build passes 2,861 tests with 162 optional skips and no failures or errors.
+The complete core run passes 1,730 tests with 85 optional skips. Checkstyle passes.
+All nine retained packaged suites and the nonempty-component suite pass.
+All 1,514 core classes and three registry resources match the embedded client and proxy copies.
+All 1,191 client classes match the tested add-on.
+All four original reports and all five goal areas remain active.
+
+## Canonical network construction
+
+Network construction now retains the selected definition independently of numeric ownership.
+Canonical lookup uses the existing constructed name without another saved-name parse.
+The constructor uses the selected Block's canonical auxiliary, or the stack auxiliary without a Block.
+A changed definition resets the stack auxiliary and can replace the Block with its associated default.
+Runtime candidate validation follows this upgrade before the constructor selects its fallback.
+
+Merge admission compares exact definition objects.
+Full stack queries compare definition names and numeric IDs.
+Stacking and cooking properties follow the retained receiver.
+Copies retain the definition, and container snapshot equality detects a different selected definition.
+Explicit identifier changes clear the retained selection.
+
+An original control remaps charcoal to ID 257 while numeric lookup for 257 still selects apple.
+Coal metadata one constructs the charcoal definition, despite that numeric collision.
+Native query and merge functions distinguish charcoal from apple and expose different stacked-by-data properties.
+The control uses 23 typed ItemData declarations and executes 672 complete zero-runtime network constructors.
+It also executes five identity pairs and ten property observations through original functions.
+Input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+The target remains 1.26.51.1, build 51061372, protocol 2193, with default Experiments and base-game version 1.26.50.
+The packaged ItemRewriter matches all 672 constructors, five pairs and ten property observations.
+The earlier 1,920-constructor control also matches, including its five previously missing coal-to-charcoal conversions.
+The 540 recipe resolutions and 1,379 registered block identities still match.
+Mutation controls reject lost definition ownership, skipped canonical upgrade and snapshots that ignore the selected definition.
+
+A runtime Block does not need an auxiliary converter when priority lookup or metadata-independent aliases establish the selected definition.
+Metadata-dependent selection requires the missing auxiliary context.
+No replacement auxiliary or missing-block answer substitutes for that context.
+The earlier primitive fixture retains its declared warm cache and empty alias tables, separately from the complete registry control.
+
+This evidence does not establish complete wire admission, negotiated nonzero runtime palettes, nonempty userdata or native registry retirement.
+The private network-header projection remains separate from the named API added below and from NBT outer-loader admission.
+Some legacy actions still compare encoded fields through `BedrockItem.isDifferent`.
+Mixed raw snapshots, complete player screens, physical input and native pixels remain unfinished.
+The 12 broad and 107 focused block-state differences remain open, and the auxiliary data remains unchanged.
+All five goal areas and four original reports remain active.
+
+The four-project build passes 2,861 tests with 162 optional skips and no failures or errors.
+The complete core suite passes 1,730 tests with 85 optional skips. Checkstyle passes.
+All retained packaged comparison suites pass.
+All 1,514 core classes and three registry resources match the embedded client and proxy copies.
+All 1,191 client classes match the tested add-on.
+
+## Named and definition stack construction
+
+The shared constructor now separates named strings, definition pointers and network input.
+Each path resolves the original Item's associated Block before numeric initialization selects its owner.
+For an ordinary Item, named-string construction disables canonical upgrade; definition-pointer and network construction enable it.
+Associated-Block paths enable upgrade in all three cases.
+
+Named lookup parses the saved name and applies its metadata rewrite before construction.
+Direct definition input keeps the existing constructed name through canonical lookup.
+The constructor keeps signed 32-bit count and auxiliary values until the native branch narrows them.
+Negative counts clamp to zero before byte conversion.
+The BlockLegacy wildcard check compares the original integer with 32767, including after count invalidation.
+The wider value 98303 narrows to the same short but does not select that wildcard branch.
+Numeric zero can retain raw count and Block fields without a resolved Item.
+The actual native air definition has an associated Air Block, which remains part of this comparison.
+
+The original named-string constructor `14247ebe0` and definition-pointer constructor `14247ead0` execute against the complete registry and actual Block metadata converter.
+The control supplies 25 typed ItemData declarations, eight counts and sixteen auxiliary values.
+It includes charcoal remapped to apple's numeric ID, original associations that differ from numeric owners, and constructed `tile.` names.
+The target remains 1.26.51.1, build 51061372, protocol 2193, with default Experiments and base-game version 1.26.50.
+Original instructions remain unchanged, and complete input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+The packaged ItemRewriter matches all 2,304 named and 1,536 definition constructions.
+It also matches all 4,440 named outputs from the earlier complete control.
+These comparisons check the selected definition, raw count, auxiliary and exact typed runtime Block state.
+They replace the earlier network-header projection as evidence for the named API.
+The projection remains a separate caller and does not become a network admission failure.
+
+Cooking input expansion now passes the selected descriptor definition to the shared default constructor.
+Output-index registration passes the output's retained definition to its count-one constructor.
+The original cooking extractor `146989830` and output-registration call at `14324d432` use this definition-pointer path.
+Focused regressions reject numeric-owner substitution before association and confirm that registration preserves the original output.
+Primitive extractor fixtures retain their declared ordinary definitions, empty aliases and warm Block caches.
+They remain separate from the complete registry controls.
+
+Five deliberate constructor changes fail native value comparisons: incorrect named or direct upgrade flags, early owner substitution, early wildcard narrowing and negative-count wrapping.
+Both consumer regressions also reject their previous numeric-construction paths.
+Retained network identity, registry, component, recipe and matcher controls still pass.
+
+These results establish the tested construction paths, without establishing NBT outer-loader admission or installed recipe availability.
+Complete client/level setup, negotiated nonzero runtime palettes, nonempty userdata and native registry retirement remain unverified here.
+Some legacy actions still use `BedrockItem.isDifferent` to compare encoded fields.
+The 12 broad and 107 focused Block-state differences remain open, and the auxiliary data remains unchanged.
+All five goal areas and the four original reports remain active.
+
+The four-project build passes 2,866 tests with 162 optional skips and no failures or errors.
+The complete core suite passes 1,735 tests with 85 optional skips. Checkstyle passes.
+All nine retained packaged suites and the nonempty-component suite pass.
+All 1,514 core classes, three registry resources and unchanged Block auxiliary data match their embedded client and proxy copies.
+All 1,191 client classes match the tested add-on.
+
+
+## Saved NBT stack loading
+
+Saved items now use a shared NBT loader with separate ItemInstance and ItemStack constructor tails.
+Merchant offers use this loader without a second Block write that could restore cleared ownership.
+Block-entity item conversion also uses the shared path.
+
+The loader preserves typed admission.
+An existing `Name` field takes precedence over `id`, including an empty or mistyped `Name`.
+Without `Name`, the loader accepts a string ID or a short legacy ID.
+The pinned table contains 292 saved ID names and five legacy ID upgrades.
+This table is separate from current numeric Item ownership.
+`Damage` requires a short tag, and `Count` requires a byte tag.
+The byte count retains its unsigned value.
+
+Named lookup precedes numeric owner selection.
+The numeric owner's association supplies the fallback Block after initialization.
+An absent or mistyped `Block` field uses that association.
+A present compound instead follows serialized Block loading, which can return no Block.
+Exact legacy-group membership remains separate from registered Block-name lookup.
+Block selection can then rebind the Item before its post-load callback.
+
+The loader copies compound userdata, retains restrictions and reads the typed pickup flag.
+For measured durable definitions, the post-load callback migrates effective auxiliary damage into userdata only when its `Damage` key is absent.
+Wildcard normalization follows that callback.
+ItemInstance assignment preserves the loaded fields.
+ItemStack reconstructs its header, clears raw auxiliary for a retained Block and invalidates zero-count Item and Block ownership.
+Userdata, restrictions and the pickup flag survive that header invalidation.
+
+Two shared lookup corrections support this path.
+Restriction expansion selects exact legacy groups first, then uses normal registered lookup for individual Blocks.
+Thus `minecraft:stone` expands its group, while `Minecraft:Stone` resolves the individual stone Block.
+The earlier 116-case group fixture retains its explicitly supplied case-sensitive primary lookup.
+It does not represent the complete registry lookup.
+An empty alias callback result now preserves the original name and auxiliary value.
+The raw callback API remains unchanged.
+This distinction preserves a generic spawn egg when its metadata has no nonempty alias target.
+
+The original loader `14248e620` and constructors `14247f1f0` and `142483da0` execute against the complete native registry and Block converter.
+The target remains 1.26.51.1, build 51061372, protocol 2193, with default Experiments and base-game version 1.26.50.
+Four controls cover 819 baseline inputs, 1,319 expanded inputs, 33 empty-registry cases and 83 follow-up cases.
+These controls overlap.
+The expanded cases include durable definitions, books, potions and actual serialized Block tags.
+The follow-up covers malformed fields, unknown Block states, spawn eggs and mixed-case restrictions.
+Original game instructions remain unchanged.
+Original input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+The packaged core matches all 4,508 ItemInstance and ItemStack outputs and eleven exact group-membership observations.
+The comparison checks selected definitions, raw counts and auxiliary values, exact typed Block states, userdata, restrictions and pickup flags.
+The Java input NBT remains unchanged after conversion.
+Nine deliberate changes fail native value comparisons across typed admission, ownership, constructor tails, wildcard handling, pickup state and shared lookup behavior.
+Retained named, definition, network, component, recipe and matcher controls still pass.
+
+The four-project build passes 2,872 tests with 161 optional skips and no failures or errors.
+The core suite passes 1,741 tests with 84 optional skips. Checkstyle passes.
+All nine retained packaged suites and the nonempty-component suite pass.
+All 1,520 core classes and four registry resources match their embedded client and proxy copies.
+All 1,191 client classes match the tested add-on.
+The Block auxiliary data remains unchanged.
+
+These typed-input controls establish the measured saved constructors, including nonempty saved userdata.
+They do not establish complete wire admission, arbitrary versioned or custom Block loading, nonfinite data, or native weak-owner retirement.
+Ordinary named and network userdata admission remains outside these controls.
+Complete client/level setup, installed recipe availability, player screens and physical input remain unfinished.
+Some legacy actions still use `BedrockItem.isDifferent` to compare encoded fields.
+The 12 broad and 107 focused Block-state differences remain open.
+All five goal areas and the four original reports remain active.
+
+
+## Ordinary inventory merge actions
+
+Ordinary Java pickup, shift-click, drag distribution and pickup-all now use the connection's native occupied-slot merge predicate.
+Each check passes the moving stack first and its destination second.
+The predicate checks retained definition identity, destination stackability, subtype metadata, native userdata equality, restrictions and blocking state.
+Items without the subtype flag can merge across auxiliary values.
+Items with matching encoded fields can still fail admission through their definitions or other retained state.
+
+An occupied merge preserves the destination's fields and increases its count.
+An empty destination receives a copy of the source.
+Pickup keeps its existing swap behavior when occupied merge admission fails.
+Drag eligibility filters incompatible destinations before count distribution or the single-slot pickup fallback.
+Pickup-all treats each collected stack as the source and the cursor as its destination.
+
+The complete target executor `1433e8380` calls merge predicate `142488fe0` with that argument order.
+Its separate count-plus-full-query branch calls `14248dac0`.
+The current change preserves that distinction and leaves `BedrockItem.isDifferent` unchanged.
+The original functions come from target 1.26.51.1, build 51061372, protocol 2193.
+
+The action regression constructs real registry definitions and executes the Java click, request and prediction paths.
+Nine ordinary cases cover definition collisions, restrictions, blocking state, subtype metadata, damage, destination preservation and rejected prediction restoration.
+The optional matrix applies 756 original native merge results to all four Java action paths, for 3,024 decision checks.
+The fixture declares non-bundle classification, a small registered Block-name set and intercepted packet transport.
+These checks preserve existing Java slot order; they do not establish native destination ordering.
+The action fixture passes all ten tests, including the optional matrix.
+The packaged JAR passes the same tests with verified implementation origins.
+Four deliberate raw-comparator reversions fail native decision comparisons through pickup, quick move, drag and pickup-all.
+The targeted inventory, bundle, response and native stacking run passes all 39 tests. Checkstyle passes.
+
+Crafting outputs, merchant and specialized workstation consumers still have separate encoded-field comparisons that need caller-specific audits.
+Legacy offhand and cursor acknowledgments also retain their existing stale-state checks.
+Complete native controller delivery, remaining locked-item permissions and live wire/server acceptance remain separate requirements.
+All five goal areas and the four original reports remain active.
+
+
+The four-project build passes 2,882 tests with 161 optional skips and no failures or errors.
+The core suite passes 1,751 tests with 84 optional skips.
+All 1,520 core classes match their embedded add-on and proxy copies. All 1,191 client classes match the tested add-on.
+All 198 core asset resources match the previous validated JAR exactly.
+Apart from the Container implementation and three build-identity classes, the remaining 1,516 core classes are unchanged.
+This preserves the prior constructor, registry, recipe and component evidence through exact artifact comparison.
+Their separate packaged suites were not rerun for this consumer-only change.
+
+
+## Provider item-lock permissions
+
+Ordinary actions now distinguish removal permission from incoming permission.
+Player hotbar, inventory and offhand removal reject typed byte lock mode `1`.
+Other byte values, including `2` and unknown unsigned values, do not trigger that removal filter.
+Generic storage and cursor removal omit this filter.
+Generic storage incoming callbacks reject every nonzero byte lock mode.
+Player and cursor incoming providers omit that callback.
+
+The lock getter reads only `minecraft:item_lock` with the NBT byte type.
+It preserves unsigned values from zero through 255 and ignores other tag types.
+The shared count-one planner no longer rejects locked menu items before these provider rules apply.
+Both authority adapters retain typed lock state, counts and their existing identity checks.
+The legacy adapter leaves tracked slots unchanged after a failed send.
+
+Pickup, shift-click, hotbar swaps and pickup-all check removal permission before prediction.
+Pickup, swaps and drag retain incoming permission checks.
+Rejected allowed actions restore the lock state with the item snapshot.
+The checks preserve existing slot routing and destination order.
+
+The original backing constructor `147c96d60` and standard installer `1431afb60` register nine measured provider roles.
+The source method `147c98300`, installed incoming callbacks and getter `14247fc00` execute without instruction changes.
+The target remains 1.26.51.1, build 51061372, protocol 2193, with default Experiments and base-game version 1.26.50.
+The control uses the complete native registry and saved ItemStack constructor.
+Its declared storage interface supplies 36 slots and the current constructed item.
+The ordinary provider context has wire type zero.
+
+Eighty typed inputs cover absent userdata, byte values, mistyped tags, wrong key case and four counts.
+All 17,280 source decisions, 240 incoming callback executions and 80 getter results match Java.
+Another 300 incoming results follow omitted callbacks and the separately inspected native default branch.
+Those 300 results are derived defaults, not callback executions.
+The provider roles include generic storage, combined inventory, hotbar, inventory, offhand, cursor, barrel, shulker and dynamic storage.
+Original backing, input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+Two failed fixture attempts remain archived privately.
+The first lacked a storage cleanup interface.
+The second registered interface addresses without their scoped execution hooks.
+The successful control installs all three scoped storage callbacks and checks positive source results before accepting its output.
+It also observes the original backing destructor and its storage unsubscribe call.
+
+The armor-removal extension below separately covers actor mode and Curse of Binding.
+World drops, bundles, specialized outputs, complete destination capacity and full controller delivery need separate caller controls.
+These permission checks do not establish wire or live server acceptance.
+All five goal areas and the four original reports remain active.
+
+
+The final four-project build passes 2,890 tests with 161 optional skips and no failures or errors.
+The core suite passes 1,759 tests with 84 optional skips. Checkstyle passes.
+All 1,520 core classes match their embedded add-on and proxy copies.
+All 1,191 client classes match the tested add-on.
+All 198 core asset resources match the archived saved-NBT milestone, including the unchanged Block auxiliary data.
+The remaining 1,506 core classes are byte-identical to that archive.
+Changed classes stay within Container, NativeContainerTransfer, BedrockItem, their nested classes and build identity.
+
+The packaged JAR passes all 30 permission, ordinary-action and authority-adapter tests with verified implementation origins.
+Seven deliberate permission regressions fail value assertions.
+Player-inventory shift-click and hotbar swaps isolate source removal from menu incoming rules.
+The retained native merge matrix still checks 3,024 Java action decisions from 756 original predicate cases.
+
+
+## Armor source permission
+
+Ordinary armor removal now checks the registered native armor source policy.
+Typed byte lock mode `1` blocks removal before the creative bypass.
+Other byte modes do not trigger this filter.
+Native player mode `Creative` bypasses Curse of Binding.
+Player mode `Default` inherits that bypass only from a creative world mode.
+`Undefined` and other modes do not inherit the bypass.
+The general Java display-mode conversion remains unchanged.
+
+Other cases reject the first matching Curse of Binding entry only when its typed short level is positive.
+Zero, negative and mistyped levels do not activate binding.
+The enchantment ID uses its unsigned low byte after typed short admission.
+Duplicate entries retain their first-match order.
+The existing enchantment-level helper remains unchanged.
+
+The original backing constructor and standard installer register armor callback `1431bb690`.
+That callback and source method `147c98300` execute against the complete native registry and original saved ItemStack construction.
+The target remains 1.26.51.1, build 51061372, protocol 2193, with default Experiments and base-game version 1.26.50.
+The declared armor storage supplies four slots with the current constructed item.
+The native range follows that backing capacity.
+The supplied actor interface contains the game-type sparse component and a fallback mode virtual service.
+Original actor getter `14253dc40` executes against those inputs.
+
+The control covers 129 typed ItemStacks and 40 actor-mode states.
+Java matches all 103,200 original source decisions.
+The native control also executes 5,160 registered callbacks and observes 129 lock and binding-presence pairs.
+Forty original actor getter results establish the mode inputs.
+The nonempty Java items match every observed binding-presence result.
+Zero-count saved stacks retain header byte one but clear Item ownership, so source admission rejects them.
+Original backing, input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+Two failed fixture attempts remain archived privately and supply no expected decisions.
+One incorrectly expected the zero-count header byte to clear.
+The other supplied player-storage capacity instead of armor-storage capacity.
+The final control uses the measured header contract and four-slot armor backing.
+
+Non-compound enchantment-list elements remain outside this control.
+Static native code selects a null element receiver and immediately reads that receiver in the typed getter.
+The reference records these two unexecuted cases without assigning a native boolean result.
+
+Action regressions cover pickup, shift-click and hotbar swaps through actual Java request prediction.
+They distinguish `Default` from `Undefined`, preserve slot locks in creative mode and restore rejected armor removal after a mode change.
+The fixtures supply cached mode fields and suppress independent attribute transport.
+Armor incoming-slot validation, world drops, direct creative edits and full destination policy remain separate callers.
+Complete Actor, Level and controller construction, physical input and live server acceptance remain unfinished.
+All five goal areas and the four original reports remain active.
+
+
+The four-project build passes 2,893 tests with 161 optional skips and no failures or errors.
+The core suite passes 1,762 tests with 84 optional skips. Checkstyle passes.
+All 1,520 core classes match their embedded add-on and proxy copies.
+All 1,191 client classes match the tested add-on.
+All 198 core asset resources match the previous provider-policy milestone, including the unchanged Block auxiliary data.
+Only ArmorContainer and three build-identity classes differ from that artifact.
+The remaining 1,516 core classes are byte-identical, including the prior provider, merge and enchantment implementations.
+
+At the armor-source milestone, the packaged JAR passed all 33 permission, ordinary-action and authority-adapter tests with verified implementation origins.
+Seven deliberate armor regressions fail value assertions.
+These controls detect a missing policy, incorrect lock modes, incorrect inherited modes, negative-level handling and reversed duplicate order.
+Prior provider and merge mutation evidence remains supported by byte-identical implementation classes and unchanged data.
+
+
+## Armor destination admission
+
+Use the selected Item receiver and actual transfer count for armor placement.
+The native incoming predicate requires one item and the matching equipment slot.
+Armor capacity stays one even for stackable head items.
+Shift-click now selects armor through the provider policy; pickup, drag, swaps and bundle extraction check their actual quantities.
+Recipe callers use the quantity-bearing API in their owning patch.
+
+Three complete-registry controls compare 94,104 destination decisions and 37,872 installed callbacks.
+They cover builtin factories, definition collisions, associated head Blocks, typed wearable slots, retained updates and saved-stack counts.
+All three controls complete original backing, input, registry, TLS, static and CRT cleanup without allocations or held locks.
+The first uses version-None wearable declarations; the second uses DataDriven declarations that execute the readers.
+
+See [the armor destination reference](../../../docs/native-player-inventory.md#armor-destination-permission) for control boundaries and validation.
+Controller ordering, specialized outputs, drops, creative edits and live server acceptance remain separate.
+
+The four-project build passes 2,902 tests and all 105 patches replay.
+The packaged core passes 59 focused tests; 23 deliberate regressions fail value assertions.
+Checkstyle, artifact comparisons and repository offline validation pass.
+
+## Inventory discard admission
+
+Keep ordinary source permission separate from discard permission.
+Inventory slot throws and cursor drops require source admission and typed byte lock mode zero before prediction.
+The shared helper rejects nonpositive action counts without changing the raw predicate's signed-count contract.
+Expose incoming admission for creative callers and share the raw creative-mode permission helper with armor removal.
+
+The original native source and discard predicates produce 56,760 decision pairs across 129 typed stacks and ten collection roles.
+Every discard decision equals source admission combined with typed lock mode zero.
+The control executes the original weak-view factory, backing constructor and policy installer.
+A pinned foreign collection-root ABI supplies role, backing and start offset zero; complete root construction remains outside the control.
+Native view destruction returns its foreign pins to baseline.
+Original backing, input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+The four-project build passes 2,910 tests. All 105 patches replay.
+The packaged core passes 67 repository tests plus a private comparison against 40 original actor mode observations.
+Thirty-two deliberate regressions fail value assertions with verified implementation origins.
+All 198 assets remain unchanged from the armor-placement milestone.
+
+See [the discard reference](../../../docs/native-player-inventory.md#inventory-discard-and-creative-admission) for caller and lifetime boundaries.
+Gameplay drops, specialized recipe Consume producers, complete controller input and live server acceptance remain separate.
+
+## Live installed-screen controls
+
+A private Java 26.3 client completes sixteen physical input controls through the preceding discard-milestone ViaProxy build and Bedrock 1.26.51.1.
+Three E-key openings receive distinct native tokens and matching acknowledgments, followed by a confirmed final close.
+The capture records thirteen requests with thirteen successful server responses.
+Locked-item refusals preserve client and core state, while ordinary cursor drops and one-item head placement succeed.
+The installed add-on, running proxy and all 1,521 embedded core classes match that recorded build.
+
+Shift-click equips one pumpkin and sends the other two to inventory slot nine.
+Native full-action destination ordering remains unverified; accepted server requests alone do not prove that contract.
+The client still uses Java's player screens. The original rendering report remains unreproduced.
+See [the live control boundaries](../../../docs/native-player-inventory.md#live-e-key-action-controls) for scope and failed fixture attempts.
+
+## Native offhand admission and ordinary player routes
+
+Use the selected definition's native offhand flag and measured builtin metadata instead of a shield-name shortcut.
+Retain typed common properties, installed component values and wearable finalization across updates.
+Validate empty-slot capacity before incoming placement.
+Keep full armor and offhand destination ranges for ordinary player quick move.
+Preserve merge-before-empty order within each logical collection, including combined-inventory fragments.
+
+Four original protocol-2193 controls compare 64,872 full destination decisions and 64,872 installed callbacks across 4,086 inputs.
+Each control completes original backing, input, registry, TLS, static and CRT cleanup without allocations or held locks.
+Read-only two-hand storage supplies empty destinations.
+No native permission, lookup or capacity result is supplied.
+The lowercase control verifies conflicting components in every declaration order; earlier mixed-case rows establish raw-name admission only.
+
+Native route construction supplies the provider list, while full model execution and transfer ordering remain unfinished.
+The earlier live E-key run predates these changes.
+See [the offhand reference](../../../docs/native-player-inventory.md#offhand-destination-permission-and-player-routing) for component rules and verification limits.
+
+The complete four-project build passes 2,921 tests with 161 optional skips.
+The packaged core passes 78 repository permission and action checks plus the private 40-mode comparison.
+All 1,521 embedded core classes and 1,191 client classes match the tested artifacts.
+Only the eight measured offhand flags change among 198 core assets; prior factory and Block auxiliary metadata remain unchanged.
+All 105 patches replay, and Checkstyle and offline validation pass.
+Forty-five deliberate regressions fail value assertions with verified implementation origins.
+
+## Live offhand actions
+
+The offhand build artifacts complete 24 physical Java inventory controls through ViaProxy and Bedrock 1.26.51.1.
+All 21 accepted requests receive successful responses.
+Arrows enter and merge in offhand, physical shift-click routes arrows there, and totems complete placement and removal.
+Apple placement and typed slot-locked removal make no request; inventory-locked transfers remain permitted.
+The installed add-on and all 1,521 embedded core classes match the built artifacts.
+The driver completes normally, the final native close is acknowledged, and all processes started by the run retire.
+
+This server-authoritative control retains Java's ordinary player screen at 854 by 480 and GUI scale two.
+It does not verify the legacy adapter, complete native controller ordering, direct joins, delayed recovery or the affected WildFFA session.
+See [the live offhand boundaries](../../../docs/native-player-inventory.md#live-offhand-action-controls).
+
+## Destination collection priority
+
+Run occupied merges and empty placement within each logical destination collection before visiting the next.
+Later inventory merges cannot bypass earlier empty armor or offhand slots.
+Keep split combined-inventory ranges together by container identity and full collection name, while retaining their traversal order.
+
+The original model/planner control executes 24 quantity cases and complete native cleanup.
+Six of nine all-count physical plans differ from the previous packaged implementation.
+The coupled Java comparison checks those nine plans; three regressions cover equipment priority and combined-inventory grouping.
+Read-only backend/root interfaces supply metadata and stored stacks; original policies and the actual class slot-check method execute.
+Foreign pins return to baseline, and native model/view/backing/input/registry/TLS/static/CRT cleanup leaves no allocations or held locks.
+Physical destinations are normalized across Java's combined inventory and native view offsets.
+Native wire-role encoding, complete controller/root construction and physical native button binding remain separate boundaries.
+See [the collection-order reference](../../../docs/native-player-inventory.md#player-destination-collection-ordering).
+
+The collection-order build passes 2,925 tests with 161 optional skips, including the nine-case original-planner comparison.
+The packaged core passes 82 repository checks plus the private 40-mode comparison.
+All 47 deliberate regressions fail value assertions with verified origins.
+All 1,522 embedded core classes and 1,191 client classes match the tested artifacts; all 198 assets remain unchanged from the offhand build.
+
+A new physical Java/ViaProxy/Bedrock control creates existing inventory stacks and exercises both priority cases.
+Shift-click places one pumpkin in armor before merging two into inventory, and routes six arrows to offhand before the later inventory merge.
+All six fixture and shift-click requests receive successful responses.
+Final client/core state, native close acknowledgment, installed artifacts and process cleanup pass verification.
+These server-authoritative final states do not establish frame-by-frame native prediction, legacy authority or complete controller parity.
+
+## Definition tag ownership
+
+Retain tags on constructed definitions through component updates and ID collisions.
+Apply constructor defaults, compiled component updates, selected Block updates and final exact-name registration in native order.
+Legacy readers ignore compiled tags; generic replacements do not inherit the displaced constructor's tags.
+Transport receiver-owned tags in emitted item animation data.
+
+Six complete original registry controls compare all 11,773 definition tag vectors and finish original cleanup without allocations or held locks.
+A separate comparison checks 89,252 original predicates with retained definition/vector backing and native HashedString construction.
+Declared typed inputs do not establish a normal packet baseline, full client lifecycle or live animation parity.
+See [the tag ownership reference](../../../docs/native-player-inventory.md#definition-owned-item-tags).
+
+The current four-project build passes 2,943 tests with 161 optional skips.
+All 138 packaged checks pass; five deliberate tag regressions fail value assertions with verified implementation origins.
+Both embedded copies match all 1,523 core classes, and the add-on matches all 1,191 compiled client classes.
+The two tag metadata assets change while 196 other assets remain byte-identical.
+Existing metadata in both changed assets remains semantically unchanged.
+No new live inventory or animation capture ran for this milestone.
+
+
+## Source descriptor ownership
+
+Keep the resolved Item receiver and normalized auxiliary value in `ItemRecipeDescriptor`.
+Project `ItemRecipeKey` from that value for numeric comparisons and cache grouping.
+Preserve the native Block-derived conversion and numeric fallback lookup rules.
+The owning recipe patch uses the selected receiver for retained Molang predicates.
+See the [retained counter reference](../../../docs/bedrock-coverage.md#retained-molang-recipe-counting-october-25-2026).
+
+
+## Versioned Item Tag index
+
+Retain constructor minimum versions and index all owned definitions that satisfy the active connection version.
+Keep component replacements independent of built-in name-based minima.
+Keep owned tags intact when a minimum excludes their receiver from the index.
+An empty context retains native zero-version behavior, while wildcard contexts bypass the minimum comparison.
+
+The pinned data adds 299 initial factory minima and 540 Block minima.
+Eight original registry controls compare 15,672 definition minima, 676 Tag sets and 7,765 member references.
+Full nested scope destruction and original final cleanup leave no allocations or held locks.
+See the [versioned Tag reference](../../../docs/bedrock-coverage.md#versioned-tag-admission-october-25-2026) for supplied contexts and remaining limits.

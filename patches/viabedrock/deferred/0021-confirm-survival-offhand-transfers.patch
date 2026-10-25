@@ -1,4 +1,4 @@
-From a95a62c66e2ba07c410ddf73b42228593f246efa Mon Sep 17 00:00:00 2001
+From a8a0d99861688502af6a974ced243653cced0734 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] fix(inventory): confirm survival offhand transfers from
@@ -24,18 +24,34 @@ while a prior transfer owns the inventory, preserve an already active
 presentation while its action waits, and always permit deactivation.
 Verify the actual native control channel, rejected activation status,
 and separation from the authoritative request session in a packet test.
+
+Validate native offhand incoming and source admission before reserving a
+legacy transfer or sending its transaction. Refuse unsupported items,
+empty-destination overcapacity and typed slot-locked removal through the
+same provider policies used by authoritative requests. Resynchronize the
+Java contents and consume the refused click without falling through to
+ordinary prediction. Preserve inventory-locked transfer semantics and
+wait for server contents on admitted actions.
+
+Targeted adapter tests execute real container policies and definition
+metadata with transport-only mocks. They check refusal before pending
+ownership, unchanged source/cursor state, admitted transaction contents
+and the distinction between incoming and removal lock policies. Codec,
+server acceptance and recovery remain separate controls.
 ---
- .../protocol/packet/InventoryPackets.java     | 143 +++++++++++++++-
+ .../protocol/packet/InventoryPackets.java     | 152 ++++++++++++++++-
  .../protocol/packet/MultiStatePackets.java    |  18 +-
  .../storage/InventoryRequestTracker.java      | 155 +++++++++++++++++-
  .../protocol/packet/InventoryPacketsTest.java |  66 ++++++++
+ .../packet/LegacyOffhandAdmissionTest.java    | 131 +++++++++++++++
  .../NativeContainerOffhandGuardTest.java      |  95 +++++++++++
  .../storage/InventoryRequestTrackerTest.java  |  75 +++++++++
- 6 files changed, 534 insertions(+), 18 deletions(-)
+ 7 files changed, 674 insertions(+), 18 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/LegacyOffhandAdmissionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NativeContainerOffhandGuardTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index 60243c409..a1a76a4d9 100644
+index 60243c409..ca54258e2 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -604,7 +604,6 @@ public final class InventoryPackets {
@@ -139,7 +155,7 @@ index 60243c409..a1a76a4d9 100644
                          if (!requestTracker.queueButtonClick(container, button)) {
                              PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
                          }
-@@ -1854,6 +1878,111 @@ public final class InventoryPackets {
+@@ -1854,6 +1878,120 @@ public final class InventoryPackets {
                  new InventoryTransactionData.NormalTransactionData());
      }
  
@@ -174,12 +190,21 @@ index 60243c409..a1a76a4d9 100644
 +        if (!offhandSlotClick) {
 +            return false;
 +        }
-+        final BedrockItem offhand = inventoryTracker.getOffhandContainer().getItem(0);
++        final Container offhandContainer = inventoryTracker.getOffhandContainer();
++        final BedrockItem offhand = offhandContainer.getItem(0);
 +        final BedrockInventoryTransaction transaction;
 +        if (!cursor.isEmpty() && offhand.isEmpty()) {
++            if (!offhandContainer.canPlaceItem(0, cursor, cursor.amount())) {
++                PacketFactory.sendJavaContainerSetContent(user, container);
++                return true;
++            }
 +            transaction = legacyOffhandTransaction(cursor);
 +            requestTracker.awaitLegacyOffhand(cursor);
 +        } else if (cursor.isEmpty() && !offhand.isEmpty()) {
++            if (!offhandContainer.canTakeItem(0, offhand.amount())) {
++                PacketFactory.sendJavaContainerSetContent(user, container);
++                return true;
++            }
 +            transaction = legacyOffhandTakeTransaction(offhand);
 +            requestTracker.awaitLegacyOffhandTake(offhand);
 +        } else {
@@ -623,6 +648,143 @@ index 7dccb3cc7..a17e52fd4 100644
      @Test
      void entityBackedGenericContainerKeepsTheWireTypeAndUsesEntitySlots() {
          final UserConnection user = (UserConnection) Proxy.newProxyInstance(
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/LegacyOffhandAdmissionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/LegacyOffhandAdmissionTest.java
+new file mode 100644
+index 000000000..5f8acc684
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/LegacyOffhandAdmissionTest.java
+@@ -0,0 +1,131 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ItemEntry;
++import net.raphimc.viabedrock.protocol.model.ItemRegistry;
++import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
++import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import org.junit.jupiter.api.Test;
++import org.mockito.ArgumentCaptor;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class LegacyOffhandAdmissionTest {
++
++    @Test
++    void refusesInvalidOrOversizedIncomingStacksBeforeTakingPendingOwnership() {
++        final var fixture = new Fixture();
++        for (final var item : new BedrockItem[]{fixture.item("minecraft:apple", 1), fixture.item("minecraft:shield", 2)}) {
++            fixture.inventory.getHudContainer().setItem(0, item);
++            try (var content = mockStatic(PacketFactory.class);
++                 var transport = mockStatic(PacketWrapper.class)) {
++                transport.when(() -> PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, fixture.user)).thenReturn(mock(PacketWrapper.class));
++                assertTrue(fixture.click());
++                assertFalse(fixture.requests.isWaitingForLegacyOffhand());
++                content.verify(() -> PacketFactory.sendJavaContainerSetContent(fixture.user, fixture.inventory.getInventoryContainer()));
++                transport.verifyNoInteractions();
++            }
++            assertSame(item, fixture.inventory.getHudContainer().getItem(0));
++            assertTrue(fixture.inventory.getOffhandContainer().getItem(0).isEmpty());
++            assertFalse(fixture.requests.isWaitingForLegacyOffhand());
++            assertFalse(fixture.requests.hasPending());
++        }
++    }
++
++    @Test
++    void refusesSlotLockedRemovalWithoutMovingOrReservingTheSource() {
++        final var fixture = new Fixture();
++        final var item = fixture.item("minecraft:shield", 1);
++        final var lock = new CompoundTag();
++        lock.putByte("minecraft:item_lock", (byte) 1);
++        item.setTag(lock);
++        fixture.inventory.getOffhandContainer().setItems(new BedrockItem[]{item});
++        try (var content = mockStatic(PacketFactory.class);
++                 var transport = mockStatic(PacketWrapper.class)) {
++            transport.when(() -> PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, fixture.user)).thenReturn(mock(PacketWrapper.class));
++            assertTrue(fixture.click());
++            assertFalse(fixture.requests.isWaitingForLegacyOffhand());
++            content.verify(() -> PacketFactory.sendJavaContainerSetContent(fixture.user, fixture.inventory.getInventoryContainer()));
++            transport.verifyNoInteractions();
++        }
++        assertSame(item, fixture.inventory.getOffhandContainer().getItem(0));
++        assertTrue(fixture.inventory.getHudContainer().getItem(0).isEmpty());
++        assertFalse(fixture.requests.isWaitingForLegacyOffhand());
++        assertFalse(fixture.requests.hasPending());
++    }
++
++    @Test
++    void allowedTransfersWaitForServerContentsAndKeepLockPoliciesSeparate() {
++        for (final boolean taking : new boolean[]{false, true}) {
++            final var fixture = new Fixture();
++            final var item = fixture.item("minecraft:arrow", 3);
++            final var lock = new CompoundTag();
++            lock.putByte("minecraft:item_lock", (byte) (taking ? 2 : 1));
++            item.setTag(lock);
++            if (taking) {
++                fixture.inventory.getOffhandContainer().setItems(new BedrockItem[]{item});
++            } else {
++                fixture.inventory.getHudContainer().setItem(0, item);
++            }
++            final var packet = mock(PacketWrapper.class);
++            try (var content = mockStatic(PacketFactory.class);
++                 var transport = mockStatic(PacketWrapper.class)) {
++                transport.when(() -> PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, fixture.user)).thenReturn(packet);
++                assertTrue(fixture.click());
++                content.verifyNoInteractions();
++            }
++            final var sent = ArgumentCaptor.forClass(BedrockInventoryTransaction.class);
++            verify(packet).write(isNull(), sent.capture());
++            assertEquals(2, sent.getValue().actions().size());
++            assertEquals(item.amount(), sent.getValue().actions().get(0).fromItem().amount());
++            assertTrue(fixture.requests.isWaitingForLegacyOffhand());
++            assertFalse(fixture.requests.hasPending());
++            assertSame(item, taking ? fixture.inventory.getOffhandContainer().getItem(0) : fixture.inventory.getHudContainer().getItem(0));
++            assertTrue((taking ? fixture.inventory.getHudContainer().getItem(0) : fixture.inventory.getOffhandContainer().getItem(0)).isEmpty());
++        }
++    }
++
++    private static final class Fixture {
++        private final UserConnection user = mock(UserConnection.class);
++        private final InventoryTracker inventory = new InventoryTracker(this.user);
++        private final InventoryRequestTracker requests = new InventoryRequestTracker(this.user);
++        private final ItemRegistry registry = new ItemRegistry(new ItemEntry[0]);
++
++        private Fixture() {
++            final var items = mock(ItemRewriter.class);
++            when(items.getItemRegistry()).thenReturn(this.registry);
++            when(items.maxStackSize(any())).thenAnswer(call -> this.registry.stackingProperties(call.getArgument(0)).maximum());
++            when(this.user.get(InventoryTracker.class)).thenReturn(this.inventory);
++            when(this.user.get(InventoryRequestTracker.class)).thenReturn(this.requests);
++            when(this.user.get(ItemRewriter.class)).thenReturn(items);
++            when(this.user.get(GameSessionStorage.class)).thenReturn(mock(GameSessionStorage.class));
++            when(this.user.get(InventoryTransactionRewriter.class)).thenReturn(mock(InventoryTransactionRewriter.class));
++            this.requests.setPredictingClick(true);
++        }
++
++        private BedrockItem item(final String identifier, final int count) {
++            return new BedrockItem(this.registry.definition(identifier).id(), (short) 0, (byte) count);
++        }
++
++        private boolean click() {
++            return InventoryPackets.handleLegacyOffhandClick(this.user, this.inventory.getInventoryContainer(), (short) 45, (byte) 0, ContainerInput.PICKUP);
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeContainerOffhandGuardTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeContainerOffhandGuardTest.java
 new file mode 100644
 index 000000000..90dd0b300

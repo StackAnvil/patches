@@ -16,8 +16,7 @@ Presented books retain their original catalog and unlock revision.
 Surviving registrations keep their click IDs; replacements receive fresh IDs.
 An old Java click cannot target a different recipe after catalog replacement.
 
-Decode recipe counts through the target's signed-short conversion before storing the positive low byte.
-Counts 128 through 255 remain nonempty.
+Clamp signed-short recipe result counts from one through 64 before constructing the result stack.
 Validate every static result against the current item table before registration.
 Reject air, unknown item IDs and empty results without claiming registration keys.
 
@@ -25,7 +24,7 @@ Reject air, unknown item IDs and empty results without claiming registration key
 
 The target is Bedrock 1.26.51.1, build 51061372, protocol 2193.
 Fresh executable probes cover 49 station/name cases, 72 network-mode cases and 217 dimension cases.
-They also cover 43 output states, all 65,536 wire counts, all 256 stack counts and 142 dynamic UUIDs.
+They also cover 43 output states, all 65,536 inventory-constructor count inputs, all 256 stack counts and 142 dynamic UUIDs.
 
 The probes supply initialized registry state, vector boundaries and comparison seams.
 The dynamic probe supplies UUID constants from an earlier matching live snapshot.
@@ -51,9 +50,9 @@ These tests use Java cooking screens.
 The authored cooking catalog, input controls and client screen still need integration.
 Native images and complete route parity remain unverified.
 
-The shared network codec now owns signed-short count clamping for inventory items and recipe results alike.
-The recipe-only type retains its clientbound write guard and no longer duplicates count conversion.
-The codec patch records the fresh native constructor comparison and regression.
+Inventory network codecs retain their signed-short clamping and byte narrowing.
+CraftingData results use a separate descriptor conversion, with signed counts clamped from one through 64.
+The recipe-only decoder consumes complete headers, including result IDs zero and negative one, and retains its clientbound write guard.
 
 ## Block ingredient identity (October 22, 2026)
 
@@ -68,7 +67,7 @@ They produce canonical metadata 0, 1 and 2 for axes y, x and z.
 The fixture supplies a null-material vector and empty optional component ownership.
 It does not establish other builtin class constructors, runtime-ID assignment or visible parity.
 
-Recipe results now use the same connection constructor as inventory stacks and retain their clientbound write guard.
+Recipe results use the connection constructor after their separate count conversion and retain their clientbound write guard.
 The complete signed-short count sweep uses the registry constructor for all 65,536 inputs.
 Both wire auxiliary values 0 and 8 construct canonical metadata 0 before the production grid matcher checks the default and alternate axis.
 The full build and eleven inventory controls pass; the authored cooking catalog and native controls remain unfinished.
@@ -514,50 +513,432 @@ The packaged core matches both new corpora and three focused integration regress
 Nine deliberate changes fail value or lookup-order comparisons. All retained packaged comparisons also pass.
 
 
-## Constructor-owned ItemRegistry aliases
+## Shared registry lookup dependency
 
-Expose exact alias admission and ordered member names through the connection registry.
-Load the native ItemRegistry's 89 redirects and 60 complex aliases with 561 members.
-Apply one redirect before complex lookup. Preserve exact names and member order.
-Require the pinned asset and protocol; unregistered names retain the native empty-vector result.
+Use the [registry foundation](../upstreamable/0095-integrate-authored-native-ui-presentation.pr.md#registry-name-lookup-ownership) for saved-name parsing, exact alias getters and metadata callbacks.
+That patch owns the required protocol asset and its parser and alias tests.
+Deferred descriptors retain wildcard alias selection on the earlier raw-name path, before ordinary lookup.
 
-Complete original ItemRegistry initialization follows native block/state construction under the recorded default version and Experiments.
-The empty parsed network vector establishes pre-packet constructor data, not actual server admission.
-All native input, registry, TLS, static and CRT cleanup completes with no remaining allocations or held locks.
-Item alias registrations differ from block aliases and restriction groups, including wood order, item-only groups and slab redirects.
-The [ItemRegistry alias reference](../../../docs/native-player-inventory.md#constructor-owned-itemregistry-aliases) records the evidence and limits.
+The [name-resolution reference](../../../docs/native-player-inventory.md#native-name-parsing-and-metadata-rewrites) records parser and callback evidence.
+The [constructor reference](../../../docs/native-player-inventory.md#constructor-staging-and-secondary-names) separates staging keys, secondary maps and later block registration.
+A DataDriven class alone does not establish priority-map lookup.
+Complete live definitions, block fallback, recipe admission and installed availability remain unfinished.
 
-Ordered member names do not replace auxiliary callbacks or live definition ownership.
-Ordinary named lookup rewriting, member/representative lookup, block fallback, complete Java registry construction and installed availability remain unfinished.
+Recipe consumers now use the shared registry's constructed definitions and independent numeric owners.
+Numeric collisions retain both names. Generic Legacy definitions do not inherit builtin traits from a matching name.
+Cooking and recipe tests use explicit numeric ownership instead of treating low builtin IDs as absent.
+The complete recipe Registry interface and installed native availability remain unfinished.
 
-The packaged connection registry matches all 2,127 original getter controls, including 86 registered results and 767 member-name comparisons.
-The controls query every constructed factory key and both names in each native redirect.
-Three deliberate changes fail value comparisons: ignored redirects, reversed member order and substituted block tables.
-The retained descriptor, counter, source matcher, search, unlock and progressive-model comparisons also pass.
-All four builds pass with 2,860 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
-All 1,495 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
+## Retained definition consumers
+
+Cooking input expansion reads the selected definition's block association before default stack construction.
+It no longer replaces that named selection with the numeric owner for this check.
+Output admission also retains the constructed stack's definition.
+The shared constructor preserves canonical definition identity, and full stack queries retain their separate name-and-ID comparison.
+
+Primitive fixtures declare their warm block caches, ordinary definitions and empty alias tables explicitly.
+Their native counter and output-index expectations remain unchanged.
+The separate complete registry control compares the packaged constructor and ItemRewriter against original native functions.
+Installed recipe availability and NBT outer-loader admission remain unfinished.
 
 
-## Native legacy names and metadata callbacks
+## Definition-based default construction
 
-Parse names with native ASCII case folding, colon/C-string suffix rules, tile-prefix removal and auxiliary acceptance.
-Expose registry fallback rewriting separately from component-definition precedence and live Item ownership.
-After one redirect and target parsing, execute the target's metadata callback and clear its auxiliary.
-The pinned data requires all 60 callbacks: 38 member-indexed definitions and 22 explicit mappings with 439 values.
-Preserve signed-short arguments, byte guards, signed remainder behavior and default targets.
-Reject metadata that indexes outside native callback storage; complete caller admission still needs implementation.
+Cooking input expansion now uses the selected descriptor Item for default construction.
+Output-index registration uses the retained output Item for its count-one construction.
+Both resolve the original definition's associated Block before numeric initialization can select a colliding owner.
+The original cooking extractor `146989830` and registration call at `14324d432` use definition-pointer constructor `14247ead0`.
 
-Complete original parser and registry rewriter provide 2,501 parser controls and 22,917 rewrites after native block/state and ItemRegistry initialization.
-The harness supplies read-only UTF-8 caller backing, allocation and ordinary Windows CRT imports.
-Native game parsing, conversion dispatch/range checks, redirects, callbacks and owned string retirement execute.
-All original input, registry, TLS, static and CRT cleanup completes with no native allocations or held locks.
-Forty-six out-of-storage input combinations remain outside the normal-result corpus.
-See the [name-resolution reference](../../../docs/native-player-inventory.md#native-name-parsing-and-metadata-rewrites) for exact scope and limits.
+The [shared constructor control](0003-translate-server-authoritative-bedrock-requests.pr.md#named-and-definition-stack-construction) matches 2,304 named and 1,536 definition constructions.
+All 4,440 earlier named outputs also match the packaged API.
+The targeted consumer run passes 39 tests and Checkstyle.
+Both packaged consumer regressions reject numeric-construction mutations by value.
+The output mutation fixture explicitly supplies both competing Block conversions; these remain declared unit interfaces.
+The existing primitive extractor and output-index controls retain their declared empty aliases and warm Block caches.
 
-Live component/member/representative definitions, underlying definition lookup, Item construction, full registry replacement, recipe admission and installed availability remain unfinished.
+The complete four-project build passes 2,866 tests with 162 optional skips and no failures or errors.
+All retained packaged comparisons pass.
+Installed recipe availability, NBT outer-loader admission and complete native screen/action behavior remain unfinished.
 
-The packaged core matches all 2,501 parser controls, 22,917 rewrites and 46 explicit unsupported-index guards.
-Nine deliberate parser or callback changes fail native value comparisons.
-The 2,127 alias getter controls and three retained alias regressions also pass, along with the earlier descriptor, counter, search, unlock and progressive comparisons.
-All four builds pass with 2,862 tests, 163 optional skips and no failures or errors. Checkstyle passes after full replay.
-All 1,498 core classes and the alias asset match both embedded copies; all 1,191 client classes match the tested add-on.
+## Player and workbench default layouts
+
+Project saved layout zero and positive out-of-range values through the native constructor default.
+Both native defaults show the recipe pane, independently of Java's previous visibility.
+Keep the raw saved values when filtering changes, and project the other screen's layout when menu ownership changes.
+Negative layouts retain the previous Java visibility as an explicit compatibility fallback.
+The independent native profile that forces a layout remains outside this projection.
+
+The recorded 1.26.51.1 constructor slice and registered layout getters provide 1,480 ordinary nonnegative cases.
+The optional `STACKANVIL_NATIVE_PLAYER_LAYOUTS` comparison checks both prior Java visibility states, for 2,960 comparisons.
+A focused packet regression also checks raw-value retention, filter changes and the two independent layouts.
+Both new tests fail against the preceding packaged core and pass after the correction, with implementation origins verified.
+The [layout reference](../../../docs/native-player-inventory.md#java-projection-of-default-layouts) records scope and limits.
+This does not implement the authored player screen or resolve the original background report.
+
+The complete four-project build passes 2,927 tests with 161 optional skips and no failures or errors.
+Checkstyle and repository offline validation pass.
+All 1,522 core classes match both embedded copies, all 1,191 client classes match the tested add-on, and all 198 assets remain unchanged.
+
+## Player output availability count state
+
+Evaluate admitted output candidates in native priority order through the full shared ingredient counter.
+Respect concrete crafting-table requirements and preserve partial input across alternatives.
+Complete input returns state zero with filtering, or state one without filtering.
+Partial input or an equal retained selected stack returns state two. Otherwise, return state three.
+Skip selected-stack comparison when partial input already determines the result.
+Keep placement capacity and stack-request authority separate.
+
+`ItemRewriter.playerRecipeAvailability` binds the decision to the actual current-owner source snapshot and native stack query.
+The caller still owns candidate admission, descriptor resolution, concrete grid requirements and retained selection.
+Search/unlock policy and installed player model publication remain unfinished.
+This change does not install the authored E-key screen or resolve the reported background problem.
+
+The original 1.26.51.1 evaluator at `0x143439420` agrees in 1,344 coupled source-bridge controls.
+The control executes output lookup `0x143249b10`, priority sorting `0x143265d00` and original grid requirements.
+Cursor enum/model-map lookup, concrete matching, counter `0x14297b140` and selected query `0x14248dac0` also execute.
+The comparison retains exact counter visitation, including 33-, 41- and 65-candidate sorts.
+It covers all four result states, 2,916 counter calls and 18,918 matcher calls.
+
+Context tags, ordinary definitions, model/vector backing, one output-vector getter and registry/CRT services remain supplied interfaces.
+Other tested virtual methods use copied original shaped/shapeless tables.
+Evaluation temporaries balance against retained backing. Complete registry/actor/controller lifetime remains outside this control.
+Wire admission, tag/Molang payloads, full installed availability, screen actions and pixels remain unfinished.
+See the [player output availability reference](../../../docs/native-player-inventory.md#player-output-availability-count-state).
+
+The ten targeted counter, source-bridge and availability tests pass with Checkstyle.
+The complete four-project build passes 2,936 tests with 161 optional skips and no failures or errors.
+Repository offline validation passes. All 106 patches replay.
+The packaged core passes three availability tests, six ability tests, 34 frame cases, five layout tests and 83 permission/action checks.
+Seven deliberate priority, table, partial, selected-stack, filter and source-bridge regressions fail value assertions, with implementation origins verified.
+All 1,523 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+All 198 assets and 1,509 existing core classes remain byte-identical to the ability milestone.
+The change adds one candidate record. Eight changed nested classes retain identical declarations and instruction disassembly.
+No new live inventory-screen capture ran for this change.
+
+## Receiver-owned recipe tags
+
+That milestone routes the constructed definition's tags into tag predicates, the then-restricted Molang parser, cooking expansion and recipe displays.
+Filter definitions before default-item construction, preserving its independent numeric owner and Block conversion.
+Focused collisions check expansion cardinality and displayed item identity.
+At that milestone, native Molang compilation and wire descriptor admission remained separate.
+The recipe expression follow-up below replaces the restricted parser.
+See [the tag ownership reference](../../../docs/native-player-inventory.md#definition-owned-item-tags).
+
+Both new consumer regressions pass against the packaged core.
+Collapsing cooking enumeration to numeric owners fails the expansion cardinality assertion.
+All 138 focused packaged checks and the four-project build pass.
+
+## Native packet result conversion (October 25, 2026)
+
+CraftingData result descriptors always contain the complete header, including empty result IDs.
+Returning early for IDs zero and negative one left later packet fields misaligned.
+The dedicated result decoder consumes count, auxiliary value, Block runtime ID and user-data bytes before handling an empty result.
+
+The native result adapter clamps signed-short counts from one through 64.
+Zero and negative values become one. Values above 64 become 64.
+Inventory stack count narrowing remains separate.
+The earlier 65,536-count reference exercised the inventory constructor, without the recipe result adapter.
+It does not establish recipe packet count conversion.
+
+Eleven fresh complete native packet controls produce ordinary apple outputs.
+They execute schema and binary decoding, ingredient and result adapters, concrete recipe construction, result materialization, registration and output lookup.
+All eleven enter the output index and match the apple source.
+Descriptor and final ItemStack counts agree for every control.
+Original packet, recipe registry, Item, Block, TLS, static and CRT cleanup leaves no allocations or held locks.
+Three separate native packet controls consume complete headers for result IDs zero, negative one and 999.
+
+Valid byte I/O and standard CRT, heap and synchronization services remain hosted.
+Constructor-input and callback backing are declared. Ordinary results use zero Block runtime ID and a null world context.
+These controls do not establish associated Block result conversion, nonzero palettes, the complete packet handler, installed player publication or physical network delivery.
+
+All 106 ViaBedrock patches replay after this correction.
+The four-project build passes 2,947 tests with 160 optional skips and no failures or errors.
+ViaBedrock passes 1,816 tests with 83 optional skips.
+The final targeted run passes all 14 checks and both Checkstyle tasks.
+It compares cumulative Java registration IDs against every native output-index result.
+Repository offline validation and patch metadata checks pass.
+
+The packaged core passes 14 focused tests and all three complete-header packet comparisons.
+Four tests fail value assertions against the preceding packaged core.
+That core also fails to decode both empty-result packet controls. Implementation origins are verified.
+All 1,523 core classes match both embedded copies.
+Only the result decoder and three build-identity classes change; 1,519 classes and all 198 assets remain byte-identical.
+No new installed player capture ran for this correction.
+
+## Block result association and field bounds (October 25, 2026)
+
+Result Item IDs must fit a signed short. Auxiliary values must be from zero through 32767.
+The decoder checks those fields before narrowing or reading later fields.
+Nineteen complete native packet controls establish eight accepted values and eleven rejections, including exact failure positions.
+Original error-tree, packet and static cleanup completes without remaining allocations or held locks.
+These field controls decode descriptors without materializing results.
+
+Recipe result construction now reads the selected Item definition's own Block association before resolving metadata.
+Associated Items discard transmitted auxiliary data; ordinary Items retain it.
+A dedicated connection context supplies this constructor to the recipe decoder.
+The shared inventory constructor keeps its existing behavior.
+
+Twenty complete native packet-to-registration controls cover apple, stripped oak wood, acacia log and item-prefixed acacia planks.
+Each uses auxiliary 0, 1, 2, 8 or 32767.
+All twenty register, match the apple ingredient and select the recorded output state.
+Acacia log auxiliary one previously produced the wrong constructed Item.
+The preceding implementation also retained wildcard auxiliary data on three associated Block results.
+Original packet, recipe, Item, Block, TLS, static and CRT retirement leaves no allocations or held locks.
+
+Java comparisons construct the registry from the same typed NBT declarations.
+Original native Block-selector observations supply the declared Block interface backing.
+The packets transmit runtime ID zero. Their Item constructors select actual default Block states through the fallback path.
+Nonzero transmitted runtime IDs, complete world-palette ownership, the full packet handler and installed player publication remain unverified here.
+
+All 106 core patches replay. The four-project build passes 2,952 tests, with 160 optional skips and no failures or errors.
+ViaBedrock passes 1,821 tests with 83 optional skips. All 19 focused packaged tests pass.
+The packaged core matches all 39 new native packet comparisons.
+The preceding core differs on eleven invalid-field cases and four Block-result cases; all fifteen differences fail value assertions.
+Constructor signatures select each packaged version's actual construction API. Implementation origins are verified.
+The range comparison supplies an empty construction boundary and compares parsing only.
+The Block comparison uses the production registry constructor with declared native selector data.
+
+All 1,524 core classes match both embedded copies.
+Compared with the preceding core, 1,515 classes and all 198 assets remain byte-identical.
+The new recipe context adds one interface.
+Three existing implementation classes, two compiler-owned nested classes and three build-identity classes change.
+Both nested classes retain identical declarations and instructions.
+Packaged implementation classes match compilation. No new installed player capture ran.
+
+## Owned runtime palette reference (October 25, 2026)
+
+The optional `STACKANVIL_NATIVE_RECIPE_PALETTE` reference constructs and populates the original dense BlockPalette.
+All 20,674 native slots carry assigned runtime IDs.
+The packaged Java palette and descriptor policies match every recorded canonical auxiliary value.
+The fixture includes a SHA-256-bound sidecar with typed state declarations.
+
+All 168 packet results match through the real Java recipe constructor and retained output lookup.
+The matrix covers four Items, three auxiliary values, ten valid nonzero slots, zero and three invalid runtime IDs.
+It includes axis selection, mismatched owners and fallback behavior.
+Registration remains separate from output lookup: twelve nondefault-axis results do not find their recipes through the normalized index.
+The original network-ID index retains all 168 recipes. The comparison also checks its exact cumulative ID sets.
+The comparison grants retained recipe IDs explicitly and compares lookup presence, without asserting complete candidate membership or order.
+
+Earlier zero-runtime controls retained unassigned native runtime fields.
+Their runtime-ID equality alone could not distinguish every axis state.
+This reference compares actual assigned IDs and exact registered state identity.
+A deliberate runtime-input regression fails twelve value assertions.
+The checked-in test also passes against the packaged core, with implementation origins verified.
+The focused stack run passes all 24 tests with no skips and both Checkstyle tasks.
+
+Original packet, recipe, palette, Item, Block, TLS, static and CRT retirement completes without retained allocations or locks.
+The harness hosts normal CRT exception counters and bounded allocation capacity. Guest C++ throw and unwind remain fatal.
+The original palette methods store a borrowed Level token but do not read it.
+Full Level construction, negotiated or hashed palette delivery, the complete handler and installed player behavior remain unverified.
+Production implementation and resource files remain unchanged. No new live capture ran.
+See the [owned palette reference](../../../docs/bedrock-coverage.md#owned-runtime-palettes-for-recipe-results-october-25-2026).
+
+## Retained output index and candidate order (October 25, 2026)
+
+`CraftingDataTracker.outputCandidates` returns retained recipes before caller unlock or availability filters.
+It preserves the original per-output map traversal, station-context order and raw recipe-ID deduplication.
+Replacement keeps the existing map node position, including replacement from a different station.
+The output key retains the selected Item definition and auxiliary value.
+The complete original query `143249870` compares actual Item pointers, rather than their numeric IDs.
+The collision regression supplies typed retained definitions. A native collision caller remains outside that control.
+
+The map foundation belongs to the earlier registry patch.
+Item definition names keep FNV-1. Recipe string IDs use FNV-1a over UTF-8 bytes.
+The earlier 168 palette queries now compare exact candidate IDs and order through the real Java policies.
+
+The new `STACKANVIL_NATIVE_RECIPE_OUTPUT_INDEX` reference executes 528 complete native packets and 3,168 original output queries.
+All candidate IDs and orders match Java.
+It records capacities 8, 64, 512 and 1024, cross-station replacement, three global registration rejections and clearing.
+Inputs include case differences, Unicode, an embedded NUL, long IDs and rejected-ID reuse.
+Every packet also compares the actual native network-ID set.
+The Java reference uses real Item registry, result-construction and output-index policies over the same typed declarations.
+
+Original packet, recipe, Item, Block, TLS, static and CRT retirement completes without retained allocations or locks.
+Caller context strings and constructor inputs remain declared backing. Standard runtime services and valid byte I/O remain hosted.
+These ordinary results use zero runtime ID and a null world context.
+
+All 106 core patches replay. The four-project build passes 2,956 tests with 160 optional skips and no failures or errors.
+ViaBedrock passes 1,825 tests with 83 optional skips. Both Checkstyle tasks and repository offline validation pass.
+All five focused packaged tests pass, with implementation origins verified.
+The preceding core fails the typed definition-collision assertion.
+A deliberate FNV-1 recipe hash fails both native candidate-order references by value.
+The existing unlock reference shares fixed definition backing across independent trackers.
+It retains every native input and the 1 GiB test heap.
+
+All 1,524 core classes and 198 core assets match both embedded copies.
+Compiled client classes also match the add-on, including its Minecraft bridge.
+The new shared map replaces the private definition map.
+The comparison retains 1,505 byte-identical core classes and all 198 assets from the preceding core.
+Five existing implementations, ten nested classes and three build-identity classes change.
+Nine nested declarations and instruction sets remain identical.
+The output catalog changes only its generic map value type, with identical erased instructions.
+
+Full descriptor admission, Molang context, retained player evaluation, controller ownership and installed publication remain unfinished.
+No new live capture ran.
+See the [candidate reference](../../../docs/bedrock-coverage.md#retained-recipe-output-candidates-october-25-2026).
+
+## Packet-created counter comparison (October 25, 2026)
+
+`STACKANVIL_NATIVE_CONCRETE_RECIPE_COUNTER` compares 160 actual native packet-created shaped recipes through the production resolved-descriptor counter.
+It replaces supplied matcher answers with original descriptor resolution, concrete matching and counting.
+All 264 rounds and 1,268 ingredient rows match, including source references.
+Quantities zero, one, two and 64 retain their wire values but produce identical availability results in each controlled group.
+Zero-quantity names remain nonempty. Placement quantities remain separate.
+
+All 16 focused tests pass without skips, plus both Checkstyle tasks.
+The comparison passes against the existing packaged core with ten implementation origins verified.
+All 106 patches replay; repository offline validation passes. Production implementations, resources and artifacts remain unchanged.
+Original packet, recipe, Item, Block, TLS, static and CRT cleanup leaves no allocations or locks.
+
+Inputs remain typed ordinary apple sources and read-only collection backing, with zero runtime IDs and null world context.
+No matching, count, emptiness or grid answer is supplied.
+Full descriptor families, retained player evaluation and publication remain unfinished.
+See the [counter reference](../../../docs/bedrock-coverage.md#packet-created-recipe-counting-october-25-2026).
+
+
+## Native recipe expression context
+
+Replace the literal-only Molang tag parser with the shared parser and float evaluator.
+Keep recipe admission and bindings separate from Actor and rendering contexts.
+The actual native loader selects usage group `tags` at version 13.
+Original registration assigns exactly two of 319 bindings to that group: `any_tag` and `all_tags`.
+Reject other queries during compilation, including queries in inactive branches.
+
+Construct a fresh temporary frame with no writable Actor or context-variable provider.
+Preserve missing-temporary faults, zero `this`, implicit bare tag calls and rejection of explicit empty calls.
+Match case-sensitive FNV-1 HashedString values with native short-circuit argument evaluation.
+Preserve the native result union's float view for a final string value.
+Validate native math arities and read-only assignment targets before evaluation.
+Use the shared parser's occurrence-specific grouping metadata to validate assignment arguments without changing rendering consumers.
+
+The private original-executable controls cover packet-created predicates, compiler admission and genuine ItemInstance frame evaluation.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-recipe-molang-context-october-25-2026) records final counts, artifact checks, supplied boundaries and remaining limits.
+No native predicate or compiler answer is supplied by these controls.
+The shared runtime follow-up closes the twelve measured assignment-result differences from the additional genuine-frame controls.
+All 67 recipe admission results and 232 predicates now match the packaged core.
+Broader caller lifetime, value/cast behavior and complete expression parity remain unfinished.
+The retained Molang counter increment follows below.
+The version-filtered Tag index and installed player publication remain unfinished.
+No new live capture closes the original inventory, movement, eating or locator reports.
+
+
+## Retained Molang counters
+
+Retain compiled recipe Molang payloads independently of their empty representatives.
+Match against tags from the converted source definition, while the counter keeps its existing numeric grouping key.
+The native fallback constructor resolves that definition through numeric registry lookup.
+The original source receiver can differ after an ID collision.
+
+The retained API matches 320 complete native packet cases: 2,560 predicates, 636 counter rounds and 1,272 ingredient rows.
+Compare exact amounts, source collections and slots across ingredient quantities zero, one, two and 64.
+The Java control explicitly constructs retained descriptors from decoded packet fields.
+The wire Molang predicate consumer now uses the converted receiver.
+Production registration and installed player publication still use their existing recipe models.
+The [coverage ledger](../../../docs/bedrock-coverage.md#retained-molang-recipe-counting-october-25-2026) records the boundary and remaining Tag work.
+
+A further six-case control supplies a borrowed source header after original Item and Block registry initialization.
+It declares the source definition cell, null Block and zero auxiliary value.
+Original conversion and matching select the current numeric owner independently of that source receiver.
+Cleanup completes without outstanding allocations or held locks.
+The control does not establish retained-header construction or full recipe/player lifetime.
+
+All four projects build with 2,980 passing tests, 152 optional skips and no failures or errors.
+Both Checkstyle tasks, repository offline validation and all 106 patch replays pass.
+Four focused retained-Molang tests pass against the packaged core, with nine implementation origins verified.
+The new core matches all six source-header predicates.
+The preceding core differs on two tag-query values without linkage failures.
+All 4,864 existing packet predicate results still match the packaged core.
+
+All 1,529 core classes and 198 core assets match both embedded copies.
+All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,509 classes and all 198 assets remain byte-identical.
+Seven further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
+The retained counter adapter intentionally changes its lambda target from the numeric key to the complete source descriptor.
+
+
+## Retained Tag admission
+
+Use the versioned registry index to admit Tag payloads.
+Keep index-based emptiness separate from matching against the converted receiver's owned tags.
+Preserve air-only index behavior and retain lazy Name, Empty, Tag and Molang values through one decoded-ingredient factory.
+The existing wire Tag consumer now uses that index guard and converted receiver.
+
+The mixed counter reference now compares all 608 packet cases: 4,864 predicates, 1,056 rounds and 2,112 ingredient rows.
+The earlier 89,252-call Tag reference still compares the concrete payload matcher at its actual supplied-definition boundary.
+Eight registry controls also compare exact versioned index membership.
+See the [coverage ledger](../../../docs/bedrock-coverage.md#versioned-tag-admission-october-25-2026) for the corrected native scope teardown and context limits.
+Installed retained recipe publication, other recipe families and all-empty counting remain unfinished.
+
+All four projects build with 2,986 passing tests, 152 optional skips and no failures or errors.
+Nineteen packaged checks pass with twelve implementation origins verified.
+The eight packaged wire-admission projections match the observed native index and traced nonempty-index loader guard.
+The preceding core differs on five projected values without linkage failures.
+These projections are not additional original-executable payload runs.
+All 4,864 existing packet predicates still match the packaged wire path.
+
+All 1,530 core classes and 198 core assets match both embedded copies.
+All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,500 classes and 196 assets remain byte-identical.
+Fourteen further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
+Only the two registry/factory JSON assets change, and their earlier data remains equal after removal of the new minimum-version fields.
+
+
+## Registered crafting ingredient ownership
+
+Retain decoded ingredient payloads when accepting shaped and shapeless network recipes.
+Preserve those owners across append and unlock updates. Create new owners after a clear update.
+Use the retained payloads and native source guards in actual crafting-grid matching.
+Keep other recipe families and the existing grid assignment algorithm separate.
+
+The complete 608-packet counter comparison now reaches production registration before evaluating ingredients.
+Its existing native reference still covers 4,864 predicates, 1,056 rounds and 2,112 ingredient rows.
+Three regression methods cover independent lazy positions, duplicate and clear updates, registry replacement and native source eligibility.
+
+Ten bounded original player-evaluator controls inspect the all-empty case.
+Eight controls repeat the `INT_MAX` minimum with growing round counts. The observer interrupts them after four scans.
+Two workbench-ineligible controls return state three without entering the counter.
+Interrupted controls claim neither an availability return nor complete cleanup.
+Java's explicit all-empty counter rejection remains a documented safety divergence.
+Installed player recipe publication and the original reported live bugs remain unfinished.
+
+All four projects build with 2,989 passing tests, 152 optional skips and no failures or errors.
+ViaBedrock passes 1,854 tests with 79 optional skips. Both Checkstyle tasks and repository offline validation pass.
+All 106 ViaBedrock patches replay.
+Twenty-two packaged checks pass with thirteen implementation origins verified.
+The separate wire predicate comparison still matches all 4,864 results.
+
+All 1,531 core classes and 198 assets match both embedded copies. All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,508 classes and all 198 assets remain byte-identical.
+Sixteen further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
+The synthetic recipe-type switch changes only its mapping order for the three crafting types.
+The only new class is the matcher interface that preserves ingredient-position identity through grid assignment.
+
+## Native block recipe contexts
+
+Use the current block at the owning screen's position to select workbench recipe contexts.
+Read shared component snapshots from the earlier block-definition patch. Keep recipe-specific typed fields and matching in this patch.
+Preserve an empty component separately from an absent component, along with tag order, duplicates and empty strings.
+The same owner-context API supplies retained output-candidate lookup.
+Grid size and table name remain data fields. They do not establish new native layout or grid behavior.
+
+Eighteen original producer controls cover state-before-legacy selection, fallback, copied output strings and position delivery.
+Twelve original typed NBT controls establish field defaults and list-element behavior.
+A complete original registry control checks 1,379 constructed BlockLegacy definitions without finding this legacy component.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-recipe-block-contexts-october-25-2026) records supplied interfaces and cleanup boundaries.
+
+Java production tests exercise changing workbench states, custom station matching, explicit-empty rejection, fallback and ordered output candidates.
+Native model-position initialization, arbitrary component admission, complete native grid behavior and installed player publication remain unverified.
+Unpositioned Java player inventory uses the fallback. The four original live reports remain unresolved.
+
+All 106 ViaBedrock patches replay, and all four projects build.
+The full run passes 2,993 tests with 152 optional skips and no failures or errors.
+ViaBedrock passes 1,858 tests with 79 optional skips. Both Checkstyle tasks and repository offline validation pass.
+Twenty-six packaged checks pass with fifteen implementation origins verified, including all twelve typed component controls.
+The separate wire predicate path still matches all 4,864 results.
+Four workbench projections match the measured context rules. The preceding packaged core differs on three values without linkage failures.
+These projections supply world-state and component backing. They do not establish complete native grid or installed player/controller behavior.
+
+All 1,532 core classes and 198 assets match both embedded copies. All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,513 classes and all 198 assets remain byte-identical.
+Eleven further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
+The only added class is the typed crafting context. The native UI patch changes only exported hunk context.
