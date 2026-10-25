@@ -1,198 +1,29 @@
-From b00815c0844bbbb95a65064941de10c0e041878c Mon Sep 17 00:00:00 2001
+From 9ce4b774f6d06c458e4c3c537518dbd45b7bea24 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 15:54:14 +0200
-Subject: [PATCH] fix(models): preserve invisible geometry and native defaults
+Subject: [PATCH] fix(models): preserve optional geometry declarations
 
-Bedrock geometry can contain cubes with an empty UV face map. Omit these
-cubes from Java model elements instead of inventing an unresolved texture
-face or exporting an invalid element with no faces. Java 26.3 requires at
-least one face per element; a wholly invisible model can have no elements.
+Retain modern and legacy geometry declarations that omit texture dimensions
+or the bones array. Use the native 64 by 64 texture defaults independently
+for each absent or null dimension, and keep a missing bones array as an
+empty model without mutating the source JSON.
 
-Keep source bones and cubes available to the native renderer. Reindex
-exported group children after filtering, and normalize copied UV arrays so
-repeated export does not mutate cached model geometry.
+Upstream PR #2 now owns invisible-cube export, missing UV defaults,
+locator-only fitting and source-preserving UV normalization. Keep those
+changes and their tests in the upstream base; this remaining patch changes
+only the optional-field parser and its targeted regression.
+https://github.com/oryxel1/CubeConverter/pull/2
 
-Recorded CubeCraft turret, watermelon and gravestone models contain these
-cubes. Synthetic tests cover mixed and wholly invisible geometry, valid
-visible texture references, preserved source cubes and repeatable export.
-
-An official Bedrock 1.26.51.1 capture of The Hive (protocol 2193) also
-contains locator-only geometry with no cubes. Such a model accumulates no
-bounds: fitting the initial extrema produces zero, and the reciprocal
-becomes Infinity in conversion metadata. Use unit scale when no cube
-contributes bounds while retaining cloned bones and source locator JSON.
-
-Synthetic tests cover finite metadata serialization for empty geometry,
-locator-only bone hierarchy and source preservation, every rotation mode,
-and unchanged fitting for populated oversized geometry. All six focused
-CubeConverter tests pass on Java 17.
-
-The licensed Bedrock 1.26.51.1 models for leash knots, experience orbs,
-fishing hooks, arrows, fireworks, tripods and fireballs omit cube UV data.
-Treat an absent face map as empty instead of rejecting the whole model.
-Keep cube bounds and valid neighboring cubes without inventing texture
-faces. The mixed-cube parser and export regression covers this case.
-
-Native 1.26.51.1 projectile planes also omit uv_size. Default its extent
-to the declared cube face dimensions, preserving explicit signed sizes.
-The versioned package supplies the cases; the official geometry schema
-documents this optional default:
-https://learn.microsoft.com/en-us/minecraft/creator/reference/content/schemasreference/schemas/minecraftschema_geometry_1.21.0?view=minecraft-bedrock-experimental
-Numeric tests cover all six asymmetric faces and an explicit negative size.
-
-Retain geometry declarations that omit texture dimensions or the bones
-array. The native geometry compiler supplies 64x64 defaults, and missing
-bones describe an empty model. Dropping those declarations made invisible
-Galaxite markers appear as unresolved geometry in the downstream resolver.
-Legacy geometry keys also need those defaults; identify them by geometry.
-prefix rather than requiring a texturewidth field.
-
-Target Bedrock 1.26.51.1/protocol 2193 caller 141c11ba0 supplies width and
-height 64 to compiler 141c13a30. A native instruction probe of its field
-reader 141c13bfd..141c13c6b preserves caller defaults for absent/null fields
-and overrides each dimension independently. The probe uses original JSON
-lookup/integer helpers with exact host CRT and allocation boundaries; it
-does not establish full model cache, schema dispatch or rendering parity.
-Mojang's geometry 1.8.0 and 1.12.0 schemas mark dimensions and bones optional.
-
-Preserve explicit dimensions and source JSON. Tests export modern and
-legacy empty models through all Java rotation modes with finite unit scale,
-including independent dimension overrides and a null dimension default.
+The matching Bedrock 1.26.51.1/protocol 2193 compiler caller supplies width
+and height 64. Twelve original bounded texture-dimension controls cover
+absent/null fields and independent overrides with two caller defaults.
+That reference does not establish schema dispatch, inherited/cached model
+dimensions, complete bone loading or native rendering parity.
 ---
- build.gradle                                  |   7 +
- .../converter/converter/FormatConverter.java  |   6 +-
- .../model/impl/java/JavaItemModel.java        |  23 +--
- .../geometry/BedrockGeometryParser.java       |  23 ++-
- .../cube/converter/util/element/UVMap.java    |  33 ++--
- .../converter/FormatConverterTest.java        | 143 ++++++++++++++++++
- .../model/impl/java/JavaItemModelTest.java    | 112 ++++++++++++++
- 7 files changed, 305 insertions(+), 42 deletions(-)
- create mode 100644 src/test/java/org/cube/converter/converter/FormatConverterTest.java
- create mode 100644 src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java
+ .../geometry/BedrockGeometryParser.java       | 23 +++++------
+ .../converter/FormatConverterTest.java        | 40 +++++++++++++++++++
+ 2 files changed, 50 insertions(+), 13 deletions(-)
 
-diff --git a/build.gradle b/build.gradle
-index ab26d86..0bc3ee5 100644
---- a/build.gradle
-+++ b/build.gradle
-@@ -19,6 +19,13 @@ dependencies {
-     implementation 'org.projectlombok:lombok:1.18.36'
-     implementation "org.joml:joml:1.10.8"
-     annotationProcessor 'org.projectlombok:lombok:1.18.36'
-+
-+    testImplementation "org.junit.jupiter:junit-jupiter:6.1.3"
-+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:6.1.3"
-+}
-+
-+test {
-+    useJUnitPlatform()
- }
- 
- group = 'org.oryxel.cube'
-diff --git a/src/main/java/org/cube/converter/converter/FormatConverter.java b/src/main/java/org/cube/converter/converter/FormatConverter.java
-index 52376c7..4e008b1 100644
---- a/src/main/java/org/cube/converter/converter/FormatConverter.java
-+++ b/src/main/java/org/cube/converter/converter/FormatConverter.java
-@@ -74,6 +74,7 @@ public class FormatConverter {
- 
-     public static JavaItemModel geometryToItemModel(final Map<Direction, String> textureMap, final BedrockGeometryModel geometry, final RotationType type) {
-         final Position3V min = new Position3V(Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE), max = new Position3V(0, 0, 0);
-+        boolean hasBounds = false;
- 
-         final List<Parent> parents = new ArrayList<>();
-         for (final Parent old : geometry.getParents()) {
-@@ -104,12 +105,13 @@ public class FormatConverter {
-                 }
- 
-                 calculateMinMax(cube, min, max);
-+                hasBounds = true;
-             }
- 
-             parents.add(parent);
-         }
- 
--        final float scale = calculateMinSize(min, max);
-+        final float scale = hasBounds ? calculateMinSize(min, max) : 1;
-         final JavaItemModel model = new JavaItemModel(textureMap, geometry.getTextureSize());
-         model.getParents().addAll(parents);
- 
-@@ -178,4 +180,4 @@ public class FormatConverter {
-             rotation.setZ(axis != 2 ? 0 : rotation.getZ());
-         }
-     }
--}
-\ No newline at end of file
-+}
-diff --git a/src/main/java/org/cube/converter/model/impl/java/JavaItemModel.java b/src/main/java/org/cube/converter/model/impl/java/JavaItemModel.java
-index 2c45ce3..8dfb658 100644
---- a/src/main/java/org/cube/converter/model/impl/java/JavaItemModel.java
-+++ b/src/main/java/org/cube/converter/model/impl/java/JavaItemModel.java
-@@ -15,7 +15,6 @@ import org.cube.converter.util.math.MathUtil;
- import org.cube.converter.util.minecraft.Transformation;
- 
- import java.util.HashMap;
--import java.util.List;
- import java.util.Map;
- 
- @Getter
-@@ -70,11 +69,14 @@ public final class JavaItemModel extends GeneralModel {
- 
-             // Children.
-             final JsonArray children = new JsonArray();
--            group.getCubes().forEach((k, v) -> children.add(k));
-             parent.add("children", children);
- 
-             for (Map.Entry<Integer, Cube> entry : group.getCubes().entrySet()) {
-                 final Cube cube = entry.getValue();
-+                final JsonObject faces = compileUV(this.textureSize.getX(), this.textureSize.getY(), cube);
-+                if (faces.isEmpty()) {
-+                    continue;
-+                }
- 
-                 final JsonObject element = new JsonObject();
-                 // TODO: name, well it is that important? I don't care enough.
-@@ -88,7 +90,8 @@ public final class JavaItemModel extends GeneralModel {
-                 } else {
-                     element.add("rotation", compileRotation(cube));
-                 }
--                element.add("faces", compileUV(this.textureSize.getX(), this.textureSize.getY(), cube));
-+                element.add("faces", faces);
-+                children.add(elements.size());
-                 elements.add(element);
-             }
- 
-@@ -127,7 +130,7 @@ public final class JavaItemModel extends GeneralModel {
-     private JsonObject compileUV(final float textureWidth, final float textureHeight, final Cube element) {
-         JsonObject faces = new JsonObject();
- 
--        for (Map.Entry<Direction, Float[]> entry : element.getUvMap().toJavaPerfaceUV(textureWidth, textureHeight).getUvMap().entrySet()) {
-+        for (Map.Entry<Direction, Float[]> entry : element.getUvMap().clone().toJavaPerfaceUV(textureWidth, textureHeight).getUvMap().entrySet()) {
-             if (entry.getValue() == null) {
-                 continue;
-             }
-@@ -149,16 +152,6 @@ public final class JavaItemModel extends GeneralModel {
-             faces.add(entry.getKey().name().toLowerCase(), faceDirection);
-         }
- 
--        if (faces.isEmpty()) {
--            final JsonObject face = new JsonObject();
--            final JsonArray array = new JsonArray();
--            List.of(0, 0, 0, 0).forEach(array::add);
--
--            face.add("uv", array);
--            face.addProperty("texture", "#0");
--            faces.add("down", face);
--        }
--
-         return faces;
-     }
- 
-@@ -166,4 +159,4 @@ public final class JavaItemModel extends GeneralModel {
-         // TODO: implement this.
-         return null;
-     }
--}
-\ No newline at end of file
-+}
 diff --git a/src/main/java/org/cube/converter/parser/bedrock/geometry/BedrockGeometryParser.java b/src/main/java/org/cube/converter/parser/bedrock/geometry/BedrockGeometryParser.java
 index b692f94..46ca26f 100644
 --- a/src/main/java/org/cube/converter/parser/bedrock/geometry/BedrockGeometryParser.java
@@ -248,85 +79,22 @@ index b692f94..46ca26f 100644
 -}
 \ No newline at end of file
 +}
-diff --git a/src/main/java/org/cube/converter/util/element/UVMap.java b/src/main/java/org/cube/converter/util/element/UVMap.java
-index bf3054a..9c1e76a 100644
---- a/src/main/java/org/cube/converter/util/element/UVMap.java
-+++ b/src/main/java/org/cube/converter/util/element/UVMap.java
-@@ -63,32 +63,41 @@ public final class UVMap {
-     public static UVMap fromPerfaceUV(final JsonObject object) {
-         final JsonObject uv = object.getAsJsonObject("uv");
-         final UVMap map = new UVMap(UVType.PERFACE);
--        
--        putIfExist(Direction.NORTH, uv, map.getUvMap());
--        putIfExist(Direction.EAST, uv, map.getUvMap());
--        putIfExist(Direction.SOUTH, uv, map.getUvMap());
--        putIfExist(Direction.WEST, uv, map.getUvMap());
--        putIfExist(Direction.UP, uv, map.getUvMap());
--        putIfExist(Direction.DOWN, uv, map.getUvMap());
-+        if (uv == null) {
-+            return map;
-+        }
-+
-+        final Position3V size = new Position3V(object.getAsJsonArray("size"));
-+        putIfExist(Direction.NORTH, uv, size, map.getUvMap());
-+        putIfExist(Direction.EAST, uv, size, map.getUvMap());
-+        putIfExist(Direction.SOUTH, uv, size, map.getUvMap());
-+        putIfExist(Direction.WEST, uv, size, map.getUvMap());
-+        putIfExist(Direction.UP, uv, size, map.getUvMap());
-+        putIfExist(Direction.DOWN, uv, size, map.getUvMap());
-         return map;
-     }
- 
--    private static void putIfExist(final Direction direction, final JsonObject object, final Map<Direction, Float[]> map) {
-+    private static void putIfExist(final Direction direction, final JsonObject object, final Position3V size, final Map<Direction, Float[]> map) {
-         String name = direction.name().toLowerCase();
-         if (object.has(name)) {
--            map.put(direction, getUVDirection(object.getAsJsonObject(name)));
-+            map.put(direction, getUVDirection(object.getAsJsonObject(name), direction, size));
-         }
-     }
- 
--    private static Float[] getUVDirection(JsonObject object) {
-+    private static Float[] getUVDirection(final JsonObject object, final Direction direction, final Position3V size) {
-         if (object == null) {
--            return new Float[] { 0F, 0F, 0F };
-+            return new Float[] { 0F, 0F, 0F, 0F };
-         }
- 
-         final JsonArray arrayUv = object.getAsJsonArray("uv");
-         final JsonArray arrayUvSize = object.getAsJsonArray("uv_size");
- 
--        return new Float[] {arrayUv.get(0).getAsFloat(), arrayUv.get(1).getAsFloat(), arrayUv.get(0).getAsFloat() + arrayUvSize.get(0).getAsFloat(), arrayUv.get(1).getAsFloat() + arrayUvSize.get(1).getAsFloat()};
-+        final float width = arrayUvSize != null ? arrayUvSize.get(0).getAsFloat()
-+                : direction == Direction.EAST || direction == Direction.WEST ? size.getZ() : size.getX();
-+        final float height = arrayUvSize != null ? arrayUvSize.get(1).getAsFloat()
-+                : direction == Direction.UP || direction == Direction.DOWN ? size.getZ() : size.getY();
-+        final float u = arrayUv.get(0).getAsFloat(), v = arrayUv.get(1).getAsFloat();
-+        return new Float[] {u, v, u + width, v + height};
-     }
- 
-     @Override
 diff --git a/src/test/java/org/cube/converter/converter/FormatConverterTest.java b/src/test/java/org/cube/converter/converter/FormatConverterTest.java
-new file mode 100644
-index 0000000..a890ea9
---- /dev/null
+index 3257dca..a890ea9 100644
+--- a/src/test/java/org/cube/converter/converter/FormatConverterTest.java
 +++ b/src/test/java/org/cube/converter/converter/FormatConverterTest.java
-@@ -0,0 +1,143 @@
-+package org.cube.converter.converter;
-+
+@@ -1,5 +1,7 @@
+ package org.cube.converter.converter;
+ 
 +import com.viaversion.viaversion.libs.gson.JsonArray;
 +import com.viaversion.viaversion.libs.gson.JsonNull;
-+import com.viaversion.viaversion.libs.gson.JsonObject;
-+import org.cube.converter.converter.enums.RotationType;
-+import org.cube.converter.model.impl.java.JavaItemModel;
-+import org.cube.converter.parser.bedrock.geometry.BedrockGeometryParser;
-+import org.cube.converter.util.GsonUtil;
-+import org.junit.jupiter.api.Test;
-+
-+import static org.junit.jupiter.api.Assertions.*;
-+
-+class FormatConverterTest {
-+
+ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import org.cube.converter.converter.enums.RotationType;
+ import org.cube.converter.model.impl.java.JavaItemModel;
+@@ -11,6 +13,44 @@ import static org.junit.jupiter.api.Assertions.*;
+ 
+ class FormatConverterTest {
+ 
 +    @Test
 +    void preservesOptionalGeometryFieldsAndNativeTextureDefaults() {
 +        for (final boolean modern : new boolean[]{false, true}) {
@@ -365,213 +133,8 @@ index 0000000..a890ea9
 +        }
 +    }
 +
-+    @Test
-+    void exportsGeometryWithoutBonesAtUnitScaleForEveryRotationMode() {
-+        final var geometry = BedrockGeometryParser.parse(geometryJson("[]")).get(0);
-+        for (final RotationType rotation : RotationType.values()) {
-+            final var model = geometry.toJavaItemModel("example:item/actor", rotation);
-+            final JsonObject json = finiteExport(model);
-+            assertEquals(1, model.getScale());
-+            assertTrue(json.getAsJsonArray("elements").isEmpty());
-+            assertTrue(json.getAsJsonArray("groups").isEmpty());
-+        }
-+        assertTrue(geometry.getParents().isEmpty());
-+    }
-+
-+    @Test
-+    void preservesLocatorOnlyBonesAndSourceGeometryAtUnitScale() {
-+        final JsonObject source = geometryJson("""
-+            [{"name":"root","pivot":[2,3,4],"rotation":[5,10,15],
-+              "locators":{"attachment":[1,2,3]}},
-+             {"name":"attachment","parent":"root","pivot":[-2,8,1],"rotation":[0,20,0],
-+              "cubes":[],"locators":{"trail":{"offset":[0,1,0],"rotation":[0,45,0]}}}]
-+            """);
-+        final JsonObject original = source.deepCopy();
-+        final var geometry = BedrockGeometryParser.parse(source).get(0);
-+        final var model = geometry.toJavaItemModel("example:item/actor", RotationType.POST_1_21_11);
-+        final JsonObject json = finiteExport(model);
-+        assertEquals(1, model.getScale());
-+        assertTrue(json.getAsJsonArray("elements").isEmpty());
-+        assertEquals(2, json.getAsJsonArray("groups").size());
-+        assertEquals(2, model.getParents().size());
-+        for (int index = 0; index < geometry.getParents().size(); index++) {
-+            final var before = geometry.getParents().get(index);
-+            final var after = model.getParents().get(index);
-+            assertNotSame(before, after);
-+            assertEquals(before.getName(), after.getName());
-+            assertEquals(before.getParent(), after.getParent());
-+            assertArrayEquals(before.getPivot().toArray(), after.getPivot().toArray());
-+            assertArrayEquals(before.getRotation().toArray(), after.getRotation().toArray());
-+            assertTrue(before.getCubes().isEmpty());
-+            assertTrue(after.getCubes().isEmpty());
-+            assertTrue(json.getAsJsonArray("groups").get(index).getAsJsonObject().getAsJsonArray("children").isEmpty());
-+        }
-+        assertArrayEquals(new float[]{2, 3, 4}, geometry.getParents().get(0).getPivot().toArray());
-+        assertArrayEquals(new float[]{5, 10, 15}, geometry.getParents().get(0).getRotation().toArray());
-+        assertEquals("root", geometry.getParents().get(1).getParent());
-+        assertEquals(original, source);
-+        assertEquals(json, model.compile());
-+    }
-+
-+    @Test
-+    void preservesPopulatedGeometryFittingAndSourceCoordinates() {
-+        final var geometry = BedrockGeometryParser.parse(geometryJson("""
-+            [{"name":"root","pivot":[0,0,0],"cubes":[
-+                {"origin":[-64,0,0],"size":[64,64,64],"uv":[0,0]}]}]
-+            """)).get(0);
-+        final var source = geometry.getParents().get(0).getCubes().get(0);
-+        final var model = geometry.toJavaItemModel("example:item/actor", RotationType.POST_1_21_11);
-+        final JsonObject json = finiteExport(model);
-+        assertEquals(4, model.getScale());
-+        assertEquals(1, json.getAsJsonArray("elements").size());
-+        final var converted = model.getParents().get(0).getCubes().get(0);
-+        assertNotSame(source, converted);
-+        assertArrayEquals(new float[]{16, 16, 16}, converted.getSize().toArray());
-+        assertArrayEquals(new float[]{-16, 0, 0}, converted.getPosition().toArray());
-+        assertArrayEquals(new float[]{64, 64, 64}, source.getSize().toArray());
-+        assertArrayEquals(new float[]{-64, 0, 0}, source.getPosition().toArray());
-+        assertEquals(6, json.getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonObject("faces").size());
-+    }
-+
-+    private static JsonObject finiteExport(final JavaItemModel model) {
-+        assertTrue(Float.isFinite(model.getScale()));
-+        assertTrue(model.getScale() > 0);
-+        final JsonObject export = new JsonObject();
-+        export.addProperty("scale", model.getScale());
-+        export.add("model", model.compile());
-+        final var gson = GsonUtil.getGson();
-+        final JsonObject decoded = gson.fromJson(gson.toJson(export), JsonObject.class);
-+        assertEquals(export, decoded);
-+        assertEquals(model.getScale(), decoded.get("scale").getAsFloat());
-+        return decoded.getAsJsonObject("model");
-+    }
-+
-+    private static JsonObject geometryJson(final String bones) {
-+        return GsonUtil.getGson().fromJson("""
-+            {"format_version":"1.12.0","minecraft:geometry":[{
-+                "description":{"identifier":"geometry.example","texture_width":64,"texture_height":64},
-+                "bones":%s
-+            }]}
-+            """.formatted(bones), JsonObject.class);
-+    }
-+}
-diff --git a/src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java b/src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java
-new file mode 100644
-index 0000000..3d41051
---- /dev/null
-+++ b/src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java
-@@ -0,0 +1,112 @@
-+package org.cube.converter.model.impl.java;
-+
-+import com.viaversion.viaversion.libs.gson.JsonObject;
-+import org.cube.converter.converter.enums.RotationType;
-+import org.cube.converter.parser.bedrock.geometry.BedrockGeometryParser;
-+import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
-+import org.junit.jupiter.api.Test;
-+
-+import static org.junit.jupiter.api.Assertions.*;
-+
-+class JavaItemModelTest {
-+
-+    @Test
-+    void omitsUntexturedJavaElementsAndPreservesSourceCubes() {
-+        final var geometry = geometry("""
-+            {"origin":[0,0,0],"size":[2,2,2],"uv":{}},
-+            {"origin":[2,0,0],"size":[2,2,2],"uv":{"north":{"uv":[0,0],"uv_size":[2,2]}}}
-+            """);
-+        final var javaModel = geometry.toJavaItemModel("example:item/actor", RotationType.POST_1_21_11);
-+        final JsonObject model = javaModel.compile();
-+        final var elements = model.getAsJsonArray("elements");
-+        assertEquals(1, elements.size());
-+        int renderedFaces = 0;
-+        for (var element : elements) {
-+            final JsonObject faces = element.getAsJsonObject().getAsJsonObject("faces");
-+            assertFalse(faces.isEmpty());
-+            for (var face : faces.entrySet()) {
-+                renderedFaces++;
-+                final String texture = face.getValue().getAsJsonObject().get("texture").getAsString();
-+                assertTrue(texture.startsWith("#"));
-+                assertTrue(model.getAsJsonObject("textures").has(texture.substring(1)));
-+            }
-+        }
-+        assertEquals(1, renderedFaces);
-+        assertEquals(0, model.getAsJsonArray("groups").get(0).getAsJsonObject().getAsJsonArray("children").get(0).getAsInt());
-+        assertEquals(2, geometry.getParents().get(0).getCubes().size());
-+        assertEquals(2, javaModel.getParents().get(0).getCubes().size());
-+        assertTrue(geometry.getParents().get(0).getCubes().get(0).getUvMap().getUvMap().isEmpty());
-+        assertEquals(model, javaModel.compile());
-+    }
-+
-+    @Test
-+    void retainsModelsThatOmitCubeUvData() {
-+        final var geometry = geometry("""
-+            {"origin":[-3,2,-3],"size":[6,8,6]},
-+            {"origin":[0,0,0],"size":[2,2,2],"uv":[0,0]}
-+            """);
-+        assertEquals(2, geometry.getParents().get(0).getCubes().size());
-+        assertTrue(geometry.getParents().get(0).getCubes().get(0).getUvMap().getUvMap().isEmpty());
-+        assertEquals(1, geometry.toJavaItemModel("example:item/actor", RotationType.POST_1_21_11)
-+                .compile().getAsJsonArray("elements").size());
-+    }
-+
-+    @Test
-+    void usesFaceDimensionsForOmittedUvSizesAndPreservesAuthoredSizes() {
-+        final var geometry = geometry("""
-+            {"origin":[0,0,0],"size":[2,3,5],"uv":{
-+                "north":{"uv":[7,11]},"south":{"uv":[7,11]},
-+                "east":{"uv":[7,11]},"west":{"uv":[7,11]},
-+                "up":{"uv":[7,11]},"down":{"uv":[7,11]}}},
-+            {"origin":[0,0,0],"size":[2,3,5],"uv":{"north":{"uv":[7,11],"uv_size":[-4,6]}}}
-+            """);
-+        final var cubes = geometry.getParents().get(0).getCubes();
-+        final var faces = cubes.get(0).getUvMap().getUvMap();
-+        for (final var face : org.cube.converter.util.element.Direction.values()) {
-+            final float width = face == org.cube.converter.util.element.Direction.EAST || face == org.cube.converter.util.element.Direction.WEST ? 5 : 2;
-+            final float height = face == org.cube.converter.util.element.Direction.UP || face == org.cube.converter.util.element.Direction.DOWN ? 5 : 3;
-+            assertArrayEquals(new Float[] {7F, 11F, 7 + width, 11 + height}, faces.get(face));
-+        }
-+        assertArrayEquals(new Float[] {7F, 11F, 3F, 17F}, cubes.get(1).getUvMap().getUvMap()
-+                .get(org.cube.converter.util.element.Direction.NORTH));
-+    }
-+
-+    @Test
-+    void exportsWhollyInvisibleGeometryWithNoJavaElements() {
-+        final var geometry = geometry("""
-+            {"origin":[0,0,0],"size":[2,2,2],"uv":{}}
-+            """);
-+        final JsonObject model = geometry.toJavaItemModel("example:item/actor", RotationType.POST_1_21_11).compile();
-+        assertTrue(model.getAsJsonArray("elements").isEmpty());
-+        assertTrue(model.getAsJsonArray("groups").get(0).getAsJsonObject().getAsJsonArray("children").isEmpty());
-+        assertEquals(1, geometry.getParents().get(0).getCubes().size());
-+    }
-+
-+    @Test
-+    void preservesVisibleBoxFacesAndTheirTextureBindings() {
-+        final JsonObject model = convert("""
-+            {"origin":[0,0,0],"size":[2,2,2],"uv":[0,0]}
-+            """);
-+        final JsonObject faces = model.getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonObject("faces");
-+        assertEquals(6, faces.size());
-+        for (var face : faces.entrySet()) {
-+            final String key = face.getValue().getAsJsonObject().get("texture").getAsString().substring(1);
-+            assertEquals("example:item/actor", model.getAsJsonObject("textures").get(key).getAsString());
-+        }
-+    }
-+
-+    private static JsonObject convert(final String cubes) {
-+        return geometry(cubes).toJavaItemModel("example:item/actor", RotationType.POST_1_21_11).compile();
-+    }
-+
-+    private static BedrockGeometryModel geometry(final String cubes) {
-+        final String json = """
-+            {"format_version":"1.12.0","minecraft:geometry":[{
-+                "description":{"identifier":"geometry.example","texture_width":32,"texture_height":32},
-+                "bones":[{"name":"root","pivot":[0,0,0],"cubes":[%s]}]
-+            }]}
-+            """.formatted(cubes);
-+        return BedrockGeometryParser.parse(json).get(0);
-+    }
-+
-+}
+     @Test
+     void exportsGeometryWithoutBonesAtUnitScaleForEveryRotationMode() {
+         final var geometry = BedrockGeometryParser.parse(geometryJson("[]")).get(0);
 -- 
 2.56.0
