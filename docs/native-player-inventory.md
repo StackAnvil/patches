@@ -1323,13 +1323,13 @@ The reference records these two unexecuted cases without assigning a native bool
 Action regressions cover pickup, shift-click and hotbar swaps through actual Java request prediction.
 They distinguish `Default` from `Undefined`, preserve slot locks in creative mode and restore rejected armor removal after a mode change.
 The fixtures supply cached mode fields and suppress independent attribute transport.
-Armor incoming-slot validation, world drops, direct creative edits and full destination policy remain separate callers.
+World drops and direct creative edits remain separate callers. Armor destination policy is covered below.
 Complete Actor, Level and controller construction, physical input and live server acceptance remain unfinished.
 All five goal areas and the four original reports remain active.
 
 
-The four-project build passes 2,893 tests with 161 optional skips and no failures or errors.
-The core suite passes 1,762 tests with 84 optional skips. Checkstyle passes.
+At the armor-source milestone, the four-project build passed 2,893 tests with 161 optional skips and no failures or errors.
+That core suite passed 1,762 tests with 84 optional skips. Checkstyle passed.
 All 1,520 core classes match their embedded add-on and proxy copies.
 All 1,191 client classes match the tested add-on.
 All 198 core asset resources match the previous provider-policy milestone, including the unchanged Block auxiliary data.
@@ -1340,3 +1340,69 @@ The packaged JAR passes all 33 permission, ordinary-action and authority-adapter
 Seven deliberate armor regressions fail value assertions.
 These controls detect a missing policy, incorrect lock modes, incorrect inherited modes, negative-level handling and reversed duplicate order.
 Prior provider and merge mutation evidence remains supported by byte-identical implementation classes and unchanged data.
+
+## Armor destination permission
+
+Armor placement now uses the selected Item definition and the actual transfer count.
+A nonempty incoming stack must transfer exactly one item to its native equipment slot.
+The four player armor slots have capacity one, independently of the item's ordinary stack maximum.
+Stackable head items therefore place one item and retain the remainder.
+Whole-stack swaps reject an incoming stack with more than one item.
+
+The shared provider policy also selects empty armor destinations for shift-click.
+It replaces the earlier item-name suffix shortcut.
+Pickup, shift-click and drag calculate the transfer count before checking admission.
+Bundle extraction checks its whole extracted stack.
+Recipe planners pass their calculated counts through the same API.
+The separate offhand and specialized output policies retain their existing contracts.
+
+Equipment state belongs to the constructed definition.
+Thirty builtin armor factories supply their native slot, including elytra.
+Head admission follows the definition's associated Block type, including carved pumpkin and the seven head types.
+A stack's runtime Block field does not replace that association.
+Numeric collisions and copies retain the selected receiver's equipment state.
+Armor-statistic tables do not control admission.
+
+Component wearables use typed string slots.
+The tested uppercase spelling selects the same slot.
+Missing, mistyped or unrecognized slot fields retain an existing value; a newly installed empty component starts at native enum value `-1`.
+The native enum covers main hand, offhand, head, chest, legs, feet and body.
+Armor admission covers the last five enum values and subtracts two for the slot index.
+A body wearable therefore passes the raw slot-four predicate but fails the four-slot provider's bounds check.
+Omitted components remain installed.
+With `componentBased=true`, version `None` constructs a component receiver without running these readers.
+
+The reference executes installed callback `1431bb5c0`, armor getters `14248fb50` and `142488390`, and destination method `147c98480`.
+The standard installer and original backing constructor install the policy.
+Original function `149978ee0` constructs the stateless armor capacity policy; its armor branch does not consume the unused context argument.
+The actual capacity function returns one.
+No capacity, Item lookup or Block lookup result is supplied.
+The storage interface supplies four slots containing empty or original constructed ItemStacks.
+
+Three controls compare 94,104 complete destination decisions and 37,872 registered callback decisions with Java.
+The first records all 1,989 constructed definitions, including version-None wearable declarations.
+The second reads DataDriven declarations and repeated wearable updates, then checks 53 selected definitions.
+The third checks 62 definitions with invalid string updates and custom head Block associations.
+A head-associated component can report a negative native slot; the complete provider still applies its bounds check.
+Saved inputs independently vary count, typed banner Type data and lock bytes.
+The native destination distinguishes empty placement, swap, merge and rejection; these controls observe no successful armor merge.
+The Java admission check compares acceptance. Action tests separately check transfer quantities, prediction and rollback.
+Original backing, inputs, registry, TLS, static and CRT cleanup leaves no allocations or held locks in all three controls.
+
+These checks do not establish native controller ordering or complete input delivery.
+Drops, direct creative edits, specialized output admission and live server acceptance still need their own caller controls.
+The authored E-key screen and all four original bug reports remain unresolved.
+
+The four-project build passes 2,902 tests with 161 optional skips and no failures or errors.
+The core passes 1,771 tests with 84 optional skips. Checkstyle and repository offline validation pass.
+All 59 packaged permission, action, bundle and authority-adapter tests pass with verified implementation origins.
+Twenty-three deliberate source, incoming, capacity, identity, typed-field and retained-update regressions fail value assertions.
+
+All 1,521 core classes match the embedded client and proxy copies.
+Packaged classes match test-compiled classes with four declared build-identity replacements.
+All 1,191 client classes match the tested add-on.
+The factory resource adds equipment metadata without changing its previous fields.
+The other 197 core assets, including Block auxiliary data, remain byte-identical to the armor-source milestone.
+One factory metadata holder class is added; implementation changes stay within placement, definition properties and recipe callers.
+Twelve changed nested classes retain matching declarations and instruction disassembly.
+The other 1,495 existing core classes remain byte-identical.

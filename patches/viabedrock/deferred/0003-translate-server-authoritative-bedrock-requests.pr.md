@@ -1036,7 +1036,28 @@ All 198 core asset resources match the previous provider-policy milestone, inclu
 Only ArmorContainer and three build-identity classes differ from that artifact.
 The remaining 1,516 core classes are byte-identical, including the prior provider, merge and enchantment implementations.
 
-The packaged JAR passes all 33 permission, ordinary-action and authority-adapter tests with verified implementation origins.
+At the armor-source milestone, the packaged JAR passed all 33 permission, ordinary-action and authority-adapter tests with verified implementation origins.
 Seven deliberate armor regressions fail value assertions.
 These controls detect a missing policy, incorrect lock modes, incorrect inherited modes, negative-level handling and reversed duplicate order.
 Prior provider and merge mutation evidence remains supported by byte-identical implementation classes and unchanged data.
+
+
+## Armor destination admission
+
+Use the selected Item receiver and actual transfer count for armor placement.
+The native incoming predicate requires one item and the matching equipment slot.
+Armor capacity stays one even for stackable head items.
+Shift-click now selects armor through the provider policy; pickup, drag, swaps and bundle extraction check their actual quantities.
+Recipe callers use the quantity-bearing API in their owning patch.
+
+Three complete-registry controls compare 94,104 destination decisions and 37,872 installed callbacks.
+They cover builtin factories, definition collisions, associated head Blocks, typed wearable slots, retained updates and saved-stack counts.
+All three controls complete original backing, input, registry, TLS, static and CRT cleanup without allocations or held locks.
+The first uses version-None wearable declarations; the second uses DataDriven declarations that execute the readers.
+
+See [the armor destination reference](../../../docs/native-player-inventory.md#armor-destination-permission) for control boundaries and validation.
+Controller ordering, specialized outputs, drops, creative edits and live server acceptance remain separate.
+
+The four-project build passes 2,902 tests and all 105 patches replay.
+The packaged core passes 59 focused tests; 23 deliberate regressions fail value assertions.
+Checkstyle, artifact comparisons and repository offline validation pass.

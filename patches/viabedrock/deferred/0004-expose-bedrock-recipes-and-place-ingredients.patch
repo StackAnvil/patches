@@ -1,4 +1,4 @@
-From 40332c5ba556c5635ec4e58548c0b7cf0cfd876c Mon Sep 17 00:00:00 2001
+From f9c2da2e9597e9bb879211c42d31b1755a27e582 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -511,6 +511,10 @@ existing primitive fixtures' declared empty aliases and warm Block caches.
 Regression controls cover a named definition whose numeric owner has a
 different association and count-one output registration without mutating
 the original result.
+
+Pass actual planned transfer counts to the shared destination admission API.
+Candidate scans ask whether one item is admissible; clearing and final
+placement validate the computed count before recording a transfer.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 +
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -519,8 +523,8 @@ the original result.
  .../model/container/CookingRecipeSources.java |  80 ++
  .../model/container/CraftingOutputPlan.java   | 109 +++
  .../model/container/CraftingPlacement.java    | 229 +++++
- .../container/FurnaceRecipePlacement.java     | 219 +++++
- .../NativeCookingRecipeSelection.java         | 206 +++++
+ .../container/FurnaceRecipePlacement.java     | 221 +++++
+ .../NativeCookingRecipeSelection.java         | 205 +++++
  .../model/container/NativeRecipeCounter.java  | 163 ++++
  .../block/CraftingTableContainer.java         | 100 ++-
  .../container/block/FurnaceContainer.java     | 209 +++++
@@ -583,7 +587,7 @@ the original result.
  .../types/model/FurnaceOptionsTypeTest.java   |  75 ++
  .../types/model/InventoryOptionsTypeTest.java |  46 +
  .../types/recipe/CraftingDataReaderTest.java  |  84 +-
- 71 files changed, 9273 insertions(+), 162 deletions(-)
+ 71 files changed, 9274 insertions(+), 162 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeAvailability.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeCatalog.java
@@ -1303,10 +1307,10 @@ index 000000000..a6c19807a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java b/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
 new file mode 100644
-index 000000000..065440f2d
+index 000000000..74bf8f422
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/FurnaceRecipePlacement.java
-@@ -0,0 +1,219 @@
+@@ -0,0 +1,221 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1372,13 +1376,13 @@ index 000000000..065440f2d
 +            for (final boolean merge : new boolean[]{true, false}) {
 +                for (int slot = 0; slot < available.length && !input.isEmpty(); slot++) {
 +                    final BedrockItem destination = available[slot];
-+                    if (!inventory.canPlaceItem(slot, input) || (merge
++                    if (merge
 +                            ? destination.isEmpty() || !hasServerId(destination) || !canMerge.test(input, destination)
-+                            : !destination.isEmpty())) {
++                            : !destination.isEmpty()) {
 +                        continue;
 +                    }
 +                    final int count = Math.min(input.amount(), limit - destination.amount());
-+                    if (count < 1) {
++                    if (count < 1 || !inventory.canPlaceItem(slot, input, count)) {
 +                        continue;
 +                    }
 +                    actions.add(new ItemStackRequestAction.PlaceAction(count,
@@ -1403,7 +1407,7 @@ index 000000000..065440f2d
 +        int target = 0;
 +        for (final BedrockItem candidate : candidates) {
 +            if (candidate.isEmpty() || !hasServerId(candidate) || !matches.test(candidate)
-+                    || !furnace.canPlaceItem(0, candidate)) {
++                    || !furnace.canPlaceItem(0, candidate, 1)) {
 +                continue;
 +            }
 +            final int limit = Math.min(255, maximum.applyAsInt(candidate));
@@ -1411,7 +1415,7 @@ index 000000000..065440f2d
 +            for (final var source : sources) {
 +                final BedrockItem item = available[source.slot()];
 +                if (!item.isEmpty() && hasServerId(item) && !item.isDifferent(candidate)
-+                        && furnace.canPlaceItem(0, item)) {
++                        && furnace.canPlaceItem(0, item, 1)) {
 +                    total += item.amount();
 +                }
 +            }
@@ -1437,11 +1441,13 @@ index 000000000..065440f2d
 +            }
 +            final int slot = reference.slot();
 +            final BedrockItem source = available[slot];
-+            if (source.isEmpty() || !hasServerId(source) || source.isDifferent(selected)
-+                    || !furnace.canPlaceItem(0, source)) {
++            if (source.isEmpty() || !hasServerId(source) || source.isDifferent(selected)) {
 +                continue;
 +            }
 +            final int count = Math.min(source.amount(), target - input.amount());
++            if (!furnace.canPlaceItem(0, source, count)) {
++                continue;
++            }
 +            actions.add(new ItemStackRequestAction.PlaceAction(count,
 +                    new ItemStackRequestSlotInfo(new FullContainerName(slot < 9
 +                            ? ContainerEnumName.HotbarContainer : ContainerEnumName.InventoryContainer, null),
@@ -1528,10 +1534,10 @@ index 000000000..065440f2d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeCookingRecipeSelection.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeCookingRecipeSelection.java
 new file mode 100644
-index 000000000..50b7fdf1d
+index 000000000..acfb4b9b6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeCookingRecipeSelection.java
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,205 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1720,13 +1726,12 @@ index 000000000..50b7fdf1d
 +            final BedrockItem from = sourceItems[source.index];
 +            final BedrockItem to = destinationItems[destination.index];
 +            if (from.isEmpty() || !unlocked(from) || !unlocked(to)
-+                    || !destination.owner.canPlaceItem(destination.index, from)
 +                    || !to.isEmpty() && !this.canMerge.test(from, to)) {
 +                return;
 +            }
 +            final int capacity = this.maximum.applyAsInt(to.isEmpty() ? from : to);
 +            final int count = Math.min(Math.min(requested, from.amount()), Math.min(255, capacity) - to.amount());
-+            if (count <= 0) {
++            if (count <= 0 || !destination.owner.canPlaceItem(destination.index, from, count)) {
 +                return;
 +            }
 +            this.transfers.add(new Transfer(source, destination, count));
