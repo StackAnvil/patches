@@ -10221,3 +10221,30 @@ All 1,532 core classes and 198 assets match both embedded copies. All 1,192 comp
 Compared with the preceding core, 1,513 classes and all 198 assets remain byte-identical.
 Eleven further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
 The only added class is the typed crafting context. The native UI patch changes only exported hunk context.
+
+## Native secondary item descriptions (October 25, 2026)
+
+**Implemented:** Selected item definitions retain their secondary-description behavior through registry changes.
+Common enchantments, potions, arrows, shulker contents, suspicious stew and ominous bottles now have native description producers.
+Compiled protocol-2193 data records enchantment categories and limits, potion effects and stew effects without translations.
+The connection supplies current text resources, world version, saved ItemStack loading and primary names lazily.
+
+Player recipe search binds both primary and secondary production.
+Empty queries skip both producers; primary matches skip secondary production.
+The description flag follows current raw game type and level default, independently of the installed Instabuild search mode.
+
+**Verified within scope:** The Java description path matches 11,209 original cases.
+These include 4,276 fresh enchantment cases, 669 fresh shulker cases and existing same-binary potion, arrow, stew and ominous controls.
+Another 810 original integer-format cases match the Java formatter.
+Shulker controls execute the original saved loader, ordinary primary selection, integer formatting and stack destruction with balanced reference counts.
+Typed fields, stable enchantment order, version gates, duration scaling, skipped list positions, NUL and malformed UTF-8 are covered.
+Targeted integration tests and both Checkstyle tasks pass.
+
+The probes supply registry and NBT backing, synthetic locale tables, allocator/CRT and selected virtual methods.
+Shulker Item methods omit damage and Block association; Java supplies an air Block state for its actual receiver.
+Duration stream transport remains a supplied boundary around separately verified native selection and tick formatting.
+A non-compound enchantment child reaches a native null dereference. Java rejects that input explicitly.
+The Microsoft-specific `I32` formatter diagnostic has no supported native result and remains outside the implemented grammar.
+
+**Remaining work:** Complete registry and locale lifetime, installed player screen publication, controller navigation and visible parity remain unverified.
+This increment adds no new live gameplay capture. The inventory, movement, eating and locator reports remain open.

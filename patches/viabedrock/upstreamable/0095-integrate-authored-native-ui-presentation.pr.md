@@ -903,3 +903,29 @@ Primary item text now resolves through the stack's selected definition and the e
 Java display conversion shares that context builder.
 Defined zero-count stacks and retained definitions keep their name producer.
 The byte conversion belongs to the later search consumer.
+
+## Definition-owned secondary descriptions
+
+Retained definitions now select common enchantments, potions, arrows, shulker contents, suspicious stew or ominous-bottle descriptions.
+The target factory snapshot assigns these methods across all 1,949 definitions.
+The compiled data contains 42 enchantments, 47 potion registrations and 13 stew effects, without localized text.
+The 1.21.0 gate controls the four newer potions and the splash-duration multiplier.
+
+Typed NBT fields, stable enchantment categories, level suffixes, curse colors and terminal formatting follow the original producers.
+Effect text preserves potency selection, float duration scaling and the literal infinite-duration token.
+Shulker contents retain the first five list positions, including skipped entries, and count every later position in the remainder.
+The native null-stack test excludes the selected air definition regardless of its numeric ID.
+Saved loading, primary names, raw integer formatting and current language remain lazy context boundaries.
+
+The Java producer matches 11,209 original secondary-description cases through the connection's item rewriter and text resources.
+The matrix covers raw and Block auxiliary values, mode, version gates, malformed text bytes and embedded NUL.
+It includes 4,276 fresh enchantment cases and 669 fresh shulker cases from the pinned protocol-2193 executable.
+The remaining cases use existing original potion, arrow, stew and ominous controls from that same executable.
+Original shulker saved loading, ordinary primary selection, integer formatting and stack destruction execute unchanged.
+Its reference counts balance after the run.
+
+The native probes supply registry inputs, typed NBT backing, locale tables, allocator/CRT and selected Item virtuals.
+Shulker Item methods have no damage or Block association. The Java adapter supplies its air Block state to resolve the actual receiver.
+The duration boundary composes separately executed original selection and tick formatting; full stream transport remains supplied.
+These controls do not establish complete registry/bootstrap lifetime, native locale ownership, authored screen publication or visible parity.
+A non-compound enchantment child dereferences null in the native control. Java rejects that input explicitly instead of reproducing the crash.

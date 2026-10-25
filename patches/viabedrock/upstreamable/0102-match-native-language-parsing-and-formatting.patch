@@ -1,4 +1,4 @@
-From ac30da42c7bc4fa4663eb23ddae04831e17247d8 Mon Sep 17 00:00:00 2001
+From 772d7b1092e40c7b97fcb3c5dfe2c96f4238450a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 10:11:46 +0200
 Subject: [PATCH] fix(text): match native language parsing and formatting
@@ -27,25 +27,35 @@ the old parser and three deliberate regressions fail behavioral assertions.
 The probes declare their controlled raw inputs, language tables, argument
 vectors, allocator/CRT and single-thread lock boundaries. They do not
 establish full locale, asset-provider, client ownership or visible parity.
+
+Keep shulker remainder lookup separate from language token expansion. The
+native typed integer printf preserves embedded NUL and malformed bytes,
+retains zero at precision zero, and honors sign flags on unsigned values.
+Match the original formatter across 810 ordinary, boundary and precision
+controls; keep unsupported Microsoft length extensions outside the grammar.
 ---
  .../api/resourcepack/content/Content.java     |  16 +-
  .../resourcepack/definition/LanguageFile.java | 117 +++++++++++
+ .../definition/LanguageIntegerFormat.java     |  87 +++++++++
  .../definition/LanguageLookup.java            |  53 +++++
  .../definition/LanguageTranslations.java      | 140 ++++++++++++++
- .../definition/TextDefinitions.java           |  34 +++-
+ .../definition/TextDefinitions.java           |  39 +++-
  .../protocol/packet/JoinPackets.java          |   4 +-
  .../protocol/packet/MultiStatePackets.java    |  10 +-
  .../content/ContentLanguageCacheTest.java     |   7 +-
  .../definition/LanguageFileTest.java          | 126 ++++++++++++
+ .../definition/LanguageIntegerFormatTest.java |  20 ++
  .../definition/LanguageLookupTest.java        |  82 ++++++++
  .../definition/LanguageTranslationsTest.java  | 127 ++++++++++++
  .../definition/TextDefinitionsTest.java       |  76 ++++++++
  .../protocol/model/ItemPrimaryNameTest.java   | 181 ++++++++++++++++++
- 13 files changed, 945 insertions(+), 28 deletions(-)
+ 15 files changed, 1057 insertions(+), 28 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFile.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormat.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookup.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslations.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFileTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormatTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookupTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslationsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitionsTest.java
@@ -227,6 +237,99 @@ index 000000000..c6e0b7990
 +    public record MissingSeparator(int line, boolean newline) { }
 +
 +    public record Result(Map<String, String> translations, boolean special, List<MissingSeparator> missingSeparators) { }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormat.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormat.java
+new file mode 100644
+index 000000000..f112da886
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormat.java
+@@ -0,0 +1,87 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import net.raphimc.viabedrock.api.io.NbtUtf8;
++
++import java.util.Locale;
++import java.util.regex.Pattern;
++
++/** The native shulker label passes one typed integer to a length-aware printf formatter. */
++public final class LanguageIntegerFormat {
++
++    private static final Pattern CONVERSION = Pattern.compile("%(?:(1)\\$)?([-+ #0]*)([0-9]*)(?:\\.([0-9]*))?(hh|ll|[hljzt])?([diuoxXc%])");
++
++    private LanguageIntegerFormat() { }
++
++    public static String format(final String format, final int value) {
++        final StringBuilder output = new StringBuilder();
++        final var matcher = CONVERSION.matcher(format);
++        int cursor = 0;
++        boolean consumed = false;
++        while (cursor < format.length()) {
++            final int start = format.indexOf('%', cursor);
++            if (start < 0) {
++                output.append(format, cursor, format.length());
++                break;
++            }
++            output.append(format, cursor, start);
++            matcher.region(start, format.length());
++            if (!matcher.lookingAt()) {
++                throw new IllegalArgumentException("Invalid integer label format");
++            }
++            final char conversion = matcher.group(6).charAt(0);
++            if (conversion == '%') {
++                output.append('%');
++            } else {
++                if (matcher.group(1) == null) {
++                    if (consumed) {
++                        throw new IllegalArgumentException("Integer label format requires another argument");
++                    }
++                    consumed = true;
++                }
++                final String flags = matcher.group(2);
++                final int width = matcher.group(3).isEmpty() ? 0 : Integer.parseInt(matcher.group(3));
++                final int precision = matcher.group(4) == null ? -1 : matcher.group(4).isEmpty() ? 0 : Integer.parseInt(matcher.group(4));
++                output.append(integer(value, conversion, flags, width, precision, matcher.group(5)));
++            }
++            cursor = matcher.end();
++        }
++        return output.toString();
++    }
++
++    private static String integer(final int value, final char conversion, final String flags, final int width,
++                                  final int precision, final String length) {
++        if (conversion == 'c') {
++            return pad(NbtUtf8.decode(new byte[]{(byte) value}), width, flags.indexOf('-') >= 0);
++        }
++        final boolean signed = conversion == 'd' || conversion == 'i';
++        final int narrowed = "hh".equals(length) ? (byte) value : "h".equals(length) ? (short) value : value;
++        final long number = signed ? narrowed : "hh".equals(length) ? Byte.toUnsignedInt((byte) value)
++                : "h".equals(length) ? Short.toUnsignedInt((short) value) : Integer.toUnsignedLong(value);
++        final int radix = conversion == 'o' ? 8 : conversion == 'x' || conversion == 'X' ? 16 : 10;
++        // Typed native printf retains zero at precision zero and honors unsigned sign flags.
++        String digits = Long.toString(Math.abs(number), radix);
++        if (conversion == 'X') {
++            digits = digits.toUpperCase(Locale.ROOT);
++        }
++        digits = "0".repeat(Math.max(0, precision - digits.length())) + digits;
++        final String sign = number < 0 ? "-" : flags.indexOf('+') >= 0 ? "+" : flags.indexOf(' ') >= 0 ? " " : "";
++        final String prefix = flags.indexOf('#') < 0 ? "" : conversion == 'o' ? digits.startsWith("0") ? "" : "0"
++                : number != 0 && conversion == 'x' ? "0x" : number != 0 && conversion == 'X' ? "0X" : "";
++        final boolean left = flags.indexOf('-') >= 0;
++        if (!left && flags.indexOf('0') >= 0 && precision < 0) {
++            return sign + prefix + "0".repeat(Math.max(0, width - sign.length() - prefix.length() - digits.length())) + digits;
++        }
++        return pad(sign + prefix + digits, width, left);
++    }
++
++    private static String pad(final String text, final int width, final boolean left) {
++        final String padding = " ".repeat(Math.max(0, width - NbtUtf8.encode(text).length));
++        return left ? text + padding : padding + text;
++    }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookup.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookup.java
@@ -435,10 +538,10 @@ index 000000000..da03a231a
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitions.java
-index 95d2d5b3d..58ec94669 100644
+index 95d2d5b3d..fc7688fbc 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitions.java
-@@ -17,34 +17,52 @@
+@@ -17,38 +17,61 @@
   */
  package net.raphimc.viabedrock.api.resourcepack.definition;
  
@@ -499,6 +602,15 @@ index 95d2d5b3d..58ec94669 100644
      }
  
      public Function<String, String> lookup() {
+         return this::get;
+     }
+ 
++    /** Integer labels use raw lookup followed by printf, independently of language token expansion. */
++    public String formatInteger(final String key, final int value) {
++        return LanguageIntegerFormat.format(this.get(key), value);
++    }
++
+ }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 index 5fe21e385..06078bae2 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
@@ -728,6 +840,32 @@ index 000000000..4e26c27dd
 +        content.put("texts/en_US.lang", raw);
 +        content.putString("texts/languages.json", "[\"en_US\"]");
 +        return content;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormatTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormatTest.java
+new file mode 100644
+index 000000000..b5ef11da8
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormatTest.java
+@@ -0,0 +1,20 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class LanguageIntegerFormatTest {
++
++    @Test
++    void preservesNativePrecisionAndUnsignedSignFlags() {
++        assertEquals("+0", LanguageIntegerFormat.format("%+.0d", 0));
++        assertEquals("  +001", LanguageIntegerFormat.format("%+06.3u", 1));
 +    }
 +
 +}

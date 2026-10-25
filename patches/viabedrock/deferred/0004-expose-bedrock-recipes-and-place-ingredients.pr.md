@@ -1082,3 +1082,16 @@ Four targeted tests pass, and both Checkstyle tasks pass. All 104 core patches r
 Java tests cover retained definitions, missing definitions, malformed name bytes and source acquisition order.
 The native controls use stable receiver backing; they do not establish complete registry replacement or controller lifetime.
 Specialized secondary descriptions and installed player screen publication remain unfinished. The original four live reports remain open.
+
+## Bound secondary search text
+
+The player search API now binds both real item producers through the connection's retained definition and language resources.
+Empty queries skip both producers. A primary match skips the secondary producer.
+The description flag reads current raw game type and level default when needed.
+It remains separate from the Instabuild search policy captured when the query is installed.
+
+The producer comparison matches all 11,209 native secondary-description cases and 810 integer-format controls.
+Integration tests cover live game-type changes, retained zero-count definitions, ID collisions and lazy producer acquisition.
+The shulker path calls the shared saved ItemStack loader and primary-name producer.
+Native controller/model lifetime and installed player screen publication remain unfinished.
+The inventory, movement, eating and locator reports remain open.
