@@ -1086,13 +1086,38 @@ Gameplay drops, specialized recipe Consume producers, complete controller input 
 
 ## Live installed-screen controls
 
-A private Java 26.3 client completes sixteen physical input controls through the current ViaProxy and Bedrock 1.26.51.1.
+A private Java 26.3 client completes sixteen physical input controls through the preceding discard-milestone ViaProxy build and Bedrock 1.26.51.1.
 Three E-key openings receive distinct native tokens and matching acknowledgments, followed by a confirmed final close.
 The capture records thirteen requests with thirteen successful server responses.
 Locked-item refusals preserve client and core state, while ordinary cursor drops and one-item head placement succeed.
-The installed add-on, running proxy and all 1,521 embedded core classes match the current build.
+The installed add-on, running proxy and all 1,521 embedded core classes match that recorded build.
 
 Shift-click equips one pumpkin and sends the other two to inventory slot nine.
 Native full-action destination ordering remains unverified; accepted server requests alone do not prove that contract.
 The client still uses Java's player screens. The original rendering report remains unreproduced.
 See [the live control boundaries](../../../docs/native-player-inventory.md#live-e-key-action-controls) for scope and failed fixture attempts.
+
+## Native offhand admission and ordinary player routes
+
+Use the selected definition's native offhand flag and measured builtin metadata instead of a shield-name shortcut.
+Retain typed common properties, installed component values and wearable finalization across updates.
+Validate empty-slot capacity before incoming placement.
+Keep full armor and offhand destination ranges for ordinary player quick move.
+The existing global merge and empty passes remain unchanged.
+
+Four original protocol-2193 controls compare 64,872 full destination decisions and 64,872 installed callbacks across 4,086 inputs.
+Each control completes original backing, input, registry, TLS, static and CRT cleanup without allocations or held locks.
+Read-only two-hand storage supplies empty destinations.
+No native permission, lookup or capacity result is supplied.
+The lowercase control verifies conflicting components in every declaration order; earlier mixed-case rows establish raw-name admission only.
+
+Native route construction supplies the provider list, while full model execution and transfer ordering remain unfinished.
+The earlier live E-key run predates these changes.
+See [the offhand reference](../../../docs/native-player-inventory.md#offhand-destination-permission-and-player-routing) for component rules and verification limits.
+
+The complete four-project build passes 2,921 tests with 161 optional skips.
+The packaged core passes 78 repository permission and action checks plus the private 40-mode comparison.
+All 1,521 embedded core classes and 1,191 client classes match the tested artifacts.
+Only the eight measured offhand flags change among 198 core assets; prior factory and Block auxiliary metadata remain unchanged.
+All 105 patches replay, and Checkstyle and offline validation pass.
+Forty-five deliberate regressions fail value assertions with verified implementation origins.

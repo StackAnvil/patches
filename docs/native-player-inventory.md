@@ -1480,7 +1480,7 @@ Twelve changed nested classes retain matching declarations and instruction disas
 
 ## Live E-key action controls
 
-A private Java 26.3 client exercises the current build through ViaProxy and Bedrock 1.26.51.1.
+A private Java 26.3 client exercises the preceding discard-milestone build through ViaProxy and Bedrock 1.26.51.1.
 The server negotiates server-authoritative inventory.
 The client uses an 854 by 480 viewport and Java GUI scale two.
 Real E-key input opens survival, creative and survival inventory in sequence.
@@ -1509,7 +1509,7 @@ The response count does not represent thirteen independent native parity compari
 Physical refusal controls establish end-to-end behavior without independently locating every refusal in the client or core.
 The packaged tests establish core admission behavior separately.
 
-The installed add-on matches the current distribution artifact.
+The installed add-on matches its recorded distribution artifact.
 All 1,521 embedded core classes match the built core, and the running proxy JAR matches its distribution artifact.
 Observers record state and request results without replacing policy answers or invoking inventory action handlers.
 The integration driver completes normally, and its client and proxy processes retire.
@@ -1520,3 +1520,60 @@ This run does not reproduce the affected WildFFA session, server pack or mod con
 Direct joins, client-authoritative inventory, deliberate live rejection and recovery under packet delay remain unverified by this control.
 The full authored player screen, physical controller navigation and complete native action ordering remain unfinished.
 The E-key background/scale, pearl/wind-charge rollback, endless eating and missing locator reports remain unresolved.
+
+## Offhand destination permission and player routing
+
+Offhand admission now follows the selected constructed Item definition.
+The installed native callback `1431bbfc0` accepts empty stacks or offhand flag mode one at Item offset `0x210`.
+Eight builtin definitions carry that flag in the complete target registry.
+These include arrows, maps, fireworks and totems as well as shields.
+Numeric ID collisions do not transfer permission between retained definitions.
+
+The common `item_properties` reader accepts only a nonzero byte `allow_off_hand` value.
+Omitted properties retain the previous flag; present properties with a missing or mistyped field clear it.
+The qualified `minecraft:allow_off_hand` component instead retains its installed typed value across omitted or mistyped updates.
+Its initial value is false.
+Installed components finalize after every reader update, including updates that omit them.
+An offhand wearable forces admission even when the qualified component says false.
+Armor wearables force compiled capacity one unless an installed `minecraft:max_stack_size` component owns that capacity.
+
+`OffhandContainer` applies slot and count bounds before permission.
+An empty destination also requires sufficient native Item capacity, including zero capacity for an empty incoming Item.
+Pickup, swaps and drag use this shared admission.
+The legacy survival adapter now checks incoming permission and source removal before reserving or sending its transaction.
+A refused click resynchronizes Java contents without changing the cursor, equipment or pending ownership.
+Incoming lock mode one remains permitted; source removal still rejects that mode.
+Admitted legacy transfers retain their server-content confirmation barrier.
+
+Native route builder `144e1dfa0` lists armor, offhand and main inventory destinations for hotbar sources.
+For main inventory sources, it lists armor, offhand and hotbar destinations.
+Equipment routes depend on separate workbench and profile flags.
+The ordinary Java player inventory now keeps both equipment ranges instead of selecting one empty armor slot or a shield-only offhand slot.
+Existing global occupied-merge and empty-slot passes remain unchanged.
+Static route construction does not establish complete native transfer ordering or controller execution.
+Crafting outputs, workbench profile combinations and physical controller navigation remain separate boundaries.
+
+Four complete native controls execute 64,872 destination decisions and 64,872 installed callbacks across 4,086 stack inputs.
+They record 2,106 definition observations, including builtin flags, typed values, retained updates, locks and all six three-component declaration orders.
+Earlier mixed-case conflict names establish raw-name admission only; the separate lowercase control establishes property precedence.
+Original backing, input, registry, TLS, static and CRT cleanup leaves no allocations or held locks in each control.
+Read-only storage supplies two empty hand slots.
+No permission, Item lookup, Block lookup or capacity result is supplied.
+Occupied destination outcomes, complete native controller construction, wire acceptance and live offhand actions remain unverified by these controls.
+
+The earlier live E-key capture uses the preceding discard-milestone artifacts.
+Its successful responses do not verify the new offhand changes.
+The four original reports and all five broader goal areas remain unresolved.
+
+The four-project offhand build passes 2,921 tests with 161 optional skips and no failures or errors.
+The core passes 1,790 tests with 84 optional skips. Checkstyle and offline validation pass, and all 105 patches replay.
+The packaged core passes 78 repository permission and action tests plus the private 40-mode comparison.
+Implementation origins point to the packaged JAR.
+All 1,521 core classes match their embedded add-on and proxy copies, and all 1,191 client classes match the tested build.
+Of 198 core assets, only the eight measured offhand flags change; the other 197 assets remain byte-identical.
+Earlier factory metadata and Block auxiliary data remain unchanged.
+No production class is added; 1,499 existing classes remain byte-identical to the discard milestone.
+Eleven changed nested classes retain matching declarations and instruction disassembly.
+
+Forty-five deliberate permission, action, capacity, identity and component-reader regressions fail value assertions.
+Each mutant also passes implementation-origin checks.
