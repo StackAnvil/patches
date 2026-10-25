@@ -97,6 +97,45 @@ Each case then executes sixteen original property getters, for 55,552 getter cal
 The reference supplies model-filter updates and initial collection refresh. It disables the separate restricted-tab policy.
 Full construction, restricted-tab availability, device delivery and visible pixels remain unverified.
 
+### Ability input to recipe availability
+
+The model predicate at `0x1434358a0` reads Instabuild, independently of effective creative mode.
+The native name table at `0x1517ea2b0` identifies Instabuild as ability index 11.
+The predicate uses actor component `0x68b75d48` through the original sparse lookup at `0x1401d1930`.
+It reads the highest numbered layer that declares the ability, from layer five through layer zero.
+The original walk-speed selection uses the same order for ability index 14.
+
+The shared connection model now applies that priority to boolean and float reads.
+Explicit false and zero values override lower layers.
+Serialized application at `0x140c4d650` maps layer IDs directly to those slots and normalizes IDs above five to Base.
+Each later entry replaces the same normalized layer, including clearing fields absent from the later entry.
+The previous codec selected CustomCache for unknown IDs and retained the first duplicate.
+
+The comparison decodes Java abilities before checking 729 complete native Instabuild queries, 1,305 walk-speed slices and 112 serialized applications.
+The packet cases check field ownership and values in each affected layer.
+The original default-type constructor, layer reset, per-entry readers and sparse actor lookup execute.
+Actor-change notification is an observed void boundary. Complete Actor/Level lifetime and real game-mode delivery remain unverified.
+The walk-speed slice stops before movement arithmetic uses the selected float.
+
+Local flight prediction now writes Base, matching native setters `0x14d38ada0` and `0x14d38ae20` at component offsets `0x174` and `0x178`.
+Game-mode fallback values remain in CustomCache; higher layers retain ownership.
+The setter evidence comes from static decompilation, without full setter execution.
+A quick Java start and stop before server acknowledgment now retains both flight requests.
+The regression fails with the corrected getter and the previous CustomCache producer.
+
+Six targeted tests also cover explicit overrides, invalid and repeated layers, and the actual Java abilities packet producers.
+Three frame-history fixtures now declare their intended flying state in Base, while retaining their existing position, velocity and frame assertions.
+This correction supplies a faithful shared input. Installing the player recipe evaluator and authored E-key screen remains unfinished.
+
+The complete build replays 106 patches and passes 2,933 tests with 161 optional skips.
+Checkstyle and repository offline validation pass.
+The packaged core passes the six ability tests, all 34 frame tests, five retained layout tests and 83 permission/action checks.
+Six deliberate ownership, codec and flight-producer regressions fail value assertions, with implementation origins verified.
+All 1,522 core classes match both embedded copies; all 1,191 client classes match the tested add-on.
+All 198 assets and 1,503 core classes remain unchanged from the default-layout build.
+Twelve changed nested classes retain identical declarations and instruction disassembly.
+This change has no new live flight or inventory-screen capture.
+
 ### Java projection of default layouts
 
 The Java recipe-book projection now opens for saved layout zero and positive values greater than three.
