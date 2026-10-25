@@ -5,6 +5,8 @@ import { incomingProjectilePasses, projectileThreatens, type IncomingProjectileO
 import { rangedKnockbackPasses, type KnockbackImpulse } from "../../../src/integration/knockback-observation.ts";
 import type { FishingObservation } from "../../../src/integration/fishing-observation.ts";
 import { registerFishingGameplay } from "./fishing.ts";
+import { registerPlayerUseGameplay } from "./player-uses.ts";
+import type { PlayerUseObservation } from "../../../src/integration/player-use-observation.ts";
 
 interface MotionObservation {
   start: Vector3;
@@ -22,6 +24,7 @@ interface MotionObservation {
 }
 
 interface Fixture {
+  playerUse?: PlayerUseObservation;
   fishing?: FishingObservation;
   fishingTarget?: Entity;
   ranged?: RangedObservation;
@@ -51,6 +54,7 @@ export interface ProbeContext {
 export function registerComplexGameplay(context: ProbeContext) {
   const { define, prepareArena, inventory, equipment, countItem, blockAt, position, getActive, tagEntity } = context;
   registerFishingGameplay(context);
+  registerPlayerUseGameplay(context);
   function fixtureFor(player: Player) {
     const current = getActive();
     return current?.playerName === player?.name && !current.fixture.closed ? current.fixture : undefined;

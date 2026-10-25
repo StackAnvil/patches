@@ -1,4 +1,7 @@
 export const complexGameplayCaseIds = [
+  "pearl-wind-charge",
+  "eat-moving-repeat",
+  "eat-moving-last",
   "bow-release",
   "bow-cancel",
   "bow-no-ammo",

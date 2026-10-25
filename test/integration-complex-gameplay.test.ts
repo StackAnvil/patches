@@ -2,6 +2,7 @@ import { expect, mock, test } from "bun:test";
 import type { Entity, Player } from "@minecraft/server";
 import type { RangedObservation } from "../src/integration/ranged-observation.ts";
 import type { IncomingProjectileObservation } from "../src/integration/projectile-observation.ts";
+import type { PlayerUseObservation } from "../src/integration/player-use-observation.ts";
 
 const callbacks = new Map<string, (event: any) => void>();
 const pending: (() => void)[] = [];
@@ -79,6 +80,32 @@ function prepareObservation(): RangedObservation {
   active = { playerName: player.name, fixture: { ranged } };
   return ranged;
 }
+
+test("player-use outcomes exclude other players and stop with the active fixture", () => {
+  const observation: PlayerUseObservation = { kind: "pearl-wind", initialFood: 0, remainingFood: 0,
+    remainingPearls: 4, remainingWindCharges: 4, absorption: 0, start: { x: 0, y: 70, z: 0 },
+    events: [], impacts: [], frames: [] };
+  const fixture = { playerUse: observation, closed: false };
+  active = { playerName: player.name, fixture };
+  const source = { ...player, typeId: "minecraft:player", location: { x: 0, y: 70, z: 1 } };
+  const use = (p: object) => callbacks.get("itemUse")!({ source: p, itemStack: { typeId: "minecraft:ender_pearl" } });
+  const impact = (p: object) => callbacks.get("projectileHitBlock")!({ source: p,
+    projectile: { typeId: "minecraft:ender_pearl" } });
+  use({ ...source, name: "OtherPlayer" });
+  impact({ ...source, name: "OtherPlayer" });
+  expect(observation.events).toHaveLength(0);
+  expect(observation.impacts).toHaveLength(0);
+  use(source);
+  impact(source);
+  expect(observation.events).toHaveLength(1);
+  expect(observation.impacts).toHaveLength(1);
+  fixture.closed = true;
+  use(source);
+  impact(source);
+  expect(observation.events).toHaveLength(1);
+  expect(observation.impacts).toHaveLength(1);
+  active = undefined;
+});
 
 function spawn(owner: string) {
   callbacks.get("entitySpawn")!({ entity: { id: "arrow", typeId: "minecraft:arrow",

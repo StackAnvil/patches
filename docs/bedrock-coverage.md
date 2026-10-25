@@ -10299,3 +10299,36 @@ The broader direct scene gate fails on `viabedrock:item/item_textures/items/came
 The proxy scene gate passes with the same controlled journal.
 The missing camera texture's cause and visible impact still need investigation.
 The rendering gate remains failed for that direct scene.
+
+## Pearl, wind-charge and moving-food controls (October 25, 2026)
+
+**Live scope:** Fresh Java 26.3 sessions use the current build with an isolated Bedrock 1.26.51.1 server.
+Both direct and ViaProxy routes receive physical input on a private display.
+The server records item use, projectile impacts, positions, velocity, item counts and food completion.
+Read-only client observers record correction replay and the final held-item state.
+
+Each route completes ordinary and steep pearl-then-wind-charge sequences.
+The second use follows the first by two or three server ticks.
+Steep throws produce an upward impulse, land and remain stationary.
+A second pair of sequences adds a declared 300 ms delay to inbound Java channel events.
+Those controls produce finite correction bursts and then settle. They do not reproduce endless rollback.
+The delayed ordinary throw differs between routes, including whether the impact launches the player upward.
+No native trajectory comparison or timing equality is claimed.
+
+Both routes complete four golden apples during an eight-second moving hold with the delay installed.
+They then consume a final single apple while moving and retain absorption.
+The client ends with an empty hand, inactive item use and no pending replay command.
+Corrections occur during food-use transitions, so these controls do not establish smooth movement parity.
+The intermittent original reports remain open.
+
+**Repeatable checks:** Three integration cases now cover these outcomes.
+`pearl-wind-charge` requires both owned impacts, consumed items, a pearl teleport, a wind jump and a stationary landing.
+`eat-moving-repeat` requires several completed uses, matching item consumption, absorption and movement during use.
+`eat-moving-last` requires final consumption and no new use after the stack becomes empty.
+Unit controls reject missing impacts, unchanged inventory, late throws, absent motion, incomplete landings, cancelled uses and renewed empty-stack use.
+The checks establish bounded server outcomes. They do not replace packet analysis or native graphical comparisons.
+
+**Pack finding:** The bundled target library declares the camera item texture but contains no corresponding image.
+Its available camera images cover block faces, the tripod entity and UI icons.
+This explains the absent source image in the direct conversion. Correct native item presentation still needs evidence.
+The direct rendering gate remains failed until the mapping is resolved.
