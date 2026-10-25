@@ -29,3 +29,14 @@ Those packaged totals include earlier permission, identity and armor controls.
 
 See [the native discard reference](../../../docs/native-player-inventory.md#inventory-discard-and-creative-admission) for evidence and limits.
 The new controls do not establish complete creative catalog production, created-output ownership or live acceptance of these permission changes.
+
+## Live creative picker control
+
+The current build completes a real E-key creative opening through ViaProxy and Bedrock 1.26.51.1.
+Physical inventory-tab inputs preserve locked items after refused edits.
+A physical catalog selection and hotbar placement sends CraftCreative, CraftResults and Place, then receives Success.
+Client and core snapshots agree on the resulting item.
+The ordinary Java picker remains installed; these observations do not establish the authored native player controller.
+Physical refusals do not independently identify whether client or core admission stopped each operation.
+
+See [the complete E-key control](../../../docs/native-player-inventory.md#live-e-key-action-controls) for artifact verification, response counts and remaining limits.

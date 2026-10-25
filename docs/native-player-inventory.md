@@ -1405,6 +1405,7 @@ The factory resource adds equipment metadata without changing its previous field
 The other 197 core assets, including Block auxiliary data, remain byte-identical to the armor-source milestone.
 One factory metadata holder class is added; implementation changes stay within placement, definition properties and recipe callers.
 Twelve changed nested classes retain matching declarations and instruction disassembly.
+
 The other 1,495 existing core classes remain byte-identical.
 
 ## Inventory discard and creative admission
@@ -1476,3 +1477,46 @@ All 1,191 client classes match the tested add-on.
 All 198 core assets remain byte-identical to the armor-placement milestone, including Block auxiliary data.
 No production class is added; 1,501 existing core classes remain byte-identical.
 Twelve changed nested classes retain matching declarations and instruction disassembly.
+
+## Live E-key action controls
+
+A private Java 26.3 client exercises the current build through ViaProxy and Bedrock 1.26.51.1.
+The server negotiates server-authoritative inventory.
+The client uses an 854 by 480 viewport and Java GUI scale two.
+Real E-key input opens survival, creative and survival inventory in sequence.
+All three openings receive distinct native tokens and matching acknowledgments.
+The final E-key close receives its native acknowledgment too.
+The client retains Java's ordinary player screens, with visible backgrounds.
+
+Sixteen physical input controls cover pickup, cursor drops, locked-item refusals, creative placement and armor admission.
+Server commands create the fixtures, including both typed item-lock modes.
+Inventory-locked items permit ordinary pickup and return but refuse cursor and slot drops.
+Slot-locked items refuse the tested pickup and drop inputs.
+Client and core observations retain the expected inventory and cursor state after each refusal.
+The creative picker accepts a real catalog placement and retains locked items after refused edits.
+
+A stack of three carved pumpkins places one item in the head slot and leaves two on the cursor.
+An occupied head-slot swap with the remaining stack makes no request.
+The return, removal and merge controls receive successful responses.
+Physical shift-click equips one pumpkin and preserves two in inventory.
+That shift-click sends two Place actions: one to armor slot zero, then two items to inventory slot nine.
+Its source hotbar slot becomes empty.
+This observation establishes accepted routing and item conservation, while native destination ordering remains unverified.
+
+The complete capture records thirteen requests and thirteen successful Bedrock responses.
+This includes an additional accepted creative replacement beyond the explicitly asserted catalog placement.
+The response count does not represent thirteen independent native parity comparisons.
+Physical refusal controls establish end-to-end behavior without independently locating every refusal in the client or core.
+The packaged tests establish core admission behavior separately.
+
+The installed add-on matches the current distribution artifact.
+All 1,521 embedded core classes match the built core, and the running proxy JAR matches its distribution artifact.
+Observers record state and request results without replacing policy answers or invoking inventory action handlers.
+The integration driver completes normally, and its client and proxy processes retire.
+An earlier run exceeded its harness timeout and assumed an unproven shift-click remainder location.
+Those failures remain separate from the completed control and its native response observations.
+
+This run does not reproduce the affected WildFFA session, server pack or mod configuration.
+Direct joins, client-authoritative inventory, deliberate live rejection and recovery under packet delay remain unverified by this control.
+The full authored player screen, physical controller navigation and complete native action ordering remain unfinished.
+The E-key background/scale, pearl/wind-charge rollback, endless eating and missing locator reports remain unresolved.

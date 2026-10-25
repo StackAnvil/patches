@@ -1083,3 +1083,16 @@ All 198 assets remain unchanged from the armor-placement milestone.
 
 See [the discard reference](../../../docs/native-player-inventory.md#inventory-discard-and-creative-admission) for caller and lifetime boundaries.
 Gameplay drops, specialized recipe Consume producers, complete controller input and live server acceptance remain separate.
+
+## Live installed-screen controls
+
+A private Java 26.3 client completes sixteen physical input controls through the current ViaProxy and Bedrock 1.26.51.1.
+Three E-key openings receive distinct native tokens and matching acknowledgments, followed by a confirmed final close.
+The capture records thirteen requests with thirteen successful server responses.
+Locked-item refusals preserve client and core state, while ordinary cursor drops and one-item head placement succeed.
+The installed add-on, running proxy and all 1,521 embedded core classes match the current build.
+
+Shift-click equips one pumpkin and sends the other two to inventory slot nine.
+Native full-action destination ordering remains unverified; accepted server requests alone do not prove that contract.
+The client still uses Java's player screens. The original rendering report remains unreproduced.
+See [the live control boundaries](../../../docs/native-player-inventory.md#live-e-key-action-controls) for scope and failed fixture attempts.
