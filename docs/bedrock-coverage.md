@@ -10122,7 +10122,7 @@ It does not run wire admission or source conversion, so the Java comparison now 
 These controls cover observed numeric, empty and wildcard registry contexts under the pinned profile.
 All captured definition minima and parsed registry contexts have discriminator zero.
 Unknown discriminator producers, arbitrary custom/versioned Block loading, other recipe families and all-empty counting remain outside this increment.
-Production recipe registration and installed player publication do not yet retain the complete recipe model.
+At this checkpoint, production registration and installed player publication did not yet retain the complete recipe model.
 No new live capture closes the inventory, movement, eating or locator reports.
 
 All four projects build with 2,986 passing tests, 152 optional skips and no failures or errors.
@@ -10137,3 +10137,42 @@ All 1,192 compiled client classes match the add-on.
 Compared with the preceding core, 1,500 classes and 196 assets remain byte-identical.
 Fourteen further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
 Only the two registry/factory JSON assets change, and their earlier data remains equal after removal of the new minimum-version fields.
+
+
+## Registered crafting ingredients (October 25, 2026)
+
+**Implemented:** Accepted shaped and shapeless registrations retain decoded Empty, lazy Name, Tag and Molang ingredient payloads.
+Each ingredient position owns its first Name resolution. Tag admission uses the registry index at registration.
+Append and unlock updates preserve those owners. Clear updates create new owners and remove stale registration access.
+Crafting-grid matching uses the retained payloads, converted source receiver and native source eligibility.
+Other recipe families and the existing Java grid assignment algorithm keep their separate contracts.
+
+**Verified within scope:** The existing 608-packet reference now compares descriptors after Java production registration.
+All 4,864 predicates, 1,056 counter rounds and 2,112 ingredient rows still match, including source locations and amounts.
+Three new regression methods exercise the production grid path, owner lifetime, registry replacement and native source eligibility.
+The packaged grid projections pass all three expected values. The preceding packaged core differs on all three without linkage failures.
+These are projections of separately verified descriptor and source-guard contracts, not additional original complete grid executions.
+
+Ten new bounded controls execute original player evaluator `143439420`, output lookup, priority sort, grid requirements and counter `14297b140`.
+The reference supplies ordinary definitions, context production, model/vector backing, the output getter and runtime services.
+Eight all-empty controls reach four unchanged `INT_MAX` minimum scans while completed round counts increase.
+The observer interrupts those controls. They claim neither a returned availability result nor complete ownership cleanup.
+Two workbench-ineligible controls return state three without counting.
+The control does not decode packets or construct full recipe, player, controller or Level owners.
+
+**Known difference:** Java explicitly rejects all-empty counting. The observed native evaluator enters repeated rounds without an all-empty guard.
+No supported native craftability result follows from those interrupted controls.
+Installed player recipe publication, other recipe families and complete native grid/controller parity remain unfinished.
+No new live capture closes the inventory, movement, eating or locator reports.
+
+All four projects build with 2,989 passing tests, 152 optional skips and no failures or errors.
+ViaBedrock passes 1,854 tests with 79 optional skips. Both Checkstyle tasks and repository offline validation pass.
+All 106 ViaBedrock patches replay.
+Twenty-two packaged checks pass with thirteen implementation origins verified.
+The separate wire predicate comparison still matches all 4,864 results.
+
+All 1,531 core classes and 198 assets match both embedded copies. All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,508 classes and all 198 assets remain byte-identical.
+Sixteen further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
+The synthetic recipe-type switch changes only its mapping order for the three crafting types.
+The only new class is the matcher interface that preserves ingredient-position identity through grid assignment.

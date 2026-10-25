@@ -881,3 +881,34 @@ All 1,192 compiled client classes match the add-on.
 Compared with the preceding core, 1,500 classes and 196 assets remain byte-identical.
 Fourteen further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
 Only the two registry/factory JSON assets change, and their earlier data remains equal after removal of the new minimum-version fields.
+
+
+## Registered crafting ingredient ownership
+
+Retain decoded ingredient payloads when accepting shaped and shapeless network recipes.
+Preserve those owners across append and unlock updates. Create new owners after a clear update.
+Use the retained payloads and native source guards in actual crafting-grid matching.
+Keep other recipe families and the existing grid assignment algorithm separate.
+
+The complete 608-packet counter comparison now reaches production registration before evaluating ingredients.
+Its existing native reference still covers 4,864 predicates, 1,056 rounds and 2,112 ingredient rows.
+Three regression methods cover independent lazy positions, duplicate and clear updates, registry replacement and native source eligibility.
+
+Ten bounded original player-evaluator controls inspect the all-empty case.
+Eight controls repeat the `INT_MAX` minimum with growing round counts. The observer interrupts them after four scans.
+Two workbench-ineligible controls return state three without entering the counter.
+Interrupted controls claim neither an availability return nor complete cleanup.
+Java's explicit all-empty counter rejection remains a documented safety divergence.
+Installed player recipe publication and the original reported live bugs remain unfinished.
+
+All four projects build with 2,989 passing tests, 152 optional skips and no failures or errors.
+ViaBedrock passes 1,854 tests with 79 optional skips. Both Checkstyle tasks and repository offline validation pass.
+All 106 ViaBedrock patches replay.
+Twenty-two packaged checks pass with thirteen implementation origins verified.
+The separate wire predicate comparison still matches all 4,864 results.
+
+All 1,531 core classes and 198 assets match both embedded copies. All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,508 classes and all 198 assets remain byte-identical.
+Sixteen further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
+The synthetic recipe-type switch changes only its mapping order for the three crafting types.
+The only new class is the matcher interface that preserves ingredient-position identity through grid assignment.

@@ -1967,5 +1967,33 @@ Original registry, Item, Block, TLS, static and CRT cleanup leaves no allocation
 These controls use a fixed Block catalog and declared typed registry inputs.
 They do not establish older client construction, arbitrary versioned Blocks or unknown version-discriminator producers.
 Current captured constructor minima and parsed contexts all have the native discriminator set to zero.
-Production recipe registration and installed player publication still need the complete retained model.
+At this checkpoint, production recipe registration and installed player publication still needed the complete retained model.
 Other recipe families, all-empty counting and the original reported live bugs remain unfinished.
+
+
+## Registered crafting ingredient ownership
+
+Accepted shaped and shapeless registrations now own their decoded Empty, Name, Tag and Molang ingredient positions.
+Tag admission occurs at registration. Each Name position retains its own first lazy resolution.
+Append and unlock updates preserve those owners. A clear update creates new owners, even for a reused wire recipe object.
+Rejected registrations do not reserve ingredient owners.
+Other recipe families retain their existing paths.
+
+Actual crafting-grid matching now uses those retained payloads through native source conversion and source eligibility.
+A registry replacement does not re-admit a previously missing Tag or resolve a previously missing Name again.
+The matching algorithm still uses its existing Java grid assignment and quantity rules.
+This change does not establish complete native grid, recipe placement or controller parity.
+
+The 608-packet comparison now passes through production recipe registration before descriptor and counter evaluation.
+It still compares 4,864 predicates, 1,056 rounds and 2,112 ingredient rows against the existing original-executable reference.
+Three additional regression methods cover ownership lifetime, registry replacement and native source eligibility in the production grid path.
+
+The native player evaluator at `143439420` does not filter all-empty candidates before calling counter `14297b140`.
+Ten bounded controls cover zero ingredients, empty shaped and shapeless ingredients, source presence and the workbench requirement.
+Eight controls reach four repeated `INT_MAX` minimum scans while their completed round counts increase.
+The observer stops those runs. They establish neither a returned availability value nor complete ownership cleanup.
+Two workbench-ineligible controls return state three without entering the counter.
+The declared model, output getter and ordinary definition backing remain supplied interfaces.
+
+Java still rejects all-empty counting explicitly. This is a safety divergence from the observed native repeated rounds.
+Installed player recipe publication, other recipe families and the four original reports remain unfinished.
