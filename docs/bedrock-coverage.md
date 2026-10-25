@@ -9851,3 +9851,37 @@ The tenth changes only its output map's generic value type to an ordered list, w
 This candidate lookup does not complete the retained player evaluator or its screen publication.
 Descriptor admission, full Molang context, native controller ownership and installed player behavior remain unfinished.
 No new live capture ran, and the four original bug reports remain unresolved.
+
+## Packet-created recipe counting (October 25, 2026)
+
+The new reference closes a gap in the earlier ingredient counter controls, which supplied matcher callbacks.
+It decodes 160 complete native recipe packets, constructs their shaped owners and executes the original descriptor matcher and counter.
+All recipes register successfully.
+The target remains Bedrock 1.26.51.1, build 51061372, protocol 2193, with the recorded default Experiments and base-game version.
+
+The matrix varies ingredient quantities zero, one, two and 64, occupied positions, source counts and collection distribution.
+It covers 1 × 1, 2 × 2, 3 × 1, 1 × 3 and 3 × 3 shapes.
+Each of the 40 otherwise identical quantity groups produces the same availability rounds and source references.
+A zero-quantity Name descriptor remains nonempty.
+Availability counts descriptor positions; placement quantity remains a separate contract.
+
+The original shaped grid getter requires a crafting table when either dimension is at least three, including shapes with one occupied position.
+Signed priorities minus seven, zero and seven survive packet decoding and construction.
+The separate static shapeless getter checks the ingredient vector length against five; this reference does not construct shapeless owners.
+
+The Java comparison decodes the same packets and uses the real registry, deferred Name resolution and resolved-descriptor counter.
+All 264 rounds and 1,268 ingredient rows match, including every source collection and slot.
+The focused run passes all 16 tests without skips, plus both Checkstyle tasks.
+The comparison also passes against the existing packaged core, with ten implementation origins verified.
+All 106 patches replay, and repository offline validation passes.
+Production implementations, resources and packaged artifacts remain unchanged in this follow-up.
+The preceding four-project build remains the implementation build reference.
+
+Original packet, recipe, Item, Block, TLS, static and CRT retirement leaves no allocations or held locks.
+The harness supplies typed ordinary apple inputs, read-only collection backing, valid byte I/O and standard runtime services.
+Runtime IDs remain zero and the world context is null.
+It supplies no matcher, count, emptiness, priority or grid answer.
+Recipes with only empty descriptors remain outside counter execution because the original counter does not terminate for them.
+
+This reference does not connect retained recipes to player publication or complete descriptor families, Molang context or controller ownership.
+No installed capture ran. The four original bug reports and all five implementation areas remain open.

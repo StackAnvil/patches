@@ -1860,3 +1860,19 @@ The existing ordinary and alias comparisons remain numeric.
 
 Complete wire decoding, other concrete recipe classes, owned Tag/Molang integration and installed player recipe publication remain unfinished.
 These controls do not close the E-key inventory, movement, eating or locator reports.
+
+## Packet-created counter ownership
+
+The earlier counter reference supplied ingredient matching callbacks.
+A new 160-packet reference runs actual shaped owners, descriptor resolution, concrete matching and counting.
+The production resolved-descriptor path matches all 264 rounds and 1,268 ingredient rows, including source references.
+
+Ingredient quantities zero, one, two and 64 produce identical availability results within each controlled group.
+A zero-quantity Name descriptor still reports nonempty.
+Keep placement quantities separate from availability counting.
+The shaped grid getter uses full dimensions, including unoccupied positions: width or height at least three requires a crafting table.
+
+Complete native cleanup, sixteen focused source tests and the packaged comparison pass.
+The new optional test belongs to the owning recipe patch. Production behavior and artifacts remain unchanged.
+Full retained descriptor admission and player publication remain unfinished.
+See the [packet-created counter reference](bedrock-coverage.md#packet-created-recipe-counting-october-25-2026) for inputs and verification limits.

@@ -775,3 +775,21 @@ The output catalog changes only its generic map value type, with identical erase
 Full descriptor admission, Molang context, retained player evaluation, controller ownership and installed publication remain unfinished.
 No new live capture ran.
 See the [candidate reference](../../../docs/bedrock-coverage.md#retained-recipe-output-candidates-october-25-2026).
+
+## Packet-created counter comparison (October 25, 2026)
+
+`STACKANVIL_NATIVE_CONCRETE_RECIPE_COUNTER` compares 160 actual native packet-created shaped recipes through the production resolved-descriptor counter.
+It replaces supplied matcher answers with original descriptor resolution, concrete matching and counting.
+All 264 rounds and 1,268 ingredient rows match, including source references.
+Quantities zero, one, two and 64 retain their wire values but produce identical availability results in each controlled group.
+Zero-quantity names remain nonempty. Placement quantities remain separate.
+
+All 16 focused tests pass without skips, plus both Checkstyle tasks.
+The comparison passes against the existing packaged core with ten implementation origins verified.
+All 106 patches replay; repository offline validation passes. Production implementations, resources and artifacts remain unchanged.
+Original packet, recipe, Item, Block, TLS, static and CRT cleanup leaves no allocations or locks.
+
+Inputs remain typed ordinary apple sources and read-only collection backing, with zero runtime IDs and null world context.
+No matching, count, emptiness or grid answer is supplied.
+Full descriptor families, retained player evaluation and publication remain unfinished.
+See the [counter reference](../../../docs/bedrock-coverage.md#packet-created-recipe-counting-october-25-2026).
