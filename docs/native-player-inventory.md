@@ -1406,3 +1406,73 @@ The other 197 core assets, including Block auxiliary data, remain byte-identical
 One factory metadata holder class is added; implementation changes stay within placement, definition properties and recipe callers.
 Twelve changed nested classes retain matching declarations and instruction disassembly.
 The other 1,495 existing core classes remain byte-identical.
+
+## Inventory discard and creative admission
+
+Inventory drops require both source permission and an unlocked item.
+The shared discard policy requires typed byte lock mode zero.
+Ordinary removal and discard therefore have different contracts.
+A menu item can permit pickup while refusing discard.
+Mistyped lock tags retain the existing typed-field behavior.
+
+Slot throws and cursor drops use this policy before prediction or request allocation.
+The action helper rejects nonpositive transfer counts.
+The raw native predicate can admit zero or negative counts when its other conditions pass.
+The native UI executor normalizes counts before constructing an action.
+The Java action guard preserves that distinction.
+
+Direct creative packets use the cached raw player mode.
+Only `Default` inherits the level mode for this permission; `Undefined` does not.
+The Java display mode does not establish creative permission.
+The armor source policy uses the same shared mode helper.
+
+Creative destination checks use the provider policy and the whole incoming count.
+Creative catalog drops reject nonzero typed lock bytes.
+Both checks run before temporarily opening inventory.
+Replacing or clearing an existing stack also requires discard permission and a stack network ID.
+That source check runs after inventory opening and source refresh.
+Denied operations allocate no request and make no predicted inventory change.
+An actual rejected response restores the previous stack after a mode change.
+
+The native target remains 1.26.51.1, build 51061372, protocol 2193.
+The control uses default Experiments and base-game version 1.26.50.
+Original source method `147c98300` and discard predicate `1431b6390` execute for every recorded row.
+The reference contains 56,760 source/discard pairs, or 113,520 original calls.
+It covers 129 typed saved ItemStacks and collection roles 6, 7, 12, 28, 29, 30, 34, 58, 59 and 63.
+Armor uses five representative actor states; other roles do not consume those mode inputs.
+The control retains 40 original actor getter observations.
+A separate packaged comparison checks the shared creative-mode helper against all 40 observations.
+Every recorded discard decision equals source permission combined with typed lock mode zero.
+
+Original backing constructor `147c96d60` and installer `1431afb60` establish the storage policies.
+Original weak-view factory `1431abbb0` constructs the views used by the discard predicate.
+A supplied pinned collection-root ABI exposes the role, backing and start offset zero.
+Its shared ownership header and read-only metadata are declared interfaces.
+The control does not construct or retire the complete native collection root.
+Read-only storage supplies four armor slots or 36 slots for the other roles.
+Sparse actor-mode and fallback services remain supplied interfaces.
+No permission result, Item lookup or Block lookup result is supplied.
+
+Original view destruction returns the foreign root's strong and weak pins to their baseline.
+Original backing, input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+Expired roots and malformed enchantment-list children receive no invented native decision.
+
+Static caller inspection finds the discard check before Drop, Destroy and Consume construction in UI executor `1433f0390`.
+This does not establish the policy for every recipe Consume producer.
+Gameplay drops outside inventory use a separate caller and remain unaudited here.
+Complete creative catalog production, output ownership, Actor mode delivery and controller lifetimes also remain unfinished.
+The executed controls do not establish complete input, wire or live server parity.
+The authored E-key screen and all four original reports remain unresolved.
+
+The four-project build passes 2,910 tests with 161 optional skips and no failures or errors.
+The core passes 1,779 tests with 84 optional skips. Checkstyle passes.
+The packaged core passes 67 repository permission and action tests plus the private 40-mode comparison.
+Thirty-two deliberate permission, action, capacity, identity and reader regressions fail value assertions.
+Implementation origins are checked against the packaged JAR.
+
+All 1,521 core classes match their embedded add-on and proxy copies.
+Packaged classes match test-compiled classes with four declared build-identity replacements.
+All 1,191 client classes match the tested add-on.
+All 198 core assets remain byte-identical to the armor-placement milestone, including Block auxiliary data.
+No production class is added; 1,501 existing core classes remain byte-identical.
+Twelve changed nested classes retain matching declarations and instruction disassembly.

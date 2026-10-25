@@ -1061,3 +1061,25 @@ Controller ordering, specialized outputs, drops, creative edits and live server 
 The four-project build passes 2,902 tests and all 105 patches replay.
 The packaged core passes 59 focused tests; 23 deliberate regressions fail value assertions.
 Checkstyle, artifact comparisons and repository offline validation pass.
+
+## Inventory discard admission
+
+Keep ordinary source permission separate from discard permission.
+Inventory slot throws and cursor drops require source admission and typed byte lock mode zero before prediction.
+The shared helper rejects nonpositive action counts without changing the raw predicate's signed-count contract.
+Expose incoming admission for creative callers and share the raw creative-mode permission helper with armor removal.
+
+The original native source and discard predicates produce 56,760 decision pairs across 129 typed stacks and ten collection roles.
+Every discard decision equals source admission combined with typed lock mode zero.
+The control executes the original weak-view factory, backing constructor and policy installer.
+A pinned foreign collection-root ABI supplies role, backing and start offset zero; complete root construction remains outside the control.
+Native view destruction returns its foreign pins to baseline.
+Original backing, input, registry, TLS, static and CRT cleanup leaves no allocations or held locks.
+
+The four-project build passes 2,910 tests. All 105 patches replay.
+The packaged core passes 67 repository tests plus a private comparison against 40 original actor mode observations.
+Thirty-two deliberate regressions fail value assertions with verified implementation origins.
+All 198 assets remain unchanged from the armor-placement milestone.
+
+See [the discard reference](../../../docs/native-player-inventory.md#inventory-discard-and-creative-admission) for caller and lifetime boundaries.
+Gameplay drops, specialized recipe Consume producers, complete controller input and live server acceptance remain separate.
