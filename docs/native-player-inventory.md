@@ -1855,8 +1855,9 @@ Those default counts do not establish index membership under other contexts.
 An unfiltered scan of definition tags cannot replace that index.
 
 Source conversion can retain a Block-derived descriptor when its representative matches the source's numeric ID.
-Otherwise it falls back to the retained source definition.
-Future Tag and Molang matching must retain the resulting definition identity alongside its ID and auxiliary value.
+Otherwise the ordinary descriptor constructor resolves the source numeric ID through the registry.
+The descriptor now retains that selected definition alongside its numeric key and auxiliary value.
+The original source receiver can differ from this selected definition after an ID collision.
 The existing ordinary and alias comparisons remain numeric.
 
 Complete wire decoding, other concrete recipe classes, owned Tag/Molang integration and installed player recipe publication remain unfinished.
@@ -1906,3 +1907,33 @@ It separates the selected result slot from operand snapshots and closes the twel
 Broader caller lifetime, value/cast behavior and complete VM parity remain unfinished.
 Native Tag index filtering and source-definition identity still need integration.
 The four original reports and all five goal areas remain open.
+
+
+## Retained Molang ingredient counting
+
+The retained descriptor API now admits recipe Molang expressions through the shared recipe compiler.
+Each payload retains its compiled expression and reports an empty representative.
+Its predicate can still match a concrete Item.
+Availability counting must preserve both results independently.
+
+Source conversion now returns the selected definition and normalized auxiliary value together.
+The existing numeric key still controls counter grouping.
+Molang reads tags from the converted definition, including after an ID collision.
+The native fallback constructor performs numeric registry lookup before it retains that definition.
+It does not directly retain the original stack receiver.
+
+The retained counter path matches 320 packet-created native shaped owners.
+These cases cover 2,560 ingredient comparisons, 636 rounds and 1,272 ingredient rows with exact source references.
+Ingredient quantities zero, one, two and 64 retain the same availability behavior.
+The Java control decodes the complete packets, then explicitly constructs retained descriptors from their decoded fields.
+The existing wire Molang predicate consumer now uses the converted definition through this retained API.
+Production recipe registration and installed player publication do not yet retain the complete recipe model.
+
+The existing native reference executes complete descriptor, recipe, Item, Block, TLS, static and CRT retirement without outstanding allocations or held locks.
+Version-filtered Tag admission, other recipe families and all-empty counter behavior remain unfinished.
+A separate six-case control supplies a borrowed source header after complete original Item and Block registry initialization.
+Its declared inputs select the retained definition cell, null Block and zero auxiliary value.
+Original conversion and Molang matching select the current numeric owner independently of that input receiver.
+Original cleanup leaves no outstanding allocations or held locks.
+The borrowed header does not own its copied references, and the control does not establish its construction or retained lifetime.
+No new live capture closes the inventory, movement, eating or locator reports.

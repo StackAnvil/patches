@@ -817,5 +817,40 @@ No native predicate or compiler answer is supplied by these controls.
 The shared runtime follow-up closes the twelve measured assignment-result differences from the additional genuine-frame controls.
 All 67 recipe admission results and 232 predicates now match the packaged core.
 Broader caller lifetime, value/cast behavior and complete expression parity remain unfinished.
-Retained Tag/Molang descriptors, the version-filtered Tag index, source conversion and installed player publication also remain unfinished.
+The retained Molang counter increment follows below.
+The version-filtered Tag index and installed player publication remain unfinished.
 No new live capture closes the original inventory, movement, eating or locator reports.
+
+
+## Retained Molang counters
+
+Retain compiled recipe Molang payloads independently of their empty representatives.
+Match against tags from the converted source definition, while the counter keeps its existing numeric grouping key.
+The native fallback constructor resolves that definition through numeric registry lookup.
+The original source receiver can differ after an ID collision.
+
+The retained API matches 320 complete native packet cases: 2,560 predicates, 636 counter rounds and 1,272 ingredient rows.
+Compare exact amounts, source collections and slots across ingredient quantities zero, one, two and 64.
+The Java control explicitly constructs retained descriptors from decoded packet fields.
+The wire Molang predicate consumer now uses the converted receiver.
+Production registration and installed player publication still use their existing recipe models.
+The [coverage ledger](../../../docs/bedrock-coverage.md#retained-molang-recipe-counting-october-25-2026) records the boundary and remaining Tag work.
+
+A further six-case control supplies a borrowed source header after original Item and Block registry initialization.
+It declares the source definition cell, null Block and zero auxiliary value.
+Original conversion and matching select the current numeric owner independently of that source receiver.
+Cleanup completes without outstanding allocations or held locks.
+The control does not establish retained-header construction or full recipe/player lifetime.
+
+All four projects build with 2,980 passing tests, 152 optional skips and no failures or errors.
+Both Checkstyle tasks, repository offline validation and all 106 patch replays pass.
+Four focused retained-Molang tests pass against the packaged core, with nine implementation origins verified.
+The new core matches all six source-header predicates.
+The preceding core differs on two tag-query values without linkage failures.
+All 4,864 existing packet predicate results still match the packaged core.
+
+All 1,529 core classes and 198 core assets match both embedded copies.
+All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,509 classes and all 198 assets remain byte-identical.
+Seven further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
+The retained counter adapter intentionally changes its lambda target from the numeric key to the complete source descriptor.

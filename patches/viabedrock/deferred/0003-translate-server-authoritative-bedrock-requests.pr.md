@@ -1179,3 +1179,12 @@ Both embedded copies match all 1,523 core classes, and the add-on matches all 1,
 The two tag metadata assets change while 196 other assets remain byte-identical.
 Existing metadata in both changed assets remains semantically unchanged.
 No new live inventory or animation capture ran for this milestone.
+
+
+## Source descriptor ownership
+
+Keep the resolved Item receiver and normalized auxiliary value in `ItemRecipeDescriptor`.
+Project `ItemRecipeKey` from that value for numeric comparisons and cache grouping.
+Preserve the native Block-derived conversion and numeric fallback lookup rules.
+The owning recipe patch uses the selected receiver for retained Molang predicates.
+See the [retained counter reference](../../../docs/bedrock-coverage.md#retained-molang-recipe-counting-october-25-2026).

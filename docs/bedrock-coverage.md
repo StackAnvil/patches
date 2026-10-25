@@ -10025,3 +10025,46 @@ The new result slot holder is the only added class.
 Normal entry/reset ownership in other native callers, broader value/cast behavior, array iteration and version gates still need comparison.
 No new installed capture or native image comparison ran for this milestone.
 The four original reports remain unresolved, and all five compatibility goal areas remain active.
+
+
+## Retained Molang recipe counting, October 25, 2026
+
+The retained ingredient API now separates a Molang payload's empty representative from its concrete matching predicate.
+The source descriptor retains the resolved Item receiver independently of its numeric grouping key.
+Both Block-derived conversion and fallback construction use the native numeric registry lookup before retaining the selected receiver.
+Portable controls distinguish definitions with the same numeric ID and different tags.
+
+The existing complete native packet reference supplies 320 Molang cases from its 608-case mixed descriptor matrix.
+The Java control decodes each complete packet and explicitly constructs retained Name and Molang descriptors from its fields.
+It compares all 2,560 ingredient predicates, 636 counter rounds and 1,272 ingredient rows, including exact collection names and source slots.
+All results match, including ingredient quantities zero, one, two and 64.
+The existing reference retires original recipe, Item, Block, TLS, static and CRT ownership with no outstanding allocations or held locks.
+A separate native source-header control follows below.
+No new live inventory session ran for this increment.
+
+The existing wire Molang predicate consumer now uses the converted receiver.
+Production registration and installed player publication do not yet retain the complete recipe model.
+The six Tag choices in the full matrix remain outside this retained counter comparison.
+Version-filtered Tag admission, complete recipe families and all-empty counting remain unfinished.
+
+
+A further six-case control isolates source conversion from the source receiver.
+It runs complete original Item and Block registry initialization, including two owned definitions with the same numeric ID and different tags.
+It copies a constructed source header into borrowed storage, then supplies its definition cell, null Block and zero auxiliary value as inputs.
+The original converter selects the current numeric owner, and the actual Molang matcher reads that converted receiver.
+Original descriptor, Item, Block, TLS, static and CRT cleanup leaves no outstanding allocations or held locks.
+The borrowed header does not own or retire its copied references.
+This control does not establish retained-header construction, a complete recipe owner, player publication, Level lifetime or live client behavior.
+
+All four projects build with 2,980 passing tests, 152 optional skips and no failures or errors.
+Both Checkstyle tasks, repository offline validation and all 106 patch replays pass.
+Four focused retained-Molang tests pass against the packaged core, with nine implementation origins verified.
+The new core matches all six source-header predicates.
+The preceding core differs on two tag-query values without linkage failures.
+All 4,864 existing packet predicate results still match the packaged core.
+
+All 1,529 core classes and 198 core assets match both embedded copies.
+All 1,192 compiled client classes match the add-on.
+Compared with the preceding core, 1,509 classes and all 198 assets remain byte-identical.
+Seven further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
+The retained counter adapter intentionally changes its lambda target from the numeric key to the complete source descriptor.

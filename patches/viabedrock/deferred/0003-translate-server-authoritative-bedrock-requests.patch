@@ -1,4 +1,4 @@
-From db8ea48d52ed98e14ed3fc91e3c15b4d9fd64a26 Mon Sep 17 00:00:00 2001
+From 9e01fbd9cba0e2bf81115652e413d8857eb36737 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -720,6 +720,8 @@ Molang compilation, installed player publication and live client actions
 remain separate boundaries. Transport receiver-owned tags in emitted
 item animation data and use the same receiver for existing tag recipe
 predicates, including constructed stacks retained across ID collisions.
+
+Retain the constructed source descriptor Item receiver alongside its normalized auxiliary value. Source conversion 142486a70 and ordinary constructor 1424d0b30 select the receiver through numeric registry lookup, including the Block-derived branch; the cache hash remains only numeric ID and auxiliary. Separate that cache key from the descriptor value so later native ingredient predicates can read the selected receiver without another lookup or substituting the original stack receiver. Ordinary and complex-alias comparisons retain their numeric behavior.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
@@ -731,7 +733,7 @@ predicates, including constructed stacks retained across ID collisions.
  .../NativeContainerActionBackend.java         |   85 +
  .../NativeContainerActionSession.java         |  136 +
  .../NativeContainerAutoPlacement.java         |   91 +
- .../container/NativeRecipeDescriptor.java     |  172 +
+ .../container/NativeRecipeDescriptor.java     |  173 +
  .../container/NativeTransferQuantity.java     |   40 +
  .../container/RecipeIngredientMatcher.java    |   38 +
  .../model/container/block/AnvilContainer.java |  178 +
@@ -765,12 +767,13 @@ predicates, including constructed stacks retained across ID collisions.
  .../protocol/model/BuiltinItemRegistry.java   |   27 +-
  .../protocol/model/ItemCookingProperties.java |   58 +
  .../model/ItemDefinitionProperties.java       |   97 +
- .../protocol/model/ItemRegistry.java          |   97 +
+ .../protocol/model/ItemRegistry.java          |  103 +
  .../protocol/model/ItemStackHeader.java       |  117 +
  .../protocol/model/NativeRecipeRegistry.java  |   68 +
  .../protocol/model/SavedItemStack.java        |  178 +
  .../protocol/model/recipe/ItemDescriptor.java |   25 +-
- .../protocol/model/recipe/ItemRecipeKey.java  |   63 +
+ .../model/recipe/ItemRecipeDescriptor.java    |   54 +
+ .../protocol/model/recipe/ItemRecipeKey.java  |   35 +
  .../protocol/packet/ClientPlayerPackets.java  |   60 +-
  .../protocol/packet/InteractionPackets.java   |   53 +-
  .../protocol/packet/InventoryPackets.java     | 1511 +++--
@@ -778,7 +781,7 @@ predicates, including constructed stacks retained across ID collisions.
  .../protocol/packet/MultiStatePackets.java    |   34 +-
  .../protocol/packet/WorldPackets.java         |   12 +
  .../protocol/rewriter/GameTypeRewriter.java   |    6 +
- .../protocol/rewriter/ItemRewriter.java       |  270 +-
+ .../protocol/rewriter/ItemRewriter.java       |  276 +-
  .../rewriter/item/BundleItemRewriter.java     |   58 +-
  .../storage/CraftedItemSynchronization.java   |  128 +
  .../protocol/storage/CraftingDataTracker.java |  206 +
@@ -823,7 +826,7 @@ predicates, including constructed stacks retained across ID collisions.
  .../model/NativeOffhandPlacementTest.java     |  113 +
  .../model/NativeRecipeRegistryTest.java       |  100 +
  .../protocol/model/SavedItemStackTest.java    |  128 +
- .../model/recipe/ItemRecipeKeyTest.java       |   91 +
+ .../model/recipe/ItemRecipeKeyTest.java       |  122 +
  .../packet/BundleSelectionPacketTest.java     |  225 +
  .../packet/ClientPlayerPacketsTest.java       |   30 +
  .../packet/ContainerDataPacketTest.java       |  119 +
@@ -856,7 +859,7 @@ predicates, including constructed stacks retained across ID collisions.
  .../item/NetworkItemConstructionTest.java     |  171 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 135 files changed, 27140 insertions(+), 1956 deletions(-)
+ 136 files changed, 27210 insertions(+), 1956 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
@@ -884,6 +887,7 @@ predicates, including constructed stacks retained across ID collisions.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemStackHeader.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/NativeRecipeRegistry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/SavedItemStack.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKey.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronization.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
@@ -2956,10 +2960,10 @@ index 000000000..0e6888402
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeDescriptor.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeDescriptor.java
 new file mode 100644
-index 000000000..12a12ab2e
+index 000000000..a24c0fe6f
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeDescriptor.java
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,173 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2970,6 +2974,7 @@ index 000000000..12a12ab2e
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.NativeItemDefinitions;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeKey;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeDescriptor;
 +
 +import java.util.List;
 +import java.util.Objects;
@@ -3004,7 +3009,7 @@ index 000000000..12a12ab2e
 +
 +    /** Match the default concrete descriptor produced from a source stack after native source guards. */
 +    default boolean matchesSource(final BedrockItem source, final Registry registry,
-+                                  final Function<BedrockItem, ItemRecipeKey> descriptor) {
++                                  final Function<BedrockItem, ItemRecipeDescriptor> descriptor) {
 +        if (!RecipeIngredientMatcher.eligible(source)) {
 +            return false;
 +        }
@@ -3013,16 +3018,16 @@ index 000000000..12a12ab2e
 +
 +    /** Compare constructed descriptors independently of the caller's recipe-source admission. */
 +    default boolean matchesStack(final BedrockItem source, final Registry registry,
-+                                 final Function<BedrockItem, ItemRecipeKey> descriptor) {
-+        final ItemRecipeKey candidate = descriptor.apply(source);
++                                 final Function<BedrockItem, ItemRecipeDescriptor> descriptor) {
++        final ItemRecipeDescriptor candidate = descriptor.apply(source);
 +        return this.matchesCandidate(candidate, source.tag() != null, registry);
 +    }
 +
-+    private boolean matchesCandidate(final ItemRecipeKey candidate, final boolean userdata, final Registry registry) {
++    private boolean matchesCandidate(final ItemRecipeDescriptor candidate, final boolean userdata, final Registry registry) {
 +        return switch (this) {
 +            case Empty _ -> candidate == null && !userdata;
 +            case Deferred deferred -> deferred.value(registry).matchesCandidate(candidate, userdata, registry);
-+            case Ordinary ordinary -> candidate != null && candidate.matches(ordinary.key(), auxiliary -> registry.hasAssociatedBlock(ordinary.item)
++            case Ordinary ordinary -> candidate != null && candidate.key().matches(ordinary.key(), auxiliary -> registry.hasAssociatedBlock(ordinary.item)
 +                    ? registry.blockState(ordinary.item, (short) auxiliary) : null);
 +            case ComplexAlias alias -> {
 +                if (candidate == null) {
@@ -3031,7 +3036,7 @@ index 000000000..12a12ab2e
 +                boolean matched = false;
 +                for (final String member : registry.aliasMembers(alias.name)) {
 +                    final NativeItemDefinitions.Definition<?> item = registry.aliasMember(member);
-+                    if (item != null && (item.id() & 0xFFFF) == candidate.identifier()) {
++                    if (item != null && (item.id() & 0xFFFF) == (candidate.definition().id() & 0xFFFF)) {
 +                        matched = true;
 +                        break;
 +                    }
@@ -8532,15 +8537,16 @@ index 3ccc218c0..e03ae3a7c 100644
          return this.category;
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
-index adbb54e9c..1defad98f 100644
+index adbb54e9c..7758afb16 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemRegistry.java
-@@ -6,12 +6,15 @@
+@@ -6,12 +6,16 @@
  package net.raphimc.viabedrock.protocol.model;
  
  import com.viaversion.nbt.tag.CompoundTag;
 +import net.raphimc.viabedrock.api.chunk.blockstate.BlockItemDescriptor;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeKey;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeDescriptor;
  import net.raphimc.viabedrock.api.model.NativeItemNames;
  
  import java.util.List;
@@ -8551,7 +8557,7 @@ index adbb54e9c..1defad98f 100644
  import java.util.stream.Collectors;
  
  /** A connection's constructed definitions, raw declarations and independent lookup owners. */
-@@ -67,6 +70,15 @@ public final class ItemRegistry {
+@@ -67,6 +71,15 @@ public final class ItemRegistry {
          return definition != null ? definition.identifier() : null;
      }
  
@@ -8567,7 +8573,7 @@ index adbb54e9c..1defad98f 100644
      /** Occupied-slot merging requires the same native Item object. */
      public boolean sameDefinition(final BedrockItem first, final BedrockItem second) {
          final var definition = this.definition(first);
-@@ -80,6 +92,16 @@ public final class ItemRegistry {
+@@ -80,6 +93,16 @@ public final class ItemRegistry {
          return a != null && b != null && a.id() == b.id() && a.identifier().equals(b.identifier());
      }
  
@@ -8584,7 +8590,7 @@ index adbb54e9c..1defad98f 100644
      public String identifier(final int id) {
          final var definition = this.definitions.numeric(id);
          return definition != null ? definition.identifier() : null;
-@@ -94,6 +116,17 @@ public final class ItemRegistry {
+@@ -94,6 +117,17 @@ public final class ItemRegistry {
          return this.definitions.lookup(name);
      }
  
@@ -8602,16 +8608,21 @@ index adbb54e9c..1defad98f 100644
      public ItemStackingProperties stackingProperties(final BedrockItem item) {
          final var definition = this.definition(item);
          return definition != null ? ((ItemDefinitionProperties) definition.receiver()).stacking() : null;
-@@ -127,6 +160,70 @@ public final class ItemRegistry {
+@@ -127,6 +161,75 @@ public final class ItemRegistry {
          return BuiltinItemAliases.rewrite(query);
      }
  
 +    /** Convert an already constructed native stack with its exact block ownership. */
 +    public ItemRecipeKey recipeKey(final BedrockItem item, final BlockItemDescriptor block) {
++        final ItemRecipeDescriptor descriptor = this.recipeDescriptor(item, block);
++        return descriptor != null ? descriptor.key() : null;
++    }
++
++    public ItemRecipeDescriptor recipeDescriptor(final BedrockItem item, final BlockItemDescriptor block) {
 +        if (item == null || item.isEmpty()) {
 +            return null;
 +        }
-+        return ItemRecipeKey.fromDefinition(item.identifier(), item.data(), block, this::numericItemId);
++        return ItemRecipeDescriptor.fromDefinition(item.identifier(), item.data(), block, this::numericRecipeDefinition);
 +    }
 +
 +    /** Raw metadata reaches associated-block resolution before the native constructor normalizes it. */
@@ -8654,10 +8665,10 @@ index adbb54e9c..1defad98f 100644
 +        return this.lookup(new NativeItemName(selected.identifier(), auxiliary != null ? auxiliary : 0)).definition();
 +    }
 +
-+    private Integer numericItemId(final int id) {
++    private NativeItemDefinitions.Definition<?> numericRecipeDefinition(final int id) {
 +        final short narrowed = (short) id;
 +        final var entry = narrowed == 0 || narrowed == -1 ? null : this.definition(narrowed);
-+        return entry != null ? entry.id() : null;
++        return entry;
 +    }
 +
 +    public ItemCookingProperties cookingProperties(final BedrockItem item) {
@@ -9114,12 +9125,12 @@ index eb263ea74..c41868165 100644
          }
  
          @Override
-diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKey.java b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKey.java
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeDescriptor.java b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeDescriptor.java
 new file mode 100644
-index 000000000..740fef1f2
+index 000000000..d311a96b6
 --- /dev/null
-+++ b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKey.java
-@@ -0,0 +1,63 @@
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeDescriptor.java
+@@ -0,0 +1,54 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -9128,6 +9139,64 @@ index 000000000..740fef1f2
 +package net.raphimc.viabedrock.protocol.model.recipe;
 +
 +import net.raphimc.viabedrock.api.chunk.blockstate.BlockItemDescriptor;
++import net.raphimc.viabedrock.protocol.model.NativeItemDefinitions;
++
++import java.util.Objects;
++import java.util.function.IntFunction;
++
++/** A source descriptor retains the resolved Item receiver independently of its numeric cache key. */
++public record ItemRecipeDescriptor(NativeItemDefinitions.Definition<?> definition, short metadata) {
++
++    public ItemRecipeDescriptor {
++        Objects.requireNonNull(definition);
++        if (metadata < 0) {
++            throw new IllegalArgumentException("Resolved descriptor metadata must be nonnegative");
++        }
++    }
++
++    public ItemRecipeKey key() {
++        return new ItemRecipeKey(this.definition.id() & 0xFFFF, this.metadata);
++    }
++
++    /** The lookup returns the resolved Item's numeric ID, which can differ from the lookup key. */
++    public static ItemRecipeDescriptor fromDefinition(final int identifier, final short metadata,
++                                               final BlockItemDescriptor block, final IntFunction<NativeItemDefinitions.Definition<?>> lookup) {
++        final int original = identifier & 0xFFFF;
++        if (block != null) {
++            final NativeItemDefinitions.Definition<?> resolved = lookup.apply(block.numericItemId());
++            if (metadata == Short.MAX_VALUE) {
++                return resolved != null ? new ItemRecipeDescriptor(resolved, Short.MAX_VALUE) : null;
++            }
++            if (resolved != null && (resolved.id() & 0xFFFF) == original) {
++                return new ItemRecipeDescriptor(resolved, normalize(block.auxiliary()));
++            }
++            // The native invalid descriptor reports ID 0xFFFF. That comparison
++            // can retain the invalid result instead of falling back to the Item.
++            if (resolved == null && original == 0xFFFF) {
++                return null;
++            }
++        }
++        final NativeItemDefinitions.Definition<?> resolved = lookup.apply(original);
++        return resolved != null ? new ItemRecipeDescriptor(resolved, normalize(metadata)) : null;
++    }
++
++    private static short normalize(final short metadata) {
++        return (short) Math.max(0, metadata);
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKey.java b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKey.java
+new file mode 100644
+index 000000000..7aa6cb26b
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKey.java
+@@ -0,0 +1,35 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model.recipe;
 +
 +import java.util.function.IntFunction;
 +
@@ -9138,32 +9207,6 @@ index 000000000..740fef1f2
 +        if (identifier < 0 || identifier > 0xFFFF || metadata < 0) {
 +            throw new IllegalArgumentException("Expected an unsigned item ID and nonnegative descriptor metadata");
 +        }
-+    }
-+
-+    /** The lookup returns the resolved Item's numeric ID, which can differ from the lookup key. */
-+    public static ItemRecipeKey fromDefinition(final int identifier, final short metadata,
-+                                               final BlockItemDescriptor block, final IntFunction<Integer> lookup) {
-+        final int original = identifier & 0xFFFF;
-+        if (block != null) {
-+            final Integer resolved = lookup.apply(block.numericItemId());
-+            if (metadata == Short.MAX_VALUE) {
-+                return resolved != null ? new ItemRecipeKey(resolved & 0xFFFF, Short.MAX_VALUE) : null;
-+            }
-+            if (resolved != null && (resolved & 0xFFFF) == original) {
-+                return new ItemRecipeKey(original, normalize(block.auxiliary()));
-+            }
-+            // The native invalid descriptor reports ID 0xFFFF. That comparison
-+            // can retain the invalid result instead of falling back to the Item.
-+            if (resolved == null && original == 0xFFFF) {
-+                return null;
-+            }
-+        }
-+        final Integer resolved = lookup.apply(original);
-+        return resolved != null ? new ItemRecipeKey(resolved & 0xFFFF, normalize(metadata)) : null;
-+    }
-+
-+    private static short normalize(final short metadata) {
-+        return (short) Math.max(0, metadata);
 +    }
 +
 +    /** Compare query-first, using exact canonical Block ownership for associated block items. */
@@ -11229,7 +11272,7 @@ index d06a858bf..a62995d1b 100644
          GameType effectiveGameType = playerGameType;
          if (effectiveGameType == GameType.Undefined || effectiveGameType == GameType.Default) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index a50d42a33..20baa82a0 100644
+index a50d42a33..74b89312d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -35,10 +35,13 @@ import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
@@ -11246,7 +11289,7 @@ index a50d42a33..20baa82a0 100644
  import net.raphimc.viabedrock.api.model.NativeItemStacking;
  import net.raphimc.viabedrock.api.model.NativeItemStackData;
  import net.raphimc.viabedrock.api.resourcepack.definition.ItemDefinitions;
-@@ -48,9 +51,15 @@ import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
+@@ -48,9 +51,16 @@ import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
  import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
  import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomItemTags;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
@@ -11259,11 +11302,12 @@ index a50d42a33..20baa82a0 100644
 -import net.raphimc.viabedrock.protocol.model.ItemEntry;
 +import net.raphimc.viabedrock.protocol.model.ItemStackHeader;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeKey;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeDescriptor;
 +import net.raphimc.viabedrock.protocol.model.ItemCookingProperties;
  import net.raphimc.viabedrock.protocol.model.ItemCooldown;
  import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
  import net.raphimc.viabedrock.protocol.model.ItemArmorData;
-@@ -63,16 +72,19 @@ import net.raphimc.viabedrock.protocol.storage.MapTracker;
+@@ -63,16 +73,19 @@ import net.raphimc.viabedrock.protocol.storage.MapTracker;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  import net.raphimc.viabedrock.protocol.types.array.ArrayType;
@@ -11284,7 +11328,7 @@ index a50d42a33..20baa82a0 100644
  
      private final ItemRegistry registry;
  
-@@ -96,6 +108,8 @@ public class ItemRewriter extends StoredObject {
+@@ -96,6 +109,8 @@ public class ItemRewriter extends StoredObject {
      private final Type<BedrockItem> newItemType;
      private final Type<BedrockItem> optionalNewItemType;
      private final Type<BedrockItem[]> newItemArrayType;
@@ -11293,7 +11337,7 @@ index a50d42a33..20baa82a0 100644
  
      static {
          // TODO: Add missing item nbt rewriters
-@@ -131,7 +145,7 @@ public class ItemRewriter extends StoredObject {
+@@ -131,7 +146,7 @@ public class ItemRewriter extends StoredObject {
          this.registry = new ItemRegistry(itemEntries, blockStateRewriter::registeredBlockIdentifier);
          this.items = this.registry.ids();
          this.componentItems = this.registry.componentItems();
@@ -11302,7 +11346,7 @@ index a50d42a33..20baa82a0 100644
              if (itemEntry.componentData() != null
                      && itemEntry.componentData().get("components") instanceof CompoundTag components) {
                  this.animationData.put(itemEntry.identifier(), ItemAnimationData.fromNetworkComponents(components));
-@@ -142,8 +156,10 @@ public class ItemRewriter extends StoredObject {
+@@ -142,8 +157,10 @@ public class ItemRewriter extends StoredObject {
                      this.cooldowns.put(itemEntry.identifier(), cooldown);
                  }
              }
@@ -11314,7 +11358,7 @@ index a50d42a33..20baa82a0 100644
          blockItems.removeIf(identifier -> !this.items.containsKey(identifier));
  
          this.blockItemValidBlockStates = new Int2ObjectOpenHashMap<>(blockItems.size());
-@@ -152,22 +168,37 @@ public class ItemRewriter extends StoredObject {
+@@ -152,22 +169,37 @@ public class ItemRewriter extends StoredObject {
              if (validBlockStates == null) {
                  final String[] components = identifier.split(":", 2);
                  if (components[1].startsWith("item.")) {
@@ -11357,7 +11401,7 @@ index a50d42a33..20baa82a0 100644
      }
  
      public Item javaItem(final BedrockItem bedrockItem) {
-@@ -177,13 +208,18 @@ public class ItemRewriter extends StoredObject {
+@@ -177,13 +209,18 @@ public class ItemRewriter extends StoredObject {
  
          final String identifier = this.registry.identifier(bedrockItem);
          if (identifier == null) {
@@ -11378,7 +11422,7 @@ index a50d42a33..20baa82a0 100644
          if (blockItemMappings != null) {
              final BlockState displayState;
              if (bedrockItem.hasBlockState()) {
-@@ -196,9 +232,13 @@ public class ItemRewriter extends StoredObject {
+@@ -196,9 +233,13 @@ public class ItemRewriter extends StoredObject {
              javaItemMapping = displayState != null ? blockItemMappings.get(displayState) : null;
          } else {
              final int meta = bedrockItem.data() & 0xFFFF;
@@ -11394,7 +11438,7 @@ index a50d42a33..20baa82a0 100644
                  if (newBlockItemMappings != null) {
                      final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(bedrockItem.identifier());
                      javaItemMapping = validBlockStates != null && !validBlockStates.isEmpty()
-@@ -207,7 +247,8 @@ public class ItemRewriter extends StoredObject {
+@@ -207,7 +248,8 @@ public class ItemRewriter extends StoredObject {
                      javaItemMapping = null;
                  }
              } else {
@@ -11404,7 +11448,7 @@ index a50d42a33..20baa82a0 100644
                  if (metaItemMappings != null) {
                      if (!metaItemMappings.containsKey(meta)) {
                          if ((metaItemMappings.size() != 1 || meta != 0)
-@@ -241,8 +282,10 @@ public class ItemRewriter extends StoredObject {
+@@ -241,8 +283,10 @@ public class ItemRewriter extends StoredObject {
              }
              javaItem = new StructuredItem(javaItemMapping.id(), bedrockItem.amount(), data);
          } else {
@@ -11417,7 +11461,7 @@ index a50d42a33..20baa82a0 100644
              final StructuredDataContainer data = ProtocolConstants.createStructuredDataContainer();
  
              if (itemDefinition != null) {
-@@ -260,13 +303,21 @@ public class ItemRewriter extends StoredObject {
+@@ -260,13 +304,21 @@ public class ItemRewriter extends StoredObject {
                      data.set(StructuredDataKey.ITEM_MODEL, CustomItemTextureResourceRewriter.getItemModel(itemDefinition.iconComponent()));
                      data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomItemTextureResourceRewriter.getCustomModelData("0"));
                  } else {
@@ -11441,7 +11485,7 @@ index a50d42a33..20baa82a0 100644
          }
  
          if (ordinaryNameKey != null) {
-@@ -290,8 +341,12 @@ public class ItemRewriter extends StoredObject {
+@@ -290,8 +342,12 @@ public class ItemRewriter extends StoredObject {
  
          final CompoundTag bedrockTag = bedrockItem.tag();
          if (bedrockTag != null) {
@@ -11456,7 +11500,7 @@ index a50d42a33..20baa82a0 100644
              }
              final String customName = this.registry.customName(identifier, bedrockTag);
              if (customName != null) {
-@@ -306,12 +361,16 @@ public class ItemRewriter extends StoredObject {
+@@ -306,12 +362,16 @@ public class ItemRewriter extends StoredObject {
              ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
          }
  
@@ -11474,7 +11518,7 @@ index a50d42a33..20baa82a0 100644
          return javaItem;
      }
  
-@@ -321,7 +380,8 @@ public class ItemRewriter extends StoredObject {
+@@ -321,7 +381,8 @@ public class ItemRewriter extends StoredObject {
              return null;
          }
          final CompoundTag javaTag = new CompoundTag();
@@ -11484,7 +11528,7 @@ index a50d42a33..20baa82a0 100644
          javaTag.put("id", new StringTag(javaId));
          javaTag.put("count", new IntTag(javaItem.amount()));
          if (javaItem.tag() != null) {
-@@ -335,28 +395,49 @@ public class ItemRewriter extends StoredObject {
+@@ -335,28 +396,49 @@ public class ItemRewriter extends StoredObject {
              return null;
          }
  
@@ -11517,7 +11561,8 @@ index a50d42a33..20baa82a0 100644
 +    public BedrockItem bedrockItemInstance(final CompoundTag bedrockTag) {
 +        return SavedItemStack.read(bedrockTag, this.savedItemContext(), SavedItemStack.Target.ITEM_INSTANCE);
 +    }
-+
+ 
+-        return this.javaItem(item);
 +    private SavedItemStack.Context savedItemContext() {
 +        final var blocks = this.user().get(BlockStateRewriter.class);
 +        return new SavedItemStack.Context() {
@@ -11525,8 +11570,7 @@ index a50d42a33..20baa82a0 100644
 +            public ItemRegistry registry() {
 +                return ItemRewriter.this.registry;
 +            }
- 
--        return this.javaItem(item);
++
 +            @Override
 +            public ItemStackHeader.Block associatedBlock(final NativeItemDefinitions.Definition<?> definition, final short auxiliary) {
 +                return ItemRewriter.this.associatedBlock(blocks, definition, auxiliary);
@@ -11553,7 +11597,7 @@ index a50d42a33..20baa82a0 100644
      }
  
      public Item[] javaItems(final BedrockItem[] bedrockItems) {
-@@ -368,7 +449,33 @@ public class ItemRewriter extends StoredObject {
+@@ -368,7 +450,33 @@ public class ItemRewriter extends StoredObject {
      }
  
      public BedrockItem bedrockItem(final Item javaItem) {
@@ -11588,7 +11632,7 @@ index a50d42a33..20baa82a0 100644
      }
  
      public BedrockItem[] bedrockItems(final Item[] javaItems) {
-@@ -391,8 +498,67 @@ public class ItemRewriter extends StoredObject {
+@@ -391,8 +499,72 @@ public class ItemRewriter extends StoredObject {
          return this.registry.identifier(item);
      }
  
@@ -11645,12 +11689,17 @@ index a50d42a33..20baa82a0 100644
 +                ? this.user().get(BlockStateRewriter.class).blockItemRecipeDescriptor(item.blockRuntimeId()) : null);
 +    }
 +
++    public ItemRecipeDescriptor recipeDescriptor(final BedrockItem item) {
++        return this.registry.recipeDescriptor(item, item != null && item.hasBlockState()
++                ? this.user().get(BlockStateRewriter.class).blockItemRecipeDescriptor(item.blockRuntimeId()) : null);
++    }
++
 +    public boolean matchesRecipeItem(final String identifier, final int metadata, final BedrockItem item) {
 +        if (item == null) {
 +            return false;
 +        }
 +        final var context = new NativeRecipeRegistry(this.registry, this.user().get(BlockStateRewriter.class));
-+        return NativeRecipeDescriptor.resolveName(identifier, metadata, context).matchesStack(item, context, this::recipeKey);
++        return NativeRecipeDescriptor.resolveName(identifier, metadata, context).matchesStack(item, context, this::recipeDescriptor);
 +    }
 +
 +    public ItemRegistry getItemRegistry() {
@@ -11658,7 +11707,7 @@ index a50d42a33..20baa82a0 100644
      }
  
      /** Match network-loaded stack queries while their connection registry remains current. */
-@@ -438,6 +604,17 @@ public class ItemRewriter extends StoredObject {
+@@ -438,6 +610,17 @@ public class ItemRewriter extends StoredObject {
          return properties == null ? 0 : properties.maximum();
      }
  
@@ -11676,7 +11725,7 @@ index a50d42a33..20baa82a0 100644
      public Type<BedrockItem> itemType() {
          return this.itemType;
      }
-@@ -462,10 +639,13 @@ public class ItemRewriter extends StoredObject {
+@@ -462,10 +645,13 @@ public class ItemRewriter extends StoredObject {
          return this.newItemArrayType;
      }
  
@@ -31503,7 +31552,7 @@ index 000000000..59c169ade
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/NativeRecipeRegistryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/NativeRecipeRegistryTest.java
 new file mode 100644
-index 000000000..2d616a9f5
+index 000000000..27736e444
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/NativeRecipeRegistryTest.java
 @@ -0,0 +1,100 @@
@@ -31543,9 +31592,9 @@ index 000000000..2d616a9f5
 +        final var descriptor = NativeRecipeDescriptor.resolveName("minecraft:planks", Short.MAX_VALUE, context);
 +        assertInstanceOf(NativeRecipeDescriptor.ComplexAlias.class, descriptor);
 +        assertFalse(descriptor.isEmpty(context));
-+        assertTrue(descriptor.matchesSource(new BedrockItem(target.id()), context, item -> items.recipeKey(item, null)));
++        assertTrue(descriptor.matchesSource(new BedrockItem(target.id()), context, item -> items.recipeDescriptor(item, null)));
 +        assertFalse(descriptor.matchesSource(new BedrockItem(items.definition("minecraft:apple").id()), context,
-+                item -> items.recipeKey(item, null)));
++                item -> items.recipeDescriptor(item, null)));
 +    }
 +
 +    @Test
@@ -31598,12 +31647,12 @@ index 000000000..2d616a9f5
 +        final var tag = new CompoundTag();
 +        tag.put("ench", new ListTag<>(IntTag.class));
 +        source.setTag(tag);
-+        assertTrue(descriptor.matchesStack(source, context, item -> items.recipeKey(item, null)));
-+        assertFalse(descriptor.matchesSource(source, context, item -> items.recipeKey(item, null)));
++        assertTrue(descriptor.matchesStack(source, context, item -> items.recipeDescriptor(item, null)));
++        assertFalse(descriptor.matchesSource(source, context, item -> items.recipeDescriptor(item, null)));
 +        tag.remove("ench");
 +        tag.putByte("minecraft:item_lock", (byte) -1);
-+        assertTrue(descriptor.matchesStack(source, context, item -> items.recipeKey(item, null)));
-+        assertFalse(descriptor.matchesSource(source, context, item -> items.recipeKey(item, null)));
++        assertTrue(descriptor.matchesStack(source, context, item -> items.recipeDescriptor(item, null)));
++        assertFalse(descriptor.matchesSource(source, context, item -> items.recipeDescriptor(item, null)));
 +    }
 +
 +}
@@ -31743,10 +31792,10 @@ index 000000000..b73681c71
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKeyTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKeyTest.java
 new file mode 100644
-index 000000000..098ca5f8a
+index 000000000..eada2c496
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/recipe/ItemRecipeKeyTest.java
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,122 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -31756,6 +31805,9 @@ index 000000000..098ca5f8a
 +
 +import com.viaversion.viaversion.libs.gson.JsonParser;
 +import net.raphimc.viabedrock.api.chunk.blockstate.BlockItemDescriptor;
++import net.raphimc.viabedrock.protocol.model.NativeItemDefinitions;
++import org.mockito.Mockito;
++import java.util.function.IntFunction;
 +import org.junit.jupiter.api.Test;
 +
 +import java.nio.file.Files;
@@ -31791,13 +31843,13 @@ index 000000000..098ca5f8a
 +    @Test
 +    void descriptorIdentityDiffersFromRawMetadataAndNumericLookupKeys() {
 +        final var block = new BlockItemDescriptor(256, (short) 7);
-+        assertEquals(new ItemRecipeKey(42, (short) 7), ItemRecipeKey.fromDefinition(42, (short) 3, block, id -> 42));
++        assertEquals(new ItemRecipeKey(42, (short) 7), descriptorKey(42, (short) 3, block, id -> 42));
 +        assertEquals(new ItemRecipeKey(55, Short.MAX_VALUE),
-+                ItemRecipeKey.fromDefinition(42, Short.MAX_VALUE, block, id -> 55));
++                descriptorKey(42, Short.MAX_VALUE, block, id -> 55));
 +        assertEquals(new ItemRecipeKey(42, (short) 0),
-+                ItemRecipeKey.fromDefinition(42, (short) -1, block, id -> id == 42 ? 42 : 55));
-+        assertNull(ItemRecipeKey.fromDefinition(42, Short.MAX_VALUE, block, id -> null));
-+        assertNull(ItemRecipeKey.fromDefinition(-1, (short) 1, block, id -> null));
++                descriptorKey(42, (short) -1, block, id -> id == 42 ? 42 : 55));
++        assertNull(descriptorKey(42, Short.MAX_VALUE, block, id -> null));
++        assertNull(descriptorKey(-1, (short) 1, block, id -> null));
 +        assertNotEquals(new ItemRecipeKey(1, (short) 0), new ItemRecipeKey(0, (short) 1));
 +    }
 +
@@ -31819,7 +31871,7 @@ index 000000000..098ca5f8a
 +                    registry.put(original, original);
 +                }
 +                final List<Integer> lookups = new ArrayList<>();
-+                final var actual = ItemRecipeKey.fromDefinition(original, (short) row.get("rawAux").getAsInt(), block, id -> {
++                final var actual = descriptorKey(original, (short) row.get("rawAux").getAsInt(), block, id -> {
 +                    lookups.add(id);
 +                    return registry.get(id);
 +                });
@@ -31835,6 +31887,34 @@ index 000000000..098ca5f8a
 +                }
 +            }
 +        }
++    }
++
++    @Test
++    void retainsTheSelectedReceiverWhenNumericIdsCollide() {
++        final var block = new BlockItemDescriptor(256, (short) 7);
++        final var blockOwner = definition(42);
++        final var numericOwner = definition(42);
++        final var resolved = ItemRecipeDescriptor.fromDefinition(42, (short) 3, block,
++                id -> id == block.numericItemId() ? blockOwner : numericOwner);
++        assertSame(blockOwner, resolved.definition());
++        assertEquals((short) 7, resolved.metadata());
++        assertSame(numericOwner, ItemRecipeDescriptor.fromDefinition(42, (short) 3, null, id -> numericOwner).definition());
++        assertEquals(resolved.key(), new ItemRecipeDescriptor(numericOwner, (short) 7).key());
++    }
++
++    private static ItemRecipeKey descriptorKey(final int identifier, final short metadata,
++                                               final BlockItemDescriptor block, final IntFunction<Integer> lookup) {
++        final var descriptor = ItemRecipeDescriptor.fromDefinition(identifier, metadata, block, id -> {
++            final Integer resolved = lookup.apply(id);
++            return resolved != null ? definition(resolved) : null;
++        });
++        return descriptor != null ? descriptor.key() : null;
++    }
++
++    private static NativeItemDefinitions.Definition<?> definition(final int id) {
++        final var definition = Mockito.mock(NativeItemDefinitions.Definition.class);
++        Mockito.when(definition.id()).thenReturn(id);
++        return definition;
 +    }
 +
 +}
