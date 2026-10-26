@@ -1872,7 +1872,7 @@ No production runtime code changes in this milestone.
 
 ## Ticked game-mode inputs, October 26, 2026
 
-The current `UPDATE_PLAYER_GAME_TYPE` translation reads and discards the packet tick.
+Before the runtime integration below, `UPDATE_PLAYER_GAME_TYPE` read and discarded the packet tick.
 Its Java profile and local mode updates do not establish native historical placement.
 The [profile-cache correction](0007-forward-local-game-mode-updates.pr.md) remains separate from this unfinished replay path.
 
@@ -1908,4 +1908,49 @@ These controls do not execute queue placement, snapshot replay, the full player 
 They do not establish the actor component value after the complete deferred replay.
 Snapshot callback consumption and mode-dependent abilities, motion, and mount effects still need tracing before live integration.
 Actor class flags, enumeration order, selection geometry, and complete aim execution also remain open.
-This milestone records executable evidence without adding runtime behavior.
+That prerequisite milestone recorded executable evidence without adding runtime behavior.
+
+## Native mode replay integration, October 26, 2026
+
+`UPDATE_PLAYER_GAME_TYPE` now retains the input tick in a separate negotiated local-player mode channel.
+The payload carries actor UUID, native lifetime, sequence, raw modes, and immutable declarations from all six ability layers.
+Float fields retain their raw bits, including signed zero and NaN payloads.
+The decoder bounds payload size, layer count, layer identities, declarations, and frame bindings.
+It rejects truncated and trailing data.
+Clients without the channel keep the standard Java path.
+
+The mode event follows the Java game event, which otherwise writes Java spectator ability defaults.
+Join, capability registration, and ability updates supply native state snapshots.
+Snapshot deduplication retains mode events even when their resulting state repeats.
+Portal duration follows native mode changes independently of the remaining cooldown timer.
+
+Exact retained input bindings distinguish a missing source from a missing following snapshot.
+Past events enter the following snapshot; a missing following snapshot queues for the next input.
+A missing target retains the event at the current snapshot without forcing replay.
+The native admission check retains its unsigned clock and nonzero-tick rules.
+Immediate updates remain immediate when the native replay path is unavailable.
+
+Fresh native execution covers 23,040 complete queue, application, and insertion controls through
+`142890810`, `142890390`, `142bbcd70`, and local admission `144376140`.
+The matrix varies ring head, sparse slots, clock boundaries, local membership, mode, world mode, and controller result.
+Host boundaries supply typed backing stores, world results, an accepted local setter, followups, and controller outcomes.
+Reserved vectors and empty shared-pointer owners exclude allocation growth and reference-count destruction.
+The production comparison selects the admitted local controls with a current completed input and a present current snapshot.
+It does not claim that the Java clock binding represents every possible native replay phase.
+
+Packet tests verify the actual tick, source and following frame bindings, raw Default retention, lifetime, packet order, and unnegotiated fallback.
+Codec tests verify immutable ownership, float bits, malformed data, and sparse or expired timing.
+Full native snapshot consumption, world physics, exact live trajectories, and the original rollback report remain separate verification.
+
+The four-project build passes 2,955 tests, with 311 optional skips and no failures or errors.
+Both core Checkstyle tasks pass.
+All 1,234 production client classes match the packaged add-on.
+All 1,565 core classes and 200 core assets match both embedded consumers; forty CubeConverter classes match too.
+Source snapshots and packaged hashes remain unchanged after negative controls.
+Wrong tick, wrong following frame, duplicate arrival admission, and missing spectator effects each fail by assertion.
+The restored focused suites pass.
+
+The permanent private-display creative-flight control and reconnect pass against the final add-on artifact.
+The server records 51 samples, including 41 flying samples, and an ascent from Y 250 to 259.945556640625.
+The installed add-on hash matches the validated package, and the screenshot receives visual review.
+This control confirms built-client flight and startup, not traced delayed mode-event replay or native trajectory parity.

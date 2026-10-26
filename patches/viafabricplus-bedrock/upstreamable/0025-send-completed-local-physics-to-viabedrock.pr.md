@@ -2202,3 +2202,41 @@ Native journals independently confirm the changed movement state.
 All 40 matched active zero-counter baseline frames still send the slowed forward vector `0.122499995`.
 The 36 matched final direct frames send `1.0`; their positions match the read-only counter samples.
 The first-use flags remain paired with active use and recorded movement, so the residual direct corrections need separate timing analysis.
+
+## Native mode events in retained physics, October 26, 2026
+
+Local mode events now share packet order with motion and position corrections.
+Replay applies the mode to historical native ability owners before the following physical input.
+It preserves higher policy layers and uses the world mode resolved at event admission.
+Copying current Java flags backwards would lose those historical owners.
+
+Ordinary ability snapshots enter at arrival.
+Mode-controlled components use the explicit command journal, so an arrival difference does not apply the same mode twice.
+Local flight toggles remain in Base when no higher layer owns Flying.
+Historical raw mode and layer state use a thread-local override; canonical live metadata remains separate.
+Actor UUID, native lifetime, connection, and world constrain admission.
+Mounted local players remain eligible independently of a vehicle control lease.
+
+Native spectator entry clears collision flags and clamps vertical motion only between `-0.0801F` and zero.
+NoClip follows resolved native ownership independently of Java spectator defaults.
+Native portal duration updates the duration accessor, not the remaining countdown.
+These side effects follow static target instructions in `1402096f0` and snapshot callback `144376350`.
+The native placement matrix does not execute those complete effects.
+
+Targeted client tests cover chronological replay through a later correction, historical policy ownership,
+thread-local isolation, duplicate admission, local flight capture, stale identities, mounted admission, and clamp boundaries.
+They include a small recorded physical model; they do not substitute for native world trajectories.
+Fresh live mode transitions and the affected public-server reports remain unverified.
+
+The four-project build passes 2,955 tests, with 311 optional skips and no failures or errors.
+Both core Checkstyle tasks pass.
+All 1,234 production client classes match the packaged add-on.
+All 1,565 core classes and 200 core assets match both embedded consumers; forty CubeConverter classes match too.
+Source snapshots and packaged hashes remain unchanged after negative controls.
+Wrong tick, wrong following frame, duplicate arrival admission, and missing spectator effects each fail by assertion.
+The restored focused suites pass.
+
+The permanent private-display creative-flight control and reconnect pass against the final add-on artifact.
+The server records 51 samples, including 41 flying samples, and an ascent from Y 250 to 259.945556640625.
+The installed add-on hash matches the validated package, and the screenshot receives visual review.
+This control confirms built-client flight and startup, not traced delayed mode-event replay or native trajectory parity.

@@ -11229,3 +11229,28 @@ The four-project build reports 2,946 passed tests, 311 optional skips, and no fa
 The new native mode-sequence comparison and existing native ability comparisons run without skips.
 Both core Checkstyle tasks pass, and packaged dependencies match their tested classes and assets.
 No fresh live flight or game-mode capture ran for this correction.
+
+
+## Local game-mode replay, October 26, 2026
+
+**Implemented:** Local mode packets retain their input tick through a negotiated channel.
+Historical replay applies native mode writes to retained ability owners before the following physical input.
+Ordinary ability snapshots remain arrival-time updates.
+Mode updates preserve packet order with motion and position corrections and accept mounted local players.
+Actor identity, lifetime, world, and connection constrain admission.
+
+**Evidence:** Native queue and insertion execution passes 23,040 controls with explicit host boundaries.
+Core tests compare the applicable admitted local cases and verify the registered packet producer and bounded payload.
+Client tests cover historical ownership, later corrections, duplicate admission, lifetime replacement, mounted players, and spectator motion boundaries.
+The [core notes](../patches/viabedrock/upstreamable/0092-retain-completed-client-prediction-frames.pr.md#native-mode-replay-integration-october-26-2026)
+and [client notes](../patches/viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md#native-mode-events-in-retained-physics-october-26-2026) record the boundaries.
+
+**Open:** Fresh live mode trajectories, full native world and mount effects, and the intermittent rollback and eating reports.
+Packs, rendering, interactions, skins, emotes, native screen parity, and the remaining five-area work stay open.
+Crafting remains parked.
+
+The complete build passes 2,955 tests, with 311 optional skips and no failures or errors.
+Four deliberately incorrect variants fail assertions; restored focused suites pass.
+The permanent creative-flight and reconnect control passes on a private display with the final add-on artifact.
+It records about 9.95 blocks of ascent and 41 flying samples.
+Delayed mode-event replay still needs a live trace.
