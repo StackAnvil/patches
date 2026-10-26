@@ -11185,3 +11185,22 @@ Both core Checkstyle tasks pass.
 All six new mode tests pass without skips.
 The packaged client classes, core and converter dependencies, and four source snapshots match the tested outputs.
 Optional native-reference and GPU controls from earlier rendering milestones are outside this build run.
+
+## Native game-mode timing prerequisites, October 26, 2026
+
+The profile-cache correction above does not implement the input tick in `UPDATE_PLAYER_GAME_TYPE`.
+The current translation discards that tick.
+Fresh native controls establish the raw component write, replay admission, packet dispatch, and local event transformation.
+All 7,544 controls pass against the pinned Bedrock 1.26.51.1 executable.
+The [movement evidence](../patches/viabedrock/upstreamable/0092-retain-completed-client-prediction-frames.pr.md#ticked-game-mode-inputs-october-26-2026) records each step and its supplied boundaries.
+
+Native replay admission requires a nonzero tick, a valid replay component, and a history owner.
+It compares the history start and packet tick as unsigned values.
+The native handler skips removed actors and selects immediate or deferred delivery.
+During local admission, raw Default remains in the actor component while the event payload becomes the effective world mode.
+The complete deferred replay can apply further changes, which these controls do not establish.
+
+Queue placement, snapshot consumption, mode-dependent motion and mount effects, and live client integration remain unfinished.
+The actor-class, enumeration, geometry, and interaction requirements for native aim also remain open.
+This evidence milestone changes no runtime source and establishes no new visual or gameplay parity claim.
+The full implementation goal stays active.

@@ -1869,3 +1869,43 @@ They retain the nonzero `DimensionStateComponent` early return and the earlier n
 The native source factory and constructor execute with supplied allocator, level/listener, and thread-ID boundaries.
 Complete phase effects, chunk-state producers, other membership producers, priority collection, options, riding, packet timing, and normal player source integration remain unfinished.
 No production runtime code changes in this milestone.
+
+## Ticked game-mode inputs, October 26, 2026
+
+The current `UPDATE_PLAYER_GAME_TYPE` translation reads and discards the packet tick.
+Its Java profile and local mode updates do not establish native historical placement.
+The [profile-cache correction](0007-forward-local-game-mode-updates.pr.md) remains separate from this unfinished replay path.
+
+Fresh executable controls target Bedrock 1.26.51.1, protocol 2193, with binary SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+The [versioned packet reference](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/update-player-game-type-packet/) records a target player, game type, and input tick.
+Native schema metadata identifies the matching packet layout and ID 151.
+The matching handler uses the mode, unique ID, and tick at offsets `0x30`, `0x38`, and `0x40`.
+No wire enum values change in this milestone.
+
+The 7,544 controls cover four distinct steps:
+
+- **4,320 component controls:** Native instructions write the supplied raw mode, retain Default, skip absent or stale component slots, and mark abilities dirty.
+  Native readers resolve Default through the world mode, while missing and Undefined remain distinct.
+  Typed component stores, the world-mode virtual result, dirty insertion, and spectator side effects are supplied boundaries.
+- **1,280 admission controls:** The complete native leaf accepts a nonzero packet tick only with a valid `ReplayStateComponent` and history owner.
+  The history start must be less than or equal to the packet tick under unsigned comparison.
+  Component absence, stale entity generations, null owners, and clocks across the signed boundary have coverage.
+  This leaf executes without code hooks against supplied component storage.
+- **1,584 dispatch controls:** The native handler matches the roster identity and skips missing or removed actors.
+  It selects immediate local, immediate remote, or deferred delivery and preserves the received mode in the deferred event.
+  These controls execute the native admission leaf too.
+  Connection virtuals, actor lookup, allocation, the enqueue sink, immediate callbacks, and local followups remain supplied boundaries.
+- **360 local-event controls:** The native local-player guard and mode readers execute with a supplied accepted setter and local followups.
+  The actor component retains raw Default at this stage, while the event payload becomes the effective world mode.
+  Non-local actors leave this local-admission callback unchanged.
+
+The raw writer is `1402096f0`; its effective and spectator readers are `140209d80` and `1419e0b30`.
+Replay admission is `144358cd0`, and the matching packet handler is `14130e4e0`.
+The deferred event uses table `14e8cca70`; local admission is `144376140`, followed by a separate snapshot callback at `144376350`.
+Compiler type strings independently identify `ActorGameTypeComponent`, `AbilitiesDirtyComponent`, and `ReplayStateComponent`.
+
+These controls do not execute queue placement, snapshot replay, the full player setter, or native world effects.
+They do not establish the actor component value after the complete deferred replay.
+Snapshot callback consumption and mode-dependent abilities, motion, and mount effects still need tracing before live integration.
+Actor class flags, enumeration order, selection geometry, and complete aim execution also remain open.
+This milestone records executable evidence without adding runtime behavior.
