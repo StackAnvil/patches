@@ -1,4 +1,4 @@
-From eadd431fb246e99c11c07f352d8b751afee99c00 Mon Sep 17 00:00:00 2001
+From 1e010dc2d33776e6615972c8c962454ca4e87361 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(appearance): manage Character Creator accounts and
@@ -49,13 +49,36 @@ one-element binding list and unchanged ordinary material flags.
 Retain ordered texture bindings in first-person surfaces. Ordinary skin
 and persona layers use one binding; native material consumers can retain
 their complete sampled resources without flattening or resampling them.
+
+Expose query.is_emoting from current native actor metadata and accepted
+per-player emote playback. The bundled 1.26.51.1 player controllers use this
+query to suppress look-at behavior during emotes. The documented query is
+also available to authored controllers and attached particle expressions.
+Refresh the value through the shared actor sampler, including existing
+bound emitters, without retaining another actor's rendered status. A read
+of playback status excludes expired entries before the next cleanup tick.
+Keep this integration with the emote adapter, after the shared runtime,
+so the earlier runtime patch does not depend on later account playback.
+
+Regression controls exercise native status removal in an existing emitter
+and independent accepted playback with movement cancellation. Both fail
+on the preceding implementation and pass after this correction.
+
+For the local player, accepted playback owns emote status. A live BDS
+control retains EMOTING metadata for about 1.6 seconds after movement
+cancels playback. Letting that delayed flag override local cancellation
+keeps controller textures and existing bound particles in the old state.
+Remote actors retain their native metadata input. A separate regression
+keeps a local EMOTING snapshot unchanged before playback and after
+movement cancellation; it fails without this local precedence rule.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
+ .../appearance/BedrockActorQueries.java       |   10 +
  .../appearance/BedrockAppearanceStore.java    |  186 +-
  .../appearance/BedrockCharacterProfiles.java  | 1527 +++++++++++++++++
  .../appearance/BedrockClassicAssets.java      |   77 +
  .../appearance/BedrockClassicSkinPack.java    |  123 +-
- .../appearance/BedrockEmotePlayback.java      |  515 ++++++
+ .../appearance/BedrockEmotePlayback.java      |  516 ++++++
  .../bedrock/appearance/BedrockEmotes.java     |  167 ++
  .../BedrockMarketplaceTransactions.java       |  253 +++
  .../appearance/BedrockOwnedSkinPacks.java     |  162 ++
@@ -83,7 +106,7 @@ their complete sampled resources without flattening or resampling them.
  .../render/MixinMinecraftSkinLifecycle.java   |   12 +
  .../features/render/MixinOptionsEmote.java    |   34 +
  .../bedrock/render/BedrockPlayerRenderer.java |    7 +-
- .../bedrock/render/BedrockPlayerSkins.java    |  650 ++++++-
+ .../bedrock/render/BedrockPlayerSkins.java    |  652 ++++++-
  .../screen/BedrockCharacterSlotsScreen.java   | 1401 +++++++++++++++
  .../screen/BedrockClassicSkinPackScreen.java  |   83 +-
  .../screen/BedrockDressingRoomScreen.java     |   88 +-
@@ -102,6 +125,7 @@ their complete sampled resources without flattening or resampling them.
  .../BedrockCharacterProfilesTest.java         |  464 +++++
  .../appearance/BedrockClassicAccountTest.java |  192 +++
  .../appearance/BedrockClassicCapeTest.java    |  126 ++
+ .../appearance/BedrockEmoteQueriesTest.java   |  124 ++
  .../bedrock/appearance/BedrockEmotesTest.java |  250 +++
  .../appearance/BedrockLimbSelectionTest.java  |  225 +++
  .../BedrockMarketplaceTransactionsTest.java   |  235 +++
@@ -120,7 +144,7 @@ their complete sampled resources without flattening or resampling them.
  .../appearance/NativeEmotePayloadTest.java    |  103 ++
  .../render/BedrockActorQuerySnapshotTest.java |   89 +
  .../BedrockStandardPlayerGeometryTest.java    |   28 +
- 70 files changed, 14578 insertions(+), 107 deletions(-)
+ 72 files changed, 14715 insertions(+), 107 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicAssets.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
@@ -161,6 +185,7 @@ their complete sampled resources without flattening or resampling them.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicAccountTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicCapeTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteQueriesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSelectionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceTransactionsTest.java
@@ -209,6 +234,48 @@ index 53f0be6..13e5d7e 100644
      }
  
      public static ViaFabricPlusBedrock impl() {
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
+index e45e61d..e38633a 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
+@@ -8,6 +8,7 @@ package com.viaversion.viafabricplus.bedrock.appearance;
+ import java.util.HashMap;
+ import java.util.Map;
+ import java.util.Set;
++import java.util.UUID;
+ import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.entity.LivingEntity;
+ import net.minecraft.world.phys.Vec3;
+@@ -25,6 +26,7 @@ public final class BedrockActorQueries {
+         queries.remove("has_target");
+         NativeActorIntegerQueries.names().forEach(queries::remove);
+         queries.putAll(nativeState(state));
++        queries.put("is_emoting", isEmoting(actor.getUUID(), state));
+         queries.put("is_alive", actor.isAlive());
+         queries.put("is_on_ground", actor.onGround());
+         queries.put("is_in_water", actor.isInWater());
+@@ -50,6 +52,7 @@ public final class BedrockActorQueries {
+         queries.putAll(NativeActorIntegerQueries.values(state == null ? null : state.integerMetadata()));
+         final Set<ActorFlags> flags = state == null ? Set.of() : state.flags();
+         if (state != null && state.targetId() != null) queries.put("has_target", state.targetId() != 0);
++        queries.put("is_emoting", flags.contains(ActorFlags.EMOTING));
+         queries.put("is_charging", flags.contains(ActorFlags.CHARGING));
+         queries.put("is_sneaking", flags.contains(ActorFlags.SNEAKING));
+         queries.put("is_riding", flags.contains(ActorFlags.RIDING));
+@@ -74,6 +77,13 @@ public final class BedrockActorQueries {
+         return Map.copyOf(queries);
+     }
+ 
++    /** Native metadata and accepted emote playback both contribute current actor status. */
++    public static boolean isEmoting(final UUID actor, final NativeActorMessage.Snapshot state) {
++        // Local playback cancels before the server necessarily clears its metadata flag.
++        return actor != null && BedrockEmotePlayback.playing(actor)
++                || state != null && !state.localPlayer() && state.flags().contains(ActorFlags.EMOTING);
++    }
++
+     public static float groundSpeed(final Vec3 movement) {
+         final float x = (float) movement.x * 20F, y = (float) movement.y * 20F, z = (float) movement.z * 20F;
+         return (float) Math.sqrt(z * z + (y * y + x * x));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
 index 5ed89d0..7e09d56 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
@@ -2379,10 +2446,10 @@ index 5f35a0d..ae57bf7 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
 new file mode 100644
-index 0000000..d01b59c
+index 0000000..fb6d1d3
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
-@@ -0,0 +1,515 @@
+@@ -0,0 +1,516 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2848,7 +2915,8 @@ index 0000000..d01b59c
 +    }
 +
 +    public static boolean playing(final UUID player) {
-+        return PLAYING.containsKey(player);
++        final Playing playing = PLAYING.get(player);
++        return playing != null && !playing.expired(System.nanoTime());
 +    }
 +
 +    public static Map<String, BedrockBoneAnimation.Transform> sample(
@@ -6616,7 +6684,7 @@ index a1e0f55..fd2eeb1 100644
      }
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 7164045..acb0ee6 100644
+index 7164045..75196fc 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -19,37 +19,62 @@
@@ -6784,7 +6852,7 @@ index 7164045..acb0ee6 100644
              return null;
          }
          if (appearance.renderer == null || appearance.rendererEpoch != rendererEpoch) {
-@@ -212,13 +272,444 @@ public final class BedrockPlayerSkins {
+@@ -212,13 +272,446 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(surface.geometry().model(), appearance.slim, surface.geometry().meshes()),
                  surface.texture())).toList();
              appearance.renderer = new BedrockPlayerRenderer(rendererContext,
@@ -7075,11 +7143,13 @@ index 7164045..acb0ee6 100644
 +
 +    static Map<String, Object> actorQueries(final Avatar entity, final AvatarRenderState state, final float partialTick) {
 +        final Map<String, Object> queries = new HashMap<>();
-+        queries.putAll(BedrockActorQueries.nativeState(BedrockActorState.state(entity.getUUID())));
++        final UUID actorId = entity.getUUID();
++        final var actorState = BedrockActorState.state(actorId);
++        queries.putAll(BedrockActorQueries.nativeState(actorState));
++        queries.put("is_emoting", BedrockActorQueries.isEmoting(actorId, actorState));
 +        queries.put("life_time", state.ageInTicks / 20F);
 +        queries.put("frame_alpha", partialTick);
 +        queries.put("is_alive", entity.isAlive());
-+        final UUID actorId = entity.getUUID();
 +        final var owner = BedrockActorState.lifetime(actorId);
 +        queries.put("spellcolor", (BedrockActorAnimation.Query) _ -> BedrockActorState.spellColor(actorId, owner));
 +        queries.put("is_on_ground", entity.onGround());
@@ -7230,7 +7300,7 @@ index 7164045..acb0ee6 100644
      public static AvatarRenderer<?> renderer(final PlayerSkin skin, final float ageInTicks) {
          if (skin == null || skin.body() == null) {
              return null;
-@@ -238,10 +729,55 @@ public final class BedrockPlayerSkins {
+@@ -238,10 +731,55 @@ public final class BedrockPlayerSkins {
      public static Model.Simple previewModel(final Identifier texture) {
          final UUID id = PLAYER_BY_TEXTURE.get(texture);
          final Appearance appearance = id == null ? null : APPEARANCES.get(id);
@@ -7289,7 +7359,7 @@ index 7164045..acb0ee6 100644
      }
  
      /** Supplies the additional animated surfaces in the same pose as a menu's primary skin. */
-@@ -251,14 +787,19 @@ public final class BedrockPlayerSkins {
+@@ -251,14 +789,19 @@ public final class BedrockPlayerSkins {
          if (appearance == null || appearance.surfaces.isEmpty()) return List.of();
          if (appearance.previewSurfaces == null)
              appearance.previewSurfaces = appearance.surfaces.stream().map(surface -> new PreviewSurface(
@@ -7311,7 +7381,7 @@ index 7164045..acb0ee6 100644
  
      public static void rendererContext(final EntityRendererProvider.Context context) {
          BedrockActorResources.clear();
-@@ -271,6 +812,7 @@ public final class BedrockPlayerSkins {
+@@ -271,6 +814,7 @@ public final class BedrockPlayerSkins {
          APPEARANCES.values().forEach(BedrockPlayerSkins::release);
          APPEARANCES.clear();
          PLAYER_BY_TEXTURE.clear();
@@ -7319,7 +7389,7 @@ index 7164045..acb0ee6 100644
          SKIN_ASSEMBLER.clear();
          skinConnection = null;
      }
-@@ -288,7 +830,8 @@ public final class BedrockPlayerSkins {
+@@ -288,7 +832,8 @@ public final class BedrockPlayerSkins {
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
@@ -7329,7 +7399,7 @@ index 7164045..acb0ee6 100644
      }
  
      private static boolean supportedImage(final BufferedImage image) {
-@@ -314,7 +857,10 @@ public final class BedrockPlayerSkins {
+@@ -314,7 +859,10 @@ public final class BedrockPlayerSkins {
  
      static String geometryName(final String resourcePatch, final String binding) {
          try {
@@ -7341,7 +7411,7 @@ index 7164045..acb0ee6 100644
              final var name = geometry.get(binding);
              return name != null && name.isJsonPrimitive() && name.getAsJsonPrimitive().isString()
                  ? name.getAsString() : "";
-@@ -344,7 +890,8 @@ public final class BedrockPlayerSkins {
+@@ -344,7 +892,8 @@ public final class BedrockPlayerSkins {
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
              final BedrockGeometryModel model = models.stream().filter(value -> value.getIdentifier().equals(name)).findFirst()
                  .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
@@ -7351,7 +7421,7 @@ index 7164045..acb0ee6 100644
          } catch (RuntimeException e) {
              LOGGER.warn("Failed to parse Bedrock player geometry", e);
              return null;
-@@ -371,7 +918,8 @@ public final class BedrockPlayerSkins {
+@@ -371,7 +920,8 @@ public final class BedrockPlayerSkins {
              final Map<Integer, JsonObject> animatedModels = new HashMap<>();
              for (final var entry : models) {
                  final JsonObject model = entry.getAsJsonObject();
@@ -7361,7 +7431,7 @@ index 7164045..acb0ee6 100644
                  if (name.equals(identifier)) {
                      if (body != null) {
                          return null;
-@@ -410,7 +958,8 @@ public final class BedrockPlayerSkins {
+@@ -410,7 +960,8 @@ public final class BedrockPlayerSkins {
                  final JsonObject model = animatedModels.get(type);
                  final var animation = animationByType.get(type);
                  if (model == null) {
@@ -7371,7 +7441,7 @@ index 7164045..acb0ee6 100644
                          return null;
                      }
                      continue;
-@@ -425,7 +974,8 @@ public final class BedrockPlayerSkins {
+@@ -425,7 +976,8 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(parsed, false, meshes);
                  surfaces.add(new Surface(parsed, Map.copyOf(meshes), animation));
              }
@@ -7381,7 +7451,7 @@ index 7164045..acb0ee6 100644
                  if (!coverage.getOrDefault(part, false)) {
                      return null;
                  }
-@@ -436,7 +986,8 @@ public final class BedrockPlayerSkins {
+@@ -436,7 +988,8 @@ public final class BedrockPlayerSkins {
                  return null;
              }
              BedrockGeometry.playerModel(parsedBody, false, bodyMeshes);
@@ -7391,7 +7461,7 @@ index 7164045..acb0ee6 100644
          } catch (RuntimeException e) {
              LOGGER.warn("Failed to parse Bedrock persona geometry", e);
              return null;
-@@ -473,12 +1024,21 @@ public final class BedrockPlayerSkins {
+@@ -473,12 +1026,21 @@ public final class BedrockPlayerSkins {
                      }
                  }
              }
@@ -7416,7 +7486,7 @@ index 7164045..acb0ee6 100644
              }
          }
          return meshes;
-@@ -500,7 +1060,13 @@ public final class BedrockPlayerSkins {
+@@ -500,7 +1062,13 @@ public final class BedrockPlayerSkins {
          return vector;
      }
  
@@ -7431,7 +7501,7 @@ index 7164045..acb0ee6 100644
          Surface face() {
              return this.surfaces.stream().filter(surface -> surface.animation().type() == 1).findFirst().orElse(null);
          }
-@@ -518,13 +1084,23 @@ public final class BedrockPlayerSkins {
+@@ -518,13 +1086,23 @@ public final class BedrockPlayerSkins {
          private final Identifier headId;
          private final long started = System.nanoTime();
          private final Geometry geometry;
@@ -12168,6 +12238,136 @@ index 0000000..58fd075
 +        final var bytes = new ByteArrayOutputStream();
 +        ImageIO.write(image, "png", bytes);
 +        return bytes.toByteArray();
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteQueriesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteQueriesTest.java
+new file mode 100644
+index 0000000..1c1ee4e
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteQueriesTest.java
+@@ -0,0 +1,124 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonParser;
++import java.util.List;
++import java.util.Map;
++import java.util.Random;
++import java.util.Set;
++import java.util.UUID;
++import net.minecraft.SharedConstants;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class BedrockEmoteQueriesTest {
++    @BeforeAll
++    static void bootstrap() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void refreshesNativeEmotingInAnExistingAttachedParticleWithoutRetainingStaleStatus() throws Exception {
++        final var entity = actor(UUID.randomUUID());
++        final var snapshot = new NativeActorMessage.Snapshot(entity.getUUID(), UUID.randomUUID(), false, 1,
++                "minecraft:player", "", 1, Set.of(ActorFlags.EMOTING), 0, 0, null, Map.of());
++        final var effect = BedrockParticleEffectTest.burst();
++        effect.getAsJsonObject("particle_effect").getAsJsonObject("components")
++                .add("minecraft:particle_appearance_billboard", JsonParser.parseString("""
++                    {"size":["3+q.is_emoting",1]}
++                    """));
++        final var environment = new BedrockMolang();
++        final var emitter = BedrockParticleEffect.read(effect).emitter(environment, new Random(1), Vec3.ZERO);
++        final var current = BedrockActorQueries.sample(entity, snapshot, Map.of("is_emoting", false));
++        final var attachment = attachment(current);
++        emitter.queryContext(attachment, Vec3.ZERO);
++        emitter.advance(0, 10, attachment, (x,y,z) -> List.of());
++        assertEquals(4F, BedrockParticleEffectTest.sample(emitter).getFirst().width());
++        assertTrue(environment.hasCompleteQueries());
++        final int population = emitter.size();
++        assertTrue(population > 0);
++        final var cleared = BedrockActorQueries.sample(entity, null, current);
++        emitter.queryContext(attachment(cleared), Vec3.ZERO);
++        assertEquals(3F, BedrockParticleEffectTest.sample(emitter).getFirst().width());
++        assertEquals(population, emitter.size());
++        assertEquals(true, current.get("is_emoting"));
++        assertEquals(false, cleared.get("is_emoting"));
++        assertTrue(environment.hasCompleteQueries());
++    }
++
++    @Test
++    void keepsPlaybackStatusIndependentAcrossActorsAndRefreshesAfterMovementCancellation() throws Exception {
++        final UUID first = UUID.randomUUID(), second = UUID.randomUUID();
++        final var a = actor(first);
++        final var b = actor(second);
++        final var animation = BedrockBoneAnimation.parse(JsonParser.parseString("""
++                {"loop":true,"animation_length":10,"bones":{"root":{"position":[0,1,0]}}}
++                """).getAsJsonObject());
++        final var emote = new BedrockEmotes.Emote(UUID.randomUUID(), animation, BedrockEmoteMessages.read(Map.of()));
++        try {
++            BedrockEmotePlayback.start(first, emote, System.nanoTime(), 200);
++            final var firstFrame = BedrockActorQueries.sample(a, null, Map.of());
++            assertEquals(true, firstFrame.get("is_emoting"));
++            assertEquals(false, BedrockActorQueries.sample(b, null, firstFrame).get("is_emoting"));
++            BedrockEmotePlayback.start(second, emote, System.nanoTime(), 200);
++            assertEquals(true, BedrockActorQueries.sample(b, null, Map.of()).get("is_emoting"));
++            cancel(first);
++            assertEquals(false, BedrockActorQueries.sample(a, null, firstFrame).get("is_emoting"));
++            assertEquals(true, BedrockActorQueries.sample(b, null, Map.of()).get("is_emoting"));
++            assertEquals(true, firstFrame.get("is_emoting"));
++            cancel(second);
++            assertEquals(false, BedrockActorQueries.sample(b, null, Map.of("is_emoting", true)).get("is_emoting"));
++        } finally {
++            cancel(first);
++            cancel(second);
++        }
++    }
++
++    @Test
++    void ignoresDelayedLocalMetadataBeforePlaybackAndAfterMovementCancellation() throws Exception {
++        final UUID player = UUID.randomUUID();
++        final var entity = actor(player);
++        final var stale = new NativeActorMessage.Snapshot(player, UUID.randomUUID(), true, 1,
++                "minecraft:player", "", 1, Set.of(ActorFlags.EMOTING), 0, 0, null, Map.of());
++        final var animation = BedrockBoneAnimation.parse(JsonParser.parseString("""
++                {"loop":true,"animation_length":10,"bones":{"root":{"position":[0,1,0]}}}
++                """).getAsJsonObject());
++        final var emote = new BedrockEmotes.Emote(UUID.randomUUID(), animation, BedrockEmoteMessages.read(Map.of()));
++        try {
++            assertEquals(false, BedrockActorQueries.sample(entity, stale, Map.of()).get("is_emoting"));
++            BedrockEmotePlayback.start(player, emote, System.nanoTime(), 200);
++            final var playing = BedrockActorQueries.sample(entity, stale, Map.of());
++            assertEquals(true, playing.get("is_emoting"));
++            cancel(player);
++            assertEquals(false, BedrockActorQueries.sample(entity, stale, playing).get("is_emoting"));
++        } finally {
++            cancel(player);
++        }
++    }
++
++    private static Entity actor(final UUID uuid) {
++        final var entity = mock(Entity.class);
++        when(entity.getUUID()).thenReturn(uuid);
++        when(entity.getDeltaMovement()).thenReturn(Vec3.ZERO);
++        when(entity.isAlive()).thenReturn(true);
++        return entity;
++    }
++
++    private static BedrockParticleAttachment attachment(final Map<String, Object> queries) {
++        return new BedrockParticleAttachment(Vec3.ZERO, 0, null, new AABB(0,0,0,1,2,1), queries);
++    }
++
++    private static void cancel(final UUID uuid) {
++        BedrockEmotePlayback.sample(uuid, Vec3.ZERO, Map.of(), false, _ -> {}, _ -> {});
++        BedrockEmotePlayback.sample(uuid, new Vec3(1,0,0), Map.of(), false, _ -> {}, _ -> {});
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java

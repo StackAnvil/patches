@@ -1188,3 +1188,31 @@ A controlled ViaProxy peer supplies a native Steve texture without geometry; the
 Local mappings are loaded in that installed profile; the isolated regression verifies the unloaded case.
 The scene's full rendering gate retains the separate missing camera-texture failure.
 Native graphical parity and shader comparisons remain open.
+
+## Emote status for authored pack queries, October 26, 2026
+
+Expose `query.is_emoting` through the shared actor sampler and player animation inputs.
+The bundled 1.26.51.1 root and HUD controllers use this query to suppress look-at behavior.
+[Mojang's reference](https://mojang.github.io/bedrock-samples/Molang.html) defines it as the current emote status.
+
+Remote actors combine native metadata with accepted playback.
+Local queries follow active playback because server metadata can remain true after movement cancels the emote.
+The live baseline retains the old status for about 1.6 seconds after cancellation.
+Expired playback entries also stop contributing status before the next cleanup tick.
+Existing attached emitters refresh the query without another actor animation frame or a new particle instance.
+
+Three regressions cover native metadata removal, independent players, movement cancellation, and delayed local metadata.
+The missing-query controls fail on the preceding implementation.
+The local precedence control fails separately on the initial combined query.
+All three pass in the final four-project build, with 3,095 passing tests and 152 optional skips overall.
+
+Fresh direct and Iris-enabled ViaProxy controls change a player texture and existing parent/child particle tints through two physical emote selections.
+Movement cancellation resets all three while the native metadata flag remains true.
+Natural completion also restores their idle state, and particle identities remain stable throughout.
+The declared wheel fixture only installs bundled assets and labels before physical B-key and slot input.
+It does not start playback, send packets, or write account state.
+
+These controls verify authored responses to emote status.
+The four bundled emote animations contain no sound or particle declarations, so native emote effect ownership remains unverified.
+Remote metadata precedence, remote skin visuals, and native graphical equality remain open.
+The [coverage record](../../../docs/bedrock-coverage.md#emote-status-in-pack-queries-october-26-2026) records the checks and limits.

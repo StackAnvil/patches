@@ -11096,3 +11096,47 @@ An earlier Iris launch stops at the disk-reserve check before creating a client 
 This supersedes the empty-avatar limit for this authored pack and these installed artifacts.
 The original E-key background/scale report and generic native portrait visuals remain separate work.
 Native graphical equality, remote skins, broader persona composition, emote effects, and complete pack and interaction parity remain open.
+
+## Emote status in pack queries, October 26, 2026
+
+**Corrected within scope:** Actor animations, player controllers, and existing attached particles now receive `query.is_emoting`.
+The bundled Bedrock 1.26.51.1 player controllers use this query to suppress look-at behavior during emotes.
+[Mojang's Molang reference](https://mojang.github.io/bedrock-samples/Molang.html) defines the query as the entity's current emote status.
+
+The shared sampler combines native metadata with accepted playback for remote actors.
+For the local player, active playback owns the status.
+A live BDS baseline retains the native metadata flag after movement cancels playback.
+The earlier combined query leaves authored visuals in their emote state for about 1.6 seconds.
+The correction restores local queries before that delayed metadata clears.
+Player controller caches also include the emote status, including changes without a new render age or metadata snapshot.
+
+Three regressions cover native status removal in an existing emitter, independent players, movement cancellation, and delayed local metadata.
+The first two fail on the preceding implementation.
+The local precedence regression separately fails on the initial combined query and passes after the correction.
+The full four-project build passes 3,095 tests, skips 152 optional tests, and reports no failures or errors.
+All 38 add-on patches replay, and both core Checkstyle tasks pass.
+All four source snapshots remain unchanged through the final build.
+Compiled client classes, shader assets, and embedded core and converter copies match their packaged artifacts.
+
+Fresh direct and Iris-enabled ViaProxy sessions use the same authored pack and final add-on artifact.
+Physical B-key and slot controls start two emotes that the native BDS receives.
+The body texture and two particle markers change from blue to red, then return after movement cancellation and natural completion.
+The shader pack renders the authored red particle tint as bright pink.
+One marker comes from a bound child emitter.
+Both emitters and their existing particles retain their identities across all five captured phases.
+At the cancellation draw, local queries and all three visuals reset while the native metadata flag remains true.
+Both routes pass state, pixel, pack-file, artifact, and process-retirement checks.
+All ten final screenshots receive visual review.
+
+The private wheel fixture installs the four already bundled assets and controlled labels.
+It does not send packets, start or stop playback, change capabilities, or write account state.
+Subsequent observations only read production state.
+Earlier disk-reserve failures and an invalid authored animation fixture supply no passing live result.
+An earlier proxy driver loses its terminal receipts during teardown and supplies no normal lifecycle result.
+The final proxy control uses an isolated supervisor and records normal recorder and server exits.
+
+This fixture verifies authored pack responses to emote status.
+The four bundled emote animations declare no sound or particle effects, so they do not establish native emote effect ownership.
+Native graphical equality, remote metadata precedence, remote skin visuals, and broader skin and emote parity remain open.
+The original inventory, locator, rollback, and eating reports remain separate work.
+The full implementation goal stays active.

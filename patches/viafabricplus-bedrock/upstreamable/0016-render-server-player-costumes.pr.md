@@ -213,3 +213,18 @@ That preview does not establish inventory material parity or resolve the origina
 Fresh per-bone persona and masked-hand visual comparisons remain unverified.
 
 The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.
+
+## Emote-dependent controller selection, October 26, 2026
+
+Player render controllers now receive current `query.is_emoting` from the shared emote adapter.
+The world selection cache includes this status alongside render age and the native actor snapshot.
+Playback changes can therefore replace authored textures and materials without waiting for another metadata update.
+GUI controller selection retains its independent frame scope.
+
+Fresh direct and Iris-enabled ViaProxy controls select a blue idle texture and red emote texture through physical wheel input.
+Movement cancellation restores the idle texture while the server's emote metadata still remains true.
+Natural completion restores it again after replay.
+The same existing parent and bound child particles follow these transitions without replacement.
+
+The final four-project build passes 3,095 tests, skips 152 optional tests, and reports no failures or errors.
+The [coverage record](../../../docs/bedrock-coverage.md#emote-status-in-pack-queries-october-26-2026) records the authored fixture and remaining native, remote, and effect limits.
