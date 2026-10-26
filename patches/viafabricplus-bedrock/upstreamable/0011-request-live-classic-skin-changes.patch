@@ -1,4 +1,4 @@
-From e69d8c761a588bc19285ffd5195dfbe91ba14872 Mon Sep 17 00:00:00 2001
+From a21fe61033288101e8132855a2a875aca841ae0d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(bedrock): request live skin changes
@@ -15,9 +15,14 @@ Replacement, timeout and disconnect fail the retired request. Keep the
 local preview immediate, but report synchronization only after core sees a
 matching native server appearance. Remove the previous direct-only
 acknowledgment path and guard character-screen status from stale replies.
+
+Use the shared native vanilla skin pack for upload geometry as well as
+preset images and emote models, so direct and proxy appearances use the
+same source without loading a local translator or maintaining a second
+archive cache.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   1 +
- .../bedrock/appearance/BedrockSkinChange.java |  77 ++++++++++++
+ .../bedrock/appearance/BedrockSkinChange.java |  61 ++++++++++
  .../appearance/NativeSkinChangePayload.java   |  22 ++++
  .../NativeSkinChangeResultPayload.java        |  22 ++++
  .../bedrock/appearance/SkinChangeSession.java |  47 ++++++++
@@ -27,7 +32,7 @@ acknowledgment path and guard character-screen status from stale replies.
  .../viafabricplus-bedrock/lang/en_us.json     |   4 +
  .../appearance/BedrockSkinChangeTest.java     | 110 ++++++++++++++++++
  .../appearance/SkinChangeSessionTest.java     |  49 ++++++++
- 11 files changed, 380 insertions(+), 7 deletions(-)
+ 11 files changed, 364 insertions(+), 7 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChange.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeSkinChangePayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeSkinChangeResultPayload.java
@@ -36,10 +41,10 @@ acknowledgment path and guard character-screen status from stale replies.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/SkinChangeSessionTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index b0d6c46..ec8b226 100644
+index 9feb3e2..8fd0b8e 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -73,6 +73,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -74,6 +74,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
  
      @Override
      public void onPreSettingsLoading() {
@@ -49,10 +54,10 @@ index b0d6c46..ec8b226 100644
          // Capture the listener identity at INIT. Fabric Context.player() returns the current client player.
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChange.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChange.java
 new file mode 100644
-index 0000000..35de552
+index 0000000..d0b7028
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChange.java
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,61 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -70,18 +75,13 @@ index 0000000..35de552
 +import net.minecraft.network.Connection;
 +import net.raphimc.viabedrock.api.model.NativeSkinChange;
 +import net.raphimc.viabedrock.api.model.NativeSkinFragment;
-+import net.raphimc.viabedrock.api.resourcepack.content.ZipContent;
-+import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +
-+import java.io.IOException;
-+import java.io.UncheckedIOException;
 +import java.util.UUID;
 +import java.util.concurrent.CompletableFuture;
 +
 +/** Uses the same negotiated Java transport for direct translation and ViaProxy. */
 +public final class BedrockSkinChange {
 +    private static final SkinChangeSession<Connection> SESSION = new SkinChangeSession<>();
-+    private static String standardGeometry;
 +
 +    private BedrockSkinChange() {}
 +
@@ -107,7 +107,7 @@ index 0000000..35de552
 +        final CompletableFuture<Boolean> confirmation = SESSION.begin(owner, request);
 +        try {
 +            // Read the real bundled native geometry without initializing a local translator on proxy connections.
-+            final var skin = appearance.skinData(appearance.persona() == null ? standardGeometry() : "");
++            final var skin = appearance.skinData(appearance.persona() == null ? BedrockVanillaSkins.geometry().toString() : "");
 +            final byte[] encoded = NativeSkinFragment.encode(skin);
 +            BedrockPlayerSkins.accept(owner, listener.getLocalGameProfile().id(), skin);
 +            NativeSkinChange.split(request, encoded, fragment -> ClientPlayNetworking.send(new NativeSkinChangePayload(fragment)));
@@ -118,17 +118,6 @@ index 0000000..35de552
 +        return confirmation;
 +    }
 +
-+    static synchronized String standardGeometry() {
-+        if (standardGeometry == null) {
-+            try (final var input = BedrockProtocol.class.getResourceAsStream("/assets/viabedrock/skin_packs/vanilla.mcpack")) {
-+                if (input == null) throw new IOException("The bundled native skin pack is missing");
-+                standardGeometry = new ZipContent(input.readAllBytes()).getSortedJson("geometry.json").toString();
-+            } catch (final IOException failure) {
-+                throw new UncheckedIOException("Could not read the bundled native skin geometry", failure);
-+            }
-+        }
-+        return standardGeometry;
-+    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeSkinChangePayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeSkinChangePayload.java
 new file mode 100644
@@ -444,7 +433,7 @@ index db52332..fa7eff9 100644
    "bedrock_character_slots.viafabricplus.select_failed": "Could not save this slot. Try again.",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChangeTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChangeTest.java
 new file mode 100644
-index 0000000..80ddacd
+index 0000000..14f2305
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChangeTest.java
 @@ -0,0 +1,110 @@
@@ -549,7 +538,7 @@ index 0000000..80ddacd
 +
 +    @Test
 +    void loadsUsableNativeGeometryWithoutALocalTranslator() throws Exception {
-+        final String geometry = BedrockSkinChange.standardGeometry();
++        final String geometry = BedrockVanillaSkins.geometry().toString();
 +        for (final String identifier : List.of("geometry.humanoid.custom", "geometry.humanoid.customSlim")) {
 +            final var model = BedrockClassicModel.read(geometry, identifier);
 +            final var decoded = org.cube.converter.model.impl.bedrock.BedrockGeometryModel.fromJson(model.geometry()).getFirst();

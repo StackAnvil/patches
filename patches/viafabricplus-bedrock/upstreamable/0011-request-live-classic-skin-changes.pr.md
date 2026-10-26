@@ -58,3 +58,16 @@ These are controlled fixtures, without account writes or a native graphical base
 
 Account writes, purchases, remote-client appearance, complete native rendering and animation timing require separate evidence.
 The controlled skin fixtures do not establish those behaviors.
+
+## One source for native classic geometry
+
+Live uploads use the shared native skin-pack reader introduced with the classic Dressing Room.
+Remove the separate archive reader and cache from this patch.
+Preset selection, animation models and outgoing geometry now resolve the same native resource.
+
+Validation: all 14 focused appearance checks pass without skips.
+The replayed full build passes 3,070 tests, with 152 optional skips and no failures or errors.
+A controlled ViaProxy peer supplies a native Steve texture without geometry; the renderer builds its native model and samples four bundled emotes.
+Local mappings are loaded in that installed profile; the isolated regression verifies the unloaded case.
+The scene's full rendering gate retains the separate missing camera-texture failure.
+Native graphical parity and shader comparisons remain open.

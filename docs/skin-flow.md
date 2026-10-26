@@ -49,6 +49,11 @@ The importer applies native ASCII lowercase rules to legacy bone names and paren
 
 Classic skin animation aliases and render flags survive import and transport. Local alias playback uses the licensed player graph. Geometry-provided alias precedence remains incomplete.
 
+Default Steve and Alex images and animated player models now use the same bundled native skin pack as live uploads.
+They do not require local Bedrock mappings, which can remain unloaded on ViaProxy connections.
+The default appearance regression reproduced a null-pointer failure before this change.
+Focused checks verify both presets, distinct wide and slim arm geometry, and independent images and model definitions.
+
 ## Account-owned classic packs
 
 The Dressing Room has an Owned packs action. It reads the authenticated `MultiItemPage_PersonaSkinSelector` Store page and lists owned skin packs. Open pack downloads the selected pack and opens the shared classic preview. Refresh updates the account list. Returning from preview retains the selected pack and clears download status.

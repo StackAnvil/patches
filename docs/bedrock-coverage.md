@@ -10728,3 +10728,21 @@ RRLS's mini-render option remains enabled, and runtime artifacts match the verif
 
 This classification applies to the indicator in these lab modpack captures.
 It does not close the original inventory background, locator, movement, eating, or broader parity reports.
+
+## Classic skin assets before protocol mapping initialization
+
+Default Steve and Alex selection, standard animation models, and live uploads share the bundled native vanilla skin pack.
+They no longer depend on the local Bedrock mapping table.
+A regression reproduced the default appearance null-pointer failure with that table unloaded.
+The new checks preserve native pixels, independent model definitions, and distinct four-pixel and three-pixel arms.
+Authored custom geometry retains precedence.
+
+The replayed four-project build passes 3,070 tests with 152 optional skips and no failures or errors.
+All 14 focused appearance checks pass without skips.
+Compiled client classes match the packaged add-on, and embedded core classes and assets match both consumers.
+
+The live controls use a declared remote classic player without supplied geometry and four bundled emotes.
+The renderer resolves the native wide model and samples all four emotes.
+The installed proxy profile loads local mappings, so the unloaded-mapping result comes from the isolated regression.
+The full scene rendering gate remains failed because its camera item references a missing texture.
+These controls do not establish complete native skin, pose, timing, placement or shader parity.

@@ -1174,3 +1174,17 @@ All four bundled emotes reach world-render sampling across 73 observations.
 The remote announcement also uses the declared native player-list name.
 Peer placement and durations remain fixture inputs, and the peer remains partly submerged.
 This control does not establish native placement, pose or complete graphical parity.
+
+## Classic emote models on ViaProxy
+
+Build standard wide and slim animation models from the shared native skin pack.
+The previous fallback read the local protocol mapping table, which can be unloaded behind ViaProxy.
+The regression checks native arm widths of four and three pixels before mappings initialize.
+Per-appearance geometry and existing authored custom models retain their ownership.
+
+Validation: all 14 focused appearance checks pass without skips.
+The replayed full build passes 3,070 tests, with 152 optional skips and no failures or errors.
+A controlled ViaProxy peer supplies a native Steve texture without geometry; the renderer builds its native model and samples four bundled emotes.
+Local mappings are loaded in that installed profile; the isolated regression verifies the unloaded case.
+The scene's full rendering gate retains the separate missing camera-texture failure.
+Native graphical parity and shader comparisons remain open.
