@@ -10526,3 +10526,32 @@ Screenshot review shows all five icons in the hotbar and the creative inventory 
 Each route also passes 16 equipped-state checks, including real sneak transitions and equipment removal.
 All 30 screenshots receive visual review, and installed runtime hashes match the build.
 These creative-screen controls do not reproduce the reported survival inventory or establish complete native visual parity.
+
+
+### Native desktop scale preference
+
+Supported native presentations now use a separate persisted scale offset from ViaFabricPlus Bedrock settings.
+The previous runtime always supplied zero to the native desktop scale calculation.
+Players can select offsets from zero through -4 without changing Java GUI scale.
+The viewport retains the preference and clamps the resolved scale to its current native limits.
+Native screen dimensions, supported HUD layouts, portraits, extraction, and pointer coordinates share that result.
+
+Existing Bedrock 1.26.51.1 `GuiData` controls establish the desktop bounds at `141566fd0`.
+A new runtime-wiring regression covers three resolutions, five Java GUI scales, and all five preference values.
+The four viewport tests pass without skips.
+The full build passes 3,054 tests with 152 optional skips and no failures or errors.
+All 1,206 compiled client classes match the add-on.
+The core and both consumers retain matching 1,558 core classes, 200 assets, and 39 converter classes.
+
+The original E-key missing-background report remains unconfirmed.
+This preference does not complete the native player-inventory controller, pocket layouts, or native pixel parity.
+
+Fresh direct and ViaProxy BDS 1.26.51.1 sessions each verify 12 physical inventory actions at 1920 by 1013 pixels.
+The native/Java scale pairs are 4/2, 3/3, 2/2, and 4/4.
+At each pair, actual clicks pick up three diamonds, place one, and restore the stack.
+Independent BDS chest counts confirm every transfer, and the production hovered slot remains aligned with the visible cell.
+The real VFP setting passes four serialization round trips per route.
+A physical click on its published settings row selects -1, and the private client configuration saves that preference.
+All 20 screenshots receive visual review, including backgrounds, slot layouts, and the settings row.
+Runtime hashes match the final distributables.
+These controls cover a real chest and desktop settings; they do not reproduce the reported E-key player inventory or compare native pixels.

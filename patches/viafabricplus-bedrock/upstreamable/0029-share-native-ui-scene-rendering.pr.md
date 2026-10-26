@@ -377,3 +377,33 @@ The reference covers 768 activation combinations and 36 press/release sequences 
 Repeated notifications still run the lifecycle when the mode value remains unchanged.
 The native controller receives the kind-7 event with its original mode payload.
 These are native reference captures. The production mode-notification route remains unimplemented.
+
+
+## Native desktop scale preference
+
+The Bedrock settings tab now exposes `Bedrock UI scale offset` through the existing persisted VFP enum setting.
+The default offset remains zero.
+Offsets from -1 through -4 reduce supported native presentations independently of Java GUI scale.
+The viewport clamps the displayed scale to its current native limits and retains the selected preference across window sizes.
+Native screens, supported HUD layouts, portraits, extraction, and pointer coordinates use the same viewport.
+
+The existing Bedrock 1.26.51.1 `GuiData` controls establish the desktop scale and offset bounds at `141566fd0`.
+Previously, runtime always supplied offset zero to that verified calculation.
+The new wiring regression covers three resolutions, five Java GUI scales, and all five preference values.
+All four viewport tests pass without skips.
+The full build passes 3,054 tests with 152 optional skips and no failures or errors.
+All 1,206 compiled client classes match the distributable add-on.
+The core and both consumers retain matching 1,558 core classes, 200 assets, and 39 converter classes.
+
+The reported missing inventory background remains unconfirmed.
+This preference does not establish complete player-inventory/controller behavior, pocket layouts, or native pixel parity.
+
+Fresh direct and ViaProxy BDS 1.26.51.1 sessions each verify 12 physical inventory actions at 1920 by 1013 pixels.
+The native/Java scale pairs are 4/2, 3/3, 2/2, and 4/4.
+At each pair, actual clicks pick up three diamonds, place one, and restore the stack.
+Independent BDS chest counts confirm every transfer, and the production hovered slot remains aligned with the visible cell.
+The real VFP setting passes four serialization round trips per route.
+A physical click on its published settings row selects -1, and the private client configuration saves that preference.
+All 20 screenshots receive visual review, including backgrounds, slot layouts, and the settings row.
+Runtime hashes match the final distributables.
+These controls cover a real chest and desktop settings; they do not reproduce the reported E-key player inventory or compare native pixels.

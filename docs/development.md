@@ -148,3 +148,18 @@ The standard Fabulously Optimized run explicitly disables shaders.
 The shader run fails if Iris does not activate the pinned pack or reports missing Bedrock pipeline overrides.
 A successful join alone does not prove correct geometry.
 Use [a recorded scene replay](server-replay.md) to exercise custom actors and geometry skins.
+
+
+## Try native UI scale offsets
+
+Development builds expose a separate scale preference for supported native presentations.
+
+1. Open the Bedrock tab in ViaFabricPlus settings.
+2. Select `Bedrock UI scale offset` to cycle through the available offsets.
+3. Open a supported native screen to inspect the result.
+
+`Default (0)` keeps the native desktop default.
+Negative offsets make native presentations smaller, within the limits of the current window.
+The preference remains selected when a small window limits its visible effect.
+Java GUI scale remains separate.
+The same viewport supplies native drawing and pointer coordinates.

@@ -1,4 +1,4 @@
-From 21a8c73d3bc7cd384a4c63cbefb32a5d95c70e8b Mon Sep 17 00:00:00 2001
+From a44187c3fa577ac4cb58f7d464b1dd09e5815d27 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -444,6 +444,18 @@ keep the existing horse path unchanged. Projection tests cover GUI scale
 and scissor changes against original native matrices. Actual Java GUI
 submission and complete player inventory/controller admission remain
 separate verification gates.
+
+Expose the native desktop GUI scale offset through the existing persisted
+VFP enum settings. GuiData 141566fd0 in Bedrock 1.26.51.1 bounds the desktop
+scale to 1..8 and clamps offsets to the viewport-dependent lower half of
+that range. The existing target controls establish these limits; runtime
+previously hardcoded offset zero despite supporting other offsets.
+
+Keep the user preference independent of Java HUD scale. Native screens,
+HUD layouts, portraits, extraction and pointer transforms share the same
+viewport. Preserve the preference across window sizes and clamp only the
+resolved scale. This adds control over supported native presentations;
+it does not reproduce or close the reported missing inventory background.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -503,7 +515,10 @@ separate verification gates.
  .../bedrock/screen/ui/NativeUiSlider.java     | 123 +++
  .../bedrock/screen/ui/NativeUiText.java       |  64 ++
  .../bedrock/screen/ui/NativeUiToggle.java     |  94 ++
- .../bedrock/screen/ui/NativeUiViewport.java   |  30 +
+ .../bedrock/screen/ui/NativeUiViewport.java   |  32 +
+ .../bedrock/settings/BedrockSettings.java     |   4 +
+ .../bedrock/settings/NativeUiScale.java       |  27 +
+ .../viafabricplus-bedrock/lang/en_us.json     |   2 +
  .../shaders/core/bedrock_actor.fsh            |   3 +
  .../viafabricplus-bedrock.accesswidener       |   1 +
  .../viafabricplus-bedrock.mixins.json         |   8 +-
@@ -538,8 +553,8 @@ separate verification gates.
  .../bedrock/screen/ui/NativeUiTextTest.java   |  56 ++
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |  86 ++
- .../screen/ui/NativeUiViewportTest.java       |  55 +
- 94 files changed, 10971 insertions(+), 24 deletions(-)
+ .../screen/ui/NativeUiViewportTest.java       |  95 ++
+ 97 files changed, 11046 insertions(+), 24 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -586,6 +601,7 @@ separate verification gates.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiText.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiToggle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewport.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/settings/NativeUiScale.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearanceTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorContextTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/AnimationPrograms.java
@@ -7391,10 +7407,10 @@ index 0000000..e63749c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewport.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewport.java
 new file mode 100644
-index 0000000..82eaa26
+index 0000000..b1f6a30
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewport.java
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,32 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7402,6 +7418,7 @@ index 0000000..82eaa26
 + */
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import net.minecraft.client.Minecraft;
 +
 +/** Desktop GuiData units, independent of Java's HUD scale. */
@@ -7419,12 +7436,88 @@ index 0000000..82eaa26
 +
 +    public static NativeUiViewport current() {
 +        final var window = Minecraft.getInstance().getWindow();
-+        return desktop(window.getWidth(), window.getHeight(), 0, window.getGuiScale());
++        return desktop(window.getWidth(), window.getHeight(),
++            ViaFabricPlusBedrock.impl().settings().nativeUiScale().value().offset(), window.getGuiScale());
 +    }
 +
 +    public double pointer(final double javaCoordinate) { return javaCoordinate / this.renderScale; }
 +    public int pixel(final float nativeCoordinate) { return Math.round(nativeCoordinate * this.renderScale); }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
+index a02d3c4..ff24677 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
+@@ -40,6 +40,7 @@ public final class BedrockSettings {
+     private final BooleanSetting muteEmoteChat;
+     private final BooleanSetting alwaysUseJavaHand;
+     private final BooleanSetting allowCameraShake;
++    private final EnumSetting<NativeUiScale> nativeUiScale;
+     private final ParticleViewDistanceSetting particleViewDistance;
+     private final BooleanSetting captions;
+     private final BooleanSetting hideOwnCaptions;
+@@ -57,6 +58,7 @@ public final class BedrockSettings {
+         this.muteEmoteChat = group.registerBoolean("mute_emote_chat", false);
+         this.alwaysUseJavaHand = group.registerBoolean("always_use_java_hand", false);
+         this.allowCameraShake = group.registerBoolean("allow_camera_shake", true);
++        this.nativeUiScale = group.registerEnum("native_ui_scale", NativeUiScale.DEFAULT);
+         this.particleViewDistance = new ParticleViewDistanceSetting();
+         group.register("particle_view_distance", this.particleViewDistance);
+         this.captions = group.registerBoolean("captions", false);
+@@ -85,6 +87,8 @@ public final class BedrockSettings {
+ 
+     public BooleanSetting allowCameraShake() { return this.allowCameraShake; }
+ 
++    public EnumSetting<NativeUiScale> nativeUiScale() { return this.nativeUiScale; }
++
+     public ParticleViewDistanceSetting particleViewDistance() { return this.particleViewDistance; }
+ 
+     public BooleanSetting captions() { return this.captions; }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/NativeUiScale.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/NativeUiScale.java
+new file mode 100644
+index 0000000..aa489da
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/NativeUiScale.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.settings;
++
++import com.viaversion.viafabricplus.api.settings.base.EnumSetting;
++import net.minecraft.network.chat.Component;
++
++/** Desktop GuiData offsets; each viewport clamps the preference to its supported range. */
++public enum NativeUiScale implements EnumSetting.EnumValue {
++    DEFAULT(0), SMALLER(-1), SMALLER_TWO(-2), SMALLER_THREE(-3), SMALLEST(-4);
++
++    private final int offset;
++
++    NativeUiScale(final int offset) { this.offset = offset; }
++
++    public int offset() { return this.offset; }
++
++    @Override
++    public Component component() {
++        return this == DEFAULT
++                ? Component.translatable("bedrock_settings.viafabricplus.native_ui_scale.default")
++                : Component.literal(Integer.toString(this.offset));
++    }
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+index 545727e..d0fac3c 100644
+--- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
++++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+@@ -388,6 +388,8 @@
+   "bedrock_marketplace.viafabricplus.wallet_sign_in": "Minecoins: sign in",
+   "bedrock_marketplace.viafabricplus.wallet_refresh": "Refresh balance",
+   "bedrock_marketplace.viafabricplus.wallet_sign_in_short": "Sign in",
++  "bedrock_settings.viafabricplus.native_ui_scale": "Bedrock UI scale offset",
++  "bedrock_settings.viafabricplus.native_ui_scale.default": "Default (0)",
+   "bedrock_settings.viafabricplus.allow_camera_shake": "Allow camera shake",
+   "bedrock_settings.viafabricplus.particle_view_distance": "Particle render distance",
+   "bedrock_settings.viafabricplus.captions": "Bedrock closed captions",
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
 index 8039501..8824767 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
@@ -12414,17 +12507,57 @@ index 0000000..de63cd3
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewportTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewportTest.java
 new file mode 100644
-index 0000000..5ea86d8
+index 0000000..1ce1da7
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewportTest.java
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,95 @@
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
++import com.mojang.blaze3d.platform.Window;
++import com.viaversion.viafabricplus.api.settings.base.EnumSetting;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.settings.BedrockSettings;
++import com.viaversion.viafabricplus.bedrock.settings.NativeUiScale;
++import net.minecraft.client.Minecraft;
 +import org.junit.jupiter.api.Test;
 +
 +import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
 +
 +final class NativeUiViewportTest {
++    @Test
++    void appliesTheSelectedPreferenceToTheCurrentViewportWithoutChangingJavaScale() {
++        final var game = mock(Minecraft.class);
++        final var window = mock(Window.class);
++        final var addon = mock(ViaFabricPlusBedrock.class);
++        final var settings = mock(BedrockSettings.class);
++        @SuppressWarnings("unchecked")
++        final EnumSetting<NativeUiScale> preference =
++                mock(EnumSetting.class);
++        when(game.getWindow()).thenReturn(window);
++        when(addon.settings()).thenReturn(settings);
++        when(settings.nativeUiScale()).thenReturn(preference);
++        try (final var client = mockStatic(Minecraft.class);
++             final var entrypoint = mockStatic(ViaFabricPlusBedrock.class)) {
++            client.when(Minecraft::getInstance).thenReturn(game);
++            entrypoint.when(ViaFabricPlusBedrock::impl).thenReturn(addon);
++            for (final var dimensions : new int[][] {{854, 480}, {1920, 1013}, {3840, 2134}}) {
++                when(window.getWidth()).thenReturn(dimensions[0]);
++                when(window.getHeight()).thenReturn(dimensions[1]);
++                for (final int javaScale : new int[] {1, 2, 3, 4, 8}) {
++                    when(window.getGuiScale()).thenReturn(javaScale);
++                    for (final var value : NativeUiScale.values()) {
++                        when(preference.value()).thenReturn(value);
++                        final var current = NativeUiViewport.current();
++                        assertEquals(NativeUiViewport.desktop(dimensions[0], dimensions[1], value.offset(), javaScale), current);
++                        assertEquals(37.25, current.pointer(37.25 * current.renderScale()), .0001);
++                        assertEquals(javaScale, window.getGuiScale());
++                    }
++                }
++            }
++        }
++    }
++
 +    @Test
 +    void matchesExecutedTargetDesktopScaleAndOffsetBounds() {
 +        // Original 1.26.51.1 GuiData 141566fd0, AppPlatform desktop type 0.
