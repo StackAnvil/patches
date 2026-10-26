@@ -2381,3 +2381,35 @@ All 1,411 core classes match the embedded add-on and proxy copies.
 All 1,139 production client classes match the packaged add-on byte for byte.
 The full 38-patch add-on stack and 104-patch core stack replay successfully.
 The combined build includes the newer native spawn-angle cache change.
+
+
+## Controller texture slots, October 26, 2026
+
+Controller texture arrays bind sampler slots in one model draw.
+The supported native ENTITY shader families sample slot zero.
+The selector previously emitted the geometry once for each texture entry.
+It now emits one supported surface per controller and uses the first texture for native body visibility.
+Every texture expression still runs in order, preserving variable changes used by later controllers.
+Separate controllers remain separate draws, and unsupported multi-sampler materials retain fallback.
+
+The reference is Bedrock 1.26.51.1, protocol 2193.
+Its bundled villager controller binds biome and profession textures in slots zero and one.
+The target Entity material SHA-256 is `403efcc7777c9712176f6715f861c873e31d8e45d0b73b8e320bd29754789058`.
+All 112 controls execute original sampled fragment IR from BaseColor, AlphaTest, Emissive, and AlphaTestEmissive.
+Only slot zero is sampled; changing slot one leaves color and discard results unchanged.
+Resource handles, texture values, interpolated lighting, constant buffers, and output sinks are supplied boundaries.
+Native pass selection, controller expression evaluation, rasterization, and complete graphical parity remain outside these controls.
+
+Both selector regressions fail against the old implementation and pass with the corrected binding.
+They cover independent perspectives, duplicate draws, secondary body textures, and ordered expression effects across separate controllers.
+The bundled villager regression now expects three controller draws instead of the erroneous fourth texture draw.
+Masked profession blending remains unsupported.
+
+The full replayed build passes 3,073 tests, skips 152 optional tests, and reports no failures or errors.
+All 18 focused controller, world-graph, and native fragment GPU tests pass without skips.
+Compiled client classes and embedded dependencies match the packaged artifacts.
+Fresh direct and ViaProxy sessions verify three controller draws across biome and age transitions, fallback, recovery, and removal.
+The ViaProxy control uses Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Native packets confirm the metadata changes, and both controls retain their playback identity and native actor lifetime.
+All 14 screenshots receive visual review, and installed artifacts match the build.
+These authored behavior controls do not establish native graphical parity, natural aging, collision, or complete interactions.

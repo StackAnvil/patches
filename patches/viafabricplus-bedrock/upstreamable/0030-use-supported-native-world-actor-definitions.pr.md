@@ -7,7 +7,8 @@ The [material notes](0002-native-entities-and-skins.pr.md#explicit-default-depth
 No authored client-entity replacement supplies the villager graph in these controls.
 
 The regression samples seven biome textures for both adult and baby geometry.
-It retains four resolved surfaces and native script scales of 0.9375 and 2.
+It retains three controller draws and native script scales of 0.9375 and 2.
+The [shared selector correction](0008-share-native-actor-and-resource-runtime.pr.md#controller-texture-slots-october-26-2026) removes a duplicate draw from the biome controller’s second sampler slot.
 The level surface retains its adult geometry while the baby visibility rule hides it.
 Supplied stationary movement inputs isolate graph admission and texture selection.
 Masked profession layers still retain Java fallback; resetting that state recovers the same playback.
@@ -17,7 +18,8 @@ Fresh direct and ViaProxy sessions load the bundled villager client graph on BDS
 An additional ViaProxy session verifies the same transitions with Iris 1.11.7 and Complementary Reimagined r5.9.3.
 Authored server component events change biome, age, and profession metadata; they do not replace the client graph.
 Native packet journals confirm each typed biome, age, and profession transition.
-Read-only observations verify four resolved surfaces, biome textures, adult/baby geometry, and native script scales.
+Those earlier read-only observations report four surfaces, including the duplicate sampler draw corrected by the shared selector.
+They also verify biome textures, adult/baby geometry, and native script scales.
 Masked professions select Java fallback, and resetting the profession recovers the same actor playback and lifetime.
 Removal retires the native snapshot on all three runs.
 All 21 final screenshots receive visual review, and runtime artifacts match the build.
@@ -147,3 +149,11 @@ The replayed four-project build passes 3,046 tests, skips 152 optional tests, an
 Fifteen focused actor tests also pass against the distributable core JAR with eight production origins verified.
 Mounted, sleeping, equipped, unsupported-material, and active crystal-beam fallbacks remain.
 Other native queries and complete graphical and gameplay parity still require work.
+
+
+## Controller draw correction, October 26, 2026
+
+The shared selector now binds texture entries as sampler slots within one draw.
+Fresh direct and Iris-enabled ViaProxy controls each resolve three villager draws through biome and age changes.
+Masked profession fallback, recovery, and removal preserve their existing lifetime rules.
+The [shared runtime evidence](0008-share-native-actor-and-resource-runtime.pr.md#controller-texture-slots-october-26-2026) records native fragment controls, regressions, builds, and limits.

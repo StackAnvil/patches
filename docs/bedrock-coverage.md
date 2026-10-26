@@ -10697,7 +10697,8 @@ All 1,213 compiled client classes match the add-on, and both consumers contain m
 Direct and ViaProxy BDS sessions drive the standard client graph through authored biome, age, and profession events.
 A further ViaProxy session checks the same states with Iris 1.11.7 and Complementary Reimagined r5.9.3.
 Native journals confirm the typed metadata transitions.
-Read-only observers verify four resolved surfaces, biome textures, age geometry, script scales, and a stable actor lifetime and playback.
+Earlier observers report four surfaces, including the duplicate removed by the [sampler correction](#controller-texture-slots-october-26-2026).
+They also verify biome textures, age geometry, script scales, and a stable actor lifetime and playback.
 Masked profession fallback and later supported-state recovery work on each run.
 Actor removal retires its snapshot, all 21 final screenshots receive visual review, and installed artifacts match the build.
 
@@ -10822,3 +10823,26 @@ Native journals independently confirm the changed movement state.
 All 40 matched active zero-counter baseline frames still send the slowed forward vector `0.122499995`.
 The 36 matched final direct frames send `1.0`; their positions match the read-only counter samples.
 The first-use flags remain paired with active use and recorded movement, so the residual direct corrections need separate timing analysis.
+
+
+## Controller texture slots, October 26, 2026
+
+**Corrected within scope:** Supported single-sampler materials now produce one model draw per render controller.
+Secondary texture slots previously duplicated geometry and could incorrectly select Steve/Alex body visibility.
+All texture expressions still run in order, preserving their effects on later controllers.
+Separate controllers remain separate draws.
+The bundled villager graph now resolves three controller draws; earlier four-surface observations included the duplicate texture draw.
+
+The [shared runtime notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#controller-texture-slots-october-26-2026) record 112 target fragment controls and failing-before/passing-after selector regressions.
+These controls verify sampled slot identity and unchanged fragment results when the secondary texture changes.
+They do not establish native controller expression timing or complete graphical parity.
+Masked multitexture blending remains unsupported.
+
+The full replayed build passes 3,073 tests, skips 152 optional tests, and reports no failures or errors.
+All 18 focused controller, world-graph, and native fragment GPU tests pass without skips.
+Compiled client classes and embedded dependencies match the packaged artifacts.
+Fresh direct and ViaProxy sessions verify three controller draws across biome and age transitions, fallback, recovery, and removal.
+The ViaProxy control uses Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Native packets confirm the metadata changes, and both controls retain their playback identity and native actor lifetime.
+All 14 screenshots receive visual review, and installed artifacts match the build.
+These authored behavior controls do not establish native graphical parity, natural aging, collision, or complete interactions.
