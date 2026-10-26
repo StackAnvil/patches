@@ -1,4 +1,4 @@
-From b9bac151ac73816d790394f9ccebe30b845f6104 Mon Sep 17 00:00:00 2001
+From b6b40d5dcb53508e206343ed6e3f8e9f0ddd4ca8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -507,10 +507,18 @@ Keep unsupported comparisons distinct so a child can restore LessEqual
 without losing valid parent shader settings. Reject malformed string
 fields rather than coercing numeric, array or null values. Other depth
 comparisons and masked multitexture materials retain their fallback.
+
+Receive negotiated custom-actor sampler snapshots on the version-two
+channel while retaining the original receiver for older core versions.
+Keep ordered immutable bindings in the existing connection-owned render
+store so secondary texture changes invalidate its model cache. Ordinary
+single-sampler rendering explicitly uses slot zero; additional slots no
+longer arrive as duplicate geometry. Masked material drawing remains a
+separate shared renderer integration and is not enabled by transport.
 ---
  build.gradle.kts                              |   6 +
  settings.gradle.kts                           |   3 +
- .../bedrock/ViaFabricPlusBedrock.java         |  17 ++
+ .../bedrock/ViaFabricPlusBedrock.java         |  22 ++
  .../access/IBedrockActorRenderType.java       |  14 +
  .../access/IBedrockDynamicTexture.java        |  10 +
  .../access/IBedrockShaderPipeline.java        |  10 +
@@ -565,6 +573,7 @@ comparisons and masked multitexture materials retain their fallback.
  .../bedrock/render/BedrockSkinImages.java     | 105 +++++++
  .../render/CustomEntityRenderStore.java       |  71 +++++
  .../render/NativeCustomEntityPayload.java     |  24 ++
+ .../NativeCustomEntitySamplerPayload.java     |  24 ++
  .../bedrock/render/NativeSkinPayload.java     |  22 ++
  .../render/compat/iris/BedrockIrisAlpha.java  |  68 +++++
  .../compat/iris/BedrockIrisAlphaUniforms.java |  31 ++
@@ -590,10 +599,10 @@ comparisons and masked multitexture materials retain their fallback.
  .../render/BedrockShaderAlphaTest.java        |  31 ++
  .../render/BedrockShaderPipelinesTest.java    |  89 ++++++
  .../bedrock/render/BedrockSkinImagesTest.java |  82 +++++
- .../render/CustomEntityRenderStoreTest.java   |  62 ++++
+ .../render/CustomEntityRenderStoreTest.java   |  84 +++++
  .../bedrock/render/EglTestContext.java        |  52 ++++
  .../compat/iris/BedrockIrisAlphaGpuTest.java  | 164 ++++++++++
- 85 files changed, 5369 insertions(+)
+ 86 files changed, 5420 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockDynamicTexture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockShaderPipeline.java
@@ -648,6 +657,7 @@ comparisons and masked multitexture materials retain their fallback.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImages.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeCustomEntityPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeCustomEntitySamplerPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeSkinPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlpha.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaUniforms.java
@@ -707,16 +717,17 @@ index c4d1e0e..e1bd73b 100644
          if (stackAnvilMavenRepo.isPresent) {
              exclusiveContent {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index a8f239a..4f85837 100644
+index a8f239a..af5a490 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -21,6 +21,13 @@
+@@ -21,6 +21,14 @@
  
  package com.viaversion.viafabricplus.bedrock;
  
 +import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
 +import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
++import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntitySamplerPayload;
 +import com.viaversion.viafabricplus.bedrock.render.CustomEntityRenderStore;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -724,7 +735,7 @@ index a8f239a..4f85837 100644
  import com.viaversion.viafabricplus.ViaFabricPlus;
  import com.viaversion.viafabricplus.api.entrypoint.ViaFabricPlusEntrypoint;
  import com.viaversion.viafabricplus.bedrock.account.BedrockAccount;
-@@ -49,6 +56,16 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -49,6 +57,20 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
  
      @Override
      public void onPreSettingsLoading() {
@@ -736,6 +747,10 @@ index a8f239a..4f85837 100644
 +        PayloadTypeRegistry.clientboundPlay().register(NativeCustomEntityPayload.TYPE, NativeCustomEntityPayload.CODEC);
 +        ClientPlayConnectionEvents.INIT.register((listener, client) ->
 +            ClientPlayNetworking.registerReceiver(NativeCustomEntityPayload.TYPE,
++                (payload, context) -> CustomEntityRenderStore.accept(listener.getConnection(), payload.message())));
++        PayloadTypeRegistry.clientboundPlay().register(NativeCustomEntitySamplerPayload.TYPE, NativeCustomEntitySamplerPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++            ClientPlayNetworking.registerReceiver(NativeCustomEntitySamplerPayload.TYPE,
 +                (payload, context) -> CustomEntityRenderStore.accept(listener.getConnection(), payload.message())));
 +        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> CustomEntityRenderStore.clear());
          this.settings = new BedrockSettings();
@@ -2596,7 +2611,7 @@ index 0000000..8017f31
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 new file mode 100644
-index 0000000..ade9ba3
+index 0000000..8c1c635
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 @@ -0,0 +1,192 @@
@@ -2730,10 +2745,10 @@ index 0000000..ade9ba3
 +                ViaFabricPlusBedrock.impl().logger().warn("Unresolved native entity geometry {} for {}", evaluated.geometryValue(), renderData.identifier());
 +                continue;
 +            }
-+            final String path = "textures/item/entities/" + StringUtil.makeIdentifierValueSafe(evaluated.textureValue().replace("textures/", "")) + ".png";
++            final String path = "textures/item/entities/" + StringUtil.makeIdentifierValueSafe(evaluated.textureValues().getFirst().replace("textures/", "")) + ".png";
 +            final Identifier texture = Identifier.fromNamespaceAndPath("viabedrock", path);
 +            if (Minecraft.getInstance().getResourceManager().getResource(texture).isEmpty()) {
-+                ViaFabricPlusBedrock.impl().logger().warn("Unresolved native entity texture {} for {}", evaluated.textureValue(), renderData.identifier());
++                ViaFabricPlusBedrock.impl().logger().warn("Unresolved native entity texture {} for {}", evaluated.textureValues().getFirst(), renderData.identifier());
 +                continue;
 +            }
 +            final var materials = BedrockActorMaterials.partition(geometry.getParents().stream().map(parent -> parent.getName()).toList(), evaluated.materials());
@@ -4215,6 +4230,36 @@ index 0000000..a22a69c
 +
 +    @Override
 +    public Type<NativeCustomEntityPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeCustomEntitySamplerPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeCustomEntitySamplerPayload.java
+new file mode 100644
+index 0000000..d7e416e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeCustomEntitySamplerPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeCustomEntityMessage;
++
++public record NativeCustomEntitySamplerPayload(NativeCustomEntityMessage message) implements CustomPacketPayload {
++    public static final Type<NativeCustomEntitySamplerPayload> TYPE = new Type<>(Identifier.parse(NativeCustomEntityMessage.SAMPLER_CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeCustomEntitySamplerPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> NativeCustomEntityMessage.SAMPLER_TYPE.write(buffer, payload.message),
++            buffer -> new NativeCustomEntitySamplerPayload(NativeCustomEntityMessage.SAMPLER_TYPE.read(buffer)));
++
++    @Override
++    public Type<NativeCustomEntitySamplerPayload> type() {
 +        return TYPE;
 +    }
 +}
@@ -6296,10 +6341,10 @@ index 0000000..354e25d
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java
 new file mode 100644
-index 0000000..101df6e
+index 0000000..0619e60
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,84 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6318,6 +6363,28 @@ index 0000000..101df6e
 +import java.util.List;
 +
 +final class CustomEntityRenderStoreTest {
++
++    @Test
++    void retainsOrderedSamplerBindingsWhenOnlyTheSecondaryTextureChanges() {
++        final UUID uuid = UUID.randomUUID();
++        final var textures = new ArrayList<>(List.of("textures/body", "textures/mask"));
++        final var first = new CustomEntity.EvaluatedModel("body", "geometry.body", textures, java.util.Map.of(), false, 1F, null);
++        final var second = new CustomEntity.EvaluatedModel("body", "geometry.body", List.of("textures/body", "textures/other"),
++                java.util.Map.of(), false, 1F, null);
++        try {
++            CustomEntityRenderStore.apply(new NativeCustomEntityMessage.Snapshot(uuid, "test:actor", 1F, List.of(first)));
++            final var before = CustomEntityRenderStore.get(uuid);
++            textures.clear();
++            CustomEntityRenderStore.apply(new NativeCustomEntityMessage.Snapshot(uuid, "test:actor", 1F, List.of(second)));
++            assertEquals(1, before.models().size());
++            assertEquals(2, before.models().getFirst().textureValues().size());
++            assertEquals(first, before.models().getFirst());
++            assertEquals(second, CustomEntityRenderStore.get(uuid).models().getFirst());
++            assertThrows(UnsupportedOperationException.class, () -> before.models().getFirst().textureValues().clear());
++        } finally {
++            CustomEntityRenderStore.clear();
++        }
++    }
 +
 +    @Test
 +    void scaleUpdatesPublishIndependentImmutableSnapshots() {
@@ -6341,7 +6408,7 @@ index 0000000..101df6e
 +    void clearsSelectionsRemovesActorsAndSeparatesReusedIdentities() {
 +        final UUID first = UUID.randomUUID();
 +        final UUID second = UUID.randomUUID();
-+        final var model = new CustomEntity.EvaluatedModel("body", "geometry.body", "textures/body", java.util.Map.of(), false, 1F, null);
++        final var model = new CustomEntity.EvaluatedModel("body", "geometry.body", List.of("textures/body"), java.util.Map.of(), false, 1F, null);
 +        try {
 +            CustomEntityRenderStore.apply(new NativeCustomEntityMessage.Snapshot(first, "test:actor", 2F, List.of(model)));
 +            CustomEntityRenderStore.apply(new NativeCustomEntityMessage.Snapshot(second, "test:actor", 3F, List.of(model)));

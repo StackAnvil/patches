@@ -283,3 +283,27 @@ Actual Social actor metadata delivery, unsupported actor classes and native GPU 
 ## Upstream prerequisites
 
 - [viabedrock patch](../../viabedrock/upstreamable/0064-share-native-float-molang-runtime.pr.md): Land the bounded float runtime before actor property evaluation.
+
+
+## Complete controller sampler transport, October 26, 2026
+
+Each evaluated render controller now retains one model with an ordered immutable list of texture bindings.
+Secondary-only changes replace its snapshot and refresh the draw cache on the following render.
+The negotiated `viabedrock:custom_entity_v2` channel carries those lists through direct connections and ViaProxy.
+The original channel retains its version-one layout and sends the primary texture to older clients.
+The 128-slot bound limits transport allocation; it does not describe native shader capacity.
+
+Shared player, equipped-item, world, and portrait selections retain all sampler slots.
+Current single-sampler material consumers explicitly use slot zero.
+Unsupported masked materials still select their existing fallback; this transport does not implement their blending.
+
+All 17 focused codec, model-state, store, and controller checks pass without skips.
+They cover ordered bindings, immutable snapshots, secondary-only changes, version isolation, legacy encoding, malformed counts, and truncated data.
+The full replayed build passes 3,077 tests, skips 152 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass, and packaged classes and embedded dependencies match their compiled outputs.
+
+Fresh direct and Iris-enabled ViaProxy BDS controls change only the secondary texture, then restore it and remove the actor.
+Both bindings reach the client, snapshots and draw caches change, and the native actor lifetime remains stable.
+The renderer retains one red model from slot zero throughout; the blue and green secondary images never become extra geometry draws.
+Read-only observations, replay audit bindings, server component transitions, and eight reviewed screenshots support these checks.
+These authored fixtures use ordinary single-sampler materials and do not establish masked blending or native graphical parity.

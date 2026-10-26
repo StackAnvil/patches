@@ -534,3 +534,15 @@ Twelve baseline controls include six expected chicken depth mismatches of `0.000
 The other 96 controls match body and emission clip positions at tolerance `1e-7` across both routes and reload phases.
 Inputs supply matrices, vertex attributes, entity identifiers, color alpha, and the overlay texture.
 These controls establish the tested geometry correction, not complete native rasterization or arbitrary shader-pack parity.
+
+
+## Complete custom-actor sampler snapshots, October 26, 2026
+
+The client accepts ordered texture bindings on the negotiated version-two custom-actor channel.
+Its existing receiver still accepts version-one snapshots from older core versions.
+Connection ownership and disconnect cleanup continue to use the shared render store.
+Secondary-only texture changes replace the received snapshot and its next rendered cache entry.
+Ordinary materials use slot zero in one geometry draw.
+
+The [shared runtime notes](0008-share-native-actor-and-resource-runtime.pr.md#complete-controller-sampler-transport-october-26-2026) record codec tests, both live routes, build identity, and remaining limits.
+Masked material blending remains a separate renderer integration.

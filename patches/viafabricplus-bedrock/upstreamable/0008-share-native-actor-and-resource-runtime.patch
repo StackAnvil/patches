@@ -1,4 +1,4 @@
-From efcae0a1d0c668e4985fbf76f22027b9c498ad49 Mon Sep 17 00:00:00 2001
+From 687d07c5128ffed9e21f023a907caba815e97c8c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -308,6 +308,13 @@ material SHA-256 is 403efcc7777c9712176f6715f861c873e31d8e45d0b73b8e320bd2975478
 Regression controls cover independent views, secondary body textures,
 ordered expression effects, and separate controller draws. Both controls
 fail against the former selector and pass with the corrected binding.
+
+Retain the complete ordered texture list in each immutable controller
+surface. Material consumers explicitly select sampler zero until their
+shader supports additional bindings. Preserve all slots through player,
+equipment, world and portrait selection rather than discard the data at
+the shared selector. This complements the core's negotiated sampler
+snapshots without admitting unsupported multi-texture materials early.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -361,7 +368,7 @@ fail against the former selector and pass with the corrected binding.
  .../appearance/BedrockPersonaAnimations.java  |  128 ++
  .../appearance/BedrockPersonaSources.java     |  228 ++++
  .../appearance/BedrockPlayerAnimations.java   |   33 +
- .../appearance/BedrockPlayerControllers.java  |  221 ++++
+ .../appearance/BedrockPlayerControllers.java  |  226 ++++
  .../appearance/BedrockResourceLibrary.java    |  438 +++++++
  .../appearance/BedrockServerParticles.java    |   94 ++
  .../appearance/BedrockServerResources.java    |   46 +
@@ -438,7 +445,7 @@ fail against the former selector and pass with the corrected binding.
  .../viafabricplus-bedrock.mixins.json         |   26 +-
  .../appearance/BedrockActorAnimationTest.java |  705 +++++++++++
  .../appearance/BedrockActorQueriesTest.java   |  143 +++
- .../BedrockActorRenderSelectionTest.java      |  100 ++
+ .../BedrockActorRenderSelectionTest.java      |  102 ++
  .../appearance/BedrockActorScaleTest.java     |   77 ++
  .../BedrockActorVisibilityTest.java           |  142 +++
  .../BedrockAnimationCommandsTest.java         |  180 +++
@@ -511,7 +518,7 @@ fail against the former selector and pass with the corrected binding.
  .../render/BedrockPlayerModelTest.java        |  104 ++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 202 files changed, 24272 insertions(+), 15 deletions(-)
+ 202 files changed, 24279 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -747,13 +754,13 @@ index cc719df..159fe40 100644
 +    sourceSets.main { resources.srcDir(bundledBedrockAssets) }
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index bf2899a..4739115 100644
+index e1ec263..53f0be6 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -24,8 +24,22 @@ package com.viaversion.viafabricplus.bedrock;
- import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
+@@ -25,8 +25,22 @@ import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
  import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
  import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
+ import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntitySamplerPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeActorPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeActorBoundsPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeActorIdentityPayload;
@@ -773,8 +780,8 @@ index bf2899a..4739115 100644
  import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
  import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
  import com.viaversion.viafabricplus.ViaFabricPlus;
-@@ -68,6 +82,43 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
-             ClientPlayNetworking.registerReceiver(NativeCustomEntityPayload.TYPE,
+@@ -73,6 +87,43 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+             ClientPlayNetworking.registerReceiver(NativeCustomEntitySamplerPayload.TYPE,
                  (payload, context) -> CustomEntityRenderStore.accept(listener.getConnection(), payload.message())));
          ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> CustomEntityRenderStore.clear());
 +        PayloadTypeRegistry.clientboundPlay().register(NativeActorPickingPayload.TYPE, NativeActorPickingPayload.CODEC);
@@ -9308,10 +9315,10 @@ index 0000000..f9335b1
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
 new file mode 100644
-index 0000000..38071ad
+index 0000000..e6a5eb2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,226 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9438,7 +9445,7 @@ index 0000000..38071ad
 +                if (!includeBody) continue;
 +            }
 +            if (!geometry.isBlank() && !texture.isBlank()) {
-+                surfaces.add(new Surface(reference.identifier(), geometry, texture, material, uv, List.copyOf(visibility), controller.ignoreLighting(), lightMultiplier));
++                surfaces.add(new Surface(reference.identifier(), geometry, textures, material, uv, List.copyOf(visibility), controller.ignoreLighting(), lightMultiplier));
 +            }
 +        }
 +        return new Selection(body, List.copyOf(surfaces));
@@ -9524,11 +9531,16 @@ index 0000000..38071ad
 +    public record Uv(float offsetX, float offsetY, float scaleX, float scaleY) {
 +        public static final Uv IDENTITY = new Uv(0, 0, 1, 1);
 +    }
-+    public record Surface(String controller, String geometry, String texture, String material, Uv uv,
++    public record Surface(String controller, String geometry, List<String> textures, String material, Uv uv,
 +                          List<Visibility> visibility, boolean ignoreLighting, float lightMultiplier) {
++        public Surface {
++            textures = List.copyOf(textures);
++            if (textures.isEmpty()) throw new IllegalArgumentException("Empty controller texture bindings");
++        }
++
 +        public boolean nativeBody() {
 +            return (this.geometry.equals("geometry.humanoid.custom") || this.geometry.equals("geometry.humanoid.customSlim"))
-+                    && (this.texture.equals("textures/entity/steve") || this.texture.equals("textures/entity/alex"));
++                    && (this.textures.getFirst().equals("textures/entity/steve") || this.textures.getFirst().equals("textures/entity/alex"));
 +        }
 +    }
 +    public record Selection(boolean bodyVisible, List<Surface> surfaces) {}
@@ -15107,10 +15119,10 @@ index 0000000..dba9313
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorRenderSelectionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorRenderSelectionTest.java
 new file mode 100644
-index 0000000..23d7b6e
+index 0000000..5f06cd0
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorRenderSelectionTest.java
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,102 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15197,6 +15209,8 @@ index 0000000..23d7b6e
 +        assertFalse(draws.bodyVisible());
 +        assertEquals(1, draws.surfaces().size());
 +        final var surface = draws.surfaces().getFirst();
++        assertEquals(2, surface.textures().size());
++        assertThrows(UnsupportedOperationException.class, () -> surface.textures().clear());
 +        assertEquals("geometry.hands", surface.geometry());
 +        assertTrue(surface.ignoreLighting());
 +        assertEquals(1F, surface.lightMultiplier());

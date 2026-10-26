@@ -22,6 +22,7 @@ public final class RenderAudit {
     private static final Map<String, Integer> fullSkinRecords = new TreeMap<>();
 
     private static final Map<String, Set<Float>> actorScales = new TreeMap<>();
+    private static final Map<String, Set<List<String>>> actorSamplerBindings = new TreeMap<>();
 
     public static synchronized void skin(UUID uuid, SkinData data, boolean installed) {
         if (installed) installedSkins++; else rejectedSkins++;
@@ -61,7 +62,10 @@ public final class RenderAudit {
         actorScales.computeIfAbsent(identifier, ignored -> new TreeSet<>()).add(scale);
         actors.add(identifier);
         if (selected.isEmpty()) emptyModels++;
-        for (CustomEntity.EvaluatedModel model : selected) models.add(model.geometryValue() + ":" + model.textureValue());
+        for (CustomEntity.EvaluatedModel model : selected) {
+            models.add(model.geometryValue() + ":" + model.textureValues().getFirst());
+            actorSamplerBindings.computeIfAbsent(identifier, ignored -> new HashSet<>()).add(model.textureValues());
+        }
         save();
     }
 
@@ -89,6 +93,7 @@ public final class RenderAudit {
             stats.put("emptyModelUpdates", emptyModels); stats.put("skinTextures", skins);
             stats.put("fullSkinRecords", fullSkinRecords);
             stats.put("actorIdentifiers", actors); stats.put("evaluatedModels", models); stats.put("actorScales", actorScales);
+            stats.put("actorSamplerBindings", actorSamplerBindings);
             Path temporary = directory.resolve("render-audit.json.tmp");
             PrivateFiles.write(temporary, new Gson().toJson(stats).getBytes(java.nio.charset.StandardCharsets.UTF_8));
             Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
