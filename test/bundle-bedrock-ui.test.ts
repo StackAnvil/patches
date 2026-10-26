@@ -3,6 +3,8 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { planBedrockUi, applyBedrockUi } from "../scripts/bundle-bedrock-ui.ts";
+import { createHash } from "node:crypto";
+import { builtinAssetsResource } from "../src/bedrock-assets.ts";
 import { inflateRawSync } from "node:zlib";
 import { builtinUiResource, builtinUiManifest, verifyBuiltinUi, verifyBuiltinUiContents, verifyEmbeddedBuiltinUi } from "../src/bedrock-ui.ts";
 import { assetZip } from "../scripts/bundle-bedrock-assets.ts";
@@ -130,7 +132,19 @@ test("requires tracked UI inputs and verifies the actual core, proxy and nested 
   const bundle = join(directory, "assets", "bedrock", "1.26.51.1", builtinUiResource);
   const plan = await planBedrockUi(directory, "1.26.51.1", bundle);
   await applyBedrockUi(plan);
-  expect(await builtinAssetArguments("viabedrock", directory)).toEqual([`-PbedrockBuiltinUi=${bundle}`]);
+  const actorDirectory = join(directory, "assets", "bedrock", "1.26.51.1", builtinAssetsResource);
+  await mkdir(actorDirectory, { recursive: true });
+  const nativeFiles = new Map(["entity/player.entity.json", "models/mobs.json", "animations/player.animation.json",
+    "animation_controllers/player.animation_controllers.json", "render_controllers/player.render_controllers.json",
+    "materials/entity.material", "attachables/shield.json", "textures/items/stick.png"].map(path => [`library/vanilla/${path}`, Buffer.from("{}")]));
+  const actorBytes = assetZip(nativeFiles);
+  const expanded = [...nativeFiles.values()].reduce((sum, bytes) => sum + bytes.length, 0);
+  await writeFile(join(actorDirectory, "builtin-01.zip"), actorBytes);
+  await writeFile(join(actorDirectory, "manifest.json"), JSON.stringify({ format: 1, version: "1.26.51.1", protocolVersion: "1.26.51",
+    files: nativeFiles.size, expandedBytes: expanded, archives: [{ name: "builtin-01.zip", files: nativeFiles.size,
+      expandedBytes: expanded, sha256: createHash("sha256").update(actorBytes).digest("hex") }] }));
+  expect(await builtinAssetArguments("viabedrock", directory)).toEqual([`-PbedrockBuiltinUi=${bundle}`,
+    `-PbedrockBuiltinImages=${join(directory, ".stackanvil", "builtin-images", "1.26.51.1", "builtin_images.zip")}`]);
   const core = assetZip(new Map([[builtinUiResource, plan.bytes]]));
   const nested = "META-INF/jars/ViaBedrock-0.0.31-StackAnvil.jar";
   await mkdir(join(directory, "output"), { recursive: true });

@@ -10488,7 +10488,41 @@ Playback identity and start time remain stable through target changes.
 Equipment removal clears both view caches after each view updates.
 All 28 final screenshots receive visual review.
 
-The fixture exposes a separate open issue: ViaProxy hotbar icons are blank, while the direct route displays vanilla icons.
-The before-fix proxy recording has the same difference.
+The fixture exposed a separate route difference: ViaProxy hotbar icons were blank, while the direct route displayed vanilla icons.
+The shared native image bundle described below addresses that difference.
 The full build passes 3,049 tests with 152 optional skips and no failures or errors.
 All 21 focused binding and owner tests pass without skips.
+
+
+### Shared native item images
+
+ViaProxy now receives native item images through the core dependency.
+The build derives the image bundle from the same checksum-verified Bedrock 1.26.51.1 archives used by the direct add-on.
+The bundle preserves 11,398 images and atlas entries across 48 native layers, including path casing and numeric overlay order.
+Accepted server images and atlas definitions retain priority.
+
+The existing converter selects an inventory image when a native atlas entry resolves.
+Without those images, ViaProxy used held attachable geometry in the GUI, which left the authored fixture icons outside the view.
+Both selectors now remain available: the native image serves the GUI, while held views retain their authored geometry.
+Item identity and gameplay components remain unchanged.
+
+The runtime checks version, hashes, paths, sizes, resource types, and overlay order.
+Core, shaded proxy, and nested client resources match the verified image bundle exactly.
+Generated native image files remain outside Git.
+
+The full build passes 3,053 tests with 152 optional skips and no failures or errors.
+Four focused core tests cover default icons, held geometry, server priority, overlays, and malformed bundles.
+Four additional checks run against the distributable core JAR with five production class origins verified.
+Three tooling tests cover original bytes, deterministic packaging, and exact embedded resources.
+All 1,558 core classes, 200 assets, 39 converter classes, and 1,205 compiled client classes match their distributions.
+
+The original inventory background and scale report remains open.
+The camera item still lacks its declared texture image, and complete native image and pose parity remains unverified.
+
+Fresh BDS 1.26.51.1 sessions verify both routes with the same final distributables.
+Five real hotbar items retain their GUI icon selectors and held-model selectors.
+Four icons use the native image fallback; the bone uses an accepted server atlas override with an orange and cyan checkerboard.
+Screenshot review shows all five icons in the hotbar and the creative inventory opened with E.
+Each route also passes 16 equipped-state checks, including real sneak transitions and equipment removal.
+All 30 screenshots receive visual review, and installed runtime hashes match the build.
+These creative-screen controls do not reproduce the reported survival inventory or establish complete native visual parity.

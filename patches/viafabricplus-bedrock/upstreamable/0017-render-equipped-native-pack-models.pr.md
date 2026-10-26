@@ -110,5 +110,6 @@ Sneak transitions preserve playback identity and start time as its clock advance
 Clearing equipment retires both perspective caches after each view updates.
 All 28 final screenshots receive visual review, and installed runtime JAR hashes match the build.
 
-The fixture also exposes an open route difference: ViaProxy hotbar icons are blank, while the direct route displays vanilla icons.
-That difference also occurs in the before-fix proxy recording and remains outside the verified equipment-owner correction.
+The fixture also exposed blank ViaProxy hotbar icons while the direct route displayed vanilla icons.
+Core patch 0068 now supplies shared native image layers and atlases, which addresses that separate conversion difference.
+The equipment-owner correction retains its own validation boundaries.

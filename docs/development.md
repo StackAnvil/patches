@@ -51,9 +51,18 @@ The UI extractor requires a fresh output path and writes a checksum manifest bes
 After reviewing the output, replace both tracked files under `assets/bedrock/1.26.51.1/assets/viabedrock/`.
 Keep the native copyright notice in the ZIP. Commit both files with changes to the version pin.
 
+The normal stack build also derives an image-only bundle from the verified add-on archives.
+It writes `builtin_images.zip` under `.stackanvil/builtin-images/<version>/` and embeds it in the core.
+ViaProxy receives the same native images through that dependency.
+Server images and atlases keep priority over these built-in layers.
+The build verifies the exact image bundle in the core and both consumers.
+Core builds now require the full pinned native archive inputs alongside the tracked UI bundle.
+Generated image bundles remain outside Git.
+
 The normal stack build passes the resource directory to Gradle.
 For a direct add-on Gradle build, pass `-PbedrockBuiltinAssets=/absolute/path/to/assets/bedrock/1.26.51.1`.
 For a direct core Gradle build, pass `-PbedrockBuiltinUi=/absolute/path/to/assets/bedrock/1.26.51.1/assets/viabedrock/builtin_ui.zip`.
+To include the optional image bundle in a direct core Gradle build, also pass `-PbedrockBuiltinImages=/absolute/path/to/builtin_images.zip`.
 When changing the target Bedrock version, regenerate the bundle and update the pin together.
 The runtime rejects bundles that do not match ViaBedrock's target version.
 

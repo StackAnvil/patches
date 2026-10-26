@@ -16,6 +16,8 @@ import {
   builtinAssetsResource,
 } from "./bedrock-assets.ts";
 
+import { prepareBuiltinImages, verifyEmbeddedBuiltinImages } from "./bedrock-images.ts";
+
 interface Coordinates {
   group: string;
   artifact: string;
@@ -36,7 +38,12 @@ export async function builtinAssetArguments(id: string, repository = root): Prom
     const bundle = join(directory, "assets", "viabedrock", "builtin_ui.zip");
     if (!existsSync(bundle)) throw new Error(`Bundled Bedrock UI is missing for ${version}`);
     const path = await verifyBuiltinUi(bundle, version);
-    return [`-PbedrockBuiltinUi=${path}`];
+    const images = await prepareBuiltinImages(
+      join(directory, builtinAssetsResource),
+      version,
+      join(repository, ".stackanvil", "builtin-images", version, "builtin_images.zip"),
+    );
+    return [`-PbedrockBuiltinUi=${path}`, `-PbedrockBuiltinImages=${images}`];
   }
   await verifyBuiltinAssets(join(directory, builtinAssetsResource), version);
   return [`-PbedrockBuiltinAssets=${directory}`];
@@ -135,6 +142,13 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
         id,
         join(root, "assets", "bedrock", version, builtinUiResource),
         version,
+      ),
+    );
+    yield* Effect.promise(() =>
+      verifyEmbeddedBuiltinImages(
+        artifact,
+        id,
+        join(root, ".stackanvil", "builtin-images", version, "builtin_images.zip"),
       ),
     );
     if (id === "viafabricplus-bedrock") {
