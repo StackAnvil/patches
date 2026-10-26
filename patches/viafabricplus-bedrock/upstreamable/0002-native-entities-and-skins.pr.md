@@ -32,8 +32,9 @@ Masked professions select Java fallback, and resetting the profession recovers t
 Removal retires the native snapshot on all three runs.
 All 21 final screenshots receive visual review, and runtime artifacts match the build.
 
-The existing white HUD bar remains visible with Iris after the actor is removed.
-Its owner remains unclassified, and this material change does not establish complete Iris or native visual parity.
+The white bar in these early shader captures is the configured RRLS reload indicator.
+[Lifecycle controls](../../../docs/bedrock-coverage.md#shader-profile-reload-indicator-october-26-2026) show that it clears automatically after loading completes.
+Complete Iris and native visual parity remain unverified.
 
 Masked multitexture professions and other depth comparisons remain unsupported.
 These checks do not establish full native appearance, aging, collision, or interaction parity.

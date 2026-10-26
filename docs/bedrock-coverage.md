@@ -10701,6 +10701,30 @@ Masked profession fallback and later supported-state recovery work on each run.
 Actor removal retires its snapshot, all 21 final screenshots receive visual review, and installed artifacts match the build.
 
 **Remaining:** Masked multitexture, other depth comparisons, native visual comparisons, and complete actor contexts remain open.
-The Iris HUD bar persists after actor removal and still needs classification.
+The white bar in the early shader captures is the [RRLS reload indicator](#shader-profile-reload-indicator-october-26-2026), which clears after loading.
 These authored behavior controls do not establish natural vanilla aging, collision, or interaction parity.
 The [world actor notes](../patches/viafabricplus-bedrock/upstreamable/0030-use-supported-native-world-actor-definitions.pr.md#bundled-villager-graph-admission-october-26-2026) record the graph scope and fallback rules.
+
+
+## Shader-profile reload indicator, October 26, 2026
+
+**Classified:** The white bar in the early shader captures is RRLS 5.2.8's configured resource-reload progress indicator.
+The shader profile includes this mod with `miniRender = true` and `type = "PROGRESS"`.
+Its [versioned renderer](https://github.com/dima-dencep/rrls/blob/26.3-5.2.8/src/main/java/org/redlance/dima_dencep/mods/rrls/mixins/LoadingOverlayMixin.java) supplies the observed progress-bar shape and position.
+No product rendering workaround is required for this indicator.
+
+**Verification:** A fresh BDS 1.26.51.1 session through ViaProxy uses Minecraft 26.3, Iris 1.11.7, and Complementary Reimagined r5.9.3.
+A read-only observer records the current screen, loading overlay, native HUD state, RRLS state, and shader state.
+All eleven reviewed screenshots have matching observations within 200 milliseconds.
+The seven bar frames have an active `LoadingOverlay`, while the four clear frames have no overlay.
+A pixel check confirms the long white progress edge only in the loading frames.
+The HUD scenes and native locator session remain inactive throughout these controls.
+
+F1, inventory opening, and the server's progress-bar hide command do not hide the loading overlay.
+The bar clears after initial resource loading completes, with Iris still enabled.
+Normal Iris toggles leave settled frames clear.
+Physical F3+T restores the loading indicator, which clears again after the reload finishes.
+RRLS's mini-render option remains enabled, and runtime artifacts match the verified build.
+
+This classification applies to the indicator in these lab modpack captures.
+It does not close the original inventory background, locator, movement, eating, or broader parity reports.
