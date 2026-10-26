@@ -1,4 +1,4 @@
-From f95bb20b8c959af941c2bbe3393be661b4487add Mon Sep 17 00:00:00 2001
+From b036b7143d7096bd9c186e5ef9d699e87690bf3e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -269,12 +269,27 @@ instead of replacing unavailable Java status methods with false.
 Keep generic particle animation-clock defaults separate from actor data.
 Remove the duplicate server-particle status builder and preserve native
 float32 motion calculations and emitter-local variables.
+
+Negotiate native query metadata without changing the two existing actor
+payload formats. Share has_target between animation and particle scopes;
+its native definition tests typed LONG metadata slot 6 against zero and
+does not resolve the target actor. Retire a cached query when an older
+snapshot cannot supply it instead of silently returning false. Target
+1.26.51.1 callback 1422130b0 matches 80 bounded native controls; the core
+actor transport patch records their supplied boundaries.
+
+Track unsupported queries per actor frame. A missing input must not poison
+later frames after native metadata or conditional branches change. Keep
+animation variables, nested query reporting, playback time and effect
+cursors intact while starting a fresh admission-error set for each frame.
+The regression restores a missing bone query in the same playback and
+checks its unchanged animation phase.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
- .../bedrock/ViaFabricPlusBedrock.java         |   41 +
+ .../bedrock/ViaFabricPlusBedrock.java         |   46 +
  .../appearance/BedrockActorAnimation.java     | 1087 +++++++++++++++++
- .../appearance/BedrockActorQueries.java       |   76 ++
+ .../appearance/BedrockActorQueries.java       |   78 ++
  .../bedrock/appearance/BedrockActorScale.java |   33 +
  .../appearance/BedrockActorVisibility.java    |  110 ++
  .../appearance/BedrockAnimationParticle.java  |   70 ++
@@ -290,7 +305,7 @@ float32 motion calculations and emitter-local variables.
  .../appearance/BedrockLevelSounds.java        |  164 +++
  .../bedrock/appearance/BedrockLimbSide.java   |   67 +
  .../appearance/BedrockMarketplaceAssets.java  |  330 +++++
- .../bedrock/appearance/BedrockMolang.java     |  337 +++++
+ .../bedrock/appearance/BedrockMolang.java     |  342 ++++++
  .../appearance/BedrockMolangColor.java        |   40 +
  .../appearance/BedrockMolangVariables.java    |  108 ++
  .../appearance/BedrockNativeBlockUpdates.java |   72 ++
@@ -387,6 +402,7 @@ float32 motion calculations and emitter-local variables.
  .../render/NativeActorIdentityPayload.java    |   24 +
  .../bedrock/render/NativeActorPayload.java    |   24 +
  .../render/NativeActorPickingPayload.java     |   24 +
+ .../render/NativeActorQueryPayload.java       |   24 +
  .../bedrock/settings/BedrockSettings.java     |   29 +
  .../bedrock/settings/CaptionDuration.java     |   26 +
  .../bedrock/settings/CaptionPosition.java     |   18 +
@@ -395,8 +411,8 @@ float32 motion calculations and emitter-local variables.
  .../licenses/vgmstream.txt                    |   23 +
  .../shaders/core/bedrock_particle.fsh         |   52 +
  .../viafabricplus-bedrock.mixins.json         |   26 +-
- .../appearance/BedrockActorAnimationTest.java |  699 +++++++++++
- .../appearance/BedrockActorQueriesTest.java   |   90 ++
+ .../appearance/BedrockActorAnimationTest.java |  705 +++++++++++
+ .../appearance/BedrockActorQueriesTest.java   |  111 ++
  .../BedrockActorRenderSelectionTest.java      |   71 ++
  .../appearance/BedrockActorScaleTest.java     |   77 ++
  .../BedrockActorVisibilityTest.java           |  142 +++
@@ -470,7 +486,7 @@ float32 motion calculations and emitter-local variables.
  .../render/BedrockPlayerModelTest.java        |  104 ++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 200 files changed, 24112 insertions(+), 15 deletions(-)
+ 201 files changed, 24175 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -583,6 +599,7 @@ float32 motion calculations and emitter-local variables.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorIdentityPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPickingPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorQueryPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/settings/CaptionDuration.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/settings/CaptionPosition.java
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/licenses/brarchive-extractor.txt
@@ -704,16 +721,17 @@ index cc719df..159fe40 100644
 +    sourceSets.main { resources.srcDir(bundledBedrockAssets) }
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index bf2899a..3c2c94f 100644
+index bf2899a..3921311 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -24,8 +24,20 @@ package com.viaversion.viafabricplus.bedrock;
+@@ -24,8 +24,21 @@ package com.viaversion.viafabricplus.bedrock;
  import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
  import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
  import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeActorPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeActorBoundsPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeActorIdentityPayload;
++import com.viaversion.viafabricplus.bedrock.render.NativeActorQueryPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeActorPickingPayload;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorPicking;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
@@ -728,7 +746,7 @@ index bf2899a..3c2c94f 100644
  import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
  import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
  import com.viaversion.viafabricplus.ViaFabricPlus;
-@@ -68,6 +80,35 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -68,6 +81,39 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
              ClientPlayNetworking.registerReceiver(NativeCustomEntityPayload.TYPE,
                  (payload, context) -> CustomEntityRenderStore.accept(listener.getConnection(), payload.message())));
          ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> CustomEntityRenderStore.clear());
@@ -744,6 +762,10 @@ index bf2899a..3c2c94f 100644
 +        PayloadTypeRegistry.clientboundPlay().register(NativeActorIdentityPayload.TYPE, NativeActorIdentityPayload.CODEC);
 +        ClientPlayConnectionEvents.INIT.register((listener, client) ->
 +            ClientPlayNetworking.registerReceiver(NativeActorIdentityPayload.TYPE,
++                (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
++        PayloadTypeRegistry.clientboundPlay().register(NativeActorQueryPayload.TYPE, NativeActorQueryPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++            ClientPlayNetworking.registerReceiver(NativeActorQueryPayload.TYPE,
 +                (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
 +        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockActorState.clear());
 +        PayloadTypeRegistry.clientboundPlay().register(NativeActorBoundsPayload.TYPE, NativeActorBoundsPayload.CODEC);
@@ -766,7 +788,7 @@ index bf2899a..3c2c94f 100644
          this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 new file mode 100644
-index 0000000..badb8ec
+index 0000000..ecd9581
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 @@ -0,0 +1,1087 @@
@@ -1367,7 +1389,7 @@ index 0000000..badb8ec
 +            queries.put(
 +                    "any_animation_finished",
 +                    (Query) _ -> this.queryState != null && this.queryState.anyFinished());
-+            this.molang.queries(queries, 0, time, this.delta);
++            this.molang.resetQueries(queries, 0, time, this.delta);
 +            this.molang.context(input.context());
 +            if (this.active == null) {
 +                this.active = this.create(roots);
@@ -1859,10 +1881,10 @@ index 0000000..badb8ec
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
 new file mode 100644
-index 0000000..1d4bdce
+index 0000000..29f4e05
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,78 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1886,6 +1908,7 @@ index 0000000..1d4bdce
 +    public static Map<String, Object> sample(final Entity actor, final NativeActorMessage.Snapshot state,
 +                                              final Map<String, ?> rendered) {
 +        final Map<String, Object> queries = new HashMap<>(rendered);
++        queries.remove("has_target");
 +        queries.putAll(nativeState(state));
 +        queries.put("is_alive", actor.isAlive());
 +        queries.put("is_on_ground", actor.onGround());
@@ -1910,6 +1933,7 @@ index 0000000..1d4bdce
 +    public static Map<String, Object> nativeState(final NativeActorMessage.Snapshot state) {
 +        final Map<String, Object> queries = new HashMap<>();
 +        final Set<ActorFlags> flags = state == null ? Set.of() : state.flags();
++        if (state != null && state.targetId() != null) queries.put("has_target", state.targetId() != 0);
 +        queries.put("is_charging", flags.contains(ActorFlags.CHARGING));
 +        queries.put("is_sneaking", flags.contains(ActorFlags.SNEAKING));
 +        queries.put("is_riding", flags.contains(ActorFlags.RIDING));
@@ -4173,10 +4197,10 @@ index 0000000..b887250
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
 new file mode 100644
-index 0000000..84a333c
+index 0000000..6e3fe9c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
-@@ -0,0 +1,337 @@
+@@ -0,0 +1,342 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4307,7 +4331,12 @@ index 0000000..84a333c
 +
 +    /** Starts an independent query context without discarding pre-effect variables. */
 +    void resetQueries(final Map<String, ?> queries) {
-+        this.queries(queries, 0, 0, 0);
++        this.resetQueries(queries, 0, 0, 0);
++    }
++
++    /** A new actor frame owns its admission errors while retaining animation variables and clocks. */
++    void resetQueries(final Map<String, ?> queries, final float time, final float elapsed, final float delta) {
++        this.queries(queries, time, elapsed, delta);
 +        this.missingQueries = new java.util.HashSet<>();
 +    }
 +
@@ -13747,6 +13776,36 @@ index 0000000..97ff000
 +        return TYPE;
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorQueryPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorQueryPayload.java
+new file mode 100644
+index 0000000..3dc6797
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorQueryPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
++
++public record NativeActorQueryPayload(NativeActorMessage message) implements CustomPacketPayload {
++    public static final Type<NativeActorQueryPayload> TYPE = new Type<>(Identifier.parse(NativeActorMessage.QUERY_CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeActorQueryPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> NativeActorMessage.QUERY_TYPE.write(buffer, payload.message),
++            buffer -> new NativeActorQueryPayload(NativeActorMessage.QUERY_TYPE.read(buffer)));
++
++    @Override
++    public Type<NativeActorQueryPayload> type() {
++        return TYPE;
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
 index 53573da..0cc4fee 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
@@ -14120,10 +14179,10 @@ index 23ea6ee..4785e69 100644
      "defaultRequire": 1
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java
 new file mode 100644
-index 0000000..8c57841
+index 0000000..f34f032
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java
-@@ -0,0 +1,699 @@
+@@ -0,0 +1,705 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -14161,11 +14220,11 @@ index 0000000..8c57841
 +    }
 +
 +    @Test
-+    void reportsUnsupportedQueriesFromNestedBonePlaybackWithoutChangingMolangZeroDefaults() throws IOException {
++    void recoversMissingBoneQueriesWithoutResettingPlaybackOrMolangDefaults() throws IOException {
 +        final var graph = BedrockActorAnimation.read(json("""
 +            {"animations":{"pose":"animation.pose"},"scripts":{"animate":["pose"]}}
 +            """), Map.of(), json("""
-+            {"animation.pose":{"bones":{"head":{"position":["q.unavailable",0,0]}}}}
++            {"animation.pose":{"animation_length":2,"loop":true,"bones":{"head":{"position":["q.unavailable",0,0],"rotation":[0,0,"q.anim_time*10"]}}}}
 +            """), new JsonObject(), "1.10.0");
 +        final var supported = graph.playback();
 +        assertEquals(8F, supported.sample(0, new BedrockActorAnimation.Frame(Map.of("unavailable", 8F), Map.of())).get("head").position().x());
@@ -14175,6 +14234,12 @@ index 0000000..8c57841
 +        assertFalse(unsupported.hasCompleteQueries());
 +        assertTrue(supported.hasCompleteQueries());
 +        assertTrue(unsupported.fork().hasCompleteQueries());
++        unsupported.sample(.5F, new BedrockActorAnimation.Frame(Map.of(), Map.of()));
++        assertFalse(unsupported.hasCompleteQueries());
++        final var resumed = unsupported.sample(1.25F, new BedrockActorAnimation.Frame(Map.of("unavailable", 14F), Map.of()));
++        assertTrue(unsupported.hasCompleteQueries());
++        assertEquals(14F, resumed.get("head").position().x());
++        assertEquals(12.5F, resumed.get("head").rotation().z());
 +    }
 +
 +    @Test
@@ -14825,10 +14890,10 @@ index 0000000..8c57841
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueriesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueriesTest.java
 new file mode 100644
-index 0000000..f6466ae
+index 0000000..66cca0a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueriesTest.java
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,111 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -14858,6 +14923,27 @@ index 0000000..f6466ae
 +    static void bootstrap() {
 +        SharedConstants.tryDetectVersion();
 +        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void evaluatesTargetMetadataWithoutTrackedTargetAndClearsUnknownLegacyState() throws Exception {
++        final var carrier = mock(Entity.class);
++        when(carrier.getDeltaMovement()).thenReturn(Vec3.ZERO);
++        final var legacy = state(Set.of());
++        final var environment = new BedrockMolang();
++        final var expression = BedrockMolang.Program.parse(JsonParser.parseString("\"q.has_target ? 9 : 4\""), 0);
++        Map<String, Object> captured = Map.of();
++        for (long target : new long[]{0, 1, -1, Long.MIN_VALUE, Long.MAX_VALUE}) {
++            final var current = new NativeActorMessage.Snapshot(legacy.uuid(), legacy.lifetime(), false, legacy.runtimeId(),
++                    legacy.identifier(), legacy.name(), 1F, Set.of(), 0, 0, null, Map.of(), -7L, target);
++            captured = BedrockActorQueries.sample(carrier, current, captured);
++            environment.queries(captured);
++            assertEquals(target == 0 ? 4 : 9, environment.evaluate(expression, 0));
++        }
++        assertEquals(true, captured.get("has_target"));
++        assertFalse(BedrockActorQueries.sample(carrier, legacy, captured).containsKey("has_target"));
++        assertFalse(BedrockActorQueries.sample(carrier, null, captured).containsKey("has_target"));
++        assertEquals(true, captured.get("has_target"));
 +    }
 +
 +    @Test

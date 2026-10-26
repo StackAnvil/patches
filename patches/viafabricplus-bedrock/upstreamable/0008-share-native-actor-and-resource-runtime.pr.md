@@ -1,5 +1,27 @@
 The shared runtime owns actor graphs, float evaluation, accepted resource decoding, sound and particles. Account selection and purchases remain in the following [appearance patch](0009-manage-character-creator-accounts-and-wardrobes.pr.md). The following research supports these APIs; historical suite counts do not replace a fresh build.
 
+## Target queries and recoverable frame admission, October 26, 2026
+
+The frontend negotiates actor-state v4 and binds `has_target` from its typed native metadata.
+The query tests the signed Long against zero, without requiring a tracked target entity.
+Older snapshots leave this query unavailable and remove any cached value from attached effect scopes.
+The [core transport notes](../../viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#native-target-query-metadata-october-26-2026) record the target-version evidence and codec boundaries.
+
+Each actor frame starts a fresh set of unsupported-query errors.
+Variables, playback clocks, nested query reporting, and consumed effect cursors remain intact.
+Tests restore a missing bone query in the same playback and verify its unchanged animation phase.
+The world adapter retries a rejected draw when its native snapshot changes, while retaining the same playback.
+This permits native rendering after a capability downgrade and restoration.
+It does not add unsupported queries or remove mounted, sleeping, or equipment fallbacks.
+
+Fresh direct and ViaProxy guardian controls verify native target acquisition and clearing against actual BDS 1.26.51.1 packets.
+The authored body changes width, and its parent and child particles change red-green-red.
+Real Fabric receiver withdrawal selects Java fallback; restoration returns the native draw with the same playback instance.
+Removing the actor clears its attached effects.
+Screenshots show these transitions, and the actual runtime artifact hashes match the build.
+The four-project build passes 3,046 tests, skips 152 optional tests, and reports no failures.
+These controls do not establish native graphical or complete guardian/emote parity.
+
 ## Live actor state for attached effects, October 26, 2026
 
 Animation frames and attached effects share immutable actor queries. Each attachment sample refreshes native flags, properties, variants, spell color, and current Java movement and living status. A custom actor with a non-living Java carrier retains its native status flags. Retired metadata clears those inputs instead of retaining an earlier frame's values. Particle clocks and counts remain specific to each effect.

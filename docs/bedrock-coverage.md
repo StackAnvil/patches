@@ -283,7 +283,7 @@ Transport passes; complete scene rendering still fails on unresolved mappings. N
 | --- | --- | --- | --- |
 | R1 | General actor controllers and scripts | Incomplete | Core-evaluated custom actor model selections now travel through the negotiated channel on both routes. Complete transitions, weighted entries, variables, events, queries, and native comparisons. |
 | R2 | Server particle dispatch | Incomplete | Core transports complete requests, typed variables, actor identity, and Java fallback bodies to native clients. Direct and ViaProxy authored fixtures verify dispatch, typed size/tint records, and fallback decoding. Complete actor queries, remote actor transport, interpolation, lifecycle comparisons, and visible native parity remain open. |
-| R3 | Particle runtime | Incomplete | [Live actor queries](#live-actor-state-for-attached-effects-october-26-2026) share native metadata across animation and particle contexts. Complete components, child effects, concurrency, and native visible lifecycle comparisons remain required. |
+| R3 | Particle runtime | Incomplete | [Live actor queries](#live-actor-state-for-attached-effects-october-26-2026) include [target metadata and rendering recovery](#native-target-queries-and-rendering-recovery-october-26-2026). Complete components, child effects, concurrency, and native visible lifecycle comparisons remain required. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
 | R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties and per-face ambient strengths through ViaProxy. Native material arithmetic matches 576 executable cases. Native corner maxima also match 12,288 executable samples. Both routes retain the settings through model baking and injected terrain lighting. Java still supplies corner sampling and interpolation. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Core carries native random offsets in converted metadata. The add-on verifies continuous terrain, outline, and camera offsets separately from floored movement collision on both routes, including edge and corner queries. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, vanilla per-type collision shapes, and native collision solving. |
 | R6 | Equipped attachables | Incomplete | Accepted actor graphs now travel through ViaProxy. Both routes render the supported costume and owner-bound chest wings. Complete proxy properties, variants, explicit bone bindings, per-bone materials, material families, and broader native comparisons. |
@@ -10400,7 +10400,43 @@ Actual runtime artifact hashes match the build, and screenshots show the transit
 The four-project build passes 3,042 tests, skips 152 optional tests, and reports no failures.
 
 **Remaining:** Mounted, sleeping, and equipped world-model fallbacks remain.
-Missing target-selection queries, native poses, complete actor contexts, child-effect behavior, and graphical comparisons still require work.
+Other target queries, native poses, complete actor contexts, child-effect behavior, and graphical comparisons still require work.
 The near-actor fixture continues body rendering and does not reproduce a frozen render cache.
 First-person and hidden-HUD controls continued to refresh their body samples and did not reproduce stale queries.
 A distant-actor control did not receive changed native metadata, so it cannot establish a stale-render regression.
+
+## Native target queries and rendering recovery, October 26, 2026
+
+**Implemented:** The negotiated actor-state v4 format carries typed target metadata while preserving both earlier formats.
+Core render controllers and client animation and particle scopes bind `has_target` from the signed Long value.
+The matching 1.26.51.1 callback checks metadata slot 6 against zero, including negative values, without resolving the target entity.
+Missing or differently typed native data supplies zero; older wire formats leave the query unavailable.
+Registration and withdrawal replay the appropriate format.
+Animation commands, picking, and vehicle prediction also accept the new format's identity fields.
+
+Unsupported-query errors now belong to one actor frame.
+Changed native inputs let a failed world draw retry with its existing playback and animation phase.
+An unchanged unsupported snapshot remains cached.
+The [core transport notes](../patches/viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#native-target-query-metadata-october-26-2026) and [world renderer notes](../patches/viafabricplus-bedrock/upstreamable/0030-use-supported-native-world-actor-definitions.pr.md#recover-native-draws-after-input-changes-october-26-2026) record the integration boundaries.
+
+**Verified:** Eighty bounded executions of the original callback cover actor presence, vector bounds, entry presence, type, zero, and signed extremes.
+The fixture supplies backing storage and the entry's virtual type getter and guarded dispatch.
+Tests cover both legacy formats, signed round trips, truncation, sparse replacement, query retirement, and recovery without restarting playback.
+The full build passes 3,046 tests, skips 152 optional tests, and reports no failures.
+Fifteen focused actor tests pass against the distributable core JAR with eight production origins verified.
+All 1,557 core classes, 199 assets, and 39 CubeConverter classes match both embedded consumers.
+All 1,204 compiled client classes match the add-on JAR.
+
+Fresh direct and ViaProxy guardian controls verify target acquisition and clearing against actual BDS 1.26.51.1 packets.
+The signed target ID matches the real spawned squid.
+The authored body changes width, and its parent and child particles change red-green-red.
+Actual Fabric receiver withdrawal selects Java fallback; restoration returns native draws with the same playback instance and increasing age.
+Removal clears the actor and attached effects.
+Runtime artifact hashes match the build, and screenshots show the transitions.
+A pre-fix control remained failed for 566 samples after query metadata returned.
+The observer only reads production state; a separate declared control changes the actual Fabric receiver and restores its original handler.
+The fixture supplies the guardian appearance, without a native graphical baseline or complete guardian/emote parity claim.
+
+**Remaining:** Other query families, conditional and time-only recovery, native poses, complete actor contexts, and graphical comparisons remain incomplete.
+Mounted, sleeping, and equipped world-model fallbacks remain.
+The original gameplay reports and the direct camera-item rendering gate remain open.

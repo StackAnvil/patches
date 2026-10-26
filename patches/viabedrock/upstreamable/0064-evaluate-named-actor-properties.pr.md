@@ -30,10 +30,39 @@ Raw packets, assets, account data, and screenshots remain private.
 
 ## Native actor inputs through ViaProxy
 
-Core publishes immutable actor inputs through `viabedrock:actor_state_v2` after capability registration and Java world initialization.
+Core publishes immutable actor inputs after capability registration and Java world initialization. Legacy formats use `viabedrock:actor_state_v2` and the identity-aware `viabedrock:actor_state_v3`.
 Snapshots retain native flags, named properties, scale, variants, typed spell color, runtime identity, and an actor lifetime token.
 The local-player flag lets the frontend resolve its actual Java profile identity on either route.
 Removal checks the lifetime token before releasing state.
+
+### Native target-query metadata, October 26, 2026
+
+The negotiated `viabedrock:actor_state_v4` format also carries target metadata as a signed Long.
+Core prefers this format and preserves both earlier wire formats without changes.
+Registration and withdrawal replay the appropriate snapshot, including when actor values remain unchanged.
+Animation commands, picking, and vehicle prediction also accept the identity fields in the new format.
+
+Bedrock 1.26.51.1 registers `query.has_target` at `1421e8107`; callback `1422130b0` reads metadata slot 6.
+It requires a present Long entry and returns true for any nonzero value, including negative values.
+It does not resolve the target actor. The separate AI filter uses different logic.
+Core retains the typed value across sparse updates and supplies zero for absent or differently typed metadata.
+Earlier wire formats leave the query unavailable in the frontend instead of supplying a false value.
+Core render-controller evaluation and client animation and particle contexts use the same predicate.
+
+Eighty bounded executions of the original callback verify actor presence, vector bounds, entry presence, type, zero, and signed extremes.
+The fixture supplies backing storage and the entry's virtual type getter, including its guarded dispatch.
+Native instructions perform the remaining reads, checks, and result selection.
+Tests cover signed round trips, both legacy representations, truncation, sparse replacement, and immutable captured state.
+
+Fresh direct and ViaProxy guardian controls receive a negative target ID when a real squid spawns, then zero when it dies.
+Journal decoding verifies the Long type and matches the target to the squid's native spawn identity.
+The authored model changes width, and its parent and child particles change red-green-red.
+Actual Fabric receiver withdrawal selects the older format; restoration returns the native draw with the same playback instance.
+The observer reads production state without supplying query values or creating effects.
+Runtime artifact hashes match the build, and screenshots show the model, particles, fallback, restoration, and removal.
+These controls verify the authored pack and transport path, without a native graphical baseline or complete guardian parity claim.
+
+Source: [Molang query reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions).
 Dimension changes publish retained inputs after the Java respawn packet.
 
 The codec preserves scalar types and rejects duplicate names, invalid kinds, unsupported versions, trailing bytes, and excessive counts.

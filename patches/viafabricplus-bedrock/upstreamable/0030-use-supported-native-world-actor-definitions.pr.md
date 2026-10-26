@@ -93,3 +93,29 @@ Raw recordings, screenshots and native assets remain private.
 Bound world-actor particles sample current common actor inputs and native metadata independently of another body submission.
 The existing resource and actor lifetime guards, locator pose, and unrelated graph inputs remain available.
 See the [shared runtime evidence](0008-share-native-actor-and-resource-runtime.pr.md#fresh-common-particle-actor-inputs) for tested queries, native boundaries, and remaining limits.
+
+## Recover native draws after input changes, October 26, 2026
+
+A failed native draw can retry when its immutable actor snapshot changes.
+The renderer retains its playback instance, variables, animation phase, and consumed effect cursors.
+The shared runtime now records unsupported queries per frame instead of retaining an earlier frame's admission errors.
+An unchanged unsupported snapshot remains cached.
+This change does not implement every conditional or time-only recovery path.
+
+The target-query transport provides a concrete recovery case.
+Withdrawing the actual Fabric v4 receiver selects the older actor format and Java fallback.
+Restoring the receiver republishes target metadata and permits native rendering again.
+Before this change, a live guardian remained failed for 566 samples after metadata returned.
+Tests restore a required query in the same world playback and verify the native crystal animation phase.
+
+Fresh direct and ViaProxy sessions repeat the guardian control with the fix.
+They verify native target changes, the authored model's width, and parent and child particle scopes and colors.
+Receiver withdrawal selects Java fallback, and restoration resumes native draws with the same playback identity and increasing age.
+Screenshots show the native model, Java fallback, restored model, and removal.
+The observer only records production state; a separate declared control changes the actual Fabric receiver and restores its original handler.
+The fixture supplies the guardian appearance, without a native graphical baseline or complete guardian parity claim.
+
+The replayed four-project build passes 3,046 tests, skips 152 optional tests, and reports no failures.
+Fifteen focused actor tests also pass against the distributable core JAR with eight production origins verified.
+Mounted, sleeping, equipped, unsupported-material, and active crystal-beam fallbacks remain.
+Other native queries and complete graphical and gameplay parity still require work.
