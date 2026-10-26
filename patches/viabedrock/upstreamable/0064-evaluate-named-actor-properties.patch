@@ -1,4 +1,4 @@
-From a4a808657bedeb848d709d15d1b93aafa571bcd7 Mon Sep 17 00:00:00 2001
+From 612dcda6552c5eb37d30b13f701dfc8d8aedfdfd Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -338,6 +338,13 @@ Codec tests cover ordered bindings, legacy fallback, version isolation,
 immutability, malformed counts, truncation and secondary-only changes.
 Target fragment controls use original 1.26.51.1 SM65 IR with supplied
 sampling/buffer boundaries; DXIL opcode28 is ceil, not round-to-nearest.
+
+Consume every ordered controller material assignment before reducing the
+results to the bone-pattern map. Evaluate superseded expressions for their
+Molang effects, and move each repeated pattern to its final declaration
+position so downstream partitioning preserves last-match precedence. The
+wire snapshot can retain unique patterns after evaluation without losing
+these semantics. Preserve the existing immutable snapshot contract.
 ---
  .../api/model/NativeActorBoundsMessage.java   |  75 ++++
  .../api/model/NativeActorIntegerQueries.java  |  36 ++
@@ -346,7 +353,7 @@ sampling/buffer boundaries; DXIL opcode28 is ceil, not round-to-nearest.
  .../api/model/NativeCustomEntityMessage.java  | 178 ++++++++++
  .../api/model/NativeHandItemState.java        |  29 ++
  .../api/model/NativeShieldBlockingState.java  |  45 +++
- .../api/model/entity/CustomEntity.java        | 118 ++++++-
+ .../api/model/entity/CustomEntity.java        | 121 ++++++-
  .../viabedrock/api/model/entity/Entity.java   | 128 +++++++
  .../protocol/packet/JoinPackets.java          |   2 +
  .../protocol/packet/MultiStatePackets.java    |  17 +
@@ -360,10 +367,10 @@ sampling/buffer boundaries; DXIL opcode28 is ceil, not round-to-nearest.
  .../model/NativeCustomEntityMessageTest.java  | 225 ++++++++++++
  .../api/model/NativeHandItemStateTest.java    |  71 ++++
  .../model/NativeShieldBlockingStateTest.java  |  91 +++++
- .../CustomEntityMaterialSelectionTest.java    |  70 ++++
+ .../CustomEntityMaterialSelectionTest.java    |  98 ++++++
  .../CustomEntityModelSelectionTest.java       |  15 +-
  .../api/model/entity/EntityScaleTest.java     | 178 ++++++++++
- 24 files changed, 2409 insertions(+), 15 deletions(-)
+ 24 files changed, 2440 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorIntegerQueries.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
@@ -1190,7 +1197,7 @@ index 000000000..cd839b67a
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
-index bf3919338..372bc38dc 100644
+index bf3919338..4e87e6acb 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 @@ -26,11 +26,13 @@ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
@@ -1415,7 +1422,7 @@ index bf3919338..372bc38dc 100644
                  }
                  arrayBinding.set(array.name().substring(6), Value.of(resolvedExpressions));
              }
-@@ -307,7 +378,26 @@ public class CustomEntity extends Entity {
+@@ -307,7 +378,29 @@ public class CustomEntity extends Entity {
          return arrayBinding;
      }
  
@@ -1424,8 +1431,11 @@ index bf3919338..372bc38dc 100644
 +        final Scope materialScope = executionScope.copy();
 +        materialScope.set("array", getArrayBinding(expressions, executionScope, controller.materials()));
 +        final Map<String, String> materials = new LinkedHashMap<>();
-+        for (Map.Entry<String, String> entry : controller.materialsMap().entrySet()) {
-+            materials.put(entry.getKey(), expressions.eval(materialScope, entry.getValue()).getAsString());
++        for (final var assignment : controller.materialAssignments()) {
++            final String material = expressions.eval(materialScope, assignment.expression()).getAsString();
++            // A repeated pattern takes its last declaration's position as well as its value.
++            materials.remove(assignment.pattern());
++            materials.put(assignment.pattern(), material);
 +        }
 +        return Collections.unmodifiableMap(materials);
 +    }
@@ -2887,10 +2897,10 @@ index 000000000..5b33c7f37
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
 new file mode 100644
-index 000000000..49fbc5404
+index 000000000..8f76072c8
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,98 @@
 +package net.raphimc.viabedrock.api.model.entity;
 +
 +import java.util.ArrayList;
@@ -2935,6 +2945,34 @@ index 000000000..49fbc5404
 +        assertTrue(model.ignoreLighting());
 +        assertEquals(0.7F, model.lightColorMultiplier());
 +        assertNotEquals(model, new CustomEntity.EvaluatedModel("actor", "geometry", List.of("texture"), selected, false, 0.7F, controller.uvAnimation()));
++    }
++
++    @Test
++    void evaluatesRepeatedPatternsBeforeKeepingTheirLastOverridePosition() throws Exception {
++        final var scope = Scope.create();
++        final var variables = new MutableObjectBinding();
++        variables.set("trace", Value.of(0));
++        scope.set("variable", variables);
++        scope.set("v", variables);
++        final var material = new MutableObjectBinding();
++        material.set("base", Value.of("entity_alphatest"));
++        material.set("glow", Value.of("entity_emissive_alpha"));
++        scope.set("material", material);
++        final var controller = BedrockControllerParser.parse("""
++            {"render_controllers":{"controller.render.actor":{
++                "materials":[
++                    {"*":"v.trace=v.trace*10+1;return Material.base;"},
++                    {"Arm*":"v.trace=v.trace*10+2;return Material.glow;"},
++                    {"*":"v.trace=v.trace*10+3;return Material.base;"}]
++            }}}
++            """).getFirst();
++        final var selected = CustomEntity.evaluateMaterials(
++            new net.raphimc.viabedrock.api.util.MoLangEngine.CompiledExpressions(), scope, controller);
++        assertEquals(123, variables.get("trace").getAsNumber());
++        assertEquals(List.of("Arm*", "*"), List.copyOf(selected.keySet()));
++        assertEquals("entity_alphatest", selected.get("*"));
++        assertEquals("entity_emissive_alpha", selected.get("Arm*"));
++        assertThrows(UnsupportedOperationException.class, () -> selected.clear());
 +    }
 +
 +    @Test

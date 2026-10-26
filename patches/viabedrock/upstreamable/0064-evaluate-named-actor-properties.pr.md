@@ -307,3 +307,36 @@ Both bindings reach the client, snapshots and draw caches change, and the native
 The renderer retains one red model from slot zero throughout; the blue and green secondary images never become extra geometry draws.
 Read-only observations, replay audit bindings, server component transitions, and eight reviewed screenshots support these checks.
 These authored fixtures use ordinary single-sampler materials and do not establish masked blending or native graphical parity.
+
+
+## Evaluate every material assignment, October 26, 2026
+
+Custom actors now evaluate every ordered material assignment before constructing their immutable pattern map.
+Repeated patterns take their final declaration's position as well as its value.
+Earlier expressions still update the actor scope even when a later assignment replaces their selected material.
+The existing wire representation keeps unique patterns after evaluation, without a protocol change.
+
+The converter prerequisite supplies complete ordered declarations.
+The [Molang reference](https://mojang.github.io/bedrock-samples/Molang.html) specifies expression order, and the [animation reference](https://mojang.github.io/bedrock-samples/Animations.html) specifies later overrides.
+The target Bedrock 1.26.51.1 library includes multiple material rules for supported native actors.
+Authored repeated-pattern controls do not execute the native client.
+
+A regression uses wildcard, arm, and repeated wildcard scripts to accumulate an ordered value of 123.
+The earlier implementation produces 32 because it removes the first expression and evaluates the final wildcard before the arm rule.
+The corrected implementation produces 123 and retains the final pattern order as arm, then wildcard.
+The resulting map remains immutable.
+
+
+### Live material override controls
+
+A private BDS pack supplies two actor bones, one zero-alpha red texture, and three material assignments.
+The final wildcard overrides an earlier arm-specific cutout rule.
+Both actor parts therefore remain visible with the opaque material.
+A native baby-state event selects cutout for both parts, and the adult-state event restores both.
+Ordered script effects also select the red image instead of a blue negative-control image.
+
+Fresh direct and Iris-enabled ViaProxy captures show both red parts, their disappearance, their restoration, and actor removal.
+Received snapshots retain arm then wildcard order and the expected texture and materials.
+The actor lifetime remains stable while snapshots and resolved draw caches change.
+The downloaded pack matches every declared fixture file on both routes.
+These controls establish authored behavior through real BDS state changes, without a native graphical baseline.

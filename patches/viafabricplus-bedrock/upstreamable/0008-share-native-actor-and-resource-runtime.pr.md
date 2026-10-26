@@ -2454,3 +2454,31 @@ The [Creator reference](https://learn.microsoft.com/en-us/minecraft/creator/refe
 The regression fails against the previous early return and passes with the correction.
 It covers empty poses, hidden parent surfaces, independently visible children, and restoration of the ordinary hierarchy.
 The [costume controls](0016-render-server-player-costumes.pr.md#independent-player-controller-draws-october-26-2026) exercise the installed implementation on both routes.
+
+
+## Ordered controller material expressions, October 26, 2026
+
+The shared client selector now evaluates every material declaration in the sampled actor scope.
+It no longer evaluates only the last wildcard expression.
+This preserves earlier script effects for later material, UV, visibility, lighting, texture, and controller expressions.
+The existing global material selection uses the last wildcard result.
+This correction does not add per-bone material drawing to player, equipped, world-graph, or portrait consumers.
+
+The converter supplies immutable ordered assignments, including repeated patterns.
+A regression accumulates 123 through three assignments before sampling the light multiplier.
+The previous selector produces 3, while the corrected selector produces 123 and retains the expected global material.
+The full add-on suite passes this regression and the existing selection tests.
+
+Equipment and world-graph admission now inspect the complete declaration list.
+They retain the existing requirement for at least one assignment and only wildcard material patterns.
+Repeated wildcard assignments remain supported, while part-specific materials retain their existing fallback.
+Constructor adaptations stay in their owning costume and equipment patches.
+
+
+A declared player controller accumulates 123 through three wildcard material assignments and selects a blue texture only for that result.
+Physical perspective changes exercise the production costume renderer on direct and Iris-enabled ViaProxy connections.
+Both retain the selected texture and light multiplier 123 in the actual cached selection.
+The plain capture shows a blue head.
+The Iris capture shows a saturated white head with blue bloom under that declared multiplier.
+The white pixels do not independently establish texture identity.
+This authored control does not establish native lighting equality, emote effects, or complete player materials.

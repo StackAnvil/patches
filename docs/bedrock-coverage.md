@@ -10956,3 +10956,40 @@ The read-only observer never samples the ephemeral first-person frame, and its p
 Pixels and actual cached model state support the rendering results.
 These authored controls do not establish native graphical parity, remote-player skin parity, or complete persona composition.
 The original E-key inventory report, emote timing, pack interactions, and other in-game behavior remain separate work.
+
+
+## Ordered material assignments, October 26, 2026
+
+**Corrected within scope:** Render-controller parsing now preserves repeated material patterns as immutable ordered assignments.
+Core evaluates every expression before reducing the results to a final pattern map.
+Repeated patterns take their final declaration positions, preserving later override precedence for bone materials.
+The client selector also retains script effects from every assignment before later draw expressions.
+
+The target Bedrock 1.26.51.1 library includes eight controllers with multiple material rules.
+The [converter notes](../patches/cubeconverter/upstreamable/0002-preserve-actor-lighting-controls.pr.md#ordered-material-declarations-october-26-2026) record the API change and target references.
+Core now depends on that converter declaration API.
+Constructor and admission changes remain in the owning client patches.
+
+The core regression previously accumulated 32 instead of the declared sequence 123.
+The player selector previously accumulated only 3.
+Both corrected regressions pass, together with the parser's duplicate-pattern control.
+All ten focused parser and selector tests pass without skips.
+
+Fresh direct and Iris-enabled ViaProxy controls show two red actor parts after a final opaque wildcard replaces an arm-specific cutout rule.
+Native BDS state changes hide both parts, then restore both before removal.
+Received materials retain their final override order, while snapshots and rendered caches refresh within the same actor lifetime.
+Both routes download the exact declared fixture files.
+A physical third-person view also exercises player material scripts and retains the expected blue texture and accumulated value 123.
+The plain player head appears blue.
+Iris produces a saturated white head with blue bloom under the fixture's light multiplier 123.
+The cached selection establishes texture identity separately from those saturated pixels.
+All ten final screenshots receive visual review.
+
+The full four-project build passes 3,086 tests with 152 optional skips and no failures or errors.
+Both core Checkstyle tasks pass.
+All 1,227 client classes and the embedded copies of 1,559 core classes, 200 assets, and 40 converter classes match compilation.
+Installed add-on and proxy hashes match the build.
+
+These authored controls do not execute a native expression or graphical baseline.
+Player, equipment, world-graph, and portrait consumers retain their existing per-bone material limits.
+Emote effect ownership and broader pack, interaction, skin, and graphical parity remain open.

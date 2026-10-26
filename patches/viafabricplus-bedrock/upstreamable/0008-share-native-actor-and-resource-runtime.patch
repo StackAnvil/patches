@@ -1,4 +1,4 @@
-From c8d4754967c1d053364188aac9af79eef9ad1ad0 Mon Sep 17 00:00:00 2001
+From 116acd93d60a5c66d973a4bc5a48b5045a9e89e1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -326,6 +326,13 @@ visibility without modifying the shared avatar render state.
 The target 1.26.51.1 player render controllers independently declare body,
 arm and spectator part rules. A regression fails on the previous empty-pose
 early return and covers visibility changes plus ordinary-tree restoration.
+
+Evaluate every ordered material declaration in the sampled actor scope,
+including repeated patterns and declarations outside the supported global
+material selection. Keep Molang effects for later draw expressions rather
+than evaluating only the last wildcard. Native part-specific material
+rendering remains a separate capability; this preserves declaration order
+without claiming that missing renderer coverage.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -379,7 +386,7 @@ early return and covers visibility changes plus ordinary-tree restoration.
  .../appearance/BedrockPersonaAnimations.java  |  128 ++
  .../appearance/BedrockPersonaSources.java     |  228 ++++
  .../appearance/BedrockPlayerAnimations.java   |   33 +
- .../appearance/BedrockPlayerControllers.java  |  226 ++++
+ .../appearance/BedrockPlayerControllers.java  |  230 ++++
  .../appearance/BedrockResourceLibrary.java    |  438 +++++++
  .../appearance/BedrockServerParticles.java    |   94 ++
  .../appearance/BedrockServerResources.java    |   46 +
@@ -456,7 +463,7 @@ early return and covers visibility changes plus ordinary-tree restoration.
  .../viafabricplus-bedrock.mixins.json         |   26 +-
  .../appearance/BedrockActorAnimationTest.java |  705 +++++++++++
  .../appearance/BedrockActorQueriesTest.java   |  143 +++
- .../BedrockActorRenderSelectionTest.java      |  102 ++
+ .../BedrockActorRenderSelectionTest.java      |  125 ++
  .../appearance/BedrockActorScaleTest.java     |   77 ++
  .../BedrockActorVisibilityTest.java           |  142 +++
  .../BedrockAnimationCommandsTest.java         |  180 +++
@@ -529,7 +536,7 @@ early return and covers visibility changes plus ordinary-tree restoration.
  .../render/BedrockPlayerModelTest.java        |  145 +++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 202 files changed, 24329 insertions(+), 15 deletions(-)
+ 202 files changed, 24356 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -9326,10 +9333,10 @@ index 0000000..f9335b1
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
 new file mode 100644
-index 0000000..e6a5eb2
+index 0000000..04fd9eb
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
-@@ -0,0 +1,226 @@
+@@ -0,0 +1,230 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9430,7 +9437,11 @@ index 0000000..e6a5eb2
 +            }
 +            molang.binding("array", arrays);
 +            final String geometry = this.value(molang, controller.geometryExpression()).getAsString();
-+            final String material = controller.materialsMap().containsKey("*") ? this.value(molang, controller.materialsMap().get("*")).getAsString() : "entity_alphatest";
++            String material = "entity_alphatest";
++            for (final var assignment : controller.materialAssignments()) {
++                final String selected = this.value(molang, assignment.expression()).getAsString();
++                if (assignment.pattern().equals("*")) material = selected;
++            }
 +            final var nativeUv = controller.uvAnimation();
 +            final UvAnimation animation = this.uvAnimations.getOrDefault(reference.identifier(),
 +                    new UvAnimation(nativeUv.offsetU(), nativeUv.offsetV(), nativeUv.scaleU(), nativeUv.scaleV()));
@@ -15139,10 +15150,10 @@ index 0000000..dba9313
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorRenderSelectionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorRenderSelectionTest.java
 new file mode 100644
-index 0000000..5f06cd0
+index 0000000..d32dde3
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorRenderSelectionTest.java
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,125 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15161,6 +15172,29 @@ index 0000000..5f06cd0
 +
 +final class BedrockActorRenderSelectionTest {
 +    @Test
++    void evaluatesEveryMaterialDeclarationBeforeLaterDrawExpressions() throws Exception {
++        final var entity = new BedrockEntityData("minecraft:player",
++                new BedrockEntityData.Scripts(List.of(), List.of("v.trace=0;"),
++                        new BedrockEntityData.Scripts.Scale("1", "1", "1", "1"), List.of()),
++                List.of(new BedrockEntityData.RenderController("controller.render.actor", "")),
++                Map.of("base", "entity_alphatest", "glow", "entity_emissive_alpha"), Map.of(),
++                Map.of("default", "textures/custom"), Map.of("default", "geometry.custom"));
++        final var controller = org.cube.converter.parser.bedrock.controller.BedrockControllerParser.parse("""
++                {"render_controllers":{"controller.render.actor":{
++                    "geometry":"Geometry.default","textures":["Texture.default"],
++                    "materials":[
++                        {"*":"v.trace=v.trace*10+1;return Material.base;"},
++                        {"Arm*":"v.trace=v.trace*10+2;return Material.glow;"},
++                        {"*":"v.trace=v.trace*10+3;return Material.base;"}],
++                    "light_color_multiplier":"v.trace"}}}
++                """).getFirst();
++        final var selection = new BedrockPlayerControllers(entity, Map.of(controller.identifier(), controller));
++        final var surface = selection.select(0, Map.of(), Map.of(), Map.of()).surfaces().getFirst();
++        assertEquals(123F, surface.lightMultiplier());
++        assertEquals("entity_alphatest", surface.material());
++    }
++
++    @Test
 +    void secondarySamplersPreserveExpressionsWithoutDrawingOrChangingBodyVisibility() throws Exception {
 +        final var entity = new BedrockEntityData("minecraft:player",
 +                new BedrockEntityData.Scripts(List.of(), List.of("v.counter=0;"),
@@ -15170,11 +15204,11 @@ index 0000000..5f06cd0
 +                Map.of("default", "entity_alphatest"), Map.of(),
 +                Map.of("default", "textures/entity/steve", "custom", "textures/custom"),
 +                Map.of("default", "geometry.humanoid.custom"));
-+        final var first = new BedrockRenderController("first", Map.of("*", "Material.default"),
++        final var first = new BedrockRenderController("first", List.of(new BedrockRenderController.MaterialAssignment("*", "Material.default")),
 +                "Geometry.default", List.of("q.property('body') ? Texture.default : Texture.custom",
 +                        "v.counter=v.counter+1;return Texture.default;"), List.of(), List.of(), List.of(),
 +                false, "1", BedrockRenderController.UvAnimation.IDENTITY);
-+        final var second = new BedrockRenderController("second", Map.of("*", "Material.default"),
++        final var second = new BedrockRenderController("second", List.of(new BedrockRenderController.MaterialAssignment("*", "Material.default")),
 +                "Geometry.default", List.of("Texture.custom"), List.of(), List.of(), List.of(),
 +                false, "v.counter", BedrockRenderController.UvAnimation.IDENTITY);
 +        final var selection = new BedrockPlayerControllers(entity, Map.of("first", first, "second", second));
@@ -15212,12 +15246,12 @@ index 0000000..5f06cd0
 +                        new BedrockEntityData.RenderController("controller.body", "!v.view")),
 +                Map.of("default", "entity_alphatest"), Map.of(), Map.of("default", "textures/entity/steve"),
 +                Map.of("default", "geometry.humanoid.custom", "hands", "geometry.hands"));
-+        final var handsController = new BedrockRenderController("controller.hands", Map.of("*", "Material.default"),
++        final var handsController = new BedrockRenderController("controller.hands", List.of(new BedrockRenderController.MaterialAssignment("*", "Material.default")),
 +                "Array.models[v.pick]", List.of("Texture.default", "Texture.default"), List.of(), List.of(),
 +                List.of(new BedrockRenderController.Array("Array.models", List.of("Geometry.default", "Geometry.hands"))),
 +                true, "v.counter/11", new BedrockRenderController.UvAnimation("v.pick/4", "0", "0.5", "1"),
 +                List.of(new BedrockRenderController.BoneVisibility("*", "0"), new BedrockRenderController.BoneVisibility("right*", "v.view")));
-+        final var bodyController = new BedrockRenderController("controller.body", Map.of("*", "Material.default"),
++        final var bodyController = new BedrockRenderController("controller.body", List.of(new BedrockRenderController.MaterialAssignment("*", "Material.default")),
 +                "Geometry.default", List.of("Texture.default"), List.of(), List.of(), List.of(), false, "1", BedrockRenderController.UvAnimation.IDENTITY);
 +        final var selection = new BedrockPlayerControllers(entity, Map.of("controller.hands", handsController, "controller.body", bodyController));
 +        final var body = graph.playback();

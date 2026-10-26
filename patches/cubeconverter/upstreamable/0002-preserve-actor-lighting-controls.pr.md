@@ -31,3 +31,23 @@ The recorded Bedrock 1.26.51.1 Hive angel wings use a wildcard visibility expres
 ## Visibility parser API
 
 Expose the ordered part-visibility declaration parser to client adapters. The parser preserves declared expressions and rule order. Renderer selection, variable scope and client-specific fallback values remain with the consumer. This public helper is a local extension to the pinned upstream API.
+
+
+## Ordered material declarations, October 26, 2026
+
+Render controllers now retain an immutable list of material assignments, including repeated bone patterns.
+The previous map removed earlier expressions and kept repeated keys at their original positions.
+That representation lost both expression effects and later override precedence.
+
+The public `materialAssignments()` list replaces `materialsMap()`.
+Constructor callers now supply `MaterialAssignment` lists.
+Core and client consumers change together, and the core patch records this prerequisite.
+Parsing does not evaluate expressions or select the final material for a bone.
+
+The [Molang reference](https://mojang.github.io/bedrock-samples/Molang.html) specifies ordered material expression evaluation.
+The [animation reference](https://mojang.github.io/bedrock-samples/Animations.html) specifies later material overrides.
+The bundled Bedrock 1.26.51.1 library includes eight controllers with multiple material rules, including axolotl limbs and chicken legs.
+These assets establish target support, without a native execution comparison for the authored repeated-pattern cases.
+
+The parser regression retains wildcard, arm, and repeated wildcard assignments in their declared positions.
+The list rejects mutation, and all 20 converter tests pass without skips.
