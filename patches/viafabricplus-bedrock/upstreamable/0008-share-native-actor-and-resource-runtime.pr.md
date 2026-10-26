@@ -1,5 +1,19 @@
 The shared runtime owns actor graphs, float evaluation, accepted resource decoding, sound and particles. Account selection and purchases remain in the following [appearance patch](0009-manage-character-creator-accounts-and-wardrobes.pr.md). The following research supports these APIs; historical suite counts do not replace a fresh build.
 
+## Live actor state for attached effects, October 26, 2026
+
+Animation frames and attached effects share immutable actor queries. Each attachment sample refreshes native flags, properties, variants, spell color, and current Java movement and living status. A custom actor with a non-living Java carrier retains its native status flags. Retired metadata clears those inputs instead of retaining an earlier frame's values. Particle clocks and counts remain specific to each effect.
+
+The shared adapter serves players, custom actors, supported world actors, and server particles. The custom animation frame also receives swimming, gliding, sleeping, item-use, and crawling flags. Existing mounted, sleeping, and equipped world-model fallbacks remain. This change does not supply missing target-selection queries or native poses.
+
+Tests evaluate all 64 combinations of six living states against stale render inputs. They also cover native carrier flags, metadata replacement, retirement, and immutable captured samples. The matching 1.26.51.1 asset library contains the status queries. Existing target protocol enums supply their flags.
+
+Fresh direct and ViaProxy sessions load a real server pack on BDS 1.26.51.1. Its animation creates a parent particle and a bound child. Both scopes follow native baby/adult changes, display red-green-red transitions, and clear after actor removal. The custom graph also evaluates the five additional status queries. The observer records state without creating effects or evaluating queries. Runtime artifact hashes and the packaged query-class origin match the build. Screenshots show both transitions and cleanup.
+
+These near-actor controls continue body rendering and do not reproduce a frozen render cache. First-person and hidden-HUD controls also continue sampling. The distant-actor control stops tracking the actor, so it cannot establish a stale-render regression. No native graphical baseline or general emote-effect parity is claimed. The replayed four-project build passes 3,042 tests, skips 152 optional tests, and reports no failures.
+
+Sources: [Molang queries](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions), [actor-bound effects](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/actor_animation.v1.8.0?view=minecraft-bedrock-stable), and [the baby component](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/entitycomponents/minecraftcomponent_is_baby?view=minecraft-bedrock-stable).
+
 ## Classic actor graph
 
 Compile reachable player animations and nested controllers from the matching licensed package. Apply classic aliases over the player defaults, including empty overrides. Preserve ordered weighted references, initialization, per-frame scripts, entry and exit scripts, state transitions, temporary remapped variables, and independent playback clocks.

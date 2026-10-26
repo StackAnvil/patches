@@ -283,7 +283,7 @@ Transport passes; complete scene rendering still fails on unresolved mappings. N
 | --- | --- | --- | --- |
 | R1 | General actor controllers and scripts | Incomplete | Core-evaluated custom actor model selections now travel through the negotiated channel on both routes. Complete transitions, weighted entries, variables, events, queries, and native comparisons. |
 | R2 | Server particle dispatch | Incomplete | Core transports complete requests, typed variables, actor identity, and Java fallback bodies to native clients. Direct and ViaProxy authored fixtures verify dispatch, typed size/tint records, and fallback decoding. Complete actor queries, remote actor transport, interpolation, lifecycle comparisons, and visible native parity remain open. |
-| R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
+| R3 | Particle runtime | Incomplete | [Live actor queries](#live-actor-state-for-attached-effects-october-26-2026) share native metadata across animation and particle contexts. Complete components, child effects, concurrency, and native visible lifecycle comparisons remain required. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
 | R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties and per-face ambient strengths through ViaProxy. Native material arithmetic matches 576 executable cases. Native corner maxima also match 12,288 executable samples. Both routes retain the settings through model baking and injected terrain lighting. Java still supplies corner sampling and interpolation. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Core carries native random offsets in converted metadata. The add-on verifies continuous terrain, outline, and camera offsets separately from floored movement collision on both routes, including edge and corner queries. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, vanilla per-type collision shapes, and native collision solving. |
 | R6 | Equipped attachables | Incomplete | Accepted actor graphs now travel through ViaProxy. Both routes render the supported costume and owner-bound chest wings. Complete proxy properties, variants, explicit bone bindings, per-bone materials, material families, and broader native comparisons. |
@@ -10373,5 +10373,34 @@ This does not establish native placement, pose or complete graphical parity.
 
 **Remaining:** Account wardrobe assignment, purchases and native graphical comparisons remain outside these controls.
 Emote effects, additional interruption modes, persona composition, platform filters and native pose comparisons remain incomplete.
-Live skin changes through ViaProxy remain unfinished.
+The later [live skin checks](skin-flow.md#skin-data-in-a-world) verify native server echoes on both routes; remote visible parity remains open.
 The direct camera-item rendering gate and original gameplay reports remain open.
+
+
+## Live actor state for attached effects, October 26, 2026
+
+**Implemented:** Animation frames and attached particles share immutable actor queries.
+Each attachment sample refreshes native metadata and current Java movement and living status.
+Non-living Java carriers retain native flags for status without an equivalent Java method.
+Retired metadata clears those inputs, and each particle retains its own clocks and counts.
+Players, custom actors, supported world actors, and server particles use the shared adapter.
+Custom animation graphs also receive swimming, gliding, sleeping, item-use, and crawling flags.
+
+**Verified:** Targeted tests evaluate all 64 combinations of six living states against stale render inputs.
+They also verify native carrier flags, metadata replacement, retirement, and immutable captured samples.
+The matching 1.26.51.1 asset library contains these status queries; existing protocol enums supply their flags.
+The [owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#live-actor-state-for-attached-effects-october-26-2026) record the evidence and integration boundaries.
+
+Fresh direct and ViaProxy sessions load a real server pack on BDS 1.26.51.1.
+Its animation creates a parent particle and a bound child on a custom native actor.
+Both scopes follow native baby/adult changes, display red-green-red transitions, and clear after actor removal.
+The custom graph also evaluates the five additional status queries.
+A read-only observer records production scopes, colors, body submissions, and the packaged query-class origin.
+Actual runtime artifact hashes match the build, and screenshots show the transitions and cleanup.
+The four-project build passes 3,042 tests, skips 152 optional tests, and reports no failures.
+
+**Remaining:** Mounted, sleeping, and equipped world-model fallbacks remain.
+Missing target-selection queries, native poses, complete actor contexts, child-effect behavior, and graphical comparisons still require work.
+The near-actor fixture continues body rendering and does not reproduce a frozen render cache.
+First-person and hidden-HUD controls continued to refresh their body samples and did not reproduce stale queries.
+A distant-actor control did not receive changed native metadata, so it cannot establish a stale-render regression.
