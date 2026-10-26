@@ -281,7 +281,7 @@ Transport passes; complete scene rendering still fails on unresolved mappings. N
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| R1 | General actor controllers and scripts | Incomplete | Core-evaluated custom actor model selections now travel through the negotiated channel on both routes. Complete transitions, weighted entries, variables, events, queries, and native comparisons. |
+| R1 | General actor controllers and scripts | Incomplete | Core-evaluated custom actor model selections now travel through the negotiated channel on both routes. [Standard villager graph admission](#standard-villager-material-admission-october-26-2026) now accepts explicit supported depth metadata. Complete transitions, weighted entries, variables, events, queries, and native comparisons. |
 | R2 | Server particle dispatch | Incomplete | Core transports complete requests, typed variables, actor identity, and Java fallback bodies to native clients. Direct and ViaProxy authored fixtures verify dispatch, typed size/tint records, and fallback decoding. Complete actor queries, remote actor transport, interpolation, lifecycle comparisons, and visible native parity remain open. |
 | R3 | Particle runtime | Incomplete | [Live actor queries](#live-actor-state-for-attached-effects-october-26-2026) include [target metadata and rendering recovery](#native-target-queries-and-rendering-recovery-october-26-2026). [Typed appearance metadata](#typed-appearance-metadata-and-actor-scopes-october-26-2026) supplies skin and trading queries. Complete components, child effects, concurrency, and native visible lifecycle comparisons remain required. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
@@ -10676,3 +10676,31 @@ The full replay preserves source contents after removal of generated metadata ch
 **Remaining:** Higher trading tiers have callback and semantic coverage only.
 These authored controls do not establish native graphical parity, complete player skins, emote behavior, or complete actor query support.
 The [frontend notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#integer-metadata-in-actor-scopes-october-26-2026) record the shared scope behavior and tests.
+
+
+## Standard villager material admission, October 26, 2026
+
+**Status:** Incomplete. The bundled villager graph can now resolve its explicit `LessEqual` material declaration.
+The existing Java actor pipeline uses the corresponding reversed-depth comparison.
+The material resolver retains inherited declarations, validates the final comparison, and rejects malformed string values.
+A supported child declaration can recover an inherited unsupported comparison.
+Other depth functions and masked multitexture professions retain fallback.
+The [material notes](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#explicit-default-depth-declarations-october-26-2026) record source identity and comparison limits.
+
+**Verification:** All 27 focused material, pipeline, and world graph tests pass without skips.
+The bundled graph resolves adult and baby geometry across all seven biomes with supplied stationary motion inputs.
+The full four-project build passes 3,067 tests, skips 152 optional tests, and reports no failures.
+Replay preserves all source files after removal of generated metadata changes.
+All 1,213 compiled client classes match the add-on, and both consumers contain matching core and converter classes and assets.
+
+Direct and ViaProxy BDS sessions drive the standard client graph through authored biome, age, and profession events.
+A further ViaProxy session checks the same states with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Native journals confirm the typed metadata transitions.
+Read-only observers verify four resolved surfaces, biome textures, age geometry, script scales, and a stable actor lifetime and playback.
+Masked profession fallback and later supported-state recovery work on each run.
+Actor removal retires its snapshot, all 21 final screenshots receive visual review, and installed artifacts match the build.
+
+**Remaining:** Masked multitexture, other depth comparisons, native visual comparisons, and complete actor contexts remain open.
+The Iris HUD bar persists after actor removal and still needs classification.
+These authored behavior controls do not establish natural vanilla aging, collision, or interaction parity.
+The [world actor notes](../patches/viafabricplus-bedrock/upstreamable/0030-use-supported-native-world-actor-definitions.pr.md#bundled-villager-graph-admission-october-26-2026) record the graph scope and fallback rules.

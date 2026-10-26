@@ -1,5 +1,43 @@
 Install supplied player skin geometry even when its identifier uses the standard humanoid alias. Queue skin updates for their exact source connection while Java is still configuring, then install them in arrival order when the play listener becomes available. Disconnected sources cannot leak updates into another connection.
 
+## Explicit default depth declarations, October 26, 2026
+
+The target villager material declares `depthFunc: LessEqual`.
+Material validation previously rejected this field even though the actor pipeline already implements that comparison.
+The Java projection uses reversed depth, and the existing actor pipelines select `GREATER_THAN_OR_EQUAL` with depth writes enabled.
+[Microsoft documents the depth comparison operators](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ne-d3d12-d3d12_comparison_func).
+
+The resolver now retains the inherited depth function and validates its effective value.
+An explicit or inherited `LessEqual` selects the existing material pipeline.
+Other comparisons retain fallback, and a child can restore the supported comparison without losing inherited shader settings.
+String fields reject numeric, boolean, null, object, and array coercion.
+This change does not add a new depth mode or change shader arithmetic.
+
+The bundled target `entity.material` has SHA-256 `a3966c3ad0e0f2f134bbc1b2145df652fe96030b890a9725e10ef671a482f7b4`.
+It contains explicit `LessEqual` declarations for villager, zombie villager, and iron golem families.
+This hash identifies the bundled normalized source; raw licensed assets remain private.
+
+All 27 focused material, pipeline, and world graph tests pass without skips.
+The bundled villager regression samples adult and baby geometry across all seven biomes with supplied stationary movement.
+It resolves four surfaces and their native script scales, then checks masked profession fallback and supported-state recovery.
+The full four-project build passes 3,067 tests, skips 152 optional tests, and reports no failures.
+
+
+Fresh direct and ViaProxy sessions load the bundled villager client graph on BDS 1.26.51.1.
+An additional ViaProxy session verifies the same transitions with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Authored server component events change biome, age, and profession metadata; they do not replace the client graph.
+Native packet journals confirm each typed biome, age, and profession transition.
+Read-only observations verify four resolved surfaces, biome textures, adult/baby geometry, and native script scales.
+Masked professions select Java fallback, and resetting the profession recovers the same actor playback and lifetime.
+Removal retires the native snapshot on all three runs.
+All 21 final screenshots receive visual review, and runtime artifacts match the build.
+
+The existing white HUD bar remains visible with Iris after the actor is removed.
+Its owner remains unclassified, and this material change does not establish complete Iris or native visual parity.
+
+Masked multitexture professions and other depth comparisons remain unsupported.
+These checks do not establish full native appearance, aging, collision, or interaction parity.
+
 Native actor rendering reports active missing geometry and textures. Inactive server variants do not produce rendering failures. Visibility uses the distance between the actor and the camera. Minecraft 26.3 supplies absolute camera coordinates, so the previous check hid nearby custom actors in lobbies far from the world origin.
 
 Validation: queue identity, order and closed-connection regressions pass; the full addon suite has no failures. Recorded Geyser and CubeCraft scenes exercise the extended configuration phase created by custom block packs. The private CubeCraft replay checks all 240 skin updates and 37 advertised actor types, then requires native model resolution and actual player and custom actor submissions. Its terrain and packet payloads remain unchanged. No server assets are included.

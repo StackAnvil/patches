@@ -1,4 +1,4 @@
-From 25d56fc53ff23d24057d86c1a2fc35ba3733aa94 Mon Sep 17 00:00:00 2001
+From b9bac151ac73816d790394f9ccebe30b845f6104 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -495,6 +495,18 @@ Unsupported stage interfaces keep the prior eye path with one diagnostic
 per selection. Ordinary pipelines, GUI portraits and shadow selection stay
 outside this pairing. This does not establish arbitrary shader-pack parity,
 complete hand behavior, emissive overlay order or framebuffer alpha.
+
+Resolve inherited depthFunc declarations before material admission. The
+pinned native villager material explicitly selects LessEqual, which the
+existing actor pipeline already implements with Java's reversed-depth
+GREATER_THAN_OR_EQUAL comparison. Rejecting that declaration prevented
+standard villager graphs from drawing after their query inputs resolved.
+
+Accept the implemented comparison when declared explicitly or inherited.
+Keep unsupported comparisons distinct so a child can restore LessEqual
+without losing valid parent shader settings. Reject malformed string
+fields rather than coercing numeric, array or null values. Other depth
+comparisons and masked multitexture materials retain their fallback.
 ---
  build.gradle.kts                              |   6 +
  settings.gradle.kts                           |   3 +
@@ -532,7 +544,7 @@ complete hand behavior, emissive overlay order or framebuffer alpha.
  .../render/MixinPlayerSkinWidget.java         |  28 ++
  .../render/MixinPlayerTabOverlay.java         |  22 ++
  .../render/BedrockAcceptedResources.java      |  53 ++++
- .../BedrockActorMaterialDefinitions.java      | 156 ++++++++++
+ .../BedrockActorMaterialDefinitions.java      | 164 ++++++++++
  .../bedrock/render/BedrockActorMaterials.java |  56 ++++
  .../render/BedrockActorRenderTypes.java       |  93 ++++++
  .../bedrock/render/BedrockActorResources.java |  43 +++
@@ -562,7 +574,7 @@ complete hand behavior, emissive overlay order or framebuffer alpha.
  .../viafabricplus-bedrock.accesswidener       |   6 +
  .../viafabricplus-bedrock.mixins.json         |  29 ++
  .../render/BedrockAcceptedResourcesTest.java  | 118 +++++++
- .../BedrockActorMaterialDefinitionsTest.java  | 187 ++++++++++++
+ .../BedrockActorMaterialDefinitionsTest.java  | 208 +++++++++++++
  .../render/BedrockActorMaterialsGpuTest.java  | 164 ++++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 +++
  .../render/BedrockActorUvTransformTest.java   |  27 ++
@@ -576,12 +588,12 @@ complete hand behavior, emissive overlay order or framebuffer alpha.
  .../BedrockRenderSnapshotCacheTest.java       | 123 ++++++++
  .../render/BedrockRidingAnchorsTest.java      | 149 +++++++++
  .../render/BedrockShaderAlphaTest.java        |  31 ++
- .../render/BedrockShaderPipelinesTest.java    |  88 ++++++
+ .../render/BedrockShaderPipelinesTest.java    |  89 ++++++
  .../bedrock/render/BedrockSkinImagesTest.java |  82 +++++
  .../render/CustomEntityRenderStoreTest.java   |  62 ++++
  .../bedrock/render/EglTestContext.java        |  52 ++++
  .../compat/iris/BedrockIrisAlphaGpuTest.java  | 164 ++++++++++
- 85 files changed, 5339 insertions(+)
+ 85 files changed, 5369 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockDynamicTexture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockShaderPipeline.java
@@ -2147,10 +2159,10 @@ index 0000000..76f93d2
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
 new file mode 100644
-index 0000000..e7b8aa8
+index 0000000..ec7c3bb
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,164 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2234,9 +2246,11 @@ index 0000000..e7b8aa8
 +            shaderDefines.remove("USE_UV_ANIM");
 +            // The target native legacy define map does not assign either name a shader flag.
 +            shaderDefines.removeAll(Set.of("USE_MASK", "Blending"));
++            // Java uses reversed depth; the actor pipeline already implements native LessEqual.
 +            if (effective == null || !effective.verifiedFields
 +                || !"shaders/entity.vertex".equals(effective.vertexShader)
 +                || !"shaders/entity.fragment".equals(effective.fragmentShader)
++                || !"LessEqual".equals(effective.depthFunction)
 +                || !shaderDefines.contains("USE_OVERLAY")
 +                || !Set.of("USE_OVERLAY", "ALPHA_TEST", "USE_EMISSIVE").containsAll(shaderDefines)
 +                || !Set.of("DisableCulling").containsAll(effective.states)) {
@@ -2262,7 +2276,7 @@ index 0000000..e7b8aa8
 +    private Effective resolve(final String name, final Set<String> ancestors) {
 +        final Definition definition = this.definitions.get(name);
 +        if (definition == null || ancestors.size() >= 128 || !ancestors.add(name)) return null;
-+        final Effective parent = definition.parent == null ? new Effective(null, null, Set.of(), Set.of(), true)
++        final Effective parent = definition.parent == null ? new Effective(null, null, "LessEqual", Set.of(), Set.of(), true)
 +            : this.resolve(definition.parent, ancestors);
 +        ancestors.remove(name);
 +        if (parent == null) return null;
@@ -2271,10 +2285,11 @@ index 0000000..e7b8aa8
 +            boolean verified = parent.verifiedFields;
 +            for (String key : fields.keySet()) {
 +                if (!Set.of("vertexShader", "fragmentShader", "defines", "+defines", "-defines",
-+                    "states", "+states", "-states", "msaaSupport").contains(key)) verified = false;
++                    "states", "+states", "-states", "msaaSupport", "depthFunc").contains(key)) verified = false;
 +            }
 +            return new Effective(string(fields, "vertexShader", parent.vertexShader),
 +                string(fields, "fragmentShader", parent.fragmentShader),
++                string(fields, "depthFunc", parent.depthFunction),
 +                flags(fields, "defines", parent.defines), flags(fields, "states", parent.states), verified);
 +        } catch (RuntimeException invalid) {
 +            return null;
@@ -2282,7 +2297,12 @@ index 0000000..e7b8aa8
 +    }
 +
 +    private static String string(final JsonObject fields, final String key, final String inherited) {
-+        return fields.has(key) ? fields.get(key).getAsString() : inherited;
++        if (!fields.has(key)) return inherited;
++        final JsonElement value = fields.get(key);
++        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
++            throw new IllegalArgumentException("Invalid actor material string field");
++        }
++        return value.getAsString();
 +    }
 +
 +    private static Set<String> flags(final JsonObject fields, final String key, final Set<String> inherited) {
@@ -2304,7 +2324,7 @@ index 0000000..e7b8aa8
 +        public Material withoutEmission() { return new Material(this.alphaTest, this.cull, false, this.uvAnimation); }
 +    }
 +    private record Definition(String parent, JsonObject fields) {}
-+    private record Effective(String vertexShader, String fragmentShader, Set<String> defines,
++    private record Effective(String vertexShader, String fragmentShader, String depthFunction, Set<String> defines,
 +                             Set<String> states, boolean verifiedFields) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterials.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterials.java
@@ -4655,10 +4675,10 @@ index 0000000..ac26125
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
 new file mode 100644
-index 0000000..4cb698f
+index 0000000..80d32da
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
-@@ -0,0 +1,187 @@
+@@ -0,0 +1,208 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4694,6 +4714,27 @@ index 0000000..4cb698f
 +        assertTrue(materials.material("cutout").orElseThrow().alphaTest());
 +        assertEquals(emission, materials.material("removed").orElseThrow());
 +        assertEquals(new BedrockActorMaterialDefinitions.Material(false, true, false, true), emission.withoutEmission());
++    }
++
++    @Test
++    void inheritsSupportedDepthComparisonAndAllowsAnExplicitOverrideToRecoverIt() {
++        final var materials = read("""
++            {"declared:entity_alphatest":{"depthFunc":"LessEqual"},
++             "inherited:declared":{},
++             "always:declared":{"depthFunc":"Always"},
++             "unsupported:always":{},
++             "restored:always":{"depthFunc":"LessEqual"}}
++            """);
++        final var expected = materials.material("entity_alphatest").orElseThrow();
++        assertEquals(expected, materials.material("declared").orElseThrow());
++        assertEquals(expected, materials.material("inherited").orElseThrow());
++        assertEquals(expected, materials.material("restored").orElseThrow());
++        assertTrue(materials.material("always").isEmpty());
++        assertTrue(materials.material("unsupported").isEmpty());
++        for (final String value : List.of("null", "true", "4", "[\"LessEqual\"]", "{}", "\"lessEqual\"")) {
++            final var malformed = read("{\"invalid:entity_alphatest\":{\"depthFunc\":" + value + "}}");
++            assertTrue(malformed.material("invalid").isEmpty());
++        }
 +    }
 +
 +    @Test
@@ -6072,10 +6113,10 @@ index 0000000..0827204
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java
 new file mode 100644
-index 0000000..a8b37e5
+index 0000000..c9f050d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,89 @@
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import com.mojang.renderpearl.api.pipeline.RenderPipeline;
@@ -6105,6 +6146,7 @@ index 0000000..a8b37e5
 +                            assertEquals(expected.getVertexFormatBindings(), actor.getVertexFormatBindings());
 +                            assertEquals(cull, actor.isCull());
 +                            assertTrue(actor.getDepthStencilState().writeDepth());
++                            assertEquals(RenderPipelines.ENTITY_SOLID.getDepthStencilState().depthTest(), actor.getDepthStencilState().depthTest());
 +                            assertTrue(actor.getColorTargetStates().getFirst().blendFunction().isEmpty());
 +                            assertSame(actor, BedrockActorRenderTypes.selectPipeline(material, unlit, nether));
 +                        }

@@ -1,5 +1,32 @@
 # Native world actor definitions
 
+## Bundled villager graph admission, October 26, 2026
+
+The standard 1.26.51.1 villager graph now resolves after its explicit default depth declaration passes material validation.
+The [material notes](0002-native-entities-and-skins.pr.md#explicit-default-depth-declarations-october-26-2026) explain the declaration and reversed-depth pipeline.
+No authored client-entity replacement supplies the villager graph in these controls.
+
+The regression samples seven biome textures for both adult and baby geometry.
+It retains four resolved surfaces and native script scales of 0.9375 and 2.
+The level surface retains its adult geometry while the baby visibility rule hides it.
+Supplied stationary movement inputs isolate graph admission and texture selection.
+Masked profession layers still retain Java fallback; resetting that state recovers the same playback.
+
+
+Fresh direct and ViaProxy sessions load the bundled villager client graph on BDS 1.26.51.1.
+An additional ViaProxy session verifies the same transitions with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Authored server component events change biome, age, and profession metadata; they do not replace the client graph.
+Native packet journals confirm each typed biome, age, and profession transition.
+Read-only observations verify four resolved surfaces, biome textures, adult/baby geometry, and native script scales.
+Masked professions select Java fallback, and resetting the profession recovers the same actor playback and lifetime.
+Removal retires the native snapshot on all three runs.
+All 21 final screenshots receive visual review, and runtime artifacts match the build.
+
+The existing white HUD bar remains visible with Iris after the actor is removed.
+Its owner remains unclassified, and this material change does not establish complete Iris or native visual parity.
+
+These controls do not establish native graphical parity, natural aging, collision behavior, or complete villager interactions.
+
 Ordinary mapped entities now resolve the bundled Bedrock 1.26.51.1 client entity definition beneath accepted server packs. Supported definitions supply native geometry, textures, animation, visibility and materials. The Java entity continues to handle gameplay.
 
 The target library's end crystal uses `animation.ender_crystal.move` and `controller.render.ender_crystal`. Its authored rotation uses lifetime and a random phase. It does not face the camera. The native draw retains server animation commands and the original Java shadow radius.
