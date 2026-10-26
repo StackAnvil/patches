@@ -72,10 +72,43 @@ Earlier CubeCraft checks reach playable spawn but retain the unresolved overall 
 These checks do not establish native first-person equipment placement or a live comparison of unresolved binding targets.
 Per-bone materials, additional variants and material families, and broader pack comparisons remain incomplete.
 
-The full four-project build passes 3,048 tests with 152 optional skips and no failures or errors.
-All 20 focused binding tests pass without skips, including both native matrix fixtures and the existing native slot callback fixture.
+The full four-project build passes 3,049 tests with 152 optional skips and no failures or errors.
+All 21 focused binding and owner tests pass without skips, including both native matrix fixtures and the existing native slot callback fixture.
 All 38 add-on patches replay.
 All 1,205 compiled client classes match the distributable add-on.
 All 1,557 core classes, 199 assets, and 39 converter classes match both embedded consumers.
 The rebuilt core and ViaProxy JARs remain byte-identical to the preceding milestone.
-This increment adds no new live gameplay capture.
+The earlier unresolved-target increment used numerical controls. The live costume checks follow here.
+
+
+## Bind equipment to the rendered costume
+
+Third-person equipment now uses the primary resolved server costume as its owner, matching the existing first-person owner order.
+Previously, equipment always used the base skin skeleton even when the server costume supplied the visible body.
+The equipment layer prepares the selected costume with the current immutable render state before reading its matrices.
+This preparation does not evaluate scripts or advance animation playback.
+If no costume resolves, equipment retains the skin owner.
+
+A real BDS 1.26.51.1 pack exposes the previous mismatch.
+Its visible costume has a body matrix at Y=24, while the base skin has Y=0.
+The valid body-bound child therefore appeared above the costume in third person.
+The regression covers this origin difference, current head animation, primary selection, replacement, and return to the skin.
+
+The live scene also exercises unresolved names, empty strings, whitespace, numeric results, and a valid body target.
+Real hotbar changes select the five items.
+Sneaking switches one binding between missing and valid targets while retaining the same item playback.
+A separate child keeps its valid binding throughout.
+The observer only reads production scopes and models after normal drawing setup.
+
+Native component lifetime, multi-geometry owner semantics, native poses, and complete image parity remain unverified.
+The scene uses an authored test costume and does not supply a native graphical baseline.
+
+Fresh direct and ViaProxy sessions each verify 16 equipment states with the same rebuilt add-on.
+Both views use the costume body matrix at Y=24 while the base skin remains at Y=0.
+The colliding owner head stays at X=32, while the unresolved item bone retains its local position.
+Sneak transitions preserve playback identity and start time as its clock advances.
+Clearing equipment retires both perspective caches after each view updates.
+All 28 final screenshots receive visual review, and installed runtime JAR hashes match the build.
+
+The fixture also exposes an open route difference: ViaProxy hotbar icons are blank, while the direct route displays vanilla icons.
+That difference also occurs in the before-fix proxy recording and remains outside the verified equipment-owner correction.

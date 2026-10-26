@@ -286,7 +286,7 @@ Transport passes; complete scene rendering still fails on unresolved mappings. N
 | R3 | Particle runtime | Incomplete | [Live actor queries](#live-actor-state-for-attached-effects-october-26-2026) include [target metadata and rendering recovery](#native-target-queries-and-rendering-recovery-october-26-2026). Complete components, child effects, concurrency, and native visible lifecycle comparisons remain required. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
 | R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties and per-face ambient strengths through ViaProxy. Native material arithmetic matches 576 executable cases. Native corner maxima also match 12,288 executable samples. Both routes retain the settings through model baking and injected terrain lighting. Java still supplies corner sampling and interpolation. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Core carries native random offsets in converted metadata. The add-on verifies continuous terrain, outline, and camera offsets separately from floored movement collision on both routes, including edge and corner queries. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, vanilla per-type collision shapes, and native collision solving. |
-| R6 | Equipped attachables | Incomplete | Both routes receive accepted graphs and named properties. Supported equipment uses shared item scopes and complete owner matrices. Explicit unresolved targets retain their local hierarchy. Verify live binding transitions, variants, per-bone materials, additional material families, and broader native comparisons. |
+| R6 | Equipped attachables | Incomplete | Both routes receive accepted graphs and named properties. Supported equipment uses shared item scopes and complete owner matrices. Explicit unresolved targets retain their local hierarchy. Third-person equipment now selects the rendered primary costume. Complete variants, per-bone materials, additional material families, multi-geometry ownership, and native visual comparisons. |
 
 The attachable matrix tests establish supported same-name affine bindings.
 They do not establish explicit binding expressions or complete native equipment parity.
@@ -10458,10 +10458,37 @@ Removing declaration-based suppression makes the numerical comparison fail.
 The controls supply parsed definitions, typed values, owner matrices, animation samples, and weak-reference backing.
 Diagnostic formatting and logging remain explicit boundaries.
 Native parsing, component cleanup, valid-to-missing lifecycle transitions, name normalization, and visible parity remain unverified.
-A live equipped-item comparison remains required for this case.
+The later live costume controls exercise this case on the Java rendering path.
 This result does not close the original inventory, locator, projectile rollback, eating, or direct camera-item rendering reports.
 
 The full build passes 3,048 tests with 152 optional skips and no failures or errors.
 All 20 focused binding tests pass without skips in that build.
 The distributable add-on matches all 1,205 compiled client classes, and both embedded consumers retain the matching core and converter classes.
 This increment adds no new live gameplay capture.
+
+
+### Equipment owners for server costumes
+
+Third-person equipment now selects the primary rendered costume, matching the existing first-person owner order.
+The equipment layer prepares that costume with the current immutable pose before reading complete bone and deformation matrices.
+If no costume resolves, equipment keeps the skin owner.
+This preparation does not evaluate scripts or advance playback.
+
+A real server-pack scene exposed the previous mismatch.
+The valid child used base-skin Y=0 in third person and costume Y=24 in first person.
+The missing target correctly retained its local position, while the independent valid child appeared above the visible costume.
+The regression covers current animation, primary selection, replacement, and return to the base skin.
+
+Native component lifetime, multi-geometry ownership, native poses, and complete image parity remain unverified.
+These authored costume controls do not provide a native graphical baseline or close the original gameplay and inventory reports.
+
+Both routes verify 16 equipped states with the same rebuilt add-on, including both views, five binding result cases, and live sneak transitions.
+The unresolved bone keeps its local pose while the valid child follows the costume at Y=24.
+Playback identity and start time remain stable through target changes.
+Equipment removal clears both view caches after each view updates.
+All 28 final screenshots receive visual review.
+
+The fixture exposes a separate open issue: ViaProxy hotbar icons are blank, while the direct route displays vanilla icons.
+The before-fix proxy recording has the same difference.
+The full build passes 3,049 tests with 152 optional skips and no failures or errors.
+All 21 focused binding and owner tests pass without skips.

@@ -1,4 +1,4 @@
-From f4c14b2216f94f1b7a2513b64b5bc1e538e9d7ea Mon Sep 17 00:00:00 2001
+From 4e526bd021d913c65d876ee7016f921783b3502a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(attachables): render equipped native pack models
@@ -223,6 +223,20 @@ declaration-based suppression fails the numerical comparison. Targeted
 scope and slot tests retain valid independent targets and preserve the
 unsupported-query fallback. Native valid-to-missing lifecycle behavior
 and a live equipped-item comparison remain separate verification work.
+
+Use the primary resolved server costume as the third-person equipment
+owner, matching the existing first-person owner order. Prepare that
+model with the current immutable render state before reading its complete
+bone and deformation matrices, since equipment can submit before the
+costume layer. Keep the skin model when no costume resolves.
+
+A real BDS 1.26.51.1 pack exposes the previous mismatch through ViaProxy:
+a body-bound child uses Y=0 from the base skin while the selected costume
+and first-person hierarchy use Y=24. It renders visibly above the costume.
+The unresolved item bone correctly remains local in that same scene.
+A regression covers primary selection, current animation, replacement,
+and restoration of the base-skin owner. Multiple selected geometry owner
+semantics and native visual parity remain separate verification work.
 ---
  .../appearance/BedrockActorAnimation.java     |  66 ++-
  .../appearance/BedrockAttachableBindings.java |  66 +++
@@ -235,11 +249,11 @@ and a live equipped-item comparison remain separate verification work.
  .../bedrock/render/BedrockActorResources.java |   3 +
  .../bedrock/render/BedrockAnimatedModel.java  |  94 +++-
  .../bedrock/render/BedrockEquipmentCache.java |  41 ++
- .../BedrockEquippedAttachableLayer.java       |  35 ++
+ .../BedrockEquippedAttachableLayer.java       |  36 ++
  .../render/BedrockHeldAttachableBindings.java |  59 +++
  .../render/BedrockPlayerAttachables.java      | 450 ++++++++++++++++++
  .../bedrock/render/BedrockPlayerModel.java    |   8 +
- .../bedrock/render/BedrockPlayerSkins.java    |  27 +-
+ .../bedrock/render/BedrockPlayerSkins.java    |  38 +-
  .../bedrock/render/BedrockTextureMeshes.java  | 109 +++++
  .../BedrockAttachableBindingsTest.java        | 105 ++++
  .../BedrockAttachableScopeTest.java           | 152 ++++++
@@ -251,12 +265,13 @@ and a live equipped-item comparison remain separate verification work.
  .../render/BedrockAnimatedModelTest.java      |  25 +
  .../render/BedrockAttachableMatricesTest.java | 150 ++++++
  .../render/BedrockCostumeVisibilityTest.java  |  45 ++
+ .../render/BedrockEquipmentOwnerTest.java     |  71 +++
  .../render/BedrockEquippedAttachableTest.java |  98 ++++
  .../render/BedrockExplicitBindingsTest.java   | 230 +++++++++
  .../BedrockHeldAttachableBindingsTest.java    | 126 +++++
  .../render/BedrockPlayerModelTest.java        |  58 +++
  .../render/BedrockTextureMeshesTest.java      |  87 ++++
- 32 files changed, 2522 insertions(+), 23 deletions(-)
+ 33 files changed, 2605 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableBindings.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java
@@ -272,6 +287,7 @@ and a live equipped-item comparison remain separate verification work.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAttachableMatricesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCostumeVisibilityTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentOwnerTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockExplicitBindingsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHeldAttachableBindingsTest.java
@@ -980,10 +996,10 @@ index 0000000..ec577f7
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java
 new file mode 100644
-index 0000000..2c20075
+index 0000000..79ea084
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,36 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1009,10 +1025,11 @@ index 0000000..2c20075
 +    public void submit(final PoseStack poses, final SubmitNodeCollector collector, final int light,
 +                       final AvatarRenderState state, final float yaw, final float pitch) {
 +        if (!(state instanceof BedrockPlayerAttachables.State nativeState) || state.isSpectator) return;
-+        final var deformations = BedrockAnimatedModel.deformations(this.getParentModel());
++        final var owner = BedrockPlayerSkins.equipmentOwner(state, this.getParentModel());
++        final var deformations = BedrockAnimatedModel.deformations(owner);
 +        for (final var surface : nativeState.bedrockAttachables()) {
 +            collector.order(1).submitModel(surface.model(),
-+                    new BedrockPlayerAttachables.Draw(deformations, BedrockAnimatedModel.boneMatrices(this.getParentModel()),
++                    new BedrockPlayerAttachables.Draw(deformations, BedrockAnimatedModel.boneMatrices(owner),
 +                            surface.bindings(), surface.selection(), surface.pose()), poses,
 +                    surface.renderType(), BedrockActorRenderTypes.lightCoords(light, surface.selection().ignoreLighting()),
 +                    OverlayTexture.NO_OVERLAY, state.outlineColor);
@@ -1565,7 +1582,7 @@ index 3baf776..bd68d57 100644
 +
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index a18437e..02e30c1 100644
+index a18437e..e80c3e7 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -78,6 +78,7 @@ import java.util.HashMap;
@@ -1576,7 +1593,25 @@ index a18437e..02e30c1 100644
  import java.util.UUID;
  
  /** Owns client textures and geometry for Bedrock player appearances. */
-@@ -532,7 +533,8 @@ public final class BedrockPlayerSkins {
+@@ -430,6 +431,17 @@ public final class BedrockPlayerSkins {
+         return List.copyOf(surfaces);
+     }
+ 
++    /** Equipment follows the primary rendered costume, using the same owner order as the hand view. */
++    static net.minecraft.client.model.player.PlayerModel equipmentOwner(final AvatarRenderState state,
++            final net.minecraft.client.model.player.PlayerModel fallback) {
++        final var surfaces = costumes(state);
++        if (surfaces.isEmpty()) return fallback;
++        final var owner = surfaces.getFirst().model();
++        // The equipment layer can submit before the costume layer prepares this frame's model.
++        owner.setupAnim(state);
++        return owner;
++    }
++
+     private static void unresolvedCostume(final Appearance appearance, final String kind, final String name) {
+         if (appearance.unresolvedCostumes.add(kind + ':' + name)) LOGGER.warn("Unresolved server player costume {}: {}", kind, name);
+     }
+@@ -532,7 +544,8 @@ public final class BedrockPlayerSkins {
          final Map<String, Float> variables = actorVariables(entity, state, false);
          final var pose = actor.sample(
                  (System.nanoTime() - appearance.started) / 1_000_000_000F,
@@ -1586,7 +1621,7 @@ index a18437e..02e30c1 100644
                  eventsEnabled, sounds::add, particles::add);
          playEffects(appearance, entity, state, pose, sounds, particles);
          return pose;
-@@ -606,7 +608,7 @@ public final class BedrockPlayerSkins {
+@@ -606,7 +619,7 @@ public final class BedrockPlayerSkins {
                  items.mainHandHeight, items.oldOffHandHeight, items.offHandHeight, partialTick);
          appearance.firstPersonActor.commands(BedrockActorState.animations(player.getUUID()));
          final var pose = appearance.firstPersonActor.sample((System.nanoTime() - appearance.started) / 1_000_000_000F,
@@ -1595,7 +1630,7 @@ index a18437e..02e30c1 100644
          final var camera = Minecraft.getInstance().options.bobView().get()
                  ? appearance.firstPersonCamera.sample(player.xRotO, player.getXRot(), player.yRotO, player.getYRot(),
                      partialTick, System.nanoTime() / 1_000_000_000D)
-@@ -623,13 +625,16 @@ public final class BedrockPlayerSkins {
+@@ -623,13 +636,16 @@ public final class BedrockPlayerSkins {
              appearance.firstPersonModels = List.copyOf(surfaces);
          }
          final List<FirstPersonSurface> draws = selection == null ? appearance.firstPersonModels : selection.surfaces();
@@ -1613,7 +1648,7 @@ index a18437e..02e30c1 100644
                  nativeDrawing ? BedrockFirstPersonActor.root(BedrockFirstPersonActor.PLAYER_RENDER_HEIGHT, player.getScale() / 16F,
                          new org.joml.Vector3f(scale.x(), scale.y(), scale.z()), false,
                          BedrockFirstPersonActor.global(player.deathTime, partialTick,
-@@ -711,11 +716,23 @@ public final class BedrockPlayerSkins {
+@@ -711,11 +727,23 @@ public final class BedrockPlayerSkins {
                          BedrockActorRenderTypes.lightCoords(packedLight, surface.material.ignoreLighting()),
                          net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY, null);
              }
@@ -1637,7 +1672,7 @@ index a18437e..02e30c1 100644
      public static boolean firstPersonActorSubmitted() {
          return firstPersonFrame != null && !firstPersonFrame.surfaces.isEmpty();
      }
-@@ -805,7 +822,7 @@ public final class BedrockPlayerSkins {
+@@ -805,7 +833,7 @@ public final class BedrockPlayerSkins {
  
      private record FirstPersonFrame(Identifier texture, BedrockActorAnimation.Visibility visibility,
                                      BedrockFirstPersonCamera.Rotation camera, List<FirstPersonSurface> surfaces,
@@ -1646,7 +1681,7 @@ index a18437e..02e30c1 100644
  
      static Map<String, Object> geometryQueries(final AvatarRenderState state) {
          final Geometry geometry = geometry(appearance(state.skin), true);
-@@ -1062,10 +1079,12 @@ public final class BedrockPlayerSkins {
+@@ -1062,10 +1090,12 @@ public final class BedrockPlayerSkins {
          BedrockActorResources.clear();
          rendererContext = context;
          rendererEpoch++;
@@ -2632,6 +2667,83 @@ index 0000000..c02a65c
 +        humanoid.visibility(List.of(new BedrockPlayerControllers.Visibility("*", false)));
 +        assertFalse(BedrockHumanoidVisibilityTest.cube(humanoid, "rightarm").visible);
 +        assertFalse(BedrockHumanoidVisibilityTest.cube(humanoid, "rightsleeve").visible);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentOwnerTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentOwnerTest.java
+new file mode 100644
+index 0000000..d0708a6
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentOwnerTest.java
+@@ -0,0 +1,71 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
++import java.util.List;
++import java.util.Map;
++import net.minecraft.client.model.player.PlayerModel;
++import net.minecraft.client.renderer.entity.state.AvatarRenderState;
++import net.minecraft.resources.Identifier;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class BedrockEquipmentOwnerTest {
++    @Test
++    void preparesTheSelectedPrimaryCostumeBeforeReadingEquipmentMatricesAndRestoresTheSkinFallback() {
++        final var skin = model(24);
++        final var costume = model(0);
++        final var replacement = model(12);
++        final var state = new State();
++        state.pose = Map.of("head", new BedrockBoneAnimation.Transform(new BedrockBoneAnimation.Vector(32, 0, 0),
++                new BedrockBoneAnimation.Vector(0, 0, 0), new BedrockBoneAnimation.Vector(1, 1, 1), false));
++        skin.setupAnim(state);
++        final var texture = Identifier.fromNamespaceAndPath("test", "owner");
++        try (final var skins = mockStatic(BedrockPlayerSkins.class, CALLS_REAL_METHODS)) {
++            skins.when(() -> BedrockPlayerSkins.costumes(state)).thenReturn(List.of(
++                    new BedrockPlayerSkins.CostumeSurface(costume, texture, true),
++                    new BedrockPlayerSkins.CostumeSurface(replacement, texture, true)));
++            final var selected = BedrockPlayerSkins.equipmentOwner(state, skin);
++            assertSame(costume, selected);
++            final var matrices = BedrockAnimatedModel.boneMatrices(selected);
++            assertEquals(24F, matrices.get("body").m31());
++            assertEquals(32F, matrices.get("head").m30());
++            assertEquals(32F, BedrockAnimatedModel.deformations(selected).get("head").m30());
++            assertEquals(0F, BedrockAnimatedModel.boneMatrices(skin).get("body").m31());
++
++            skins.when(() -> BedrockPlayerSkins.costumes(state)).thenReturn(List.of(
++                    new BedrockPlayerSkins.CostumeSurface(replacement, texture, true)));
++            assertSame(replacement, BedrockPlayerSkins.equipmentOwner(state, skin));
++            assertEquals(12F, BedrockAnimatedModel.boneMatrices(replacement).get("body").m31());
++            assertEquals(32F, BedrockAnimatedModel.boneMatrices(replacement).get("head").m30());
++
++            skins.when(() -> BedrockPlayerSkins.costumes(state)).thenReturn(List.of());
++            assertSame(skin, BedrockPlayerSkins.equipmentOwner(state, skin));
++            assertEquals(0F, BedrockAnimatedModel.boneMatrices(skin).get("body").m31());
++        }
++    }
++
++    private static PlayerModel model(final int bodyPivot) {
++        final var geometry = BedrockGeometryModel.fromJson("""
++                {"minecraft:geometry":[{"description":{"identifier":"geometry.owner","texture_width":32,"texture_height":16},
++                "bones":[{"name":"body","pivot":[0,%d,0]},{"name":"head","parent":"body","pivot":[0,24,0]}]}]}
++                """.formatted(bodyPivot)).getFirst();
++        return BedrockGeometry.playerModel(geometry, false);
++    }
++
++    private static final class State extends AvatarRenderState implements BedrockPlayerAnimationState {
++        private Map<String, BedrockBoneAnimation.Transform> pose = Map.of();
++        private BedrockActorAnimation.Visibility visibility = BedrockActorAnimation.Visibility.UNSPECIFIED;
++        public BedrockActorAnimation.Visibility bedrockBodyVisibility() { return this.visibility; }
++        public void bedrockBodyVisibility(final BedrockActorAnimation.Visibility value) { this.visibility = value; }
++        public Map<String, BedrockBoneAnimation.Transform> bedrockAnimationPose() { return this.pose; }
++        public void bedrockAnimationPose(final Map<String, BedrockBoneAnimation.Transform> value) { this.pose = value; }
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
