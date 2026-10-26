@@ -10320,6 +10320,7 @@ Both routes complete four golden apples during an eight-second moving hold with 
 They then consume a final single apple while moving and retain absorption.
 The client ends with an empty hand, inactive item use and no pending replay command.
 Corrections occur during food-use transitions, so these controls do not establish smooth movement parity.
+The later consumable-counter control below addresses the repeated delayed-completion burst, while retaining isolated direct corrections.
 The intermittent original reports remain open.
 
 **Repeatable checks:** Three integration cases now cover these outcomes.
@@ -10778,3 +10779,46 @@ A declared negative control requests the unresolved `camera/0` model through the
 The API reports the retained missing-image reason, and the full rendering gate fails as expected.
 All four emotes still render during that control.
 The probe tests the selection diagnostic; it does not exercise a native camera item interaction.
+
+## Consumable movement after counter expiry
+
+The local consumable counter can reach zero before its server completion event arrives.
+Java retains active use during that wait.
+The previous movement path therefore kept applying the native slowdown after the counter expired.
+A fresh strict-BDS 1.26.51.1 control reproduced repeated corrections with a declared 300 ms inbound Java channel delay.
+A read-only observer recorded seven active zero-counter ticks per delayed completion.
+
+Movement now resumes at counter expiry for automatic consumables.
+Inventory, completion handling and the active use cycle retain their existing authority.
+Non-consumables and release-based items keep their existing path.
+Historical physics uses its recorded counter and item components for the same decision, without repeating consumption.
+The change adds no delay constant, extra timer or network revision.
+
+| Control | Undelayed corrections | Delayed repeated food | Delayed final item |
+| --- | ---: | ---: | ---: |
+| Fresh direct baseline | 0 | 8 | 2 |
+| Direct candidate | 0 | 0 | 0 |
+| Final direct artifact | 0 | 1 | 1 |
+| Final proxy artifact | 0 | 0 | 0 |
+
+Counts exclude declared preparation corrections before physical item use starts.
+All runs retain the same physical input and server fixture; the observer adds a read of the applied scale after the baseline.
+Both final routes complete four delayed foods and the last single item, retain absorption, and end with an empty hand and inactive use.
+Undelayed completion counts vary between four and five during the fixed input window.
+These controls do not establish exact native consumption timing.
+
+The full replayed build passes 3,072 tests with 152 optional skips and no failures or errors.
+The permanent repeated-food, final-item, bow-release and reconnect checks pass against the final build.
+Compiled client classes and both embedded core copies match the verified packages.
+A body-only patch amendment preserves the exact tested source contents.
+
+The two isolated direct corrections remain under investigation.
+Packet inspection pairs each `StartUsingItem` flag with active local use and its recorded input vector.
+That evidence does not justify adding an arbitrary action delay or changing the prediction transport.
+The original intermittent endless-eating and pearl/wind-charge rollback reports remain open.
+No fresh native graphical comparison or complete movement parity is claimed.
+
+Native journals independently confirm the changed movement state.
+All 40 matched active zero-counter baseline frames still send the slowed forward vector `0.122499995`.
+The 36 matched final direct frames send `1.0`; their positions match the read-only counter samples.
+The first-use flags remain paired with active use and recorded movement, so the residual direct corrections need separate timing analysis.

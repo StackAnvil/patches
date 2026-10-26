@@ -1,4 +1,4 @@
-From bacb27fe61bf754c9d1fc66bdd0c5460c797688a Mon Sep 17 00:00:00 2001
+From ceaa95807625cb3f73d11ecccde4c17e94d0ed4d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -584,6 +584,25 @@ registry and collider regressions. The shared source codec now carries
 remote-player interpolation clears; the client consumes them through its
 existing lifetime-checked source channel and historical captures remain
 immutable.
+
+End the movement modifier of an automatic consumable when its local use
+counter expires, while leaving the use cycle, completion event and
+inventory authority intact. Keep non-consumables and release-based items
+on their existing path. Historical physics already retains the counter
+and item components, so replay makes the same movement decision without
+repeating consumption or changing the live inventory.
+
+A strict Bedrock 1.26.51.1 control with a declared 300 ms inbound Java
+delay retains active food use for seven zero-counter ticks per completion.
+The previous client keeps applying slowdown during that gap, causing eight
+corrections during repeated moving eating and two on the final item.
+The final-artifact controls remove that repeated burst: ViaProxy has no
+corrections in either delayed food phase, while direct retains one
+isolated correction per phase. Both routes complete four delayed foods
+and the final item, retain absorption, and end with an empty hand and
+inactive use. Undelayed controls remain correction-free. The remaining
+direct transitions, exact native timing and intermittent original eating
+report still need investigation.
 ---
  build.gradle.kts                              |   2 +-
  .../bedrock/ViaFabricPlusBedrock.java         |  14 +
@@ -609,7 +628,7 @@ immutable.
  .../movement/MixinLevelPhysicsReplay.java     |  25 +
  .../features/movement/MixinLivingEntity.java  | 140 +++++
  .../movement/MixinLivingPhysicsState.java     | 145 ++++++
- .../features/movement/MixinLocalPlayer.java   | 361 ++++++++++++-
+ .../features/movement/MixinLocalPlayer.java   | 364 ++++++++++++-
  .../movement/MixinMobEffectPhysicsState.java  |  18 +
  .../movement/MixinParticlePhysicsReplay.java  |  24 +
  .../movement/MixinPassengerPhysicsReplay.java |  39 ++
@@ -681,7 +700,7 @@ immutable.
  .../replay/PhysicalWorldCollisionTest.java    | 111 ++++
  .../render/PhysicalColliderSourcesTest.java   | 151 ++++++
  .../render/PhysicalReplayLifetimeTest.java    | 151 ++++++
- 96 files changed, 7479 insertions(+), 74 deletions(-)
+ 96 files changed, 7482 insertions(+), 74 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAgePhysicsState.java
@@ -788,7 +807,7 @@ index 159fe40..0340595 100644
      jarInJar("org.redlance.mochafloats:runtime:6.1.0") {
          exclude(group = "io.netty")
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 6462cfa..9472343 100644
+index 5acbb07..580d20e 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 @@ -21,6 +21,7 @@
@@ -799,7 +818,7 @@ index 6462cfa..9472343 100644
  import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
  import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
  import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
-@@ -67,6 +68,10 @@ import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
+@@ -68,6 +69,10 @@ import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
  import com.viaversion.viafabricplus.bedrock.hud.BedrockLocatorBar;
  import com.viaversion.viafabricplus.bedrock.hud.LocatorBarPayload;
  import com.viaversion.viafabricplus.bedrock.input.RawInputPayload;
@@ -810,7 +829,7 @@ index 6462cfa..9472343 100644
  import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
  import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusSkinProvider;
  import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusBuiltinResourcePackProvider;
-@@ -132,6 +137,11 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -137,6 +142,11 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
              ClientPlayNetworking.registerReceiver(NativeActorBoundsPayload.TYPE,
                  (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
@@ -822,7 +841,7 @@ index 6462cfa..9472343 100644
          PayloadTypeRegistry.clientboundPlay().register(NativeAnimationPayload.TYPE, NativeAnimationPayload.CODEC);
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
              ClientPlayNetworking.registerReceiver(NativeAnimationPayload.TYPE,
-@@ -148,6 +158,10 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -153,6 +163,10 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          ClientPlayNetworking.registerGlobalReceiver(NativeParticlePlaybackPayload.TYPE,
                  (payload, context) -> BedrockServerParticles.accept(payload.message()));
          PayloadTypeRegistry.serverboundPlay().register(RawInputPayload.TYPE, RawInputPayload.CODEC);
@@ -2230,10 +2249,10 @@ index 0000000..3cad3f3
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index e5a8167..76e4813 100644
+index e5a8167..0249da9 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,22 +21,379 @@
+@@ -21,22 +21,382 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -2410,8 +2429,11 @@ index e5a8167..76e4813 100644
 +        }
 +        // Core translates the squared native modifier into USE_EFFECTS.
 +        // Native applies it after posture input and clears it after the frame.
-+        this.viaFabricPlusBedrock$itemUseScale = this.isUsingItem() && !this.isPassenger()
-+                ? this.getUseItem().getOrDefault(DataComponents.USE_EFFECTS, UseEffects.DEFAULT).speedMultiplier() : 1F;
++        final ItemStack item = this.getUseItem();
++        // A completion event can arrive after the local consumable counter expires.
++        final boolean expiredConsumable = item.has(DataComponents.CONSUMABLE) && !item.useOnRelease() && this.getUseItemRemainingTicks() <= 0;
++        this.viaFabricPlusBedrock$itemUseScale = this.isUsingItem() && !this.isPassenger() && !expiredConsumable
++                ? item.getOrDefault(DataComponents.USE_EFFECTS, UseEffects.DEFAULT).speedMultiplier() : 1F;
 +        return input.scale(this.viaFabricPlusBedrock$itemUseScale);
 +    }
 +
@@ -6324,10 +6346,10 @@ index f42de8f..8e8672c 100644
  
  accessible field net/minecraft/client/renderer/RenderPipelines ENTITY_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 103a613..1dd5634 100644
+index dfea2ec..5b8386c 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -141,12 +141,37 @@
+@@ -144,12 +144,37 @@
      "features.input.MixinMouseHandler",
      "features.input.MixinInputPermissionConnection",
      "features.input.MixinMinecraftInputPermissions",

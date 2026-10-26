@@ -2173,3 +2173,32 @@ These results do not establish a fix for that signaling failure.
 This closes the final-artifact active-use overlap gap for the tested standing and controlled-boat cases.
 The affected public-server rollback and eating reports, other authority modes, remaining mounts, complete native use cycles, seat/lifetime parity, and native trajectories remain unverified.
 The full five-area implementation goal remains active.
+
+## Consumable counter expiry under delayed completion
+
+The previous path kept slowing an automatic consumable while Java waited at a zero counter for the server completion event.
+A strict Bedrock 1.26.51.1 control with a declared 300 ms inbound Java channel delay records seven such ticks per completion.
+The movement predicate now expires for non-release consumables at zero.
+Inventory, completion events, the live use cycle and release-based items retain their existing paths.
+Historical replay already captures the counter and item components, so it makes the same movement decision without new state or consumption side effects.
+
+Fresh baseline: zero undelayed corrections, eight during delayed repeated eating and two during the delayed final item.
+The first direct candidate has zero in all three phases.
+The final direct artifact retains one isolated correction in each delayed phase; final ViaProxy has none.
+Both final routes complete four delayed foods plus the final single item, retain absorption and end with an empty hand and inactive use.
+The fixed undelayed input window completes four or five foods across runs; exact native timing is not established.
+Preparation corrections occur before physical use and are counted separately.
+
+The final replayed build passes 3,072 tests with 152 optional skips and no failures or errors.
+Permanent repeated-food, final-item, bow-release and reconnect controls pass against that build.
+All input and server fixture hashes stay fixed; after the baseline, the read-only observer also samples the applied movement scale.
+The body-only final amendment preserves tested source hashes and packaged class identities.
+
+Residual direct transitions remain open. Native packet inspection pairs `StartUsingItem` with active use and the recorded movement frame.
+It does not support a heuristic frame delay or a new prediction revision as a fix.
+Complete native timing, other consumables and authority modes, graphical parity, and the intermittent original reports remain unverified.
+
+Native journals independently confirm the changed movement state.
+All 40 matched active zero-counter baseline frames still send the slowed forward vector `0.122499995`.
+The 36 matched final direct frames send `1.0`; their positions match the read-only counter samples.
+The first-use flags remain paired with active use and recorded movement, so the residual direct corrections need separate timing analysis.
