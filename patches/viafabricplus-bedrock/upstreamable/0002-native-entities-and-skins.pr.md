@@ -404,3 +404,45 @@ These results do not establish complete native image parity.
 Geometry and tessellation programs retain the earlier reference bridge until their UV transport is implemented and verified.
 Emissive material integration and arbitrary shader-pack output behavior remain separate work.
 Raw recordings, shader diagnostics, observer code, and pixel-control logs remain private.
+
+
+## Opaque actor materials
+
+Native actor materials now retain their opaque or alpha-tested coverage through every supported appearance consumer.
+The same material value reaches custom actors, skins, persona layers, server costumes, equipped items, and native portraits.
+Opaque world draws write color and depth even when a source texel has zero alpha.
+Ordinary cutouts keep their strict alpha cutoff, while emissive cutouts discard only empty RGBA texels.
+Iris receives a solid lit pass for opaque emissive materials and a cutout lit pass for alpha-tested emissive materials.
+Unknown shader effects and unsupported material states keep the existing fallback.
+
+The pinned Bedrock 1.26.51.1 container contains `BaseColor`, `AlphaTest`, `Emissive`, and `AlphaTestEmissive` passes.
+Its SHA-256 is `403efcc7777c9712176f6715f861c873e31d8e45d0b73b8e320bd29754789058`.
+Unmodified Lazurite 0.10 reads the complete version-26 container through its closing magic and end of file.
+All four sampled vertex shaders are byte-identical.
+The opaque fragments retain the same lighting, overlay, inverse-alpha emission, and fog arithmetic without either discard operation.
+
+A private control executes the original fragment IR with supplied texture, interpolation, constant-buffer, and output boundaries.
+The actual production fragment shader matches all 672 controls through Mesa EGL at tolerance `1e-6`.
+The comparison includes RGBA output, discard behavior, and retained depth for zero-alpha opaque texels.
+It does not establish native vertex production, pass selection, GPU state, or complete rasterization parity.
+
+The full build passes 3,056 tests with 152 optional skips and no failures or errors.
+All 19 focused material, pipeline, bundled-definition, and GPU tests pass without skips.
+The distributable add-on matches all 1,207 compiled client classes.
+Both consumers retain matching core and converter classes and assets.
+
+Fresh BDS 1.26.51.1 controls exercise six material selections on both routes, with and without Iris.
+Both views retain the selected native graphs, textures, coverage flags, depth writes, and derived Iris passes.
+Real server removal retires the six observed UUID snapshots in each session.
+All eight final screenshots receive visual review and show the expected material surfaces and cutout holes.
+The plain and shader scenes use different actor carriers to isolate material behavior from entity-specific pack effects.
+Installed add-on and proxy hashes match the final build.
+These checks do not establish complete renderer-cache cleanup or native graphical parity.
+
+Complete Iris emissive overlay order and framebuffer alpha remain unverified.
+A separate chicken-carrier control appears black on both routes with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+That pack offsets chicken depth in its entity program but omits that offset from its eye program.
+This source difference is a candidate cause, not an executed proof of the generated shader mismatch.
+Matching transforms across shader-pack passes remains an open requirement.
+Native graphical comparison remains unavailable because the installed native launcher cannot decode its licensing response.
+The original inventory, locator, intermittent item-use, emote, skin, interaction, and other gameplay requirements remain open.
