@@ -286,7 +286,7 @@ Transport passes; complete scene rendering still fails on unresolved mappings. N
 | R3 | Particle runtime | Incomplete | [Live actor queries](#live-actor-state-for-attached-effects-october-26-2026) include [target metadata and rendering recovery](#native-target-queries-and-rendering-recovery-october-26-2026). Complete components, child effects, concurrency, and native visible lifecycle comparisons remain required. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
 | R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties and per-face ambient strengths through ViaProxy. Native material arithmetic matches 576 executable cases. Native corner maxima also match 12,288 executable samples. Both routes retain the settings through model baking and injected terrain lighting. Java still supplies corner sampling and interpolation. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Core carries native random offsets in converted metadata. The add-on verifies continuous terrain, outline, and camera offsets separately from floored movement collision on both routes, including edge and corner queries. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, vanilla per-type collision shapes, and native collision solving. |
-| R6 | Equipped attachables | Incomplete | Accepted actor graphs now travel through ViaProxy. Both routes render the supported costume and owner-bound chest wings. Complete proxy properties, variants, explicit bone bindings, per-bone materials, material families, and broader native comparisons. |
+| R6 | Equipped attachables | Incomplete | Both routes receive accepted graphs and named properties. Supported equipment uses shared item scopes and complete owner matrices. Explicit unresolved targets retain their local hierarchy. Verify live binding transitions, variants, per-bone materials, additional material families, and broader native comparisons. |
 
 The attachable matrix tests establish supported same-name affine bindings.
 They do not establish explicit binding expressions or complete native equipment parity.
@@ -877,7 +877,7 @@ Core applies converted model selectors after both vanilla and custom item mappin
 
 **Automated checks:** All four builds pass with 969 Java tests passing and 113 optional fixture tests skipped. Archive tests verify order, provenance, complete bytes, reconstruction, excluded paths, malformed headers, and indexes. Item and binding tests cover vanilla and custom models, unchanged gameplay data, accepted and rejected resources, explicit conditions, generic fallback, wearer changes, equipment context, and query isolation. Both north-star patch application checks pass. An isolated effects checkout, manually adapted for predecessor context without setup, passes 35 tests and both Checkstyle tasks. That result does not establish automatic isolated application of the effects patch.
 
-**Remaining:** ViaProxy now receives evaluated custom actor models. Named actor and player properties now travel through the shared actor-input channel. Complete events, emote state, and outbound account synchronization remain incomplete. This archive has memory bounds of 32 MiB per file, 256 MiB decompressed content, and 4,096 layers. Larger real packs need verification. First-person equipment, explicit bone binding expressions, per-bone materials, non-default variants, additional material families, competing eligible item bindings, and unavailable licensed default assets remain incomplete or unverified. Resource availability and submitted surfaces do not establish complete visible parity. All earlier skin, persona, account, gameplay, editor, audio, particle, UI, and platform requirements remain active.
+**Remaining:** ViaProxy now receives evaluated custom actor models. Named actor and player properties now travel through the shared actor-input channel. Complete events, emote state, and outbound account synchronization remain incomplete. This archive has memory bounds of 32 MiB per file, 256 MiB decompressed content, and 4,096 layers. Larger real packs need verification. First-person equipment placement, binding lifecycle and name admission, per-bone materials, non-default variants, additional material families, competing eligible item bindings, and unavailable licensed default assets remain incomplete or unverified. Resource availability and submitted surfaces do not establish complete visible parity. All earlier skin, persona, account, gameplay, editor, audio, particle, UI, and platform requirements remain active.
 
 **Integration evidence:** The unchanged native scene payloads pass direct playback `2026-10-04T12-34-33.379Z-replay-scene` and ViaProxy playback `2026-10-04T12-31-09.735Z-replay-scene`. Both load the accepted pack without a frontend Store account. The reconstructed library contains 61 layers, one server pack, the player-specific iron attachable, and both authored geometries. Each route installs both recorded skins without rejection. Equipment selection changes from zero to one supported surface after the captured chest update. Both wing bones reach full scale.
 
@@ -10440,3 +10440,28 @@ The fixture supplies the guardian appearance, without a native graphical baselin
 **Remaining:** Other query families, conditional and time-only recovery, native poses, complete actor contexts, and graphical comparisons remain incomplete.
 Mounted, sleeping, and equipped world-model fallbacks remain.
 The original gameplay reports and the direct camera-item rendering gate remain open.
+
+
+### Unresolved attachable bone targets
+
+Explicit binding declarations now suppress implicit same-name owner deformation even when their result does not resolve.
+The bone retains its local hierarchy, and independent valid child bindings still work.
+Typed non-string results remain distinct from empty or whitespace strings.
+Held and first-person admission retain declared geometry ancestry without requiring every target name to exist.
+Unsupported queries and unbound mob equipment retain their existing fallback.
+
+Ninety-six fresh-frame controls execute the pinned Bedrock 1.26.51.1 typed gate, owner lookup, complete constructors, and recursive matrix composition.
+The fixtures include a colliding same-name owner, four matrix families, entity-relative rotation, and animation.
+Java bone and locator matrices match every control.
+Removing declaration-based suppression makes the numerical comparison fail.
+
+The controls supply parsed definitions, typed values, owner matrices, animation samples, and weak-reference backing.
+Diagnostic formatting and logging remain explicit boundaries.
+Native parsing, component cleanup, valid-to-missing lifecycle transitions, name normalization, and visible parity remain unverified.
+A live equipped-item comparison remains required for this case.
+This result does not close the original inventory, locator, projectile rollback, eating, or direct camera-item rendering reports.
+
+The full build passes 3,048 tests with 152 optional skips and no failures or errors.
+All 20 focused binding tests pass without skips in that build.
+The distributable add-on matches all 1,205 compiled client classes, and both embedded consumers retain the matching core and converter classes.
+This increment adds no new live gameplay capture.
