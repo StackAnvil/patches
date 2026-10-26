@@ -10744,5 +10744,37 @@ Compiled client classes match the packaged add-on, and embedded core classes and
 The live controls use a declared remote classic player without supplied geometry and four bundled emotes.
 The renderer resolves the native wide model and samples all four emotes.
 The installed proxy profile loads local mappings, so the unloaded-mapping result comes from the isolated regression.
-The full scene rendering gate remains failed because its camera item references a missing texture.
+The initial scene gate failed on an unused camera atlas declaration.
+The item atlas dependency checks below resolve that conversion failure on both routes.
 These controls do not establish complete native skin, pose, timing, placement or shader parity.
+
+## Item atlas dependency checks
+
+The converter now exports item icon variants only when their native images resolve.
+Sparse selector indices, native pixels and pack priority remain intact.
+Missing variants retain their reasons in converter metadata, including cached results.
+An actively selected missing icon reports a diagnostic that the rendering gate rejects.
+A later conversion clears the missing state when its image becomes available.
+An atlas without resolved variants uses the existing empty item-definition schema.
+
+Bedrock 1.26.51.1 declares `textures/items/camera` without supplying that item image.
+Its current camera definitions and ordinary item mapping do not select the atlas entry.
+Eager conversion previously produced a dangling Java sprite on unrelated joins.
+The fix applies to atlas dependencies generally and supplies no replacement image.
+Native camera interaction behavior remains outside these checks.
+
+The replayed four-project build passes 3,072 tests with 152 optional skips and no failures or errors.
+Two focused icon tests, 19 cache tests and 14 replay gate tests pass without skips.
+Checkstyle and the tooling checks pass.
+Compiled client classes and embedded core classes, assets and CubeConverter classes match their verified packages.
+
+The same controlled classic-player scene now passes full transport and rendering gates on direct and ViaProxy connections.
+Both routes sample four bundled emotes and install all three expected skin records with unchanged pixels and metadata.
+The direct observer retains the missing camera-icon reason without selecting it.
+These controls use authored placement and durations, plain software rendering, and no native graphical comparison.
+Complete native skin, emote, camera and shader parity remain open.
+
+A declared negative control requests the unresolved `camera/0` model through the production selection API in a running direct client.
+The API reports the retained missing-image reason, and the full rendering gate fails as expected.
+All four emotes still render during that control.
+The probe tests the selection diagnostic; it does not exercise a native camera item interaction.

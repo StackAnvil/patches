@@ -26,6 +26,7 @@ test("detects dropped actors, generic player rendering, and malformed assets", (
   expect(verifyRendering(expected, { ...actual, actorIdentifiers: [], evaluatedModels: [], nativePlayerRendererSelections: 0 }, "", true)).toHaveLength(3);
   expect(verifyRendering(expected, actual, "Couldn't parse item model: Empty case list\nFailed to handle packet", true)).toHaveLength(2);
   expect(verifyRendering(expected, undefined, "", true)).toHaveLength(1);
+  expect(verifyRendering(expected, actual, "Selected unresolved custom item icon example:missing/0: missing texture textures/missing", true)).toHaveLength(1);
   expect(verifyRendering(expected, actual, "Missing texture references in model viabedrock:block/custom/slot_1:\n    particle", true)).toHaveLength(1);
 });
 test("requires an actual third-person local-avatar submission rather than selection alone", () => {

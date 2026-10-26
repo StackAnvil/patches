@@ -66,3 +66,16 @@ Model parsing and baking remained visible costs.
 These measurements cover prepared packaging and the recorded replay.
 They do not establish current network latency, licensed acquisition speed, native rendering parity or live server frame time.
 Raw packs, licensed images, recordings and profiles remain private.
+
+## Item atlas output invalidation
+
+Advance the resource fingerprint when item conversion stops exporting unresolved sprite models.
+The existing metadata schema retains missing-icon reasons through memory and disk cache hits and reopened caches.
+Resolved variants retain their native selector indices.
+
+Validation: the replayed four-project build passes 3,072 tests with 152 optional skips and no failures or errors.
+Both new icon tests and all 19 cache tests pass without skips; Checkstyle and tooling checks pass.
+The same controlled classic-player scene passes full transport and rendering gates on direct and ViaProxy connections.
+Each route samples four bundled emotes and installs all three expected complete skin records.
+The direct observer retains the unresolved camera-icon reason while ordinary rendering passes.
+These plain software controls do not establish complete native camera, emote, skin or shader parity.

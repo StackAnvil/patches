@@ -139,7 +139,7 @@ export function verifyRendering(
   )
     failures.push("The replay reported model parsing, baking, or controller failures.");
   if (
-    /Missing textures in model|Missing texture references in model|Missing bedrock -> java block state mapping|Missing bedrock entity type|Unresolved server player costume|Unresolved native entity (?:geometry|texture)|Selected unresolved custom entity model/.test(
+    /Missing textures in model|Missing texture references in model|Missing bedrock -> java block state mapping|Missing bedrock entity type|Unresolved server player costume|Unresolved native entity (?:geometry|texture)|Selected unresolved custom entity model|Selected unresolved custom item icon/.test(
       clientLog,
     )
   )
