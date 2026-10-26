@@ -1216,3 +1216,52 @@ These controls verify authored responses to emote status.
 The four bundled emote animations contain no sound or particle declarations, so native emote effect ownership remains unverified.
 Remote metadata precedence, remote skin visuals, and native graphical equality remain open.
 The [coverage record](../../../docs/bedrock-coverage.md#emote-status-in-pack-queries-october-26-2026) records the checks and limits.
+
+## Bundled default emote wheel, October 26, 2026
+
+The world wheel now starts with the bundled Follow Me, Over There, Clapping, and Wave emotes.
+A separate appearance-account lookup is no longer necessary for these free assets.
+When no character is active, account loadout resolution uses the same default positions.
+Saved account positions and explicit empty slots retain precedence.
+The client prepares asset futures after native emote actions are negotiated, then advertises ready choices through the existing channel.
+
+Default positions come from the shared starter recipes for Bedrock 1.26.51.1.
+All nine starter recipes contain the same four emote positions.
+The target bundle supplies each pack, animation, and localized `persona.offer.title`.
+[Mojang's emote update](https://www.minecraft.net/en-us/article/new-emote-features-bedrock-edition) documents the four default free emotes.
+Labels use pack translations with an English fallback per key.
+Explicit empty translations remain empty, and titles bypass announcement marker formatting.
+
+The previous accountless ViaProxy control has an enabled emote connection but four disabled, unassigned slots.
+A physical selection sends no native emote.
+The observer initially attached before client initialization; a successful retry continues in the same client process.
+Its resumed observations and screenshot establish the empty-wheel baseline.
+The recorder and private server then close normally.
+
+Fresh plain and full-modpack controls use the same final development add-on.
+Its SHA-256 is `ceb35261dfb8ecec0e41b13e1c9c2d78723be2ba1b59015b1005eeb86f8d8d96`.
+The full modpack includes Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Both clients have no appearance account, and their observer never installs wheel choices or assets.
+Physical B and 1-4 controls produce four matching `playerEmote` receipts from BDS 1.26.51.1 in each run.
+Packet journals verify all four pack IDs, advertisement before playback, the local runtime actor, zero flags, and the current duration calculation.
+Each run contains four separate playback intervals with world renderer sampling.
+Input flags demonstrate early movement cancellation and natural completion, then return to the inactive state.
+
+All twelve final screenshots received visual review, including the loading and ready wheel states.
+The plain client uses an actual 854-by-480 window; the full modpack uses 1920 by 1013.
+Manual F5 controls select third person for observation.
+These captures establish availability and playback integration, without native camera, pose, or exact timing equality.
+Both final recorders and servers exit successfully, retire their owned processes, and restore the prepared profiles.
+
+Regression coverage exercises all nine starter recipes, no active character, reordered selections, explicitly cleared wheels, and localized title fallback.
+Empty-default, overwritten-selection, and missing-title variants each fail assertions; the restored implementation passes.
+All 38 add-on patches replay, with the change retained in this owning patch.
+The complete four-project build passes 2,962 tests, skips 315 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass.
+Source snapshots, compiled client classes, embedded dependencies, and shader resources match the tested outputs.
+Offline tooling and patch-metadata validation pass.
+
+Live controls cover the accountless path; saved account selection preservation has unit coverage in this change.
+Native quick-wheel behavior, controller navigation, automatic perspective, broader skin composition, and emote effects remain unfinished.
+The four free animations contain no sound or particle declarations, so they provide no new effect-ownership proof.
+The original five-area goal and the reported gameplay problems remain open.

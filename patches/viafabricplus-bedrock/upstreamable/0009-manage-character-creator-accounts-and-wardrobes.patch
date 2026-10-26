@@ -1,4 +1,4 @@
-From 215a36c7be9b629be0ad80b9306fc22048bf1ddc Mon Sep 17 00:00:00 2001
+From 15aa5877ac4690c00188cfb1da53b8bce59ccca7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(appearance): manage Character Creator accounts and
@@ -71,18 +71,40 @@ keeps controller textures and existing bound particles in the old state.
 Remote actors retain their native metadata input. A separate regression
 keeps a local EMOTING snapshot unchanged before playback and after
 movement cancellation; it fails without this local precedence rule.
+
+Initialize the world emote wheel from the target's shared starter recipes
+and prepare bundled assets once emote controls are negotiated. The free
+Follow Me, Over There, Clapping and Wave packs already load without an
+appearance account, but the previous wheel remained empty until an account
+wardrobe lookup. A live accountless ViaProxy control confirms all four
+slots disabled and no native emote after a physical selection.
+
+Use defaults when no character is active; retain saved positions and
+explicit empty slots when an account wheel arrives. Keep asynchronous
+asset loading and native advertisement on the existing ownership path.
+Read each pack's localized persona.offer.title for default labels, with
+per-key English fallback and no announcement-format processing.
+
+The pinned 1.26.51.1 bundle supplies these four packs and translations;
+all nine target starter recipes share their order. Mojang's emote feature
+announcement describes the four default free emotes:
+https://www.minecraft.net/en-us/article/new-emote-features-bedrock-edition
+This establishes default availability, not complete native wheel, camera,
+pose or emote-effect parity. Do not require a separate account selection
+or catalog request for resources already supplied with the game.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockActorQueries.java       |   10 +
  .../appearance/BedrockAppearanceStore.java    |  186 +-
- .../appearance/BedrockCharacterProfiles.java  | 1527 +++++++++++++++++
+ .../appearance/BedrockCharacterProfiles.java  | 1540 +++++++++++++++++
  .../appearance/BedrockClassicAssets.java      |   77 +
  .../appearance/BedrockClassicSkinPack.java    |  123 +-
- .../appearance/BedrockEmotePlayback.java      |  516 ++++++
+ .../appearance/BedrockEmoteMessages.java      |   24 +-
+ .../appearance/BedrockEmotePlayback.java      |  524 ++++++
  .../bedrock/appearance/BedrockEmotes.java     |  167 ++
  .../BedrockMarketplaceTransactions.java       |  253 +++
  .../appearance/BedrockOwnedSkinPacks.java     |  162 ++
- .../BedrockPersonaAnimationAtlas.java         |   96 ++
+ .../BedrockPersonaAnimationAtlas.java         |   96 +
  .../appearance/BedrockPersonaAssembler.java   |  193 +++
  .../appearance/BedrockPersonaAssets.java      |  120 ++
  .../appearance/BedrockPersonaBody.java        |  389 +++++
@@ -122,9 +144,10 @@ movement cancellation; it fails without this local precedence rule.
  .../BedrockAppearanceStoreTest.java           |   33 +
  .../appearance/BedrockBuiltinAssetsTest.java  |  112 ++
  .../BedrockCharacterColorsTest.java           |  301 ++++
- .../BedrockCharacterProfilesTest.java         |  464 +++++
- .../appearance/BedrockClassicAccountTest.java |  192 +++
+ .../BedrockCharacterProfilesTest.java         |  487 ++++++
+ .../appearance/BedrockClassicAccountTest.java |  192 ++
  .../appearance/BedrockClassicCapeTest.java    |  126 ++
+ .../appearance/BedrockEmoteMessagesTest.java  |    7 +-
  .../appearance/BedrockEmoteQueriesTest.java   |  124 ++
  .../bedrock/appearance/BedrockEmotesTest.java |  250 +++
  .../appearance/BedrockLimbSelectionTest.java  |  225 +++
@@ -144,7 +167,7 @@ movement cancellation; it fails without this local precedence rule.
  .../appearance/NativeEmotePayloadTest.java    |  103 ++
  .../render/BedrockActorQuerySnapshotTest.java |   89 +
  .../BedrockStandardPlayerGeometryTest.java    |   28 +
- 72 files changed, 14715 insertions(+), 107 deletions(-)
+ 74 files changed, 14779 insertions(+), 118 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicAssets.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
@@ -616,10 +639,10 @@ index 5ed89d0..7e09d56 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
 new file mode 100644
-index 0000000..2f9f66d
+index 0000000..85d54c8
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
-@@ -0,0 +1,1527 @@
+@@ -0,0 +1,1540 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1573,8 +1596,21 @@ index 0000000..2f9f66d
 +        return personaEditRequest(wardrobe, slotNumber, edited);
 +    }
 +
++    public static List<String> emoteIds(final AccountWardrobe wardrobe, final List<WardrobeItem> categoryItems) {
++        return wardrobe.activeSlot() < 1 ? defaultEmoteIds()
++                : emoteIds(wardrobe.slots().get(wardrobe.activeSlot() - 1), categoryItems);
++    }
++
 +    public static List<String> emoteIds(final Slot slot, final List<WardrobeItem> categoryItems) {
-+        final JsonArray entries = array(object(slot.profile(), "personaCollection"), "universalApp");
++        return emoteIds(slot.profile(), categoryItems);
++    }
++
++    static List<String> defaultEmoteIds() {
++        return emoteIds(STARTER_CHARACTERS.get(Starter.STEVE), List.of());
++    }
++
++    private static List<String> emoteIds(final JsonObject profile, final List<WardrobeItem> categoryItems) {
++        final JsonArray entries = array(object(profile, "personaCollection"), "universalApp");
 +        final int start = emoteStart(entries, categoryItems);
 +        final List<String> ids = new ArrayList<>(4);
 +        for (int index = 0; index < 4; index++) {
@@ -2444,12 +2480,64 @@ index 5f35a0d..ae57bf7 100644
      }
  
  }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessages.java
+index 1e1b478..ca831f1 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessages.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessages.java
+@@ -12,7 +12,7 @@ import java.util.Locale;
+ import java.util.Map;
+ import java.util.UUID;
+ 
+-/** Pack-local announcement translations and the target client's repeat rules. */
++/** Pack-local emote translations and the target client's announcement repeat rules. */
+ public final class BedrockEmoteMessages {
+     private final Map<String, Map<String, String>> languages;
+ 
+@@ -38,11 +38,12 @@ public final class BedrockEmoteMessages {
+                 final int equals = line.indexOf('=');
+                 if (equals < 0) continue;
+                 final String key = line.substring(0, equals).strip();
+-                if (!key.equals("persona.emote.chat_message")
++                if (!key.equals("persona.offer.title")
++                        && !key.equals("persona.emote.chat_message")
+                         && !key.equals("persona.emote.easter_egg")) continue;
+                 final String value = line.substring(equals + 1).strip();
+                 if (value.length() > 4096)
+-                    throw new IOException("The emote announcement is too long");
++                    throw new IOException("The emote translation is too long");
+                 messages.put(key, value);
+             }
+             final var previous = languages.putIfAbsent(language, Map.copyOf(messages));
+@@ -54,13 +55,16 @@ public final class BedrockEmoteMessages {
+ 
+     String message(final String language, final boolean alternate, final String player) {
+         final String key = alternate ? "persona.emote.easter_egg" : "persona.emote.chat_message";
+-        final String template =
+-                languages
+-                        .getOrDefault(language.toLowerCase(Locale.ROOT), Map.of())
+-                        .getOrDefault(
+-                                key,
+-                                languages.getOrDefault("en_us", Map.of()).getOrDefault(key, ""));
+-        return format(template, player);
++        return format(translation(language, key), player);
++    }
++
++    String title(final String language) {
++        return translation(language, "persona.offer.title");
++    }
++
++    private String translation(final String language, final String key) {
++        return languages.getOrDefault(language.toLowerCase(Locale.ROOT), Map.of()).getOrDefault(
++                key, languages.getOrDefault("en_us", Map.of()).getOrDefault(key, ""));
+     }
+ 
+     static String format(final String template, final String player) {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
 new file mode 100644
-index 0000000..fb6d1d3
+index 0000000..03e6dcc
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
-@@ -0,0 +1,516 @@
+@@ -0,0 +1,524 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2501,7 +2589,7 @@ index 0000000..fb6d1d3
 +    private static final Map<UUID, BedrockEmoteMessages.Repeat> ANNOUNCEMENTS = new HashMap<>();
 +    private static final int MUTE_EMOTE_CHAT = 2;
 +    private static List<String> names = List.of("", "", "", "");
-+    private static List<String> wheel = List.of("", "", "", "");
++    private static List<String> wheel = BedrockCharacterProfiles.defaultEmoteIds();
 +    private static BedrockAuthManager account;
 +    private static volatile UserConnection connection;
 +    private static Connection networkConnection;
@@ -2581,7 +2669,7 @@ index 0000000..fb6d1d3
 +            ITEMS.clear();
 +            ASSETS.clear();
 +            PLAYING.clear();
-+            wheel = List.of("", "", "", "");
++            wheel = BedrockCharacterProfiles.defaultEmoteIds();
 +            names = List.of("", "", "", "");
 +            REQUESTS.clear();
 +            ANNOUNCEMENTS.clear();
@@ -2589,6 +2677,7 @@ index 0000000..fb6d1d3
 +            failed = false;
 +            if (account != null) refresh();
 +        }
++        if (enabled()) prepareWheelAssets();
 +        while (KEY.consumeClick()) {
 +            if (enabled() && minecraft.gui.screen() == null)
 +                minecraft.gui.setScreen(new BedrockEmoteWheelScreen());
@@ -2624,13 +2713,7 @@ index 0000000..fb6d1d3
 +                .thenCombine(
 +                        BedrockCharacterProfiles.loadItems(
 +                                account, BedrockCharacterProfiles.Category.EMOTES),
-+                        (wardrobe, items) -> {
-+                            if (wardrobe.activeSlot() < 1)
-+                                return new AccountEmotes(items, List.of("", "", "", ""));
-+                            final var slot = wardrobe.slots().get(wardrobe.activeSlot() - 1);
-+                            return new AccountEmotes(
-+                                    items, BedrockCharacterProfiles.emoteIds(slot, items));
-+                        })
++                        (wardrobe, items) -> new AccountEmotes(items, BedrockCharacterProfiles.emoteIds(wardrobe, items)))
 +                .whenComplete(
 +                        (result, error) ->
 +                                Minecraft.getInstance()
@@ -2685,11 +2768,7 @@ index 0000000..fb6d1d3
 +                                                                    entry ->
 +                                                                            entry.getValue()
 +                                                                                    .isCompletedExceptionally());
-+                                                    for (int index = 0; index < 4; index++) {
-+                                                        final UUID id = wheelId(index);
-+                                                        if (id != null)
-+                                                            ASSETS.putIfAbsent(id, asset(id));
-+                                                    }
++                                                    prepareWheelAssets();
 +                                                    while (!PENDING.isEmpty()) {
 +                                                        receive(PENDING.removeFirst());
 +                                                    }
@@ -2760,11 +2839,28 @@ index 0000000..fb6d1d3
 +    }
 +
 +    public static List<String> wheelNames() {
-+        return names;
++        final String language = Minecraft.getInstance().options.languageCode;
++        return java.util.stream.IntStream.range(0, 4).mapToObj(slot -> {
++            if (!names.get(slot).isBlank()) return names.get(slot);
++            final var future = ASSETS.get(wheelId(slot));
++            final var emote = future == null || future.isCompletedExceptionally() ? null : future.getNow(null);
++            return emote == null ? "" : emote.messages().title(language);
++        }).toList();
 +    }
 +
 +    public static boolean loading() {
-+        return loading;
++        return loading || java.util.stream.IntStream.range(0, 4).anyMatch(slot -> {
++            final UUID id = wheelId(slot);
++            final var future = ASSETS.get(id);
++            return id != null && (future == null || !future.isDone());
++        });
++    }
++
++    private static void prepareWheelAssets() {
++        for (int slot = 0; slot < 4; slot++) {
++            final UUID id = wheelId(slot);
++            if (id != null && !ASSETS.containsKey(id)) asset(id);
++        }
 +    }
 +
 +    public static boolean failed() {
@@ -11442,10 +11538,10 @@ index 0000000..f7290bb
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
 new file mode 100644
-index 0000000..a5bc4dd
+index 0000000..14503b8
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
-@@ -0,0 +1,464 @@
+@@ -0,0 +1,487 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.google.gson.JsonObject;
@@ -11772,6 +11868,29 @@ index 0000000..a5bc4dd
 +            .get("offlineUpdate").getAsBoolean());
 +        assertEquals(1, wardrobe.slots().getFirst().pieceIds().size());
 +        assertEquals("eyes/two", wardrobe.slots().get(1).pieceIds().getFirst());
++    }
++
++    @Test
++    void usesNativeDefaultsWithoutAnActiveCharacterAndPreservesExplicitWheelOverrides() throws Exception {
++        final var defaults = BedrockCharacterProfiles.defaultEmoteIds();
++        assertEquals(4, defaults.stream().distinct().count());
++        assertTrue(defaults.stream().allMatch(id -> BedrockEmotes.isBuiltin(id.split("/", 2)[0])));
++        for (final var preset : BedrockCharacterProfiles.Starter.values()) {
++            final var slot = BedrockPersonaProfileTest.starterSlot(preset);
++            assertEquals(defaults, BedrockCharacterProfiles.emoteIds(slot, List.of()));
++            final var wardrobe = new BedrockCharacterProfiles.AccountWardrobe(List.of(slot), 0, 1, new JsonObject());
++            assertEquals(defaults, BedrockCharacterProfiles.emoteIds(wardrobe, List.of()));
++            final var active = new BedrockCharacterProfiles.AccountWardrobe(List.of(slot), 1, 1, new JsonObject());
++            final var entries = slot.profile().getAsJsonObject("personaCollection").getAsJsonArray("universalApp");
++            final var selected = List.of(defaults.get(3), "/e", defaults.get(2), defaults.get(0));
++            for (int index = 0; index < 4; index++)
++                entries.get(entries.size() - 4 + index).getAsJsonObject().addProperty("id", selected.get(index));
++            assertEquals(selected, BedrockCharacterProfiles.emoteIds(active, List.of()));
++            for (int index = 0; index < 4; index++)
++                entries.get(entries.size() - 4 + index).getAsJsonObject().addProperty("id", "/e");
++            assertTrue(BedrockCharacterProfiles.emoteIds(active, List.of()).stream().allMatch("/e"::equals));
++            assertEquals(defaults, BedrockCharacterProfiles.emoteIds(wardrobe, List.of()));
++        }
 +    }
 +
 +    @Test
@@ -12240,6 +12359,27 @@ index 0000000..58fd075
 +        return bytes.toByteArray();
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessagesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessagesTest.java
+index ff33158..b5a0fda 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessagesTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessagesTest.java
+@@ -31,10 +31,15 @@ final class BedrockEmoteMessagesTest {
+         files.put(
+                 "en_US.lang",
+                 bytes(
+-                        "\uFEFFpersona.emote.chat_message=@ &hello&.\r\n"
++                        "\uFEFFpersona.offer.title=Title @&=literal\r\n"
++                                + "persona.emote.chat_message=@ &hello&.\r\n"
+                                 + "persona.emote.easter_egg=@ again.\t###{LOCKED}\r\n"));
+         files.put("texts/de_DE.lang", bytes("persona.emote.chat_message=@ hallo=ja.\n"));
+         var messages = BedrockEmoteMessages.read(files);
++        assertEquals("Title @&=literal", messages.title("de_de"));
++        files.put("texts/de_DE.lang", bytes("persona.offer.title=\n"));
++        assertEquals("", BedrockEmoteMessages.read(files).title("de_de"));
++        files.put("texts/de_DE.lang", bytes("persona.emote.chat_message=@ hallo=ja.\n"));
+         assertEquals("§bPlayer§r hallo=ja.", messages.message("de_de", false, "Player"));
+         assertEquals("§bPlayer§r again.", messages.message("de_de", true, "Player"));
+         assertEquals("§bPlayer§r §ahello§r.", messages.message("fr_fr", false, "Player"));
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteQueriesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteQueriesTest.java
 new file mode 100644
 index 0000000..1c1ee4e

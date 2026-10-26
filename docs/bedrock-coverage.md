@@ -11338,3 +11338,43 @@ Its actual window is 854 by 480; the full modpack control uses 1920 by 1013.
 The plain control uses model readiness because its profile lacks the modpack's reload-log marker.
 All six plain screenshots received visual review, including the reload overlay and the final unobscured world.
 Both final clients close normally, retire their owned processes, and restore the prepared profiles.
+
+## Bundled default emote wheel, October 26, 2026
+
+The world emote wheel now loads its four bundled free choices without an appearance account.
+It uses the target starter-recipe positions for Follow Me, Over There, Clapping, and Wave.
+Account loadouts without an active character use those same defaults.
+Saved positions and explicit empty slots retain precedence when an account wheel arrives.
+Native actions must be negotiated before asset preparation and advertisement.
+Pack-local titles supply localized labels with an English fallback per key.
+
+The target Bedrock 1.26.51.1 bundle contains all four packs and their translations.
+All nine starter recipes share their slot order.
+[Mojang's emote update](https://www.minecraft.net/en-us/article/new-emote-features-bedrock-edition) documents the four default free emotes.
+The previous live accountless control shows four disabled, unassigned positions despite an enabled connection.
+Selecting a position sends no native emote.
+A corrected observer continues in the same client after an early initialization error and records that baseline.
+
+Fresh plain and full-modpack ViaProxy controls run against a private BDS 1.26.51.1 server.
+The full modpack loads Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Neither observer installs a wheel, seeds assets, or starts playback.
+Physical B and 1-4 controls produce four native server receipts in each run.
+Packet journals verify pack IDs, advertisement, actor ownership, flags, and the current duration calculation.
+Four separate world playback intervals, early movement cancellation, natural completion, and inactive final input flags pass in both runs.
+All twelve final screenshots received visual review, including loading and ready wheel states.
+Both clients and servers close normally, retire owned processes, and restore the prepared profiles.
+
+Regressions cover all nine starter recipes, absent active characters, reordered and cleared wheels, and title translation fallback.
+Three incorrect variants fail assertions; restored tests pass.
+The complete build passes 2,962 tests, skips 315 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass.
+Packaged classes, embedded dependencies, shaders, and four source snapshots match the tested outputs.
+Offline tooling and patch-metadata validation pass.
+
+The accountless controls use manual third-person selection and do not establish native camera, pose, or exact timing equality.
+Saved account selection preservation has unit coverage, without new live account writes.
+Quick-wheel behavior, controller navigation, broader skins, emote effects, packs, and interactions remain unfinished.
+The original E-key inventory, locator, rollback, and eating reports remain open.
+The full five-area goal stays active, and crafting stays parked.
+The [owning emote notes](../patches/viafabricplus-bedrock/upstreamable/0009-manage-character-creator-accounts-and-wardrobes.pr.md#bundled-default-emote-wheel-october-26-2026)
+record the default selection and verification limits.
