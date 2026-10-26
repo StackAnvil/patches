@@ -10591,9 +10591,58 @@ Installed add-on and proxy hashes match the final build.
 These checks do not establish complete renderer-cache cleanup or native graphical parity.
 
 Complete Iris emissive overlay order and framebuffer alpha remain unverified.
-A separate chicken-carrier control appears black on both routes with Iris 1.11.7 and Complementary Reimagined r5.9.3.
-That pack offsets chicken depth in its entity program but omits that offset from its eye program.
-This source difference is a candidate cause, not an executed proof of the generated shader mismatch.
-Matching transforms across shader-pack passes remains an open requirement.
+An initial chicken-carrier control appeared black on both routes with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Generated shader output retains a chicken depth offset in the body program and omits it from the eye program.
+The paired-stage change below addresses this captured case.
+Other shader-pack transforms and complete emission parity remain separate requirements.
 Native graphical comparison remains unavailable because the installed native launcher cannot decode its licensing response.
 The original inventory, locator, intermittent item-use, emote, skin, interaction, and other gameplay requirements remain open.
+
+
+### Shared geometry stages for Iris emission
+
+Native emission now uses the complete geometry-producing stages of its depth-writing body.
+The selected Iris body supplies vertex, geometry, tessellation-control, and tessellation-evaluation sources and attribute decisions.
+The selected emission program supplies the fragment source and framebuffer directives.
+Both selections remain part of the cache key, including Iris context variants.
+Body lightmap and overlay bindings remain available to the paired program.
+
+Previously, the two passes selected separate entity and eye vertex programs.
+Complementary Reimagined r5.9.3 offsets chicken clip depth only in its entity program.
+The lit surface therefore covered its own additive emission.
+Generated Iris 1.11.7 programs retain that difference.
+With paired geometry stages, the same native chicken control emits in both captured views.
+Prototype exports are byte-identical. Final exports can differ in formatting and unused helper functions.
+GPU controls compare their resulting clip positions with explicit supplied inputs.
+
+Compilation context restores the previous pipeline after nested lookups and exceptions.
+Each Iris world pipeline owns its paired program cache and registers those programs with its normal shader lifetime.
+Missing program sources retain the existing eye path.
+Incompatible stage interfaces produce one diagnostic per selection and retain that path.
+No shader-pack name, entity identifier, fixed depth offset, or forced depth comparison selects this behavior.
+
+The twelve native body/emission mappings and nested compilation recovery have targeted tests.
+Ordinary program lookups, GUI portraits, and shadow selection keep their existing paths.
+Complete hand behavior, stage interfaces in other packs, emissive overlay order, and framebuffer alpha remain unverified.
+Native graphical comparison still depends on the unavailable launcher licensing response.
+
+
+**Verification:** Current reports cover 3,210 tests, with 3,058 passes, 152 optional skips, and no failures or errors.
+All 21 focused material, pipeline, bundled-definition, and fragment GPU tests pass without skips.
+The full prototype build passes for all four projects. The final cache refinement also passes a direct prepared-source Gradle build.
+All 1,212 compiled client classes match the distributable add-on.
+Core and converter classes and assets match both embedded consumers.
+All 38 add-on patches replay, with all 988 source and resource file hashes unchanged after the final export cleanup.
+
+Fresh direct and ViaProxy BDS sessions render the original chicken material correctly in both views and after a real Iris reload.
+Actual Iris overrides retain the paired GL program objects and their exact native body-pipeline associations.
+Each reload deletes two owned GL programs before the new world pipeline rebuilds its cache.
+Server removal retires the six observed actor UUID snapshots on each route.
+A separate ViaProxy session without the Iris mod preserves all six material controls and retires their snapshots.
+All eight final screenshots receive visual review, and installed artifacts match the final build.
+
+Mesa transform feedback executes 108 controls from actual generated shaders and links the paired vertex and fragment stages.
+Twelve baseline controls include six expected chicken depth mismatches of `0.000075` in clip Z.
+The other 96 controls match body and emission clip positions at tolerance `1e-7` across both routes and reload phases.
+Inputs supply matrices, vertex attributes, entity identifiers, color alpha, and the overlay texture.
+These controls establish the tested geometry correction, not complete native rasterization or arbitrary shader-pack parity.
