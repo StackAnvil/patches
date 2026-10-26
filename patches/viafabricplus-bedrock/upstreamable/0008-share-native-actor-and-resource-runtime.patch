@@ -1,4 +1,4 @@
-From 116acd93d60a5c66d973a4bc5a48b5045a9e89e1 Mon Sep 17 00:00:00 2001
+From e9afcbd9ae7955ee5ec56714db204a1ab3f68803 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -333,6 +333,13 @@ material selection. Keep Molang effects for later draw expressions rather
 than evaluating only the last wildcard. Native part-specific material
 rendering remains a separate capability; this preserves declaration order
 without claiming that missing renderer coverage.
+
+Retain the complete evaluated material-pattern map for each controller.
+Filter only cubes and meshes when building a material-specific model,
+keeping every ancestor, bone transform and locator available for poses and
+bindings. Ignore empty helper bones during material partitioning because
+they own no rendered surface. Player and actor factories share this rule;
+materials do not implicitly change visibility or rerun animation scripts.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -386,7 +393,7 @@ without claiming that missing renderer coverage.
  .../appearance/BedrockPersonaAnimations.java  |  128 ++
  .../appearance/BedrockPersonaSources.java     |  228 ++++
  .../appearance/BedrockPlayerAnimations.java   |   33 +
- .../appearance/BedrockPlayerControllers.java  |  230 ++++
+ .../appearance/BedrockPlayerControllers.java  |  235 ++++
  .../appearance/BedrockResourceLibrary.java    |  438 +++++++
  .../appearance/BedrockServerParticles.java    |   94 ++
  .../appearance/BedrockServerResources.java    |   46 +
@@ -438,7 +445,7 @@ without claiming that missing renderer coverage.
  .../BedrockFirstPersonItemRendering.java      |   27 +
  .../render/BedrockFirstPersonProjection.java  |   28 +
  .../bedrock/render/BedrockFluidRendering.java |   34 +
- .../bedrock/render/BedrockGeometry.java       |   23 +-
+ .../bedrock/render/BedrockGeometry.java       |   55 +-
  .../render/BedrockGeometryQueries.java        |   77 ++
  .../bedrock/render/BedrockModelLocators.java  |  122 ++
  .../render/BedrockModelTransforms.java        |   82 ++
@@ -463,7 +470,7 @@ without claiming that missing renderer coverage.
  .../viafabricplus-bedrock.mixins.json         |   26 +-
  .../appearance/BedrockActorAnimationTest.java |  705 +++++++++++
  .../appearance/BedrockActorQueriesTest.java   |  143 +++
- .../BedrockActorRenderSelectionTest.java      |  125 ++
+ .../BedrockActorRenderSelectionTest.java      |  128 ++
  .../appearance/BedrockActorScaleTest.java     |   77 ++
  .../BedrockActorVisibilityTest.java           |  142 +++
  .../BedrockAnimationCommandsTest.java         |  180 +++
@@ -530,13 +537,14 @@ without claiming that missing renderer coverage.
  .../render/BedrockFluidRenderingTest.java     |   39 +
  .../render/BedrockGeometryQueriesTest.java    |  129 ++
  .../render/BedrockHumanoidVisibilityTest.java |   85 ++
+ .../render/BedrockMaterialGeometryTest.java   |   84 ++
  .../render/BedrockModelLocatorsTest.java      |  112 ++
  .../render/BedrockModelTransformsTest.java    |   97 ++
  .../render/BedrockPlayerBodyRotationTest.java |   53 +
  .../render/BedrockPlayerModelTest.java        |  145 +++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 202 files changed, 24356 insertions(+), 15 deletions(-)
+ 203 files changed, 24480 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -725,6 +733,7 @@ without claiming that missing renderer coverage.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFluidRenderingTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometryQueriesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHumanoidVisibilityTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockMaterialGeometryTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelTransformsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotationTest.java
@@ -9333,10 +9342,10 @@ index 0000000..f9335b1
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
 new file mode 100644
-index 0000000..04fd9eb
+index 0000000..71b1e4c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,235 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9348,6 +9357,8 @@ index 0000000..04fd9eb
 +import java.io.IOException;
 +import java.util.ArrayList;
 +import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.Collections;
 +import java.util.List;
 +import java.util.Map;
 +import org.cube.converter.data.bedrock.BedrockEntityData;
@@ -9437,11 +9448,13 @@ index 0000000..04fd9eb
 +            }
 +            molang.binding("array", arrays);
 +            final String geometry = this.value(molang, controller.geometryExpression()).getAsString();
-+            String material = "entity_alphatest";
++            final Map<String, String> materials = new LinkedHashMap<>();
 +            for (final var assignment : controller.materialAssignments()) {
 +                final String selected = this.value(molang, assignment.expression()).getAsString();
-+                if (assignment.pattern().equals("*")) material = selected;
++                materials.remove(assignment.pattern());
++                materials.put(assignment.pattern(), selected);
 +            }
++            if (materials.isEmpty()) materials.put("*", "entity_alphatest");
 +            final var nativeUv = controller.uvAnimation();
 +            final UvAnimation animation = this.uvAnimations.getOrDefault(reference.identifier(),
 +                    new UvAnimation(nativeUv.offsetU(), nativeUv.offsetV(), nativeUv.scaleU(), nativeUv.scaleV()));
@@ -9467,7 +9480,7 @@ index 0000000..04fd9eb
 +                if (!includeBody) continue;
 +            }
 +            if (!geometry.isBlank() && !texture.isBlank()) {
-+                surfaces.add(new Surface(reference.identifier(), geometry, textures, material, uv, List.copyOf(visibility), controller.ignoreLighting(), lightMultiplier));
++                surfaces.add(new Surface(reference.identifier(), geometry, textures, materials, uv, List.copyOf(visibility), controller.ignoreLighting(), lightMultiplier));
 +            }
 +        }
 +        return new Selection(body, List.copyOf(surfaces));
@@ -9553,10 +9566,11 @@ index 0000000..04fd9eb
 +    public record Uv(float offsetX, float offsetY, float scaleX, float scaleY) {
 +        public static final Uv IDENTITY = new Uv(0, 0, 1, 1);
 +    }
-+    public record Surface(String controller, String geometry, List<String> textures, String material, Uv uv,
++    public record Surface(String controller, String geometry, List<String> textures, Map<String, String> materials, Uv uv,
 +                          List<Visibility> visibility, boolean ignoreLighting, float lightMultiplier) {
 +        public Surface {
 +            textures = List.copyOf(textures);
++            materials = Collections.unmodifiableMap(new LinkedHashMap<>(materials));
 +            if (textures.isEmpty()) throw new IllegalArgumentException("Empty controller texture bindings");
 +        }
 +
@@ -13166,28 +13180,60 @@ index 0000000..1f5bc09
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-index 437a11a..27208bf 100644
+index 437a11a..4f25286 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-@@ -74,16 +74,30 @@ public final class BedrockGeometry {
+@@ -74,16 +74,62 @@ public final class BedrockGeometry {
  
      public static PlayerModel playerModel(final BedrockGeometryModel geometry, final boolean slim,
                                            final Map<String, JsonObject> meshes) {
 -        return new PlayerModel(root(geometry, true, meshes, _ -> true), slim);
++        return playerModel(geometry, slim, meshes, _ -> true);
++    }
++
++    public static PlayerModel playerModel(final BedrockGeometryModel geometry, final boolean slim,
++                                          final Map<String, JsonObject> meshes, final Set<String> bones) {
++        return playerModel(geometry, slim, meshes, bones::contains);
++    }
++
++    private static PlayerModel playerModel(final BedrockGeometryModel geometry, final boolean slim,
++                                           final Map<String, JsonObject> meshes, final Predicate<String> selected) {
 +        final Map<String, ModelPart> roots = new HashMap<>();
-+        final ModelPart root = root(geometry, true, meshes, null, roots, _ -> true);
-+        return new BedrockPlayerModel(root, slim, roots, animatedModel(geometry, meshes));
++        final ModelPart root = root(geometry, true, meshes, null, roots, selected);
++        return new BedrockPlayerModel(root, slim, roots, animatedModel(geometry, meshes, selected, true));
 +    }
 +
 +    public static BedrockAnimatedModel animatedModel(final BedrockGeometryModel geometry,
 +                                                     final Map<String, JsonObject> meshes) {
-+        final Map<String, ModelPart> parts = new HashMap<>();
-+        return new BedrockAnimatedModel(root(geometry, false, meshes, parts, null, _ -> true), parts, geometry);
++        return animatedModel(geometry, meshes, _ -> true, true);
++    }
++
++    public static BedrockAnimatedModel animatedModel(final BedrockGeometryModel geometry,
++                                                     final Map<String, JsonObject> meshes, final Set<String> bones) {
++        return animatedModel(geometry, meshes, bones::contains, true);
 +    }
 +
 +    static BedrockAnimatedModel actorModel(final BedrockGeometryModel geometry) {
++        return animatedModel(geometry, Map.of(), _ -> true, false);
++    }
++
++    static BedrockAnimatedModel actorModel(final BedrockGeometryModel geometry, final Set<String> bones) {
++        return animatedModel(geometry, Map.of(), bones::contains, false);
++    }
++
++    private static BedrockAnimatedModel animatedModel(final BedrockGeometryModel geometry,
++                                                      final Map<String, JsonObject> meshes,
++                                                      final Predicate<String> selected, final boolean humanoid) {
 +        final Map<String, ModelPart> parts = new HashMap<>();
-+        return new BedrockAnimatedModel(root(geometry, false, Map.of(), parts, null, _ -> true), parts, geometry, false);
++        return new BedrockAnimatedModel(root(geometry, false, meshes, parts, null, selected), parts, geometry, humanoid);
++    }
++
++    /** Only surfaces need materials; empty ancestors remain in every model for transforms and bindings. */
++    public static Map<String, Set<String>> partitionMaterials(final BedrockGeometryModel geometry,
++            final Map<String, JsonObject> meshes, final Map<String, String> materials) {
++        return BedrockActorMaterials.partition(geometry.getParents().stream()
++                .filter(parent -> !parent.getCubes().isEmpty() || meshes.containsKey(parent.getName()))
++                .map(parent -> parent.getName()).toList(), materials);
      }
  
      private static ModelPart root(final BedrockGeometryModel geometry, final boolean player,
@@ -13203,7 +13249,7 @@ index 437a11a..27208bf 100644
          final Map<String, Bone> bones = new HashMap<>();
          final float textureWidth = geometry.getTextureSize().getX();
          final float textureHeight = geometry.getTextureSize().getY();
-@@ -101,9 +115,10 @@ public final class BedrockGeometry {
+@@ -101,9 +147,10 @@ public final class BedrockGeometry {
                  children.put("mesh", meshPart(mesh, parent, textureWidth, textureHeight));
              }
              bones.put(parent.getName(), new Bone(parent, part, children));
@@ -15150,10 +15196,10 @@ index 0000000..dba9313
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorRenderSelectionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorRenderSelectionTest.java
 new file mode 100644
-index 0000000..d32dde3
+index 0000000..27e9619
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorRenderSelectionTest.java
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,128 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15191,7 +15237,10 @@ index 0000000..d32dde3
 +        final var selection = new BedrockPlayerControllers(entity, Map.of(controller.identifier(), controller));
 +        final var surface = selection.select(0, Map.of(), Map.of(), Map.of()).surfaces().getFirst();
 +        assertEquals(123F, surface.lightMultiplier());
-+        assertEquals("entity_alphatest", surface.material());
++        assertEquals(List.of("Arm*", "*"), List.copyOf(surface.materials().keySet()));
++        assertEquals("entity_emissive_alpha", surface.materials().get("Arm*"));
++        assertThrows(UnsupportedOperationException.class, () -> surface.materials().clear());
++        assertEquals("entity_alphatest", surface.materials().get("*"));
 +    }
 +
 +    @Test
@@ -25872,6 +25921,96 @@ index 0000000..b2e4356
 +            default -> body.getChild(bone);
 +        };
 +        return part.getChild("cube_0");
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockMaterialGeometryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockMaterialGeometryTest.java
+new file mode 100644
+index 0000000..420f6de
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockMaterialGeometryTest.java
+@@ -0,0 +1,84 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
++import java.util.Map;
++import java.util.Set;
++import net.minecraft.client.model.geom.ModelPart;
++import net.minecraft.client.renderer.entity.state.AvatarRenderState;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockMaterialGeometryTest {
++    @Test
++    void filtersSurfacesWithoutRemovingAnimatedAncestorsOrMeshBones() {
++        final var geometry = geometry();
++        final var meshes = meshes();
++        final var groups = BedrockGeometry.partitionMaterials(geometry, meshes,
++                Map.of("body", "entity", "detail", "entity_alphatest"));
++        assertEquals(Map.of("entity", Set.of("body"), "entity_alphatest", Set.of("detail")), groups);
++        final var complete = BedrockGeometry.animatedModel(geometry, meshes);
++        final var selected = BedrockGeometry.animatedModel(geometry, meshes, groups.get("entity_alphatest"));
++        final var allBody = body(complete.model().root());
++        final var selectedBody = body(selected.model().root());
++        assertTrue(allBody.hasChild("cube_0"));
++        assertFalse(selectedBody.hasChild("cube_0"));
++        assertTrue(selectedBody.getChild("detail").hasChild("mesh"));
++        assertTrue(selected.model().root().hasChild("anchor"));
++        final var pose = Map.of("body", new BedrockBoneAnimation.Transform(
++                new BedrockBoneAnimation.Vector(3, 4, 5), new BedrockBoneAnimation.Vector(20, 30, 10),
++                new BedrockBoneAnimation.Vector(1, 2, .5F), false));
++        complete.pose(pose);
++        selected.pose(pose);
++        assertTrue(complete.drawingMatrices().get(allBody.getChild("detail"))
++                .equals(selected.drawingMatrices().get(selectedBody.getChild("detail")), .00001F));
++        selected.visibility(new BedrockActorAnimation.Visibility(true, java.util.List.of(java.util.List.of(
++                new BedrockActorAnimation.PartVisibility(com.viaversion.viafabricplus.bedrock.appearance.BedrockBonePattern.wildcard("body"), false)))));
++        assertTrue(selectedBody.getChild("detail").getChild("mesh").visible);
++    }
++
++    @Test
++    void appliesTheSameSurfaceFilterToBothPlayerHierarchies() {
++        final var geometry = geometry();
++        final var complete = (BedrockPlayerModel) BedrockGeometry.playerModel(geometry, false, meshes());
++        final var selected = (BedrockPlayerModel) BedrockGeometry.playerModel(geometry, false, meshes(), Set.of("detail"));
++        assertFalse(selected.body.hasChild("cube_0"));
++        final var state = new AvatarRenderState();
++        final var visibility = new BedrockActorAnimation.Visibility(true, java.util.List.of());
++        complete.setupAnim(state, visibility);
++        selected.setupAnim(state, visibility);
++        final var selectedBody = body(selected.root().getChild("animated"));
++        assertFalse(selectedBody.hasChild("cube_0"));
++        assertTrue(selectedBody.getChild("detail").hasChild("mesh"));
++        assertEquals(complete.body.x, selected.body.x);
++        assertEquals(complete.body.y, selected.body.y);
++        assertEquals(complete.body.z, selected.body.z);
++    }
++
++    private static ModelPart body(final ModelPart root) {
++        return root.getChild("anchor").getChild("body");
++    }
++
++    private static BedrockGeometryModel geometry() {
++        return BedrockGeometryModel.fromJson("""
++                {"minecraft:geometry":[{"description":{"identifier":"geometry.material_filter","texture_width":64,"texture_height":64},
++                "bones":[{"name":"anchor","pivot":[0,2,0],"rotation":[10,0,15]},
++                {"name":"body","parent":"anchor","pivot":[0,12,0],"cubes":[{"origin":[0,0,0],"size":[2,2,2],"uv":[0,0]}]},
++                {"name":"detail","parent":"body","pivot":[3,10,0]}]}]}
++                """).getFirst();
++    }
++
++    private static Map<String, com.viaversion.viaversion.libs.gson.JsonObject> meshes() {
++        return Map.of("detail", JsonParser.parseString("""
++                {"positions":[[0,0,0],[1,0,0],[0,1,0]],"normals":[[0,0,1]],
++                 "uvs":[[0,0],[1,0],[0,1]],"polys":[[[0,0,0],[1,0,1],[2,0,2]]]}
++                """).getAsJsonObject());
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorsTest.java

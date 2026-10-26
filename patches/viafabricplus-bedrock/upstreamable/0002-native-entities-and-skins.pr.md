@@ -560,3 +560,21 @@ Ordinary materials use slot zero in one geometry draw.
 
 The [shared runtime notes](0008-share-native-actor-and-resource-runtime.pr.md#complete-controller-sampler-transport-october-26-2026) record codec tests, both live routes, build identity, and remaining limits.
 Masked material blending remains a separate renderer integration.
+
+
+## Opaque input for shader-pack hand branches, October 26, 2026
+
+Native opaque materials now supply coverage alpha one to primary texture reads before shader-pack shading.
+The per-bind uniform resets for cutout and ordinary Java draws, including shared programs.
+The transform follows supported sampler helpers while unrelated images retain their original alpha.
+Raw primary sampling and composed material alpha remain available for native coverage tests.
+Emission preprocessing retains its original source-alpha weighting.
+
+The initial Complementary Reimagined r5.9.3 capture shows an invisible first-person item with correct models and bindings.
+Its hand program checks sampled alpha independently of the engine alpha test.
+This fix uses the native opaque material, without shader-pack names or program-specific source replacement.
+A real-driver regression reproduces the previous failure through a forwarded sampler and an authored alpha branch.
+Both transformed and fallback programs pass after the fix, across opaque, cutout, and Java binds.
+
+Fresh installed results and build totals appear in the [coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026).
+Other shader-pack branches, native graphical parity, and inventory avatars remain separate verification work.

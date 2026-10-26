@@ -157,3 +157,23 @@ The shared selector now binds texture entries as sampler slots within one draw.
 Fresh direct and Iris-enabled ViaProxy controls each resolve three villager draws through biome and age changes.
 Masked profession fallback, recovery, and removal preserve their existing lifetime rules.
 The [shared runtime evidence](0008-share-native-actor-and-resource-runtime.pr.md#controller-texture-slots-october-26-2026) records native fragment controls, regressions, builds, and limits.
+
+
+## Per-bone world materials, October 26, 2026
+
+Supported world actor graphs now select separate material groups from the complete controller map.
+The renderer intersects each group's bone set with controller visibility before model lookup.
+All active groups and required images must resolve before native rendering replaces Java.
+An unavailable group retains fallback for the whole actor.
+Effect and locator models retain their complete skeleton independently of material partitions.
+
+The new world regression splits two rendered bones across opaque and cutout materials, then merges them through a later rule.
+It retains the parent pose, excludes an empty anchor from material demand, rejects an unsupported active group, and recovers afterward.
+Restoring the earlier non-wildcard admission rejection fails this regression.
+
+A declared native crystal uses two zero-alpha color surfaces and a material expression based on its actual actor lifetime.
+Direct and Iris-enabled ViaProxy captures show the green surface disappear and reappear while the red surface remains visible.
+The controller retains one native actor lifetime across those changes.
+This authored scene does not provide a native expression or graphical baseline.
+
+The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.

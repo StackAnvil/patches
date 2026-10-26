@@ -191,3 +191,25 @@ All 38 add-on patches replay, and both core Checkstyle tasks pass.
 All 1,227 compiled client classes match the packaged add-on.
 Both consumers embed matching copies of 1,559 core classes, 200 assets, and 39 converter classes.
 Installed add-on and proxy hashes match their built artifacts.
+
+
+## Per-bone costume and hand materials, October 26, 2026
+
+Player costumes and first-person surfaces now partition each controller's geometry by its evaluated bone materials.
+Each model contains only its assigned cubes and meshes, with the full skeleton available for poses and equipment ownership.
+Deferred draws retain their controller visibility independently of material selection.
+Model keys include the selected bones, preventing one material group from reusing another group's surfaces.
+
+Native body replacements validate all required groups before replacing the ordinary skin.
+Persona geometries receive their own partitions from the same material rules and retain their independent primary images.
+Uniform ordinary skin draws retain their existing renderer.
+First-person caches retain the current material subsets, and costume caches retire historical subsets after selection.
+Unsupported materials and missing required images retain fallback rather than a partial native body replacement.
+
+The direct and Iris-enabled ViaProxy fixtures show a blue body and a separate yellow surface only during physical sneaking.
+The selected model groups change from two to one and back without losing bone transforms.
+The fixture's creative inventory avatar preview is empty.
+That preview does not establish inventory material parity or resolve the original E-key report.
+Fresh per-bone persona and masked-hand visual comparisons remain unverified.
+
+The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.

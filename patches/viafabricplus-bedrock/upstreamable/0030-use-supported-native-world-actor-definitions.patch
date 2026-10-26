@@ -1,4 +1,4 @@
-From f3d3629bf3ee01fbb3253b4d48d064815ee1b84e Mon Sep 17 00:00:00 2001
+From a19e61a71ce89817d6d6f42c57a9c51f9b84260b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(render): use supported native world actor definitions
@@ -98,15 +98,22 @@ required image independently. Masked biome/profession layers retain one
 geometry draw with two GPU sampler resources; caches include both image
 identities. Keep fallback when a required binding or image is unavailable.
 The bundled villager test now admits its two-image profession draw.
+
+Admit supported per-bone materials in native world actor graphs. Validate
+all active material groups and images before replacing Java rendering, so
+an unavailable group retains fallback rather than presenting a partial
+native actor. Keep empty transform helpers outside material partitioning,
+retain complete animation and effect skeletons, and use each draw's bone
+subset together with controller visibility in the rendered model key.
 ---
- .../BedrockWorldActorAppearance.java          |  80 +++++
+ .../BedrockWorldActorAppearance.java          |  81 +++++
  .../render/MixinEntityRenderDispatcher.java   |  16 +
  .../bedrock/render/BedrockAnimatedModel.java  |   7 +-
  .../render/BedrockWorldActorRenderer.java     | 316 ++++++++++++++++++
- .../BedrockWorldActorAppearanceTest.java      | 263 +++++++++++++++
+ .../BedrockWorldActorAppearanceTest.java      | 305 +++++++++++++++++
  .../render/BedrockCustomActorModelTest.java   |   7 +
  .../render/BedrockWorldActorQueryTest.java    | 121 +++++++
- 7 files changed, 809 insertions(+), 1 deletion(-)
+ 7 files changed, 852 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
@@ -114,10 +121,10 @@ The bundled villager test now admits its two-image profession draw.
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
 new file mode 100644
-index 0000000..fd8ca74
+index 0000000..b37e301
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,81 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -130,6 +137,8 @@ index 0000000..fd8ca74
 +import java.util.ArrayList;
 +import java.util.List;
 +import java.util.Map;
++import java.util.Set;
++import com.viaversion.viafabricplus.bedrock.render.BedrockGeometry;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorMaterialDefinitions;
@@ -168,25 +177,24 @@ index 0000000..fd8ca74
 +            if (!this.animation.hasCompleteQueries() || selection.surfaces().isEmpty()) return null;
 +            final List<Draw> draws = new ArrayList<>();
 +            for (final var surface : selection.surfaces()) {
-+                final var controller = packs.getRenderControllers().renderControllers().get(surface.controller());
-+                if (controller == null || controller.materialAssignments().isEmpty()
-+                        || controller.materialAssignments().stream().anyMatch(rule -> !rule.pattern().equals("*"))) return null;
 +                final var geometry = packs.getModels().entityModels().get(surface.geometry());
-+                final var material = materials.material(surface.material()).orElse(null);
-+                if (geometry == null || material == null) return null;
-+                if (surface.textures().size() < material.textureCount()) return null;
-+                final List<BufferedImage> textures = new ArrayList<>();
-+                for (int slot = 0; slot < material.textureCount(); slot++) {
-+                    final String path = surface.textures().get(slot);
-+                    BufferedImage image = images.get(path);
-+                    if (image == null) for (final var pack : packs.getPackStackTopToBottom()) {
-+                        final var found = pack.content().getShortnameImage(path);
-+                        if (found != null) { image = found.getImage(); images.put(path, image); break; }
++                if (geometry == null) return null;
++                for (final var group : BedrockGeometry.partitionMaterials(geometry, Map.of(), surface.materials()).entrySet()) {
++                    final var material = materials.material(group.getKey()).orElse(null);
++                    if (material == null || surface.textures().size() < material.textureCount()) return null;
++                    final List<BufferedImage> textures = new ArrayList<>();
++                    for (int slot = 0; slot < material.textureCount(); slot++) {
++                        final String path = surface.textures().get(slot);
++                        BufferedImage image = images.get(path);
++                        if (image == null) for (final var pack : packs.getPackStackTopToBottom()) {
++                            final var found = pack.content().getShortnameImage(path);
++                            if (found != null) { image = found.getImage(); images.put(path, image); break; }
++                        }
++                        if (image == null) return null;
++                        textures.add(image);
 +                    }
-+                    if (image == null) return null;
-+                    textures.add(image);
++                    draws.add(new Draw(surface, geometry, List.copyOf(textures), material, group.getValue()));
 +                }
-+                draws.add(new Draw(surface, geometry, List.copyOf(textures), material));
 +            }
 +            return new Frame(pose, scale, List.copyOf(draws), List.copyOf(sounds), List.copyOf(particles));
 +        }
@@ -196,7 +204,7 @@ index 0000000..fd8ca74
 +                        List<Draw> draws, List<BedrockActorAnimation.SoundCue> sounds,
 +                        List<BedrockActorAnimation.ParticleCue> particles) {}
 +    public record Draw(BedrockPlayerControllers.Surface surface, BedrockGeometryModel geometry,
-+                       List<BufferedImage> images, BedrockActorMaterialDefinitions.Material material) {}
++                       List<BufferedImage> images, BedrockActorMaterialDefinitions.Material material, Set<String> bones) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
 index 94877d4..7b5265c 100644
@@ -274,7 +282,7 @@ index e076c9d..898f90e 100644
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
 new file mode 100644
-index 0000000..a718c45
+index 0000000..245bdb2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
 @@ -0,0 +1,316 @@
@@ -516,7 +524,7 @@ index 0000000..a718c45
 +        final List<Draw> draws = new ArrayList<>();
 +        for (final var draw : actor.frame.draws()) {
 +            final var surface = draw.surface();
-+            final Set<String> bones = draw.geometry().getParents().stream().map(bone -> bone.getName()).filter(name -> {
++            final Set<String> bones = draw.bones().stream().filter(name -> {
 +                boolean visible = true;
 +                for (final var rule : surface.visibility()) if (rule.matches(name)) visible = rule.visible();
 +                return visible;
@@ -596,10 +604,10 @@ index 0000000..a718c45
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
 new file mode 100644
-index 0000000..14c973d
+index 0000000..91372c5
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,305 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -689,6 +697,48 @@ index 0000000..14c973d
 +        queries.put("is_item_name_any", (BedrockActorAnimation.Query) _ -> false);
 +        queries.put("position_delta", (BedrockActorAnimation.Query) _ -> 0F);
 +        return new BedrockActorAnimation.Frame(queries, Map.of());
++    }
++
++    @Test
++    void partitionsBoneMaterialsWithoutDroppingAncestorsAndRejectsIncompleteGroups() throws Exception {
++        final var actor = appearanceWithOverrides(Map.of(
++                "entity/ender_crystal.entity.json", """
++                    {"format_version":"1.10.0","minecraft:client_entity":{"description":{
++                      "identifier":"minecraft:ender_crystal","materials":{"default":"entity","cutout":"entity_alphatest"},
++                      "textures":{"default":"textures/entity/endercrystal/endercrystal"},
++                      "geometry":{"default":"geometry.material_test"},
++                      "scripts":{"initialize":[],"pre_animation":[],"animate":["pose"]},
++                      "animations":{"pose":"animation.material.pose"},"render_controllers":["controller.render.material"]}}}
++                    """,
++                "models/entity/material.json", """
++                    {"minecraft:geometry":[{"description":{"identifier":"geometry.material_test","texture_width":64,"texture_height":64},
++                    "bones":[{"name":"anchor","pivot":[0,0,0]},
++                    {"name":"body","parent":"anchor","pivot":[0,12,0],"cubes":[{"origin":[0,0,0],"size":[2,2,2],"uv":[0,0]}]},
++                    {"name":"GlowChild","parent":"body","pivot":[3,10,0],"cubes":[{"origin":[3,2,0],"size":[2,2,2],"uv":[0,0]}]}]}]}
++                    """,
++                "animations/material.json", """
++                    {"animations":{"animation.material.pose":{"loop":true,"bones":{"body":{"position":[3,4,5]}}}}}
++                    """,
++                "render_controllers/material.json", """
++                    {"render_controllers":{"controller.render.material":{"geometry":"Geometry.default","textures":["Texture.default"],
++                    "materials":[{"body":"Material.default"},{"Glow*":"Material.cutout"},
++                    {"*Child":"q.has_target ? (q.is_invisible ? Material.unsupported : Material.default) : Material.cutout"}]}}}
++                    """
++        )).playback();
++        final var split = actor.sample(0, new BedrockActorAnimation.Frame(Map.of("has_target", false, "is_invisible", false), Map.of()), false);
++        assertNotNull(split);
++        assertEquals(2, split.draws().size());
++        assertEquals(Set.of("body"), split.draws().getFirst().bones());
++        assertEquals(Set.of("GlowChild"), split.draws().getLast().bones());
++        assertFalse(split.draws().getFirst().material().alphaTest());
++        assertTrue(split.draws().getLast().material().alphaTest());
++        assertEquals(3F, split.pose().get("body").position().x());
++        final var merged = actor.sample(.25F, new BedrockActorAnimation.Frame(Map.of("has_target", true, "is_invisible", false), Map.of()), false);
++        assertNotNull(merged);
++        assertEquals(1, merged.draws().size());
++        assertEquals(Set.of("body", "GlowChild"), merged.draws().getFirst().bones());
++        assertNull(actor.sample(.5F, new BedrockActorAnimation.Frame(Map.of("has_target", true, "is_invisible", true), Map.of()), false));
++        assertNotNull(actor.sample(.75F, new BedrockActorAnimation.Frame(Map.of("has_target", false, "is_invisible", false), Map.of()), false));
 +    }
 +
 +    @Test

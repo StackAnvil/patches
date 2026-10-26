@@ -122,3 +122,21 @@ This retains the selected controller visibility without changing the shared avat
 The existing equipment-owner regression uses the real costume wrapper and passes alongside the new deferred-draw regressions.
 The [player costume controls](0016-render-server-player-costumes.pr.md#independent-player-controller-draws-october-26-2026) verify the installed wrapper on both routes.
 This adaptation does not add new live equipment-placement coverage.
+
+
+## Per-bone equipped materials, October 26, 2026
+
+Equipped models now admit supported per-bone materials instead of rejecting every non-wildcard declaration.
+Each material draws only its selected surfaces while retaining all owner and explicit binding targets.
+An unresolved parent binding still preserves local geometry, and an independently bound child retains its valid target.
+Materialized sprite geometry has a separate cache from the filtered draw models.
+Current draw subsets replace historical subsets without restarting the equipment entry.
+Missing active materials or required images retain the existing whole-slot fallback.
+
+The authored live stick retains a local head matrix at `(4, 4, 12)` and a body-bound child at `(0, 24, 0)`.
+Physical sneaking changes the child material between cutout and opaque while the parent remains opaque.
+Direct and Iris-enabled ViaProxy captures show the green child appear and disappear beside the retained red parent.
+Both first-person and third-person views retain their selected model groups and complete binding matrices.
+These controls do not establish native placement or component-lifetime equality.
+
+The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.

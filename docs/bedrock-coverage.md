@@ -10993,3 +10993,54 @@ Installed add-on and proxy hashes match the build.
 These authored controls do not execute a native expression or graphical baseline.
 Player, equipment, world-graph, and portrait consumers retain their existing per-bone material limits.
 Emote effect ownership and broader pack, interaction, skin, and graphical parity remain open.
+
+
+## Per-bone material rendering, October 26, 2026
+
+**Corrected within scope:** Player costumes, native hands, equipment, world graphs, and portrait extraction now retain each controller's complete material map.
+They partition cubes and meshes by the selected material while preserving the full skeleton in every model.
+Empty transform helpers do not require materials, while mesh-only surfaces retain their assignments.
+Deferred draws retain independent controller visibility, owner matrices, and explicit child bindings.
+Current model subsets replace historical subsets as materials change.
+Required native body, equipment, and world groups resolve before replacement, preserving fallback for incomplete selections.
+
+The [shared runtime notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#material-specific-surfaces-with-complete-skeletons-october-26-2026) describe the model contract and target references.
+Bedrock 1.26.51.1 bundled controllers use distinct materials for axolotl limbs and chicken legs.
+The implementation follows ordered whole-bone assignments without evaluating scripts again for each material.
+The target asset evidence does not supply a native graphical or expression baseline.
+
+Native opaque samples now retain coverage through shader-pack hand branches.
+The initial Iris capture shows an invisible first-person item despite correct model groups and binding matrices.
+Complementary Reimagined r5.9.3 checks sampled alpha inside its hand program, independently of the engine alpha test.
+The [Iris correction](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#opaque-input-for-shader-pack-hand-branches-october-26-2026) supplies opaque coverage before pack shading and resets it for ordinary Java draws.
+Raw native coverage sampling and emission preprocessing retain their existing behavior.
+
+New geometry and world regressions fail when the previous unfiltered models and blanket material rejection return.
+A real EGL regression also fails on the previous hand shader branch and passes after the correction.
+It alternates opaque, cutout, and Java binds through forwarded samplers in transformed and fallback programs.
+The full four-project build passes 3,090 tests, skips 152 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass, and all 38 add-on patches replay.
+All 1,229 client classes match compilation, as do the embedded 1,559 core classes, 200 assets, and 40 converter classes.
+All four source snapshots remain unchanged through the normal build.
+
+Fresh direct and Iris-enabled ViaProxy sessions use the same downloaded server pack and final add-on artifact.
+Physical sneak transitions show a retained red item parent and a green child that appears only with opaque selection.
+The local head remains at `(4, 4, 12)`, while the independently body-bound child retains `(0, 24, 0)`.
+First-person and equipped caches each retain their own entry identity and start time through two-to-one-to-two model changes.
+A blue player body remains visible while a separate yellow surface follows the same material transition.
+A world crystal independently hides and restores its green surface within one native actor lifetime.
+Clearing the item retires both equipment-view caches.
+
+All 26 final-run screenshots receive visual review.
+Twenty scoped world, player, item, and removal phase captures pass.
+Both zero-alpha inventory avatar captures remain empty, and four preliminary direct world captures remain outside those passing controls.
+The direct world sequence repeats within the same owned session after the first gate accepts a removed cached crystal.
+The final observer distinguishes removed entities before the ViaProxy sequence.
+An earlier ViaProxy observation gate expires during initial shader compilation and supplies no passing phases.
+The final run waits for scene readiness before the world controls.
+Downloaded fixture files and installed artifact hashes match, and every owned process retires after normal shutdown.
+
+Fresh multi-material persona layers, masked native hands, and generic portrait rendering remain unverified.
+The creative inventory avatar is a separate renderer and does not establish generic portrait coverage.
+The original E-key background/scale report, locator report, rollback, and endless eating remain open.
+Remote skins, native depth and animation equality, emote effect ownership, and broader pack and interaction parity also remain open.

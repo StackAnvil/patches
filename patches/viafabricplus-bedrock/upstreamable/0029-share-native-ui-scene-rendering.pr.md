@@ -407,3 +407,18 @@ A physical click on its published settings row selects -1, and the private clien
 All 20 screenshots receive visual review, including backgrounds, slot layouts, and the settings row.
 Runtime hashes match the final distributables.
 These controls cover a real chest and desktop settings; they do not reproduce the reported E-key player inventory or compare native pixels.
+
+
+## Per-bone portrait material extraction, October 26, 2026
+
+Portrait extraction now partitions each controller's actual rendered bones by material.
+Each group intersects its surface selection with that controller's visibility rules.
+Model keys retain the selected bones while the model keeps the complete animation hierarchy.
+The current portrait cache releases historical surface subsets.
+
+The shared geometry regressions cover surface filtering and preserved ancestor transforms.
+Existing portrait appearance tests consume the complete material map and retain their independent context behavior.
+Fresh installed portrait rendering with several bone materials remains unverified.
+The separate creative inventory avatar preview is empty in the zero-alpha player fixture and does not verify this renderer.
+
+The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.

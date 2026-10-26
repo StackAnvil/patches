@@ -2482,3 +2482,30 @@ The plain capture shows a blue head.
 The Iris capture shows a saturated white head with blue bloom under that declared multiplier.
 The white pixels do not independently establish texture identity.
 This authored control does not establish native lighting equality, emote effects, or complete player materials.
+
+
+## Material-specific surfaces with complete skeletons, October 26, 2026
+
+The shared selector now retains each controller's complete evaluated material map.
+Repeated patterns retain their final override positions, and the map remains immutable.
+Consumers partition rendered bones by those materials after expression evaluation.
+This broadens the earlier global-material limit without evaluating scripts or animation again for each material.
+
+Model factories filter cubes and meshes while retaining every bone and ancestor.
+Empty transform helpers do not require material assignments.
+Mesh-only bones do require their selected material.
+Player factories apply the same surface filter to their ordinary and native hierarchies.
+Animation, locators, owner transforms, and child bindings retain the complete skeleton.
+
+The [Molang reference](https://mojang.github.io/bedrock-samples/Molang.html) assigns materials to whole bones through ordered rules.
+The [animation reference](https://mojang.github.io/bedrock-samples/Animations.html) specifies later overrides.
+Bedrock 1.26.51.1 bundled controllers use separate materials for axolotl limbs and chicken legs.
+The target asset evidence remains separate from authored Java controls and native graphical comparisons.
+
+New geometry regressions cover filtered cubes, mesh-only bones, empty ancestors, child matrices, and both player hierarchies.
+Restoring unfiltered factories fails both geometry checks.
+Restoring blanket world rejection also fails the new world-actor regression.
+All three checks pass after restoration of the implementation.
+The final relevant test classes pass 34 tests with one optional NPC skip.
+
+The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.

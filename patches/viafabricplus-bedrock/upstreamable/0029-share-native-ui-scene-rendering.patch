@@ -1,4 +1,4 @@
-From 04ee256b78364f5fb098558cf63ff1c456136126 Mon Sep 17 00:00:00 2001
+From b998a53a941965ab4e862b8fe1e997625fb16dda Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -464,6 +464,12 @@ secondary slots remain available for multi-texture shader integration.
 Pass explicit texture binding lists and the masked material mode through
 the shared GPU material API. Existing single-image appearances retain a
 one-element binding list and unchanged ordinary material flags.
+
+Retain each portrait controller's complete material map and partition its
+renderable bones before drawing. Intersect the material surface subset
+with that controller's visibility without removing hierarchy nodes used by
+animation. Include the actual selected bones in model keys and release
+historical subsets from the current portrait cache.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -486,7 +492,7 @@ one-element binding list and unchanged ordinary material flags.
  .../bedrock/render/BedrockEntityRenderer.java |   6 +-
  .../bedrock/render/BedrockGeometry.java       |   4 +-
  .../render/BedrockGuiActorContext.java        | 151 +++
- .../render/BedrockGuiActorRenderer.java       | 133 +++
+ .../render/BedrockGuiActorRenderer.java       | 140 +++
  .../render/BedrockPlayerAttachables.java      |  15 +-
  .../bedrock/render/BedrockPlayerSkins.java    |  43 +-
  .../bedrock/screen/ui/BedrockHudOverlays.java | 129 +++
@@ -562,7 +568,7 @@ one-element binding list and unchanged ordinary material flags.
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |  86 ++
  .../screen/ui/NativeUiViewportTest.java       |  95 ++
- 97 files changed, 11048 insertions(+), 30 deletions(-)
+ 97 files changed, 11055 insertions(+), 30 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -1341,7 +1347,7 @@ index 3bb710c..e09a72e 100644
          final JsonElement materials = compiled.get("materials");
          if (materials == null || !materials.isJsonObject()) return compiled;
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
-index 25e7542..80060fd 100644
+index 8ade116..c871d3f 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
 @@ -6,6 +6,8 @@
@@ -1476,7 +1482,7 @@ index 6cf01a9..aa9d3b5 100644
  
      private static final class ActorPlayback {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-index 6e99eea..25c7e53 100644
+index a2fae94..97c0960 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 @@ -69,9 +69,9 @@ public final class BedrockGeometry {
@@ -1650,10 +1656,10 @@ index 0000000..6a9fa61
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGuiActorRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGuiActorRenderer.java
 new file mode 100644
-index 0000000..f1b616a
+index 0000000..2ed5c05
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGuiActorRenderer.java
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,140 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1671,6 +1677,8 @@ index 0000000..f1b616a
 +import java.util.HashMap;
 +import java.util.List;
 +import java.util.Map;
++import java.util.Set;
++import java.util.HashSet;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.model.Model;
 +import net.minecraft.client.renderer.SubmitNodeCollector;
@@ -1719,23 +1727,28 @@ index 0000000..f1b616a
 +        state.color = (Math.round(opacity * 255) << 24) | 0xFFFFFF;
 +        state.lightCoords = 0xF000F0;
 +        final List<Draw> draws = new ArrayList<>();
++        final Set<ModelKey> activeModels = new HashSet<>();
 +        for (final var surface : frame.draws().surfaces()) {
 +            final var geometry = appearance.model(surface.geometry());
-+            final var key = new ModelKey(surface.geometry(), surface.visibility());
-+            final var model = this.models.computeIfAbsent(key, _ -> BedrockGeometry.entityModel(geometry,
-+                geometry.getParents().stream().map(parent -> parent.getName())
-+                    .filter(name -> visible(surface.visibility(), name)).collect(java.util.stream.Collectors.toSet())));
-+            final var material = appearance.materials().material(surface.material())
-+                .orElseThrow(() -> new IOException("Unsupported native GUI actor material " + surface.material()));
-+            final var uv = surface.uv();
-+            if (surface.textures().size() < material.textureCount()) throw new IOException("Missing native GUI actor sampler binding");
-+            final List<Identifier> textures = new ArrayList<>();
-+            for (int slot = 0; slot < material.textureCount(); slot++) textures.add(this.texture(appearance, surface.textures().get(slot)));
-+            final var type = BedrockActorRenderTypes.createGui(textures, material,
-+                surface.ignoreLighting(), surface.lightMultiplier(),
-+                new BedrockActorUvTransform(uv.offsetX(), uv.offsetY(), uv.scaleX(), uv.scaleY()));
-+            draws.add(new Draw(model, type));
++            for (final var group : BedrockGeometry.partitionMaterials(geometry, Map.of(), surface.materials()).entrySet()) {
++                final Set<String> bones = group.getValue().stream().filter(name -> visible(surface.visibility(), name))
++                        .collect(java.util.stream.Collectors.toUnmodifiableSet());
++                final var key = new ModelKey(surface.geometry(), bones);
++                activeModels.add(key);
++                final var model = this.models.computeIfAbsent(key, _ -> BedrockGeometry.entityModel(geometry, bones));
++                final var material = appearance.materials().material(group.getKey())
++                        .orElseThrow(() -> new IOException("Unsupported native GUI actor material " + group.getKey()));
++                final var uv = surface.uv();
++                if (surface.textures().size() < material.textureCount()) throw new IOException("Missing native GUI actor sampler binding");
++                final List<Identifier> textures = new ArrayList<>();
++                for (int slot = 0; slot < material.textureCount(); slot++) textures.add(this.texture(appearance, surface.textures().get(slot)));
++                final var type = BedrockActorRenderTypes.createGui(textures, material,
++                        surface.ignoreLighting(), surface.lightMultiplier(),
++                        new BedrockActorUvTransform(uv.offsetX(), uv.offsetY(), uv.scaleX(), uv.scaleY()));
++                draws.add(new Draw(model, type));
++            }
 +        }
++        this.models.keySet().retainAll(activeModels);
 +        state.draws = List.copyOf(draws);
 +        BedrockGuiActorContext.extracted(state);
 +        return state;
@@ -1784,11 +1797,11 @@ index 0000000..f1b616a
 +        @Override public BedrockActorAnimation.Visibility visibility() { return this.visibility; }
 +    }
 +
-+    private record ModelKey(String geometry, List<com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerControllers.Visibility> visibility) {}
++    private record ModelKey(String geometry, Set<String> bones) {}
 +    private record Draw(Model<EntityRenderState> model, RenderType type) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
-index 7e4dd5a..aa23fc6 100644
+index 096a937..4b91dac 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 @@ -99,6 +99,9 @@ public final class BedrockPlayerAttachables {
@@ -1840,10 +1853,10 @@ index 7e4dd5a..aa23fc6 100644
              } catch (IOException | RuntimeException invalid) {
                  if (FAILED_SELECTIONS.add(stack.getItem().toString()))
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 6c20acb..54ed6d7 100644
+index a18025f..668c6d0 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -371,7 +371,9 @@ public final class BedrockPlayerSkins {
+@@ -372,7 +372,9 @@ public final class BedrockPlayerSkins {
          if (appearance == null || appearance.serverControllers == null) return null;
          final UUID player = PLAYER_BY_TEXTURE.get(appearance.bodyId);
          final var actor = BedrockActorState.state(player);
@@ -1854,7 +1867,7 @@ index 6c20acb..54ed6d7 100644
          try {
              final Map<String, Object> queries = new HashMap<>();
              queries.put("mark_variant", actor == null ? 0 : actor.markVariant());
-@@ -383,13 +385,16 @@ public final class BedrockPlayerSkins {
+@@ -384,13 +386,16 @@ public final class BedrockPlayerSkins {
              queries.put("is_alive", true);
              queries.put("target_x_rotation", state.xRot);
              queries.put("head_x_rotation", BedrockPlayerQueries.headPitch(state.xRot));
@@ -1874,7 +1887,7 @@ index 6c20acb..54ed6d7 100644
              appearance.selectionAge = state.ageInTicks;
              appearance.selectionActor = actor;
              return appearance.serverSelection;
-@@ -554,7 +559,8 @@ public final class BedrockPlayerSkins {
+@@ -581,7 +586,8 @@ public final class BedrockPlayerSkins {
      }
  
      public static BedrockActorAnimation.Visibility bodyVisibility(final UUID uuid) {
@@ -1884,7 +1897,7 @@ index 6c20acb..54ed6d7 100644
          return playback == null ? BedrockActorAnimation.Visibility.UNSPECIFIED : playback.visibility();
      }
  
-@@ -567,6 +573,8 @@ public final class BedrockPlayerSkins {
+@@ -594,6 +600,8 @@ public final class BedrockPlayerSkins {
      public static Map<String, BedrockBoneAnimation.Transform> pose(
              final Avatar entity, final AvatarRenderState state, final float partialTick) {
          final Appearance appearance = APPEARANCES.get(entity.getUUID());
@@ -1893,7 +1906,7 @@ index 6c20acb..54ed6d7 100644
          final var actor = actor(appearance);
          final List<BedrockActorAnimation.SoundCue> sounds = new ArrayList<>();
          final List<BedrockActorAnimation.ParticleCue> particles = new ArrayList<>();
-@@ -602,6 +610,26 @@ public final class BedrockPlayerSkins {
+@@ -629,6 +637,26 @@ public final class BedrockPlayerSkins {
          return pose;
      }
  
@@ -1920,7 +1933,7 @@ index 6c20acb..54ed6d7 100644
      private static Map<String, Float> actorVariables(final Avatar entity, final AvatarRenderState state,
                                                       final boolean firstPerson) {
          final Map<String, Float> variables = new HashMap<>();
-@@ -616,7 +644,7 @@ public final class BedrockPlayerSkins {
+@@ -643,7 +671,7 @@ public final class BedrockPlayerSkins {
                          .variables());
          variables.put("attack_time", state.swingAnimation);
          variables.put("player_x_rotation", state.xRot);
@@ -1929,7 +1942,7 @@ index 6c20acb..54ed6d7 100644
          variables.put("gliding_speed_value", Math.max(1, state.speedValue));
          variables.put(
                  "is_holding_right",
-@@ -890,6 +918,7 @@ public final class BedrockPlayerSkins {
+@@ -925,6 +953,7 @@ public final class BedrockPlayerSkins {
      static Map<String, Object> actorQueries(final Avatar entity, final AvatarRenderState state, final float partialTick) {
          final Map<String, Object> queries = new HashMap<>();
          queries.putAll(BedrockActorQueries.nativeState(BedrockActorState.state(entity.getUUID())));
@@ -1937,7 +1950,7 @@ index 6c20acb..54ed6d7 100644
          queries.put("life_time", state.ageInTicks / 20F);
          queries.put("frame_alpha", partialTick);
          queries.put("is_alive", entity.isAlive());
-@@ -912,7 +941,7 @@ public final class BedrockPlayerSkins {
+@@ -947,7 +976,7 @@ public final class BedrockPlayerSkins {
          queries.put("shield_blocking_bob", BedrockActorState.shieldBlockingBob(entity.getUUID(), partialTick));
          queries.put("target_x_rotation", state.xRot);
          queries.put("head_x_rotation", BedrockPlayerQueries.headPitch(state.xRot));
@@ -7591,7 +7604,7 @@ index a2dd1df..ba8efbd 100644
      "defaultRequire": 1
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearanceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearanceTest.java
 new file mode 100644
-index 0000000..284b658
+index 0000000..eb50b32
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearanceTest.java
 @@ -0,0 +1,92 @@
@@ -7651,7 +7664,7 @@ index 0000000..284b658
 +            assertNotEquals(a.draws().surfaces().getFirst().textures().getFirst(), b.draws().surfaces().getFirst().textures().getFirst());
 +            assertEquals(b.draws(), c.draws());
 +            assertTrue(b.draws().surfaces().getFirst().visibility().getFirst().visible());
-+            assertTrue(first.materials().material(b.draws().surfaces().getFirst().material()).isPresent());
++            assertTrue(b.draws().surfaces().getFirst().materials().values().stream().allMatch(name -> first.materials().material(name).isPresent()));
 +        }
 +        assertThrows(IllegalStateException.class, () -> first.sample(2, null, 0, 0, 0));
 +    }
@@ -7670,7 +7683,7 @@ index 0000000..284b658
 +                assertTrue(selected.add(draw.textures().getFirst()));
 +                assertFalse(appearance.model(draw.geometry()).getParents().isEmpty());
 +                assertNotNull(appearance.image(draw.textures().getFirst()));
-+                assertTrue(appearance.materials().material(draw.material()).isPresent());
++                assertTrue(draw.materials().values().stream().allMatch(name -> appearance.materials().material(name).isPresent()));
 +                assertFalse(frame.pose().isEmpty());
 +            }
 +        }
@@ -7859,10 +7872,10 @@ index d47b872..f4f4f89 100644
          assertNull(packs.get(1).content().get("textures/items/casesensitive.jpg"));
          assertArrayEquals(new byte[] {9}, packs.get(2).content().get("textures/items/shared.png"));
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java
-index e04661c..f687eb7 100644
+index 4d4bf0a..f10cfbe 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java
-@@ -33,6 +33,25 @@ final class BedrockShaderPipelinesTest {
+@@ -34,6 +34,25 @@ final class BedrockShaderPipelinesTest {
                          }
      }
  
