@@ -10,12 +10,14 @@ Layer IDs above five normalize to Base, independently of packet order.
 A later entry for the same normalized layer replaces that layer, including clearing fields omitted by the later entry.
 The previous codec redirects unknown IDs to CustomCache and keeps the first duplicate.
 
-Local flight prediction writes Base, while game-mode fallback values stay in CustomCache.
+Local flight prediction and ordinary game-mode changes write Base.
+Spectator mode uses its separate layer, which clears on every mode change.
 The native setters at `0x14d38ada0` and `0x14d38ae20` write Base Flying at component offsets `0x174` and `0x178`.
 This setter evidence comes from static decompilation, without complete setter execution.
 With the corrected getter, the old CustomCache write loses a quick stop before server acknowledgment.
 A regression invokes the registered Java abilities handler twice and checks both requests and Base state.
-An explicit layer accessor replaces the cache-only accessor for both producers.
+An explicit layer accessor replaces the cache-only accessor for flight prediction.
+The shared game-mode writer applies native Base and Spectator ownership.
 
 The target is Bedrock 1.26.51.1, build 51061372, protocol 2193.
 The original serialized application at `0x140c4d650` maps layer IDs directly to six slots and normalizes unknown IDs to one.
@@ -56,3 +58,46 @@ The 19 changed classes comprise four implementations, twelve compiler-owned nest
 All twelve nested classes retain identical declarations and instruction disassembly.
 No new live flight or authored inventory capture ran for this change.
 See the [player availability input reference](../../../docs/native-player-inventory.md#ability-input-to-recipe-availability) for integration limits.
+
+
+## Native game-mode layer writes, October 26, 2026
+
+The previous mode producer wrote the lowest-priority CustomCache layer.
+After native priority selection, Base declarations could hide those mode changes.
+Spectator permissions also lacked their separate native owner.
+
+Mode changes now clear the Spectator declarations first.
+Survival and Adventure update Base Flying, MayFly, Instabuild, Invulnerable, and NoClip to false.
+Creative updates Base permissions and preserves Base Flying.
+Spectator disables its six interaction abilities and declares Flying, Invulnerable, and NoClip as true.
+Its MayFly and Instabuild values are false.
+Commands, Editor, LoadingScreen, and CustomCache retain their independent state.
+
+Default uses the world mode for these writes.
+Undefined leaves Base unchanged after the Spectator reset.
+Java profile conversion retains its existing fallback, independently of native permission state.
+The local player producer calls this shared operation before sending its flight context.
+
+The complete native writer at `1402096f0` supplies 3,456 writes across 1,728 two-mode sequences.
+The target remains Bedrock 1.26.51.1, protocol 2193, with binary SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+The comparison checks all six layers after each write.
+It compares declarations, declared boolean values, and declared float bits, including signed zero and NaN payloads.
+Bytes in unavailable fields remain outside the comparison.
+Typed component stores, dirty insertion, and spectator world-effect helpers are supplied boundaries.
+
+Four targeted tests cover transitions, higher policy ownership, raw mode fallback, the actual local producer, and the native sequence comparison.
+The preceding local producer fails by assertion.
+Deliberate wrong-owner and retained-spectator mutations each fail four tests by assertion.
+Both core Checkstyle tasks pass.
+
+These controls do not complete input-tick placement, native portal or mount effects, or live flight parity.
+The [timing requirements](0092-retain-completed-client-prediction-frames.pr.md#ticked-game-mode-inputs-october-26-2026) remain unfinished.
+
+
+The full four-project build passes 2,946 tests, skips 311 optional tests, and reports no failures or errors.
+Both native ability comparison suites run without skips.
+All four new mode tests pass, and both core Checkstyle tasks pass.
+All four source snapshots match the tested content.
+The packaged 1,559 core classes and 200 assets match both client and proxy copies.
+The 1,230 client classes and 40 converter classes also match their packaged outputs.
+No fresh live flight or game-mode capture ran for this correction.

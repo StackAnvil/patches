@@ -11204,3 +11204,28 @@ Queue placement, snapshot consumption, mode-dependent motion and mount effects, 
 The actor-class, enumeration, geometry, and interaction requirements for native aim also remain open.
 This evidence milestone changes no runtime source and establishes no new visual or gameplay parity claim.
 The full implementation goal stays active.
+
+
+## Native game-mode ability ownership, October 26, 2026
+
+Local mode changes now update Base and Spectator ability layers through one shared native operation.
+Each mode change clears old Spectator declarations while higher policy layers keep their values.
+Creative preserves Base Flying.
+Spectator declares Flying as true and MayFly as false, independently of Java spectator defaults.
+Undefined does not inherit the world mode for native ability writes.
+Java profile fallback keeps its existing behavior.
+
+The previous local producer fails the new regression.
+The corrected implementation matches 3,456 native writes across 1,728 two-mode sequences, with all six layers compared after each write.
+Separate mutations of Base ownership and Spectator reset fail the targeted tests.
+The [ability notes](../patches/viabedrock/upstreamable/0103-honor-native-ability-layer-priority.pr.md#native-game-mode-layer-writes-october-26-2026) record the native inputs and supplied boundaries.
+
+This correction establishes mode-dependent ability state in the core model and local producer.
+Input-tick placement, full native world effects, live flight comparisons, and complete movement and aim parity remain open.
+The full implementation goal stays active.
+
+
+The four-project build reports 2,946 passed tests, 311 optional skips, and no failures or errors.
+The new native mode-sequence comparison and existing native ability comparisons run without skips.
+Both core Checkstyle tasks pass, and packaged dependencies match their tested classes and assets.
+No fresh live flight or game-mode capture ran for this correction.
