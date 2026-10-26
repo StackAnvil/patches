@@ -1,4 +1,4 @@
-From 8dd8b4e9b789268ed0b6bc9d2cd86b39ece18e15 Mon Sep 17 00:00:00 2001
+From 6999cf98f1d263e44d49500a2e60263f2dfc3a04 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -607,6 +607,21 @@ nested construction and exception paths automatically; the optional EMF
 mixin leaves calls outside native construction unchanged. Resource reload
 replaces both caches. The first live prototype proved vanilla-root reuse
 but exposed the remaining shoulder counter, which this integration covers.
+
+Preserve authored per-face uv_rotation in native actor and skin geometry.
+Rotate texture corners before mirroring while retaining physical vertices,
+normal vectors, missing faces and signed UV rectangles. Project the same
+clockwise quarter turns into Java head icons instead of returning an
+unprojected custom skin. Ordinary zero-rotation faces retain their path.
+
+Bedrock added entity face UV rotation in geometry format 1.21.0. Its
+1.26.40 schema specifies clockwise 0/90/180/270-degree rotations before
+applying the UV rectangle, predating the 1.26.51.1/protocol 2193 target.
+https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/geometry.v1.26.40
+CubeConverter's face-rotation patch supplies the shared parsed angles.
+Both mesh-corner and head-pixel regressions fail before these consumer
+changes and pass afterward. This verifies coordinate and image semantics,
+not a matched native graphical session or complete skin parity.
 ---
  build.gradle.kts                              |   6 +
  settings.gradle.kts                           |   3 +
@@ -656,7 +671,7 @@ but exposed the remaining shoulder counter, which this integration covers.
  .../render/BedrockActorUvTransform.java       |  18 ++
  .../bedrock/render/BedrockEmissiveMask.java   |  27 ++
  .../bedrock/render/BedrockEntityRenderer.java | 195 +++++++++++
- .../bedrock/render/BedrockGeometry.java       | 215 ++++++++++++
+ .../bedrock/render/BedrockGeometry.java       | 227 +++++++++++++
  .../bedrock/render/BedrockModelCube.java      |  35 ++
  .../bedrock/render/BedrockNameTagAnchors.java |  75 +++++
  .../bedrock/render/BedrockNameTags.java       |  76 +++++
@@ -668,7 +683,7 @@ but exposed the remaining shoulder counter, which this integration covers.
  .../bedrock/render/BedrockShaderAlpha.java    |  43 +++
  .../bedrock/render/BedrockShaderEmission.java | 206 ++++++++++++
  .../render/BedrockShaderPipelines.java        |  55 ++++
- .../bedrock/render/BedrockSkinImages.java     | 105 ++++++
+ .../bedrock/render/BedrockSkinImages.java     | 113 +++++++
  .../render/CustomEntityRenderStore.java       |  71 ++++
  .../render/NativeCustomEntityPayload.java     |  24 ++
  .../NativeCustomEntitySamplerPayload.java     |  24 ++
@@ -690,6 +705,7 @@ but exposed the remaining shoulder counter, which this integration covers.
  .../bedrock/render/BedrockCubeFacesTest.java  | 182 +++++++++++
  .../render/BedrockEmissiveMaskTest.java       |  36 +++
  .../render/BedrockEntityRendererTest.java     |  50 +++
+ .../bedrock/render/BedrockFaceUvsTest.java    | 100 ++++++
  .../bedrock/render/BedrockModelCubeTest.java  |  47 +++
  .../render/BedrockNameTagAnchorsTest.java     | 120 +++++++
  .../bedrock/render/BedrockNameTagsTest.java   | 127 ++++++++
@@ -703,7 +719,7 @@ but exposed the remaining shoulder counter, which this integration covers.
  .../render/CustomEntityRenderStoreTest.java   |  84 +++++
  .../bedrock/render/EglTestContext.java        |  52 +++
  .../compat/iris/BedrockIrisAlphaGpuTest.java  | 306 ++++++++++++++++++
- 95 files changed, 6348 insertions(+)
+ 96 files changed, 6468 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/BedrockMixinPlugin.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockDynamicTexture.java
@@ -781,6 +797,7 @@ but exposed the remaining shoulder counter, which this integration covers.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEmissiveMaskTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFaceUvsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelCubeTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchorsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
@@ -3166,10 +3183,10 @@ index 0000000..485712b
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 new file mode 100644
-index 0000000..59c454a
+index 0000000..4667641
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,227 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3349,10 +3366,22 @@ index 0000000..59c454a
 +                }
 +                final Float[] face = uv.getUvMap().get(sourceFace(direction));
 +                final boolean rotate = uv.getUvType() == UVType.BOX && (direction == Direction.DOWN || direction == Direction.UP);
-+                cube.polygons[index++] = new ModelPart.Polygon(vertices,
++                final ModelPart.Polygon polygon = new ModelPart.Polygon(vertices,
 +                    rotate ? face[2] : face[0], rotate ? face[3] : face[1],
 +                    rotate ? face[0] : face[2], rotate ? face[1] : face[3],
 +                    width, height, mirror, direction);
++                final int turns = (int) (uv.getUvRotation().getOrDefault(sourceFace(direction), 0F) / 90);
++                if (turns == 0) {
++                    cube.polygons[index++] = polygon;
++                    continue;
++                }
++                final ModelPart.Vertex[] corners = polygon.vertices();
++                final ModelPart.Vertex[] rotated = corners.clone();
++                for (int i = 0; i < corners.length; i++) {
++                    final var sample = corners[Math.floorMod(i + (mirror ? -turns : turns), corners.length)];
++                    rotated[i] = corners[i].remap(sample.u(), sample.v());
++                }
++                cube.polygons[index++] = new ModelPart.Polygon(rotated, polygon.normal());
 +            }
 +        }
 +    }
@@ -4463,10 +4492,10 @@ index 0000000..122cb02
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImages.java
 new file mode 100644
-index 0000000..7fabea5
+index 0000000..a06cf65
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImages.java
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,113 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4515,7 +4544,8 @@ index 0000000..7fabea5
 +    private static boolean ordinaryHead(final Cube cube) {
 +        return cube != null && cube.getSize().getX() == 8 && cube.getSize().getY() == 8 && cube.getSize().getZ() == 8
 +            && cube.getRotation().getX() == 0 && cube.getRotation().getY() == 0 && cube.getRotation().getZ() == 0
-+            && cube.getUvMap().getUvRotation().values().stream().allMatch(rotation -> rotation == 0);
++            && cube.getUvMap().getUvRotation().values().stream()
++                .allMatch(rotation -> rotation == 0 || rotation == 90 || rotation == 180 || rotation == 270);
 +    }
 +
 +    private static UVMap target(final int offset) {
@@ -4525,6 +4555,7 @@ index 0000000..7fabea5
 +    private static boolean sameCoordinates(final BufferedImage source, final BedrockGeometryModel model,
 +                                           final Cube cube, final int offset, final int size) {
 +        if (cube.getUvMap().getUvType() != UVMap.UVType.BOX) return false;
++        if (cube.getUvMap().getUvRotation().values().stream().anyMatch(rotation -> rotation != 0)) return false;
 +        for (final var entry : target(offset).getUvMap().entrySet()) {
 +            final Float[] uv = cube.getUvMap().getUvMap().get(entry.getKey());
 +            if (uv == null) return false;
@@ -4550,10 +4581,16 @@ index 0000000..7fabea5
 +            final int bottom = Math.round(Math.max(destination[1], destination[3]) * scale);
 +            final boolean turn = cube.getUvMap().getUvType() != UVMap.UVType.BOX
 +                && (entry.getKey() == Direction.UP || entry.getKey() == Direction.DOWN);
++            final int turns = (int) (cube.getUvMap().getUvRotation().getOrDefault(entry.getKey(), 0F) / 90);
 +            for (int y = top; y < bottom; y++) for (int x = left; x < right; x++) {
 +                float u = ((x + .5F) / scale - destination[0]) / (destination[2] - destination[0]);
 +                float v = ((y + .5F) / scale - destination[1]) / (destination[3] - destination[1]);
 +                if (turn) { u = 1 - u; v = 1 - v; }
++                for (int i = 0; i < turns; i++) {
++                    final float previousU = u;
++                    u = v;
++                    v = 1 - previousU;
++                }
 +                final int sourceX = (int) Math.floor((uv[0] + u * (uv[2] - uv[0])) * source.getWidth() / model.getTextureSize().getX());
 +                final int sourceY = (int) Math.floor((uv[1] + v * (uv[3] - uv[1])) * source.getHeight() / model.getTextureSize().getY());
 +                if (sourceX >= 0 && sourceY >= 0 && sourceX < source.getWidth() && sourceY < source.getHeight())
@@ -6291,6 +6328,112 @@ index 0000000..aac5efd
 +        }
 +    }
 +
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFaceUvsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFaceUvsTest.java
+new file mode 100644
+index 0000000..dac484b
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFaceUvsTest.java
+@@ -0,0 +1,100 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.awt.image.BufferedImage;
++import java.util.Locale;
++import net.minecraft.client.model.geom.ModelPart;
++import net.minecraft.util.RandomSource;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.cube.converter.util.element.Direction;
++import org.cube.converter.util.element.Position3V;
++import org.cube.converter.util.element.UVMap;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockFaceUvsTest {
++    @Test
++    void rotatesTextureCoordinatesWithoutMovingVerticesOrChangingNormals() {
++        for (final Direction face : Direction.values()) for (final boolean mirror : new boolean[]{false, true}) {
++            for (final int sign : new int[]{-1, 1}) {
++                final var original = polygon(geometry(face, 0, mirror, sign));
++                for (int turns = 0; turns < 4; turns++) {
++                    final var rotated = polygon(geometry(face, turns * 90, mirror, sign));
++                    assertEquals(original.normal(), rotated.normal());
++                    assertEquals(4, rotated.vertices().length);
++                    for (int i = 0; i < 4; i++) {
++                        final var before = original.vertices()[i];
++                        final var after = rotated.vertices()[i];
++                        assertEquals(before.x(), after.x());
++                        assertEquals(before.y(), after.y());
++                        assertEquals(before.z(), after.z());
++                        final float u = (before.u() * 64 - 24) / (sign * 8);
++                        final float v = (before.v() * 64 - 24) / 8;
++                        final float[] expected = rotated(u, v, turns);
++                        assertEquals((24 + expected[0] * sign * 8) / 64, after.u());
++                        assertEquals((24 + expected[1] * 8) / 64, after.v());
++                    }
++                }
++            }
++        }
++    }
++
++    @Test
++    void projectsRotatedHeadFacesIntoJavaIconsWithoutChangingTheSkin() {
++        final var source = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
++        for (int y = 0; y < 64; y++) for (int x = 0; x < 64; x++)
++            source.setRGB(x, y, 0xFF000000 | y << 8 | x);
++        for (final Direction face : Direction.values()) for (final int sign : new int[]{-1, 1}) {
++            final Float[] destination = UVMap.fromBoxUV(new Position3V(8, 8, 8), new Float[]{0F, 0F}, false)
++                    .getUvMap().get(face);
++            final int left = Math.round(Math.min(destination[0], destination[2]));
++            final int top = Math.round(Math.min(destination[1], destination[3]));
++            for (int turns = 0; turns < 4; turns++) {
++                final var atlas = BedrockSkinImages.javaHeadTexture(source, geometry(face, turns * 90, false, sign));
++                assertNotSame(source, atlas);
++                for (int y = top; y < top + 8; y++) for (int x = left; x < left + 8; x++) {
++                    float u = (x + .5F - destination[0]) / (destination[2] - destination[0]);
++                    float v = (y + .5F - destination[1]) / (destination[3] - destination[1]);
++                    if (face == Direction.UP || face == Direction.DOWN) { u = 1 - u; v = 1 - v; }
++                    final float[] sample = rotated(u, v, turns);
++                    assertEquals(source.getRGB((int) Math.floor(24 + sample[0] * sign * 8),
++                            (int) Math.floor(24 + sample[1] * 8)), atlas.getRGB(x, y));
++                }
++                assertEquals(0, atlas.getRGB(0, 32));
++            }
++        }
++        assertEquals(0xFF001818, source.getRGB(24, 24));
++    }
++
++    private static float[] rotated(final float u, final float v, final int turns) {
++        return switch (turns) {
++            case 0 -> new float[]{u, v};
++            case 1 -> new float[]{v, 1 - u};
++            case 2 -> new float[]{1 - u, 1 - v};
++            case 3 -> new float[]{1 - v, u};
++            default -> throw new IllegalArgumentException();
++        };
++    }
++
++    private static ModelPart.Polygon polygon(final BedrockGeometryModel geometry) {
++        final var cube = BedrockGeometry.entityModel(geometry).root().getChild("head").getChild("cube_0")
++                .getRandomCube(RandomSource.create());
++        assertEquals(1, cube.polygons.length);
++        return cube.polygons[0];
++    }
++
++    private static BedrockGeometryModel geometry(final Direction face, final int rotation, final boolean mirror, final int sign) {
++        return BedrockGeometryModel.fromJson("""
++                {"format_version":"1.21.0","minecraft:geometry":[{
++                  "description":{"identifier":"geometry.head","texture_width":64,"texture_height":64},
++                  "bones":[{"name":"head","pivot":[0,24,0],"cubes":[{
++                    "origin":[-4,24,-4],"size":[8,8,8],"mirror":%s,"uv":{
++                      "%s":{"uv":[24,24],"uv_size":[%d,8],"uv_rotation":%d}}}]}]}]}
++                """.formatted(mirror, face.name().toLowerCase(Locale.ROOT), sign * 8, rotation)).getFirst();
++    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelCubeTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelCubeTest.java
 new file mode 100644

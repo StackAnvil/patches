@@ -2,6 +2,19 @@
 
 Support the target's nonemissive alpha-test `MASKED_MULTITEXTURE` family with two GPU images in one geometry draw. Preserve independent image dimensions and normalized UV sampling. Keep the mask separate from Minecraft's overlay sampler. Missing bindings retain the legacy custom-actor fallback, including older version-one snapshots.
 
+Preserve authored per-face texture rotation in actor and skin models.
+The [target-compatible geometry reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/geometry.v1.26.40?view=minecraft-bedrock-stable)
+specifies clockwise quarter turns before applying each UV rectangle.
+CubeConverter preserves these angles in the shared geometry model.
+The renderer rotates UV corners before cube mirroring and preserves vertices, normals and absent faces.
+Java head icons receive the same rotation when projecting a custom skin atlas.
+Ordinary faces avoid the extra corner rotation.
+
+Two regressions fail against the previous consumers and pass with the change.
+They cover all six faces, all four angles, mirrored cubes, signed UV rectangles and exact projected head pixels.
+Existing head atlas tests also pass.
+These are coordinate and image checks, without a new matched native graphical session.
+
 The production shader passes all 512 original sampled masked fragment controls and the existing 672 ordinary controls at tolerance 1e-6. These compare color, discard, and depth with supplied sampling and buffer boundaries. A deliberate floor substitution fails; restoring native upward rounding passes. Native material selection, other constant/shared-input variants, sampler filtering, and graphical parity remain outside these controls.
 
 The Iris bridge composes normalized primary-image reads before pack shading and tests native coverage at the original UV. It forwards sampler identity through helper parameters, prototypes, and overloads, while preserving unrelated images. A separate reserved texture unit retains overlay and lightmap bindings. A configuration plugin gates Iris hooks by the installed mod while keeping strict injection checks for that integration. GPU regressions cover ordinary, LOD, and gradient reads, mask overwrite/keep/discard, and reuse of shared native/Java programs. Geometry/tessellation transport and other sampling operations remain incomplete or unverified.

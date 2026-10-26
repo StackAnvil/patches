@@ -41,6 +41,11 @@ Legacy 64×32 skins expand to 64×64 by mirroring limb faces. The importer prese
 
 Custom geometry import checks bone hierarchy, coordinate bounds, texture dimensions, and model size before replacing a saved skin. Legacy inheritance keeps parent surfaces and appends child cubes on matching bones. Child bones supply their pose and flags. Each texture dimension inherits separately, with a 64×64 default. The importer preserves cube mirror and inflation defaults, polygon indices, and visible bounds. It rejects unresolved parents, ambiguous names, inheritance cycles, and inheritance in format versions 1.12 and later.
 
+Per-face texture rotations survive geometry parsing, actor and skin drawing, and Java head icon projection.
+The renderer supports the clockwise quarter turns defined by the [Bedrock geometry schema](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/geometry.v1.26.40?view=minecraft-bedrock-stable).
+Regression checks cover face coordinates, mirrored cubes, reversed texture rectangles and exact head pixels.
+Native visual comparisons remain pending.
+
 Missing legacy parents resolve from the bundled vanilla model library. Pack definitions take precedence, including across library chains. Imports run in the background and load built-in models only when needed. The importer checks the account and open screen before showing the result.
 
 Licensed tests resolve all seven inherited entries from the base skin-model library, including parents supplied by entity model files. Equal duplicate definitions share one library entry. Conflicting definitions remain errors. The library now resolves versioned vanilla overlays.
