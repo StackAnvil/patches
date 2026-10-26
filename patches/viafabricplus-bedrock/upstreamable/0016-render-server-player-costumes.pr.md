@@ -1,3 +1,9 @@
+## Native material bindings, October 26, 2026
+
+Third-person costumes and first-person hands now retain all images required by supported native materials. Default-body draws substitute the player's uploaded skin only for the primary image. Masked replacements keep Character Creator face and clothing surfaces with their own primaries and the selected mask. A failed replacement leaves the ordinary body and its layers available.
+
+Supported UV animation runs in the shader with each image's independent dimensions. Unsupported legacy materials keep their previous fallback. The third-person material cache replaces sampled state per controller and geometry instead of retaining every animated UV value. Complete selector coverage preserves the existing default selection behavior. Fresh masked player-costume and Character Creator visual comparisons remain pending; the live masked actor fixture exercises the shared renderer and Iris bridge.
+
 Render server minecraft:player overrides against native actor properties, including costume geometry, materials, UV animation and controller playback. CubeCraft uses these definitions for hats, gloves, shoes and back accessories.
 
 Validation: controller and supplied skin geometry regressions pass, together with the full addon test suite. Private recorded scene replay exercises the actual client renderer without another public connection. Active unresolved assets remain visible as failures.

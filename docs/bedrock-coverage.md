@@ -10876,3 +10876,53 @@ DXIL opcode 28 rounds toward positive infinity, as specified in [Microsoft's DXI
 The controls supply texture samples, handles, constant buffers, lighting, and output sinks.
 They do not execute native material selection, sampler filtering, controller expressions, or rasterization.
 Production masked-shader comparisons remain pending.
+
+## Sampled masked actor materials, October 26, 2026
+
+The renderer now supports the target's sampled `MASKED_MULTITEXTURE` alpha-test family.
+Each controller keeps one geometry draw with two independently loaded GPU images.
+The mask overwrites the base unless its RGB sum, multiplied by inverse alpha, rounds upward to a positive value.
+The selected color then follows the existing native discard, overlay, lighting, and fog path.
+This supersedes the masked-material fallback limit in the preceding sampler-transport milestone.
+
+Material inheritance retains the mask flag and rejects unsupported opaque or emissive combinations.
+Custom actors, equipped pack models, server player costumes, first-person hands, world actors, and GUI portraits load the required bindings.
+The two images retain their own dimensions and share normalized UV coordinates.
+The mask has a separate resource binding; Minecraft's overlay sampler keeps its existing role.
+Missing custom-actor bindings retain the legacy fallback, including snapshots from older core versions.
+
+Default-body costumes use the player's uploaded skin as the primary image.
+A loaded masked replacement retains Character Creator face and clothing surfaces with their own primary images.
+Missing replacement images leave the ordinary body and its layers available.
+Supported costume UV animation runs in the shader, while unsupported legacy materials retain their previous presentation.
+
+Iris receives the composed input before shader-pack color processing.
+Native coverage still uses the original actor UV and the composed alpha.
+Sampler identity passes through helper functions, prototypes, and overloads, leaving unrelated image reads unchanged.
+A reserved mask texture unit keeps the primary image, overlay, and lightmap independent.
+Iris hooks load only when that optional mod is installed.
+Each pipeline binding restores its mask and alpha state when control returns to a Java draw.
+
+The production fragment shader passes all 512 original native masked controls and 672 ordinary-material controls at tolerance 1e-6.
+These controls check color, discard, and depth with supplied texture samples and buffer values.
+A deliberate floor substitution fails the masked comparison; restoring upward rounding passes.
+The Iris GPU regression checks ordinary, LOD, and gradient reads through sampler helpers, unrelated images, and shared native/Java programs.
+Material, controller, equipment-owner, and bundled world-actor regressions also pass.
+The bundled villager profession now resolves one two-image masked draw.
+The full four-project build passes 3,080 tests, skips 152 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass; packaged classes, shader assets, and embedded dependencies match their compiled inputs.
+
+
+Fresh direct and Iris-enabled ViaProxy sessions verify blue overwrite, red base retention, restoration, and actor removal.
+Only the secondary image changes; the controller retains one model and the same native actor lifetime.
+The primary image is 16 × 16, while the two secondary images are 13 × 9 and 7 × 11.
+Native component events, received bindings, refreshed draw caches, and eight reviewed screenshots support these checks.
+Installed artifact hashes match the final build, and the shader profile loads Iris with Complementary Reimagined.
+These authored pack controls do not establish native graphical parity or fresh player-costume visual coverage.
+
+**Limits:** The native controls cover the both-sampled fragment variant.
+They do not verify native pass selection, constant/shared-input variants, sampler filtering, or rasterization.
+The Iris bridge covers normalized texture, LOD, and gradient reads in the supported vertex/fragment stages.
+Geometry/tessellation transport and other shader-pack sampling operations still need implementation or verification.
+The shared consumer changes do not establish complete skin, emote, equipment, interaction, or pack parity.
+Native graphical comparisons and the original inventory, locator, movement, and eating reports remain open.

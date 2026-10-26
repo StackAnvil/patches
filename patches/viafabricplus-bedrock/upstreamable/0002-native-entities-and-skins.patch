@@ -1,4 +1,4 @@
-From b6b40d5dcb53508e206343ed6e3f8e9f0ddd4ca8 Mon Sep 17 00:00:00 2001
+From f8200dbc81831c2ea97f0315c8a80212f47869c8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -515,15 +515,47 @@ store so secondary texture changes invalidate its model cache. Ordinary
 single-sampler rendering explicitly uses slot zero; additional slots no
 longer arrive as duplicate geometry. Masked material drawing remains a
 separate shared renderer integration and is not enabled by transport.
+
+Carry the verified masked-overwrite material mode through native actor
+pipelines. Bind independent color and mask textures in one draw, preserve
+their own sampling grids, and apply the target ceil/clamp selector before
+alpha testing, overlay, lighting and fog. Keep Minecraft's overlay sampler
+separate from the Bedrock mask resource. Accept the verified alpha-test
+masked family and continue rejecting unverified emission combinations.
+
+The target 1.26.51.1 sampled SM65 fragment uses ceil of mask RGB sum times
+inverse alpha to choose between complete source texels. The GPU regression
+compares actual production GLSL RGBA, discard and depth with 512 original
+fragment controls using supplied sampling/buffer boundaries. Constant and
+shared-input variants and native sampling/filter producers remain outside
+that comparison. All material consumers and Iris require matching bindings.
+
+Compose masked color inputs before shader-pack shading and test native
+coverage from the original UV. Keep the mask on its own reserved Iris
+texture unit and preserve the overlay/lightmap bindings. Forward sampler
+identity through GLSL helper parameters, including overloads and prototypes,
+so normal-map and other sampler reads remain unchanged. Native mask state
+belongs to each pipeline bind and restores with nested Java draws.
+
+The Iris bridge handles normalized texture, LOD and gradient reads in the
+supported vertex/fragment stages. Geometry/tessellation transport and
+other shader-pack sampling operations still need separate verification.
+Retain the legacy entity fallback for older snapshots missing sampler data.
+
+Gate Iris integration by the installed mod, not only target-class presence.
+Its binding hook targets a method Iris adds to Minecraft's GlProgram, so
+an absent Iris must skip that mixin while an installed Iris keeps strict
+injection validation. The fresh plain-client startup exposed this path.
 ---
  build.gradle.kts                              |   6 +
  settings.gradle.kts                           |   3 +
  .../bedrock/ViaFabricPlusBedrock.java         |  22 ++
+ .../bedrock/injection/BedrockMixinPlugin.java |  29 ++
  .../access/IBedrockActorRenderType.java       |  14 +
  .../access/IBedrockDynamicTexture.java        |  10 +
  .../access/IBedrockShaderPipeline.java        |  10 +
  .../iris/IrisProgramSourceConstructor.java    |  24 ++
- .../compat/iris/MixinIrisAlphaSampler.java    |  29 ++
+ .../compat/iris/MixinIrisAlphaSampler.java    |  32 ++
  .../compat/iris/MixinIrisAlphaTransform.java  |  30 ++
  .../compat/iris/MixinIrisAlphaUniforms.java   |  26 ++
  .../compat/iris/MixinIrisEmissionLookup.java  |  36 +++
@@ -531,9 +563,11 @@ separate shared renderer integration and is not enabled by transport.
  .../compat/iris/MixinIrisFallbackAlpha.java   |  56 ++++
  .../iris/MixinIrisFallbackTransform.java      |  40 +++
  .../compat/iris/MixinIrisJavaAlphaTest.java   |  29 ++
+ .../compat/iris/MixinIrisMaskBinding.java     |  33 ++
+ .../compat/iris/MixinIrisMaskReservation.java |  29 ++
  .../compat/iris/MixinIrisMaterialAlpha.java   |  40 +++
  .../mixin/compat/iris/MixinIrisPipelines.java |  23 ++
- .../compat/iris/MixinNativeShaderBinding.java |  30 ++
+ .../compat/iris/MixinNativeShaderBinding.java |  34 +++
  .../iris/MixinNativeShaderCompilation.java    |  29 ++
  .../render/MixinAbstractClientPlayer.java     |  38 +++
  .../render/MixinBedrockActorPipelines.java    |  27 ++
@@ -552,13 +586,13 @@ separate shared renderer integration and is not enabled by transport.
  .../render/MixinPlayerSkinWidget.java         |  28 ++
  .../render/MixinPlayerTabOverlay.java         |  22 ++
  .../render/BedrockAcceptedResources.java      |  53 ++++
- .../BedrockActorMaterialDefinitions.java      | 164 ++++++++++
+ .../BedrockActorMaterialDefinitions.java      | 174 +++++++++++
  .../bedrock/render/BedrockActorMaterials.java |  56 ++++
- .../render/BedrockActorRenderTypes.java       |  93 ++++++
+ .../render/BedrockActorRenderTypes.java       | 116 +++++++
  .../bedrock/render/BedrockActorResources.java |  43 +++
  .../render/BedrockActorUvTransform.java       |  18 ++
  .../bedrock/render/BedrockEmissiveMask.java   |  27 ++
- .../bedrock/render/BedrockEntityRenderer.java | 192 ++++++++++++
+ .../bedrock/render/BedrockEntityRenderer.java | 195 ++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 +++++++++++++
  .../bedrock/render/BedrockModelCube.java      |  35 +++
  .../bedrock/render/BedrockNameTagAnchors.java |  75 +++++
@@ -567,7 +601,7 @@ separate shared renderer integration and is not enabled by transport.
  .../bedrock/render/BedrockPlayerSkins.java    | 287 ++++++++++++++++++
  .../render/BedrockRenderSnapshotCache.java    |  48 +++
  .../bedrock/render/BedrockRidingAnchors.java  |  73 +++++
- .../bedrock/render/BedrockShaderAlpha.java    |  29 ++
+ .../bedrock/render/BedrockShaderAlpha.java    |  42 +++
  .../bedrock/render/BedrockShaderEmission.java | 196 ++++++++++++
  .../render/BedrockShaderPipelines.java        |  55 ++++
  .../bedrock/render/BedrockSkinImages.java     | 105 +++++++
@@ -575,16 +609,17 @@ separate shared renderer integration and is not enabled by transport.
  .../render/NativeCustomEntityPayload.java     |  24 ++
  .../NativeCustomEntitySamplerPayload.java     |  24 ++
  .../bedrock/render/NativeSkinPayload.java     |  22 ++
- .../render/compat/iris/BedrockIrisAlpha.java  |  68 +++++
- .../compat/iris/BedrockIrisAlphaUniforms.java |  31 ++
+ .../render/compat/iris/BedrockIrisAlpha.java  |  69 +++++
+ .../compat/iris/BedrockIrisAlphaUniforms.java |  37 +++
  .../compat/iris/BedrockIrisEmission.java      |  16 +
- .../shaders/core/bedrock_actor.fsh            |  50 +++
+ .../compat/iris/BedrockIrisMaskedTexture.java | 138 +++++++++
+ .../shaders/core/bedrock_actor.fsh            |  58 ++++
  .../shaders/core/bedrock_actor.vsh            |  47 +++
  .../viafabricplus-bedrock.accesswidener       |   6 +
- .../viafabricplus-bedrock.mixins.json         |  29 ++
+ .../viafabricplus-bedrock.mixins.json         |  32 ++
  .../render/BedrockAcceptedResourcesTest.java  | 118 +++++++
- .../BedrockActorMaterialDefinitionsTest.java  | 208 +++++++++++++
- .../render/BedrockActorMaterialsGpuTest.java  | 164 ++++++++++
+ .../BedrockActorMaterialDefinitionsTest.java  | 228 ++++++++++++++
+ .../render/BedrockActorMaterialsGpuTest.java  | 185 +++++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 +++
  .../render/BedrockActorUvTransformTest.java   |  27 ++
  .../bedrock/render/BedrockCubeFacesTest.java  | 182 +++++++++++
@@ -596,13 +631,14 @@ separate shared renderer integration and is not enabled by transport.
  .../render/BedrockPlayerMaterialsTest.java    |  42 +++
  .../BedrockRenderSnapshotCacheTest.java       | 123 ++++++++
  .../render/BedrockRidingAnchorsTest.java      | 149 +++++++++
- .../render/BedrockShaderAlphaTest.java        |  31 ++
+ .../render/BedrockShaderAlphaTest.java        |  38 +++
  .../render/BedrockShaderPipelinesTest.java    |  89 ++++++
  .../bedrock/render/BedrockSkinImagesTest.java |  82 +++++
  .../render/CustomEntityRenderStoreTest.java   |  84 +++++
  .../bedrock/render/EglTestContext.java        |  52 ++++
- .../compat/iris/BedrockIrisAlphaGpuTest.java  | 164 ++++++++++
- 86 files changed, 5420 insertions(+)
+ .../compat/iris/BedrockIrisAlphaGpuTest.java  | 248 +++++++++++++++
+ 90 files changed, 5855 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/BedrockMixinPlugin.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockDynamicTexture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockShaderPipeline.java
@@ -615,6 +651,8 @@ separate shared renderer integration and is not enabled by transport.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisFallbackAlpha.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisFallbackTransform.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisJavaAlphaTest.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisMaskBinding.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisMaskReservation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisMaterialAlpha.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisPipelines.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinNativeShaderBinding.java
@@ -662,6 +700,7 @@ separate shared renderer integration and is not enabled by transport.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlpha.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaUniforms.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisEmission.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisMaskedTexture.java
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.vsh
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java
@@ -756,6 +795,41 @@ index a8f239a..af5a490 100644
          this.settings = new BedrockSettings();
          this.account = new BedrockAccount(ViaFabricPlus.api().path().resolve("bedrock.json"));
      }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/BedrockMixinPlugin.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/BedrockMixinPlugin.java
+new file mode 100644
+index 0000000..4c000e8
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/BedrockMixinPlugin.java
+@@ -0,0 +1,29 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection;
++
++import java.util.List;
++import java.util.Set;
++import net.fabricmc.loader.api.FabricLoader;
++import org.objectweb.asm.tree.ClassNode;
++import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
++import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
++
++/** Iris adds methods to Minecraft classes, so target presence alone cannot gate its integration. */
++public final class BedrockMixinPlugin implements IMixinConfigPlugin {
++    @Override
++    public boolean shouldApplyMixin(final String targetClassName, final String mixinClassName) {
++        return !mixinClassName.startsWith("com.viaversion.viafabricplus.bedrock.injection.mixin.compat.iris.")
++                || FabricLoader.getInstance().isModLoaded("iris");
++    }
++
++    @Override public void onLoad(final String mixinPackage) {}
++    @Override public String getRefMapperConfig() { return null; }
++    @Override public void acceptTargets(final Set<String> myTargets, final Set<String> otherTargets) {}
++    @Override public List<String> getMixins() { return null; }
++    @Override public void preApply(final String targetClassName, final ClassNode targetClass, final String mixinClassName, final IMixinInfo mixinInfo) {}
++    @Override public void postApply(final String targetClassName, final ClassNode targetClass, final String mixinClassName, final IMixinInfo mixinInfo) {}
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
 new file mode 100644
 index 0000000..cf85397
@@ -794,7 +868,7 @@ index 0000000..50fc1c5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockShaderPipeline.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockShaderPipeline.java
 new file mode 100644
-index 0000000..7582ea8
+index 0000000..c976e95
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockShaderPipeline.java
 @@ -0,0 +1,10 @@
@@ -806,7 +880,7 @@ index 0000000..7582ea8
 +package com.viaversion.viafabricplus.bedrock.injection.access;
 +
 +public interface IBedrockShaderPipeline {
-+    void bedrock$alphaReference(float reference);
++    void bedrock$material(float reference, boolean masked);
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/IrisProgramSourceConstructor.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/IrisProgramSourceConstructor.java
 new file mode 100644
@@ -840,10 +914,10 @@ index 0000000..72721df
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisAlphaSampler.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisAlphaSampler.java
 new file mode 100644
-index 0000000..a352f54
+index 0000000..1d59f53
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisAlphaSampler.java
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,32 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -854,6 +928,7 @@ index 0000000..a352f54
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 +import com.viaversion.viafabricplus.bedrock.render.compat.iris.BedrockIrisAlpha;
++import com.viaversion.viafabricplus.bedrock.render.compat.iris.BedrockIrisMaskedTexture;
 +import net.irisshaders.iris.gl.sampler.SamplerHolder;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.Pseudo;
@@ -870,6 +945,8 @@ index 0000000..a352f54
 +        if (unit == 0) {
 +            // Register separately: a gtexture override must not replace the native source as well.
 +            samplers.addExternalSampler(0, BedrockIrisAlpha.SAMPLER);
++            if (samplers.hasSampler(BedrockIrisMaskedTexture.SAMPLER))
++                samplers.addExternalSampler(BedrockIrisMaskedTexture.UNIT, BedrockIrisMaskedTexture.SAMPLER);
 +        }
 +    }
 +}
@@ -1208,6 +1285,80 @@ index 0000000..7be98d5
 +        return BedrockIrisAlpha.supports(parameters) ? BedrockIrisAlpha.javaAlphaTest(expression) : expression;
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisMaskBinding.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisMaskBinding.java
+new file mode 100644
+index 0000000..b1d23a4
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisMaskBinding.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.compat.iris;
++
++import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
++import com.mojang.renderpearl.backend.opengl.GlProgram;
++import com.mojang.renderpearl.backend.opengl.Uniform;
++import com.viaversion.viafabricplus.bedrock.render.compat.iris.BedrockIrisMaskedTexture;
++import java.util.List;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(value = GlProgram.class, priority = 900, remap = false)
++public abstract class MixinIrisMaskBinding {
++    @Shadow @Final
++    private List<Uniform> uniforms;
++
++    @Inject(method = "iris$setupBindings", at = @At("RETURN"))
++    private void bedrock$mask(final List<BindGroupLayout.UniformDescription> descriptions, final int pushConstants,
++                              final CallbackInfo ci) {
++        for (int index = 0; index < descriptions.size(); index++) {
++            if (descriptions.get(index).name().equals(BedrockIrisMaskedTexture.SAMPLER))
++                this.uniforms.set(index, new Uniform.Sampler(BedrockIrisMaskedTexture.UNIT));
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisMaskReservation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisMaskReservation.java
+new file mode 100644
+index 0000000..c075837
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisMaskReservation.java
+@@ -0,0 +1,29 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.compat.iris;
++
++import com.llamalad7.mixinextras.sugar.Local;
++import com.viaversion.viafabricplus.bedrock.render.compat.iris.BedrockIrisMaskedTexture;
++import java.util.HashSet;
++import java.util.Set;
++import org.lwjgl.opengl.GL46C;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Pseudo;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.ModifyVariable;
++import org.spongepowered.asm.mixin.injection.At.Shift;
++
++@Pseudo
++@Mixin(targets = "net.irisshaders.iris.gl.program.ProgramSamplers$Builder", remap = false)
++public abstract class MixinIrisMaskReservation {
++    @ModifyVariable(method = "<init>", at = @At(value = "INVOKE", target = "Ljava/lang/Object;<init>()V", shift = Shift.AFTER), argsOnly = true)
++    private Set<Integer> bedrock$reserveMask(final Set<Integer> reserved, @Local(argsOnly = true) final int program) {
++        if (GL46C.glGetUniformLocation(program, BedrockIrisMaskedTexture.SAMPLER) < 0) return reserved;
++        final Set<Integer> result = new HashSet<>(reserved);
++        result.add(BedrockIrisMaskedTexture.UNIT);
++        return Set.copyOf(result);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisMaterialAlpha.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisMaterialAlpha.java
 new file mode 100644
 index 0000000..da86a05
@@ -1285,10 +1436,10 @@ index 0000000..0e2a633
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinNativeShaderBinding.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinNativeShaderBinding.java
 new file mode 100644
-index 0000000..6ec822a
+index 0000000..bcaf1e5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinNativeShaderBinding.java
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,34 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1309,19 +1460,23 @@ index 0000000..6ec822a
 +    @Unique
 +    private float bedrock$alphaReference = Float.NaN;
 +
++    @Unique
++    private boolean bedrock$masked;
++
 +    @Override
-+    public void bedrock$alphaReference(final float reference) {
++    public void bedrock$material(final float reference, final boolean masked) {
 +        this.bedrock$alphaReference = reference;
++        this.bedrock$masked = masked;
 +    }
 +
 +    @WrapMethod(method = "bind")
 +    private void bedrock$material(final Operation<Void> original) {
-+        BedrockShaderAlpha.bind(this.bedrock$alphaReference, () -> original.call());
++        BedrockShaderAlpha.bind(this.bedrock$alphaReference, this.bedrock$masked, () -> original.call());
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinNativeShaderCompilation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinNativeShaderCompilation.java
 new file mode 100644
-index 0000000..5c06e6b
+index 0000000..3ea92d6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinNativeShaderCompilation.java
 @@ -0,0 +1,29 @@
@@ -1349,7 +1504,7 @@ index 0000000..5c06e6b
 +        // Wrap the complete method so this sees Iris's cached override, including cancelled returns.
 +        final CompiledRenderPipeline compiled = BedrockShaderPipelines.compiling(pipeline, () -> original.call(pipeline));
 +        if (compiled instanceof FrontendRenderPipeline frontend && frontend.backendRenderPipeline() instanceof IBedrockShaderPipeline material) {
-+            material.bedrock$alphaReference(BedrockShaderPipelines.alphaReference(pipeline));
++            material.bedrock$material(BedrockShaderPipelines.alphaReference(pipeline), pipeline.getShaderDefines().flags().contains("MASKED_MULTITEXTURE"));
 +        }
 +        return compiled;
 +    }
@@ -2174,10 +2329,10 @@ index 0000000..76f93d2
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
 new file mode 100644
-index 0000000..ec7c3bb
+index 0000000..3bb710c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,174 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2212,6 +2367,7 @@ index 0000000..ec7c3bb
 +                "entity_nocull:entity":{"+states":["DisableCulling"]},
 +                "entity_alphatest:entity_nocull":{"+defines":["ALPHA_TEST"]},
 +                "entity_alphatest_one_sided:entity":{"+defines":["ALPHA_TEST"]},
++                "entity_multitexture_masked:entity_alphatest":{"+defines":["MASKED_MULTITEXTURE"]},
 +                "entity_emissive:entity":{"+defines":["USE_EMISSIVE"]},
 +                "entity_emissive_alpha:entity_nocull":{"+defines":["ALPHA_TEST","USE_EMISSIVE"]},
 +                "entity_emissive_alpha_one_sided:entity":{"+defines":["ALPHA_TEST","USE_EMISSIVE"]}
@@ -2267,11 +2423,15 @@ index 0000000..ec7c3bb
 +                || !"shaders/entity.fragment".equals(effective.fragmentShader)
 +                || !"LessEqual".equals(effective.depthFunction)
 +                || !shaderDefines.contains("USE_OVERLAY")
-+                || !Set.of("USE_OVERLAY", "ALPHA_TEST", "USE_EMISSIVE").containsAll(shaderDefines)
++                || !Set.of("USE_OVERLAY", "ALPHA_TEST", "USE_EMISSIVE", "MASKED_MULTITEXTURE").containsAll(shaderDefines)
 +                || !Set.of("DisableCulling").containsAll(effective.states)) {
 +                return Optional.empty();
 +            }
-+            return Optional.of(new Material(effective.defines.contains("ALPHA_TEST"), !effective.states.contains("DisableCulling"), effective.defines.contains("USE_EMISSIVE"), effective.defines.contains("USE_UV_ANIM")));
++            final boolean masked = effective.defines.contains("MASKED_MULTITEXTURE");
++            if (masked && (!effective.defines.contains("ALPHA_TEST") || effective.defines.contains("USE_EMISSIVE"))) {
++                return Optional.empty();
++            }
++            return Optional.of(new Material(effective.defines.contains("ALPHA_TEST"), !effective.states.contains("DisableCulling"), effective.defines.contains("USE_EMISSIVE"), effective.defines.contains("USE_UV_ANIM"), masked));
 +        });
 +    }
 +
@@ -2333,10 +2493,15 @@ index 0000000..ec7c3bb
 +        return result;
 +    }
 +
-+    public record Material(boolean alphaTest, boolean cull, boolean emissive, boolean uvAnimation) {
-+        public static final Material CUTOUT = new Material(true, false, false, false);
++    public record Material(boolean alphaTest, boolean cull, boolean emissive, boolean uvAnimation, boolean masked) {
++        public static final Material CUTOUT = new Material(true, false, false, false, false);
 +
-+        public Material withoutEmission() { return new Material(this.alphaTest, this.cull, false, this.uvAnimation); }
++        public Material {
++            if (masked && (!alphaTest || emissive)) throw new IllegalArgumentException("Unsupported masked material family");
++        }
++
++        public int textureCount() { return this.masked ? 2 : 1; }
++        public Material withoutEmission() { return new Material(this.alphaTest, this.cull, false, this.uvAnimation, this.masked); }
 +    }
 +    private record Definition(String parent, JsonObject fields) {}
 +    private record Effective(String vertexShader, String fragmentShader, String depthFunction, Set<String> defines,
@@ -2406,10 +2571,10 @@ index 0000000..8e46c00
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
 new file mode 100644
-index 0000000..d4e4a8b
+index 0000000..25e7542
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,116 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2419,6 +2584,8 @@ index 0000000..d4e4a8b
 +
 +import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 +import com.mojang.renderpearl.api.pipeline.RenderPipeline;
++import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
++import com.mojang.renderpearl.api.pipeline.UniformType;
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockActorRenderType;
 +import com.viaversion.viafabricplus.ViaFabricPlus;
 +import java.util.List;
@@ -2444,9 +2611,10 @@ index 0000000..d4e4a8b
 +            for (final boolean cull : new boolean[] {false, true})
 +                for (final boolean unlit : new boolean[] {false, true})
 +                    for (final boolean emissive : new boolean[] {false, true})
-+                        for (final boolean nether : new boolean[] {false, true}) {
-+                            if (unlit && nether) continue;
-+                            final var key = new PipelineKey(alphaTest, cull, unlit, emissive, nether);
++                        for (final boolean nether : new boolean[] {false, true})
++                            for (final boolean masked : new boolean[] {false, true}) {
++                            if (unlit && nether || masked && (!alphaTest || emissive)) continue;
++                            final var key = new PipelineKey(alphaTest, cull, unlit, emissive, nether, masked);
 +                            result.put(key, pipeline(key));
 +                        }
 +        return java.util.Collections.unmodifiableMap(result);
@@ -2454,12 +2622,14 @@ index 0000000..d4e4a8b
 +
 +    private static RenderPipeline pipeline(final PipelineKey key) {
 +        final var builder = RenderPipeline.builder(RenderPipelines.ENTITY_SNIPPET)
-+            .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/actor_" + key.alphaTest + "_" + key.cull + "_" + key.unlit + "_" + key.emissive + "_" + key.nether))
++            .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/actor_" + key.alphaTest + "_" + key.cull + "_" + key.unlit + "_" + key.emissive + "_" + key.nether + (key.masked ? "_masked" : "")))
 +            .withVertexShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_actor"))
 +            .withFragmentShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_actor"))
 +            .withBindGroupLayout(BindGroupLayouts.SAMPLER1)
 +            .withColorTargetState(ColorTargetState.DEFAULT)
 +            .withCull(key.cull);
++        if (key.masked) builder.withShaderDefine("MASKED_MULTITEXTURE")
++            .withBindGroupLayout(BindGroupLayout.builder().withUniform("BedrockMaskTexture", UniformType.COMBINED_IMAGE_SAMPLER).build());
 +        if (key.alphaTest) builder.withShaderDefine("ALPHA_TEST");
 +        if (key.unlit) builder.withShaderDefine("IGNORE_LIGHTING");
 +        if (key.nether) builder.withShaderDefine("NETHER_LIGHTING");
@@ -2486,22 +2656,40 @@ index 0000000..d4e4a8b
 +        return level != null && level.dimension().equals(Level.NETHER);
 +    }
 +
-+    public static RenderType create(final Identifier texture, final BedrockActorMaterialDefinitions.Material material, final boolean ignoreLighting, final float multiplier, final BedrockActorUvTransform uv, final boolean netherLighting) {
-+        final RenderType type = RenderType.create("bedrock_actor", RenderSetup.builder(selectPipeline(material, ignoreLighting, netherLighting))
-+            .withTexture("Sampler0", texture).useLightmap().useOverlay().createRenderSetup());
++    public static RenderType create(final List<Identifier> textures, final BedrockActorMaterialDefinitions.Material material, final boolean ignoreLighting, final float multiplier, final BedrockActorUvTransform uv, final boolean netherLighting) {
++        final var setup = textures(RenderSetup.builder(selectPipeline(material, ignoreLighting, netherLighting)), textures, material);
++        final RenderType type = RenderType.create("bedrock_actor", setup.useLightmap().useOverlay().createRenderSetup());
 +        ((IBedrockActorRenderType) type).bedrock$lightColorMultiplier(multiplier);
 +        ((IBedrockActorRenderType) type).bedrock$uvTransform(uv);
-+        if (material.emissive()) BedrockShaderEmission.register(type, texture, material, ignoreLighting, multiplier, uv, netherLighting);
++        if (material.emissive()) BedrockShaderEmission.register(type, textures.getFirst(), material, ignoreLighting, multiplier, uv, netherLighting);
 +        return type;
 +    }
 +
 +    static RenderPipeline selectPipeline(final BedrockActorMaterialDefinitions.Material material,
 +                                         final boolean ignoreLighting, final boolean netherLighting) {
 +        return MATERIAL_PIPELINES.get(new PipelineKey(material.alphaTest(), material.cull(), ignoreLighting,
-+                material.emissive(), netherLighting && !ignoreLighting));
++                material.emissive(), netherLighting && !ignoreLighting, material.masked()));
 +    }
 +
-+    private record PipelineKey(boolean alphaTest, boolean cull, boolean unlit, boolean emissive, boolean nether) {}
++    private static RenderSetup.RenderSetupBuilder textures(final RenderSetup.RenderSetupBuilder setup,
++            final List<Identifier> textures, final BedrockActorMaterialDefinitions.Material material) {
++        if (textures.size() < material.textureCount()) throw new IllegalArgumentException("Missing material sampler binding");
++        if (material.masked()) {
++            setup.withTexture("Sampler0", textures.getFirst(), () -> clampedSampler(textures.getFirst()));
++            setup.withTexture("BedrockMaskTexture", textures.get(1), () -> clampedSampler(textures.get(1)));
++        } else setup.withTexture("Sampler0", textures.getFirst());
++        return setup;
++    }
++
++    private static com.mojang.renderpearl.api.textures.GpuSampler clampedSampler(final Identifier texture) {
++        final var original = Minecraft.getInstance().getTextureManager().getTexture(texture).getSampler();
++        return com.mojang.blaze3d.systems.RenderSystem.getSamplerCache().getSampler(
++                com.mojang.renderpearl.api.textures.AddressMode.CLAMP_TO_EDGE,
++                com.mojang.renderpearl.api.textures.AddressMode.CLAMP_TO_EDGE,
++                original.getMinFilter(), original.getMagFilter(), original.getMaxLod().isEmpty());
++    }
++
++    private record PipelineKey(boolean alphaTest, boolean cull, boolean unlit, boolean emissive, boolean nether, boolean masked) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
 new file mode 100644
@@ -2611,10 +2799,10 @@ index 0000000..8017f31
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 new file mode 100644
-index 0000000..8c1c635
+index 0000000..485712b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,195 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2745,8 +2933,9 @@ index 0000000..8c1c635
 +                ViaFabricPlusBedrock.impl().logger().warn("Unresolved native entity geometry {} for {}", evaluated.geometryValue(), renderData.identifier());
 +                continue;
 +            }
-+            final String path = "textures/item/entities/" + StringUtil.makeIdentifierValueSafe(evaluated.textureValues().getFirst().replace("textures/", "")) + ".png";
-+            final Identifier texture = Identifier.fromNamespaceAndPath("viabedrock", path);
++            final List<Identifier> textures = evaluated.textureValues().stream().map(value -> Identifier.fromNamespaceAndPath("viabedrock",
++                    "textures/item/entities/" + StringUtil.makeIdentifierValueSafe(value.replace("textures/", "")) + ".png")).toList();
++            final Identifier texture = textures.getFirst();
 +            if (Minecraft.getInstance().getResourceManager().getResource(texture).isEmpty()) {
 +                ViaFabricPlusBedrock.impl().logger().warn("Unresolved native entity texture {} for {}", evaluated.textureValues().getFirst(), renderData.identifier());
 +                continue;
@@ -2755,11 +2944,13 @@ index 0000000..8c1c635
 +            for (var material : materials.entrySet()) {
 +                final ModelKey modelKey = new ModelKey(evaluated.geometryValue(), material.getValue());
 +                final Model<EntityRenderState> model = this.models.computeIfAbsent(modelKey, _ -> BedrockGeometry.entityModel(geometry, material.getValue()));
-+                final var resolvedMaterial = this.materialDefinitions.material(material.getKey());
++                final var resolvedMaterial = this.materialDefinitions.material(material.getKey()).filter(value ->
++                        textures.size() >= value.textureCount() && textures.stream().limit(value.textureCount())
++                                .allMatch(id -> Minecraft.getInstance().getResourceManager().getResource(id).isPresent()));
 +                final RenderType type;
 +                if (resolvedMaterial.isPresent()) {
-+                    final MaterialKey key = new MaterialKey(texture, resolvedMaterial.get(), evaluated.ignoreLighting(), evaluated.lightColorMultiplier(), netherLighting);
-+                    type = this.renderTypes.computeIfAbsent(key, _ -> BedrockActorRenderTypes.create(texture, key.material(), key.ignoreLighting(), key.multiplier(), BedrockActorUvTransform.IDENTITY, key.netherLighting()));
++                    final MaterialKey key = new MaterialKey(textures, resolvedMaterial.get(), evaluated.ignoreLighting(), evaluated.lightColorMultiplier(), netherLighting);
++                    type = this.renderTypes.computeIfAbsent(key, _ -> BedrockActorRenderTypes.create(key.textures(), key.material(), key.ignoreLighting(), key.multiplier(), BedrockActorUvTransform.IDENTITY, key.netherLighting()));
 +                } else {
 +                    type = RenderTypes.entityTranslucent(texture);
 +                }
@@ -2800,7 +2991,7 @@ index 0000000..8c1c635
 +    private record ModelKey(String geometry, Set<String> bones) {
 +    }
 +
-+    private record MaterialKey(Identifier texture, BedrockActorMaterialDefinitions.Material material, boolean ignoreLighting, float multiplier, boolean netherLighting) {
++    private record MaterialKey(List<Identifier> textures, BedrockActorMaterialDefinitions.Material material, boolean ignoreLighting, float multiplier, boolean netherLighting) {
 +    }
 +
 +    private record RenderedModel(Model<EntityRenderState> model, RenderType renderType) {
@@ -3719,10 +3910,10 @@ index 0000000..79525c0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderAlpha.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderAlpha.java
 new file mode 100644
-index 0000000..7887528
+index 0000000..3e0c3ef
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderAlpha.java
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,42 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3732,29 +3923,42 @@ index 0000000..7887528
 +
 +/** The material of the GPU pipeline being bound, rather than the shared shader program. */
 +public final class BedrockShaderAlpha {
-+    private static final ThreadLocal<float[]> REFERENCE = ThreadLocal.withInitial(() -> new float[] {Float.NaN});
++    private static final ThreadLocal<State> REFERENCE = ThreadLocal.withInitial(State::new);
 +
 +    private BedrockShaderAlpha() {}
 +
 +    public static float reference(final float fallback) {
-+        final float value = REFERENCE.get()[0];
++        final float value = REFERENCE.get().reference;
 +        return Float.isNaN(value) ? fallback : value;
 +    }
 +
 +    public static void bind(final float reference, final Runnable action) {
-+        final float[] current = REFERENCE.get();
-+        final float previous = current[0];
-+        current[0] = reference;
++        bind(reference, false, action);
++    }
++
++    public static boolean masked() { return REFERENCE.get().masked; }
++
++    public static void bind(final float reference, final boolean masked, final Runnable action) {
++        final State current = REFERENCE.get();
++        final float previous = current.reference;
++        final boolean previousMask = current.masked;
++        current.reference = reference;
++        current.masked = masked;
 +        try {
 +            action.run();
 +        } finally {
-+            current[0] = previous;
++            current.reference = previous;
++            current.masked = previousMask;
 +        }
++    }
++    private static final class State {
++        private float reference = Float.NaN;
++        private boolean masked;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderEmission.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderEmission.java
 new file mode 100644
-index 0000000..3609974
+index 0000000..7854792
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderEmission.java
 @@ -0,0 +1,196 @@
@@ -3807,7 +4011,7 @@ index 0000000..3609974
 +        final Map<RenderPipeline, RenderPipeline> result = new java.util.IdentityHashMap<>();
 +        for (final var body : BedrockActorRenderTypes.PIPELINES) {
 +            final var flags = body.getShaderDefines().flags();
-+            if (flags.contains("USE_EMISSIVE") || flags.contains("GUI_PORTRAIT")) continue;
++            if (flags.contains("USE_EMISSIVE") || flags.contains("GUI_PORTRAIT") || flags.contains("MASKED_MULTITEXTURE")) continue;
 +            final var emission = BedrockShaderPipelines.register(RenderPipeline.builder(RenderPipelines.ENTITY_SNIPPET, RenderPipelines.EYES_SNIPPET)
 +                    .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", body.getLocation().getPath() + "_emission"))
 +                    .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.SAMPLER1)
@@ -3837,7 +4041,7 @@ index 0000000..3609974
 +        try {
 +            final Textures textures = textures(material.texture());
 +            return textures.passes.computeIfAbsent(material, key -> {
-+                final RenderType lit = BedrockActorRenderTypes.create(textures.litId, key.material().withoutEmission(), key.unlit(), key.multiplier(), key.uv(), key.nether());
++                final RenderType lit = BedrockActorRenderTypes.create(List.of(textures.litId), key.material().withoutEmission(), key.unlit(), key.multiplier(), key.uv(), key.nether());
 +                final RenderType emission = RenderType.create("bedrock_emission", RenderSetup.builder(EMISSION_PIPELINES.get(lit.pipeline()))
 +                        .withTexture("Sampler0", textures.emissionId).useLightmap().useOverlay().createRenderSetup());
 +                // Radiance bypasses the native lighting multiplier but shares its texture coordinates.
@@ -4293,10 +4497,10 @@ index 0000000..5b31c39
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlpha.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlpha.java
 new file mode 100644
-index 0000000..db0f807
+index 0000000..21560be
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlpha.java
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,69 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4356,21 +4560,22 @@ index 0000000..db0f807
 +    }
 +
 +    private static void fragment(final ASTParser parser, final TranslationUnit tree) {
++        BedrockIrisMaskedTexture.transform(parser, tree);
 +        tree.parseAndInjectNodes(parser, ASTInjectionPoint.BEFORE_DECLARATIONS,
 +            "in vec2 " + UV + ";",
 +            "uniform int " + ENABLED + ";",
 +            "uniform float " + REFERENCE + ";",
 +            "uniform sampler2D " + SAMPLER + ";");
-+        tree.prependMainFunctionBody(parser, "if (" + ENABLED + " != 0 && !(texture("
-+            + SAMPLER + ", " + UV + ").a > " + REFERENCE + ")) { discard; }");
++        tree.prependMainFunctionBody(parser, "if (" + ENABLED + " != 0 && !(iris_bedrock_Compose(texture("
++            + SAMPLER + ", " + UV + "), texture(" + BedrockIrisMaskedTexture.SAMPLER + ", " + UV + ")).a > " + REFERENCE + ")) { discard; }");
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaUniforms.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaUniforms.java
 new file mode 100644
-index 0000000..4fff8de
+index 0000000..61ec37b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaUniforms.java
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,37 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4386,11 +4591,15 @@ index 0000000..4fff8de
 +    private final int enabled;
 +    private final int reference;
 +    private final int sampler;
++    private final int masked;
++    private final int maskSampler;
 +
 +    public BedrockIrisAlphaUniforms(final int program) {
 +        this.enabled = GL46C.glGetUniformLocation(program, BedrockIrisAlpha.ENABLED);
 +        this.reference = GL46C.glGetUniformLocation(program, BedrockIrisAlpha.REFERENCE);
 +        this.sampler = GL46C.glGetUniformLocation(program, BedrockIrisAlpha.SAMPLER);
++        this.masked = GL46C.glGetUniformLocation(program, BedrockIrisMaskedTexture.ENABLED);
++        this.maskSampler = GL46C.glGetUniformLocation(program, BedrockIrisMaskedTexture.SAMPLER);
 +    }
 +
 +    /** Call after Iris updates uniforms and samplers, while this program is current. */
@@ -4400,6 +4609,8 @@ index 0000000..4fff8de
 +        GL46C.glUniform1f(this.reference, Float.isNaN(nativeReference) ? 0F : nativeReference);
 +        // A pack may replace gtexture. This separate sampler always reads the actor's unit zero.
 +        GL46C.glUniform1i(this.sampler, 0);
++        GL46C.glUniform1i(this.masked, BedrockShaderAlpha.masked() ? 1 : 0);
++        GL46C.glUniform1i(this.maskSampler, BedrockIrisMaskedTexture.UNIT);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisEmission.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisEmission.java
@@ -4424,12 +4635,156 @@ index 0000000..985dd4e
 +
 +    GlProgram bedrock$emissionProgram(ShaderKey body, ShaderKey emission);
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisMaskedTexture.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisMaskedTexture.java
+new file mode 100644
+index 0000000..3508f31
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisMaskedTexture.java
+@@ -0,0 +1,138 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.compat.iris;
++
++import io.github.douira.glsl_transformer.ast.node.Identifier;
++import io.github.douira.glsl_transformer.ast.node.TranslationUnit;
++import io.github.douira.glsl_transformer.ast.node.declaration.FunctionParameter;
++import io.github.douira.glsl_transformer.ast.node.expression.Expression;
++import io.github.douira.glsl_transformer.ast.node.expression.ReferenceExpression;
++import io.github.douira.glsl_transformer.ast.node.expression.unary.FunctionCallExpression;
++import io.github.douira.glsl_transformer.ast.node.external_declaration.FunctionDefinition;
++import io.github.douira.glsl_transformer.ast.node.type.FullySpecifiedType;
++import io.github.douira.glsl_transformer.ast.node.type.specifier.BuiltinFixedTypeSpecifier;
++import io.github.douira.glsl_transformer.ast.node.type.specifier.BuiltinNumericTypeSpecifier;
++import io.github.douira.glsl_transformer.util.Type;
++import io.github.douira.glsl_transformer.ast.node.type.specifier.BuiltinFixedTypeSpecifier.BuiltinType;
++import io.github.douira.glsl_transformer.ast.node.type.specifier.FunctionPrototype;
++import io.github.douira.glsl_transformer.ast.transform.ASTInjectionPoint;
++import io.github.douira.glsl_transformer.ast.transform.ASTParser;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.TreeSet;
++
++/** Compose sampled native images before a shader pack applies its material shading. */
++public final class BedrockIrisMaskedTexture {
++    public static final String ENABLED = "iris_bedrock_Masked";
++    public static final String SAMPLER = "BedrockMaskTexture";
++    // Iris reserves 0/1/2 for the primary image, overlay and lightmap. Reserve this separately.
++    public static final int UNIT = 3;
++    private static final Set<String> PRIMARY = Set.of("tex", "texture", "gtexture", "u_MainSampler", "Sampler0");
++
++    private BedrockIrisMaskedTexture() {}
++
++    public static void transform(final ASTParser parser, final TranslationUnit tree) {
++        final var root = tree.getRoot();
++        final List<FunctionPrototype> prototypes = root.nodeIndex.getStream(FunctionPrototype.class).toList();
++        // The union keeps overload selection stable when only some signatures accept samplers.
++        final Map<Signature, Set<Integer>> arguments = new HashMap<>();
++        for (final var prototype : prototypes) {
++            final var key = new Signature(prototype.getName().getName(), prototype.getParameters().size());
++            for (int index = 0; index < key.count(); index++) {
++                if (sampler(prototype.getParameters().get(index)))
++                    arguments.computeIfAbsent(key, _ -> new TreeSet<>()).add(index);
++            }
++        }
++        final Set<Sample> samples = new LinkedHashSet<>();
++        // Snapshot before adding wrappers so their own texture reads are never rewritten.
++        for (final var call : root.nodeIndex.getStream(FunctionCallExpression.class).toList()) {
++            if (call.getFunctionName() == null) continue;
++            final String name = call.getFunctionName().getName();
++            final int count = call.getParameters().size();
++            final var forwarded = arguments.get(new Signature(name, count));
++            if (forwarded != null) {
++                for (final int index : forwarded)
++                    call.getParameters().add(parser.parseExpression(root, nativeArgument(call, call.getParameters().get(index))));
++            } else if (count >= 2) {
++                final String nativeArgument = nativeArgument(call, call.getParameters().getFirst());
++                final Sample sample = Sample.of(name, count);
++                if (sample != null && !nativeArgument.equals("false")) {
++                    samples.add(sample);
++                    call.getFunctionName().setName(sample.wrapper());
++                    call.getParameters().add(parser.parseExpression(root, nativeArgument));
++                }
++            }
++        }
++        for (final var prototype : prototypes) {
++            final var forwarded = arguments.get(new Signature(prototype.getName().getName(), prototype.getParameters().size()));
++            if (forwarded == null) continue;
++            for (final int index : forwarded) {
++                final var parameter = root.indexNodes(() -> new FunctionParameter(
++                        new FullySpecifiedType(new BuiltinNumericTypeSpecifier(Type.BOOL)), new Identifier(flag(index))));
++                prototype.getParameters().add(parameter);
++            }
++        }
++        final List<String> declarations = new ArrayList<>();
++        declarations.add("uniform int " + ENABLED + ";");
++        declarations.add("uniform sampler2D " + SAMPLER + ";");
++        declarations.add("""
++                vec4 iris_bedrock_Compose(vec4 base, vec4 mask) {
++                    if (iris_bedrock_Masked == 0) return base;
++                    float keepBase = clamp(ceil((mask.r + mask.g + mask.b) * (1.0 - mask.a)), 0.0, 1.0);
++                    return mix(mask, base, keepBase);
++                }
++                """);
++        samples.forEach(sample -> declarations.add(sample.source()));
++        tree.parseAndInjectNodes(parser, ASTInjectionPoint.BEFORE_DECLARATIONS, declarations.toArray(String[]::new));
++    }
++
++    private static boolean sampler(final FunctionParameter parameter) {
++        return parameter.getType().getTypeSpecifier() instanceof BuiltinFixedTypeSpecifier builtin && builtin.type == BuiltinType.SAMPLER2D;
++    }
++
++    private static String flag(final int index) { return "iris_bedrock_arg" + index; }
++
++    private static String nativeArgument(final FunctionCallExpression call, final Expression expression) {
++        if (!(expression instanceof ReferenceExpression reference)) return "false";
++        final String name = reference.getIdentifier().getName();
++        final var definition = call.getAncestor(FunctionDefinition.class);
++        if (definition != null) {
++            final var parameters = definition.getFunctionPrototype().getParameters();
++            for (int index = 0; index < parameters.size(); index++) {
++                final var parameter = parameters.get(index);
++                if (parameter.getName() != null && parameter.getName().getName().equals(name))
++                    return sampler(parameter) ? flag(index) : "false";
++            }
++        }
++        return PRIMARY.contains(name) ? "true" : "false";
++    }
++
++    private record Signature(String name, int count) {}
++    private record Sample(String function, int count, String parameters, String arguments) {
++        private static Sample of(final String name, final int count) {
++            return switch (name) {
++                case "texture", "texture2D" -> count == 2 ? new Sample("texture", count, "", "")
++                        : count == 3 ? new Sample("texture", count, ", float bias", ", bias") : null;
++                case "textureLod", "texture2DLod" -> count == 3 ? new Sample("textureLod", count, ", float lod", ", lod") : null;
++                case "textureGrad", "texture2DGradARB" -> count == 4 ? new Sample("textureGrad", count,
++                        ", vec2 dx, vec2 dy", ", dx, dy") : null;
++                default -> null;
++            };
++        }
++        private String wrapper() { return "iris_bedrock_" + this.function + this.count; }
++        private String source() {
++            return "vec4 " + wrapper() + "(sampler2D image, vec2 uv" + this.parameters + ", bool actor) {\n"
++                    + "if (actor && " + ENABLED + " != 0) return iris_bedrock_Compose("
++                    + this.function + "(" + BedrockIrisAlpha.SAMPLER + ", uv" + this.arguments + "), "
++                    + this.function + "(" + SAMPLER + ", uv" + this.arguments + "));\n"
++                    + "return " + this.function + "(image, uv" + this.arguments + ");\n}";
++        }
++    }
++}
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
 new file mode 100644
-index 0000000..118981a
+index 0000000..2ea0cad
 --- /dev/null
 +++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,58 @@
 +#version 330
 +#extension GL_ARB_separate_shader_objects : require
 +
@@ -4437,6 +4792,9 @@ index 0000000..118981a
 +#include <minecraft:dynamictransforms.glsl>
 +
 +uniform sampler2D Sampler0;
++#ifdef MASKED_MULTITEXTURE
++uniform sampler2D BedrockMaskTexture;
++#endif
 +layout(location = 0) in float sphericalVertexDistance;
 +layout(location = 1) in float cylindricalVertexDistance;
 +layout(location = 2) in vec4 vertexColor;
@@ -4449,6 +4807,11 @@ index 0000000..118981a
 +
 +void main() {
 +    vec4 color = texture(Sampler0, texCoord0);
++#ifdef MASKED_MULTITEXTURE
++    vec4 mask = texture(BedrockMaskTexture, texCoord0);
++    float keepBase = clamp(ceil((mask.r + mask.g + mask.b) * (1.0 - mask.a)), 0.0, 1.0);
++    color = mix(mask, color, keepBase);
++#endif
 +#ifdef USE_EMISSIVE
 +    // Native AlphaTestEmissive uses inverse alpha as the emissive mask and
 +    // discards only entirely empty texels, including their RGB channels.
@@ -4548,10 +4911,15 @@ index 35145bc..f42de8f 100644
 +accessible field net/minecraft/client/renderer/RenderPipelines ENTITY_NO_LIGHTMAP_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 +accessible field net/minecraft/client/renderer/RenderPipelines EYES_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index b44b3ca..006403e 100644
+index b44b3ca..5f2312e 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -5,6 +5,19 @@
+@@ -1,10 +1,26 @@
+ {
+   "required": true,
++  "plugin": "com.viaversion.viafabricplus.bedrock.injection.BedrockMixinPlugin",
+   "minVersion": "0.8",
+   "package": "com.viaversion.viafabricplus.bedrock.injection.mixin",
    "compatibilityLevel": "JAVA_25",
    "priority": 1001,
    "client": [
@@ -4568,10 +4936,12 @@ index b44b3ca..006403e 100644
 +    "compat.iris.MixinIrisFallbackTransform",
 +    "compat.iris.MixinIrisAlphaUniforms",
 +    "compat.iris.MixinIrisAlphaSampler",
++    "compat.iris.MixinIrisMaskBinding",
++    "compat.iris.MixinIrisMaskReservation",
      "jjwt.MixinClasses",
      "jjwt.MixinDefaultJwtParserBuilder",
      "core.access.MixinConfirmScreen",
-@@ -45,6 +58,22 @@
+@@ -45,6 +61,22 @@
      "features.misc.MixinClientSuggestionProvider",
      "features.misc.MixinInventoryScreen",
      "features.misc.MixinMinecraft",
@@ -4720,10 +5090,10 @@ index 0000000..ac26125
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
 new file mode 100644
-index 0000000..80d32da
+index 0000000..486d0c6
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
-@@ -0,0 +1,208 @@
+@@ -0,0 +1,228 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4739,6 +5109,26 @@ index 0000000..80d32da
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class BedrockActorMaterialDefinitionsTest {
++    @Test
++    void retainsMaskedSamplingAcrossInheritanceAndRejectsUnverifiedFamilyCombinations() {
++        final var materials = read("""
++            {"masked:entity_multitexture_masked":{"+defines":["USE_UV_ANIM"]},
++             "single:masked":{"-defines":["MASKED_MULTITEXTURE"]},
++             "opaque:masked":{"-defines":["ALPHA_TEST"]},
++             "emissive:masked":{"+defines":["USE_EMISSIVE"]}}
++            """);
++        final var masked = materials.material("masked").orElseThrow();
++        assertTrue(masked.masked());
++        assertTrue(masked.alphaTest());
++        assertTrue(masked.uvAnimation());
++        assertEquals(2, masked.textureCount());
++        assertEquals(masked, masked.withoutEmission());
++        assertFalse(materials.material("single").orElseThrow().masked());
++        assertEquals(1, materials.material("single").orElseThrow().textureCount());
++        assertTrue(materials.material("opaque").isEmpty());
++        assertTrue(materials.material("emissive").isEmpty());
++    }
++
 +    @Test
 +    void retainsOpaqueCoverageAcrossInheritanceAndEmissionChanges() {
 +        final var materials = read("""
@@ -4758,7 +5148,7 @@ index 0000000..80d32da
 +        assertTrue(emission.uvAnimation());
 +        assertTrue(materials.material("cutout").orElseThrow().alphaTest());
 +        assertEquals(emission, materials.material("removed").orElseThrow());
-+        assertEquals(new BedrockActorMaterialDefinitions.Material(false, true, false, true), emission.withoutEmission());
++        assertEquals(new BedrockActorMaterialDefinitions.Material(false, true, false, true, false), emission.withoutEmission());
 +    }
 +
 +    @Test
@@ -4898,9 +5288,9 @@ index 0000000..80d32da
 +             "unknown:compatibility":{"+defines":["FUTURE_SHADER_EFFECT"]},
 +             "blend_state:compatibility":{"+states":["Blending"]}}
 +            """);
-+        assertEquals(new BedrockActorMaterialDefinitions.Material(true, true, false, true), materials.material("compatibility").orElseThrow());
-+        assertEquals(new BedrockActorMaterialDefinitions.Material(true, false, true, true), materials.material("inherited").orElseThrow());
-+        assertEquals(new BedrockActorMaterialDefinitions.Material(true, false, true, false), materials.material("stationary").orElseThrow());
++        assertEquals(new BedrockActorMaterialDefinitions.Material(true, true, false, true, false), materials.material("compatibility").orElseThrow());
++        assertEquals(new BedrockActorMaterialDefinitions.Material(true, false, true, true, false), materials.material("inherited").orElseThrow());
++        assertEquals(new BedrockActorMaterialDefinitions.Material(true, false, true, false, false), materials.material("stationary").orElseThrow());
 +        for (String name : List.of("color_mask", "unknown", "blend_state")) {
 +            assertTrue(materials.material(name).isEmpty());
 +        }
@@ -4934,10 +5324,10 @@ index 0000000..80d32da
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsGpuTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsGpuTest.java
 new file mode 100644
-index 0000000..f45eba6
+index 0000000..0ed9ef3
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsGpuTest.java
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,185 @@
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import com.google.gson.JsonObject;
@@ -4967,9 +5357,19 @@ index 0000000..f45eba6
 +        EglTestContext.run(() -> verify(cases));
 +    }
 +
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_MASKED_MATERIALS", matches = ".+")
++    void matchesNativeMaskedOverwriteColorDiscardAndDepth() throws IOException {
++        final var reference = JsonParser.parseString(Files.readString(
++                Path.of(System.getenv("STACKANVIL_NATIVE_MASKED_MATERIALS")))).getAsJsonObject();
++        final var cases = reference.getAsJsonArray("cases");
++        assertEquals(512, cases.size());
++        EglTestContext.run(() -> verify(cases));
++    }
++
 +    private static void verify(final com.google.gson.JsonArray cases) {
 +        final int vao = glGenVertexArrays(), framebuffer = glGenFramebuffers();
-+        final int color = glGenTextures(), depth = glGenTextures(), source = glGenTextures();
++        final int color = glGenTextures(), depth = glGenTextures(), source = glGenTextures(), secondary = glGenTextures();
 +        final int fog = glGenBuffers(), dynamic = glGenBuffers();
 +        final var programs = new HashMap<com.mojang.renderpearl.api.pipeline.RenderPipeline, Integer>();
 +        try {
@@ -4989,9 +5389,11 @@ index 0000000..f45eba6
 +            glDepthMask(true);
 +            for (final var element : cases) {
 +                final var control = element.getAsJsonObject();
-+                final var material = new BedrockActorMaterialDefinitions.Material(control.get("alphaTest").getAsBoolean(),
-+                        false, control.get("emissive").getAsBoolean(), false);
-+                final var pipeline = BedrockActorRenderTypes.selectPipeline(material, control.get("ignoreLighting").getAsBoolean(), false);
++                final boolean masked = control.has("secondary");
++                final var material = new BedrockActorMaterialDefinitions.Material(masked || control.get("alphaTest").getAsBoolean(),
++                        false, !masked && control.get("emissive").getAsBoolean(), false, masked);
++                final var pipeline = BedrockActorRenderTypes.selectPipeline(material,
++                        !masked && control.get("ignoreLighting").getAsBoolean(), false);
 +                final int program = programs.computeIfAbsent(pipeline, BedrockActorMaterialsGpuTest::program);
 +                glUseProgram(program);
 +                vector(program, "inputVertex", floats(control, "vertex"));
@@ -5012,8 +5414,17 @@ index 0000000..f45eba6
 +                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 +                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 +                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 1, 1, 0, GL_RGBA, GL_FLOAT,
-+                            stack.floats(floats(control, "texture")));
++                            stack.floats(floats(control, masked ? "primary" : "texture")));
 +                    glUniform1i(glGetUniformLocation(program, "Sampler0"), 0);
++                    if (masked) {
++                        glActiveTexture(GL_TEXTURE1);
++                        glBindTexture(GL_TEXTURE_2D, secondary);
++                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++                        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 1, 1, 0, GL_RGBA, GL_FLOAT,
++                                stack.floats(floats(control, "secondary")));
++                        glUniform1i(glGetUniformLocation(program, "BedrockMaskTexture"), 1);
++                    }
 +                    glClearColor(.8F, .6F, .4F, 1F);
 +                    glClearDepth(1);
 +                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -5033,7 +5444,7 @@ index 0000000..f45eba6
 +            programs.values().forEach(program -> glDeleteProgram(program));
 +            glBindFramebuffer(GL_FRAMEBUFFER, 0);
 +            glDeleteFramebuffers(framebuffer);
-+            glDeleteTextures(color); glDeleteTextures(depth); glDeleteTextures(source);
++            glDeleteTextures(color); glDeleteTextures(depth); glDeleteTextures(source); glDeleteTextures(secondary);
 +            glDeleteBuffers(fog); glDeleteBuffers(dynamic); glDeleteVertexArrays(vao);
 +        }
 +    }
@@ -6121,10 +6532,10 @@ index 0000000..e3eadc3
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderAlphaTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderAlphaTest.java
 new file mode 100644
-index 0000000..0827204
+index 0000000..6360b94
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderAlphaTest.java
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,38 @@
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import java.util.concurrent.CompletableFuture;
@@ -6136,13 +6547,19 @@ index 0000000..0827204
 +    @Test
 +    void scopesTheReferenceToEachBindingAndRestoresNestedJavaAndNativeDraws() {
 +        assertEquals(0.1F, BedrockShaderAlpha.reference(0.1F));
-+        BedrockShaderAlpha.bind(0.5F, () -> {
++        BedrockShaderAlpha.bind(0.5F, true, () -> {
++            assertTrue(BedrockShaderAlpha.masked());
 +            assertEquals(0.5F, BedrockShaderAlpha.reference(0.1F));
-+            BedrockShaderAlpha.bind(Float.NaN, () -> assertEquals(0.1F, BedrockShaderAlpha.reference(0.1F)));
++            BedrockShaderAlpha.bind(Float.NaN, () -> {
++                assertFalse(BedrockShaderAlpha.masked());
++                assertEquals(0.1F, BedrockShaderAlpha.reference(0.1F));
++            });
++            assertTrue(BedrockShaderAlpha.masked());
 +            assertEquals(0.5F, BedrockShaderAlpha.reference(0.1F));
 +            BedrockShaderAlpha.bind(0F, () -> assertEquals(0F, BedrockShaderAlpha.reference(0.1F)));
 +            assertEquals(0.5F, BedrockShaderAlpha.reference(0.1F));
 +        });
++        assertFalse(BedrockShaderAlpha.masked());
 +        assertEquals(0.1F, BedrockShaderAlpha.reference(0.1F));
 +    }
 +
@@ -6153,12 +6570,13 @@ index 0000000..0827204
 +            assertEquals(0.1F, CompletableFuture.supplyAsync(() -> BedrockShaderAlpha.reference(0.1F)).join());
 +            throw failure;
 +        })));
++        assertFalse(BedrockShaderAlpha.masked());
 +        assertEquals(0.1F, BedrockShaderAlpha.reference(0.1F));
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java
 new file mode 100644
-index 0000000..c9f050d
+index 0000000..e04661c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java
 @@ -0,0 +1,89 @@
@@ -6179,7 +6597,7 @@ index 0000000..c9f050d
 +                for (final boolean unlit : new boolean[] {false, true})
 +                    for (final boolean emissive : new boolean[] {false, true})
 +                        for (final boolean nether : new boolean[] {false, true}) {
-+                            final var material = new BedrockActorMaterialDefinitions.Material(alphaTest, cull, emissive, false);
++                            final var material = new BedrockActorMaterialDefinitions.Material(alphaTest, cull, emissive, false, false);
 +                            final var actor = BedrockActorRenderTypes.selectPipeline(material, unlit, nether);
 +                            final var expected = emissive ? RenderPipelines.EYES
 +                                : !alphaTest ? RenderPipelines.ENTITY_SOLID
@@ -6489,10 +6907,10 @@ index 0000000..fbb2ce7
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaGpuTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaGpuTest.java
 new file mode 100644
-index 0000000..60e54f5
+index 0000000..12732ed
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaGpuTest.java
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,248 @@
 +package com.viaversion.viafabricplus.bedrock.render.compat.iris;
 +
 +import com.viaversion.viafabricplus.bedrock.render.BedrockShaderAlpha;
@@ -6519,6 +6937,90 @@ index 0000000..60e54f5
 +    @Test
 +    void testsSourceCoverageAndRestoresEveryJavaComparisonInSharedPrograms() {
 +        com.viaversion.viafabricplus.bedrock.render.EglTestContext.run(BedrockIrisAlphaGpuTest::verifyPrograms);
++    }
++
++    @Test
++    void composesColorAndCoverageThroughSamplerHelpersWithoutChangingOtherImagesOrJavaDraws() {
++        com.viaversion.viafabricplus.bedrock.render.EglTestContext.run(() -> {
++            final int vao = glGenVertexArrays();
++            final int source = glGenTextures(), override = glGenTextures(), mask = glGenTextures();
++            glBindVertexArray(vao);
++            glVertexAttrib2f(0, 0.25F, 0.5F);
++            glViewport(0, 0, 1, 1);
++            glDisable(GL_BLEND);
++            glDisable(GL_DEPTH_TEST);
++            // Black/transparent overwrites and discards; opaque blue overwrites;
++            // a tiny nonzero RGB with partial alpha keeps the base (ceil, not round).
++            final float[][] masks = {{0, 0, 0, 0}, {0, 0, 1, 1}, {0, 0, 0.001F, 0.75F}};
++            try {
++                for (boolean fallback : new boolean[] {false, true}) {
++                    final String attribute = fallback ? "UV0" : "iris_UV0";
++                    final String vertex = "#version 330 core\nlayout(location=0) in vec2 " + attribute + ";"
++                            + "void main(){ vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2-1,0,1);}";
++                    final String fragment = """
++                            #version 330 core
++                            uniform sampler2D gtexture, otherImage;
++                            uniform int method;
++                            out vec4 fragColor;
++                            vec4 readImage(sampler2D image, vec2 uv);
++                            vec4 readImage(float value, vec2 uv) { return vec4(value); }
++                            vec4 readImage(sampler2D image, vec2 uv) {
++                                if(method==1) return textureLod(image,uv,0.0);
++                                if(method==2) return textureGrad(image,uv,vec2(0),vec2(0));
++                                return texture(image,uv);
++                            }
++                            vec4 forwardImage(sampler2D image, vec2 uv) { return readImage(image,uv); }
++                            void main() {
++                                fragColor = forwardImage(gtexture, vec2(0.25,0.5));
++                                fragColor.rgb += forwardImage(otherImage, vec2(0.25,0.5)).rgb * 0.1;
++                                fragColor += readImage(0.0,vec2(0));
++                            }
++                            """;
++                    final int vs = shader(GL_VERTEX_SHADER, transformed(vertex, PatchShaderType.VERTEX, fallback));
++                    final int fs = shader(GL_FRAGMENT_SHADER, transformed(fragment, PatchShaderType.FRAGMENT, fallback));
++                    final int program = glCreateProgram();
++                    try {
++                        glAttachShader(program,vs); glAttachShader(program,fs); glLinkProgram(program);
++                        assertEquals(GL_TRUE,glGetProgrami(program,GL_LINK_STATUS),glGetProgramInfoLog(program));
++                        glUseProgram(program);
++                        glUniform1i(glGetUniformLocation(program,"gtexture"),1);
++                        glUniform1i(glGetUniformLocation(program,"otherImage"),1);
++                        final var uniforms = new BedrockIrisAlphaUniforms(program);
++                        for (int method=0; method<3; method++) {
++                            glUniform1i(glGetUniformLocation(program,"method"),method);
++                            for (float alpha : new float[] {0.25F,0.5F,0.75F,1F}) {
++                                texture(0,source,alpha,1-alpha);
++                                pixel(1,override,new float[] {1,0,0,1});
++                                for (int index=0; index<masks.length; index++) {
++                                    pixel(BedrockIrisMaskedTexture.UNIT,mask,masks[index]);
++                                    for (int mode : new int[] {2,1,0,2,0}) {
++                                        final boolean nativeDraw = mode!=0, masked=mode==2;
++                                        BedrockShaderAlpha.bind(nativeDraw?0.5F:Float.NaN,masked,uniforms::bind);
++                                        glClearColor(1,1,0,1); glClear(GL_COLOR_BUFFER_BIT); glDrawArrays(GL_TRIANGLES,0,3);
++                                        final boolean keepBase = !masked || index==2;
++                                        final boolean kept = !nativeDraw || (keepBase ? alpha>0.5F : index==1);
++                                        final float[] expected = !kept ? new float[] {1,1,0,1} : !masked ? new float[] {1,0,0,1}
++                                                : !keepBase ? new float[] {0.1F,0,1,1} : new float[] {0.1F,1,0,alpha};
++                                        try(var stack=MemoryStack.stackPush()) {
++                                            final var value=stack.malloc(4); glReadPixels(0,0,1,1,GL_RGBA,GL_UNSIGNED_BYTE,value);
++                                            for(int channel=0;channel<4;channel++) assertEquals(Math.round(expected[channel]*255),
++                                                    Byte.toUnsignedInt(value.get(channel)),1,"mode="+mode+" mask="+index+" channel="+channel);
++                                        }
++                                    }
++                                }
++                            }
++                        }
++                    } finally { glUseProgram(0); glDeleteProgram(program); glDeleteShader(vs); glDeleteShader(fs); }
++                }
++            } finally { glDeleteTextures(source);glDeleteTextures(override);glDeleteTextures(mask);glDeleteVertexArrays(vao); }
++        });
++    }
++
++    private static void pixel(final int unit, final int texture, final float[] value) {
++        glActiveTexture(GL_TEXTURE0+unit); glBindTexture(GL_TEXTURE_2D,texture);
++        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
++        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
++        try(var stack=MemoryStack.stackPush()) { glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA32F,1,1,0,GL_RGBA,GL_FLOAT,stack.floats(value)); }
 +    }
 +
 +    private static void verifyPrograms() {

@@ -1,4 +1,4 @@
-From ca56b0e5959e328c3e1a78032d194bd9c1607a37 Mon Sep 17 00:00:00 2001
+From cedc6d42e53a30460781ae61027511b7a9e2156b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(render): use supported native world actor definitions
@@ -88,15 +88,25 @@ creates a spurious fourth draw. Masked professions remain unsupported.
 Consume the shared controller's immutable ordered sampler bindings.
 Explicitly use slot zero for the existing single-sampler material path;
 secondary slots remain available for multi-texture shader integration.
+
+Pass explicit texture binding lists and the masked material mode through
+the shared GPU material API. Existing single-image appearances retain a
+one-element binding list and unchanged ordinary material flags.
+
+Resolve each sampled world's material texture count and upload every
+required image independently. Masked biome/profession layers retain one
+geometry draw with two GPU sampler resources; caches include both image
+identities. Keep fallback when a required binding or image is unavailable.
+The bundled villager test now admits its two-image profession draw.
 ---
- .../BedrockWorldActorAppearance.java          |  74 +++++
+ .../BedrockWorldActorAppearance.java          |  80 +++++
  .../render/MixinEntityRenderDispatcher.java   |  16 +
  .../bedrock/render/BedrockAnimatedModel.java  |   7 +-
- .../render/BedrockWorldActorRenderer.java     | 312 ++++++++++++++++++
- .../BedrockWorldActorAppearanceTest.java      | 259 +++++++++++++++
+ .../render/BedrockWorldActorRenderer.java     | 316 ++++++++++++++++++
+ .../BedrockWorldActorAppearanceTest.java      | 263 +++++++++++++++
  .../render/BedrockCustomActorModelTest.java   |   7 +
  .../render/BedrockWorldActorQueryTest.java    | 121 +++++++
- 7 files changed, 795 insertions(+), 1 deletion(-)
+ 7 files changed, 809 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
@@ -104,10 +114,10 @@ secondary slots remain available for multi-texture shader integration.
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
 new file mode 100644
-index 0000000..9461f12
+index 0000000..a43b16a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,80 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -164,13 +174,19 @@ index 0000000..9461f12
 +                final var geometry = packs.getModels().entityModels().get(surface.geometry());
 +                final var material = materials.material(surface.material()).orElse(null);
 +                if (geometry == null || material == null) return null;
-+                BufferedImage image = images.get(surface.textures().getFirst());
-+                if (image == null) for (final var pack : packs.getPackStackTopToBottom()) {
-+                    final var found = pack.content().getShortnameImage(surface.textures().getFirst());
-+                    if (found != null) { image = found.getImage(); images.put(surface.textures().getFirst(), image); break; }
++                if (surface.textures().size() < material.textureCount()) return null;
++                final List<BufferedImage> textures = new ArrayList<>();
++                for (int slot = 0; slot < material.textureCount(); slot++) {
++                    final String path = surface.textures().get(slot);
++                    BufferedImage image = images.get(path);
++                    if (image == null) for (final var pack : packs.getPackStackTopToBottom()) {
++                        final var found = pack.content().getShortnameImage(path);
++                        if (found != null) { image = found.getImage(); images.put(path, image); break; }
++                    }
++                    if (image == null) return null;
++                    textures.add(image);
 +                }
-+                if (image == null) return null;
-+                draws.add(new Draw(surface, geometry, image, material));
++                draws.add(new Draw(surface, geometry, List.copyOf(textures), material));
 +            }
 +            return new Frame(pose, scale, List.copyOf(draws), List.copyOf(sounds), List.copyOf(particles));
 +        }
@@ -180,7 +196,7 @@ index 0000000..9461f12
 +                        List<Draw> draws, List<BedrockActorAnimation.SoundCue> sounds,
 +                        List<BedrockActorAnimation.ParticleCue> particles) {}
 +    public record Draw(BedrockPlayerControllers.Surface surface, BedrockGeometryModel geometry,
-+                       BufferedImage image, BedrockActorMaterialDefinitions.Material material) {}
++                       List<BufferedImage> images, BedrockActorMaterialDefinitions.Material material) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
 index 94877d4..7b5265c 100644
@@ -258,10 +274,10 @@ index e076c9d..898f90e 100644
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
 new file mode 100644
-index 0000000..8d74acb
+index 0000000..a718c45
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
-@@ -0,0 +1,312 @@
+@@ -0,0 +1,316 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -508,10 +524,12 @@ index 0000000..8d74acb
 +            final var model = this.models.computeIfAbsent(new ModelKey(actor.packs, surface.geometry(), bones),
 +                    _ -> BedrockGeometry.entityModel(draw.geometry(), bones));
 +            final var uv = surface.uv();
-+            final var material = new MaterialKey(this.textures.get(new TextureKey(actor.packs, surface.textures().getFirst())), draw.material(),
++            final List<Identifier> bindings = surface.textures().stream().limit(draw.material().textureCount())
++                    .map(path -> this.textures.get(new TextureKey(actor.packs, path))).toList();
++            final var material = new MaterialKey(bindings, draw.material(),
 +                    surface.ignoreLighting(), surface.lightMultiplier(), new BedrockActorUvTransform(uv.offsetX(), uv.offsetY(), uv.scaleX(), uv.scaleY()),
 +                    BedrockActorRenderTypes.usesNetherLighting());
-+            final var type = this.renderTypes.computeIfAbsent(material, key -> BedrockActorRenderTypes.create(key.texture(),
++            final var type = this.renderTypes.computeIfAbsent(material, key -> BedrockActorRenderTypes.create(key.textures(),
 +                    key.material(), key.ignoreLighting(), key.multiplier(), key.uv(), key.nether()));
 +            draws.add(new Draw(model, type, surface.ignoreLighting()));
 +        }
@@ -519,17 +537,19 @@ index 0000000..8d74acb
 +    }
 +
 +    private void texture(final ResourcePackStorage packs, final BedrockWorldActorAppearance.Draw draw) {
-+        final var key = new TextureKey(packs, draw.surface().textures().getFirst());
-+        if (this.textures.containsKey(key)) return;
-+        final var image = draw.image();
-+        final var pixels = new NativeImage(image.getWidth(), image.getHeight(), false);
-+        for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
-+            final int argb = image.getRGB(x,y);
-+            pixels.setPixelABGR(x,y,(argb & 0xFF00FF00) | ((argb & 0xFF) << 16) | ((argb >>> 16) & 0xFF));
++        for (int slot = 0; slot < draw.images().size(); slot++) {
++            final var key = new TextureKey(packs, draw.surface().textures().get(slot));
++            if (this.textures.containsKey(key)) continue;
++            final var image = draw.images().get(slot);
++            final var pixels = new NativeImage(image.getWidth(), image.getHeight(), false);
++            for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
++                final int argb = image.getRGB(x,y);
++                pixels.setPixelABGR(x,y,(argb & 0xFF00FF00) | ((argb & 0xFF) << 16) | ((argb >>> 16) & 0xFF));
++            }
++            final var id = Identifier.fromNamespaceAndPath("viafabricplus-bedrock", this.textureRoot + this.textures.size());
++            Minecraft.getInstance().getTextureManager().register(id, new DynamicTexture(id::toString,pixels));
++            this.textures.put(key, id);
 +        }
-+        final var id = Identifier.fromNamespaceAndPath("viafabricplus-bedrock", this.textureRoot + this.textures.size());
-+        Minecraft.getInstance().getTextureManager().register(id, new DynamicTexture(id::toString,pixels));
-+        this.textures.put(key, id);
 +    }
 +
 +    @Override protected float getShadowRadius(final State state) { return state.nativeShadowRadius; }
@@ -568,7 +588,7 @@ index 0000000..8d74acb
 +            this.packs = packs; this.lifetime = lifetime; this.playback = playback;
 +        }
 +    }
-+    private record MaterialKey(Identifier texture, BedrockActorMaterialDefinitions.Material material, boolean ignoreLighting, float multiplier, BedrockActorUvTransform uv, boolean nether) {}
++    private record MaterialKey(List<Identifier> textures, BedrockActorMaterialDefinitions.Material material, boolean ignoreLighting, float multiplier, BedrockActorUvTransform uv, boolean nether) {}
 +    private record ModelKey(ResourcePackStorage packs, String geometry, Set<String> bones) {}
 +    private record TextureKey(ResourcePackStorage packs, String path) {}
 +    private record GeometryKey(ResourcePackStorage packs, String geometry) {}
@@ -576,10 +596,10 @@ index 0000000..8d74acb
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
 new file mode 100644
-index 0000000..30fe4f9
+index 0000000..14c973d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,263 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -636,13 +656,17 @@ index 0000000..30fe4f9
 +            assertEquals(.9375F, adult.scale().x());
 +            assertEquals(2F, baby.scale().x());
 +            assertNotSame(adult.draws().getFirst().geometry(), baby.draws().getFirst().geometry());
-+            adultBiomes.add(adult.draws().get(1).image());
-+            babyBiomes.add(baby.draws().get(1).image());
++            adultBiomes.add(adult.draws().get(1).images().getFirst());
++            babyBiomes.add(baby.draws().get(1).images().getFirst());
 +        }
 +        assertEquals(7, adultBiomes.size());
 +        assertEquals(7, babyBiomes.size());
-+        // Profession layers require masked multitexture support, so preserve the Java fallback.
-+        assertNull(actor.sample(7, villagerInput(1, 0, false), false));
++        final var profession = actor.sample(7, villagerInput(1, 0, false), false);
++        assertNotNull(profession);
++        assertEquals(3, profession.draws().size());
++        assertTrue(profession.draws().get(1).material().masked());
++        assertEquals(2, profession.draws().get(1).images().size());
++        assertNotSame(profession.draws().get(1).images().getFirst(), profession.draws().get(1).images().getLast());
 +        assertNotNull(actor.sample(7.25F, villagerInput(0, 0, false), false));
 +    }
 +
@@ -728,7 +752,7 @@ index 0000000..30fe4f9
 +        final var first = actor.sample(0, new BedrockActorAnimation.Frame(Map.of("show_bottom", true, "rotation_to_camera", 0F), Map.of("time_offset", 0F)), false);
 +        assertNotNull(first);
 +        assertEquals(1, first.draws().size());
-+        assertNotNull(first.draws().getFirst().image());
++        assertNotNull(first.draws().getFirst().images().getFirst());
 +        assertFalse(first.pose().isEmpty());
 +        final var turned = appearance(null).playback().sample(0, new BedrockActorAnimation.Frame(Map.of("show_bottom", false, "rotation_to_camera", 180F), Map.of("time_offset", 0F)), false);
 +        assertEquals(first.pose(), turned.pose());

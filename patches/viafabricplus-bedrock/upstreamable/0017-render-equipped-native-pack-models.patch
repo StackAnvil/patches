@@ -1,4 +1,4 @@
-From a3bc55f8890bf8f85bddfc7c44d222d50f04a09a Mon Sep 17 00:00:00 2001
+From ef219b1d66bd7d4d4d6c1250ec6eeeeda5425cf0 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(attachables): render equipped native pack models
@@ -241,6 +241,15 @@ semantics and native visual parity remain separate verification work.
 Consume the shared controller's immutable ordered sampler bindings.
 Explicitly use slot zero for the existing single-sampler material path;
 secondary slots remain available for multi-texture shader integration.
+
+Pass explicit texture binding lists and the masked material mode through
+the shared GPU material API. Existing single-image appearances retain a
+one-element binding list and unchanged ordinary material flags.
+
+Load each required material image for equipped surfaces independently.
+Keep the geometry bound to its primary image while the render-type cache
+includes the ordered sampler bindings. Missing required images retain the
+existing item fallback rather than hiding equipment or dropping the mask.
 ---
  .../appearance/BedrockActorAnimation.java     |  66 ++-
  .../appearance/BedrockAttachableBindings.java |  66 +++
@@ -255,7 +264,7 @@ secondary slots remain available for multi-texture shader integration.
  .../bedrock/render/BedrockEquipmentCache.java |  41 ++
  .../BedrockEquippedAttachableLayer.java       |  36 ++
  .../render/BedrockHeldAttachableBindings.java |  59 +++
- .../render/BedrockPlayerAttachables.java      | 450 ++++++++++++++++++
+ .../render/BedrockPlayerAttachables.java      | 456 ++++++++++++++++++
  .../bedrock/render/BedrockPlayerModel.java    |   8 +
  .../bedrock/render/BedrockPlayerSkins.java    |  38 +-
  .../bedrock/render/BedrockTextureMeshes.java  | 109 +++++
@@ -275,7 +284,7 @@ secondary slots remain available for multi-texture shader integration.
  .../BedrockHeldAttachableBindingsTest.java    | 126 +++++
  .../render/BedrockPlayerModelTest.java        |  58 +++
  .../render/BedrockTextureMeshesTest.java      |  87 ++++
- 33 files changed, 2605 insertions(+), 23 deletions(-)
+ 33 files changed, 2611 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableBindings.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java
@@ -664,11 +673,11 @@ index 0000000..8646b14
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
-index bf0cdfd..0ee90d8 100644
+index 37e57bb..a50c4a0 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
-@@ -88,6 +88,11 @@ public final class BedrockPlayerControllers {
-         return this.select(this.molang, false);
+@@ -94,6 +94,11 @@ public final class BedrockPlayerControllers {
+         return this.select(this.molang, includeBody);
      }
  
 +    /** Resolves bindings after standalone selection when no animation graph is available. */
@@ -1107,10 +1116,10 @@ index 0000000..1ea81dc
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 new file mode 100644
-index 0000000..d820046
+index 0000000..7e4dd5a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
-@@ -0,0 +1,450 @@
+@@ -0,0 +1,456 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1312,11 +1321,17 @@ index 0000000..d820046
 +                            break;
 +                        }
 +                    }
-+                    final Identifier texture = texture(selected.textures().getFirst(), packs);
 +                    final var material = materials.material(selected.material()).orElse(null);
++                    if (material == null || selected.textures().size() < material.textureCount()) { supported = false; break; }
++                    final List<Identifier> textures = new ArrayList<>();
++                    for (int index = 0; index < material.textureCount(); index++) {
++                        final Identifier texture = texture(selected.textures().get(index), packs);
++                        if (texture == null) { supported = false; break; }
++                        textures.add(texture);
++                    }
++                    if (!supported) break;
 +                    if (geometry == null || !equipped.resource.models.containsKey(modelKey)
-+                            && geometry.getParents().stream().allMatch(parent -> parent.getCubes().isEmpty())
-+                            || texture == null || material == null) { supported = false; break; }
++                            && geometry.getParents().stream().allMatch(parent -> parent.getCubes().isEmpty())) { supported = false; break; }
 +                    final var binding = BINDINGS.get(selected.geometry());
 +                    final BedrockAttachableBindings.Resolved bindings = binding == null ? BedrockAttachableBindings.Resolved.EMPTY : equipped.playback == null
 +                            ? equipped.controllers.bindings(binding) : equipped.playback.bindings(binding);
@@ -1333,7 +1348,7 @@ index 0000000..d820046
 +                        model = model(geometry);
 +                        equipped.resource.models.put(modelKey, model);
 +                    }
-+                    slotSurfaces.add(new Surface(slot, model, texture, selected, pose, bindings, renderType(texture, selected, material)));
++                    slotSurfaces.add(new Surface(slot, model, selected, pose, bindings, renderType(List.copyOf(textures), selected, material)));
 +                }
 +                if (supported) result.addAll(slotSurfaces);
 +            } catch (IOException | RuntimeException invalid) {
@@ -1494,13 +1509,13 @@ index 0000000..d820046
 +        return null;
 +    }
 +
-+    private static RenderType renderType(final Identifier texture, final BedrockPlayerControllers.Surface selection,
++    private static RenderType renderType(final List<Identifier> textures, final BedrockPlayerControllers.Surface selection,
 +                                         final BedrockActorMaterialDefinitions.Material material) {
-+        final MaterialKey key = new MaterialKey(texture, material, selection.ignoreLighting(), selection.lightMultiplier(),
++        final MaterialKey key = new MaterialKey(textures, material, selection.ignoreLighting(), selection.lightMultiplier(),
 +                selection.uv(), BedrockActorRenderTypes.usesNetherLighting());
 +        return RENDER_TYPES.computeIfAbsent(key, value -> {
 +            final var uv = value.uv();
-+            return BedrockActorRenderTypes.create(value.texture(), value.material(), value.ignoreLighting(),
++            return BedrockActorRenderTypes.create(value.textures(), value.material(), value.ignoreLighting(),
 +                    value.multiplier(), new BedrockActorUvTransform(uv.offsetX(), uv.offsetY(), uv.scaleX(), uv.scaleY()), value.nether());
 +        });
 +    }
@@ -1527,12 +1542,12 @@ index 0000000..d820046
 +    }
 +
 +    record ItemIdentity(String identifier, String variant) {}
-+    public record Surface(EquipmentSlot slot, Model<Draw> model, Identifier texture, BedrockPlayerControllers.Surface selection,
++    public record Surface(EquipmentSlot slot, Model<Draw> model, BedrockPlayerControllers.Surface selection,
 +                          Map<String, BedrockBoneAnimation.Transform> pose, BedrockAttachableBindings.Resolved bindings, RenderType renderType) {}
 +    public record Draw(Map<String, Matrix4f> deformations, Map<String, Matrix4f> ownerBones, BedrockAttachableBindings.Resolved bindings, BedrockPlayerControllers.Surface selection,
 +                       Map<String, BedrockBoneAnimation.Transform> pose) {}
 +
-+    private record MaterialKey(Identifier texture, BedrockActorMaterialDefinitions.Material material,
++    private record MaterialKey(List<Identifier> textures, BedrockActorMaterialDefinitions.Material material,
 +                               boolean ignoreLighting, float multiplier, BedrockPlayerControllers.Uv uv, boolean nether) {}
 +
 +    private static final class Resource {
@@ -1586,7 +1601,7 @@ index 3baf776..bd68d57 100644
 +
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 5dbe52c..7508096 100644
+index 8523507..6c20acb 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -77,6 +77,7 @@ import java.util.HashMap;
@@ -1597,7 +1612,7 @@ index 5dbe52c..7508096 100644
  import java.util.UUID;
  
  /** Owns client textures and geometry for Bedrock player appearances. */
-@@ -429,6 +430,17 @@ public final class BedrockPlayerSkins {
+@@ -449,6 +450,17 @@ public final class BedrockPlayerSkins {
          return List.copyOf(surfaces);
      }
  
@@ -1615,7 +1630,7 @@ index 5dbe52c..7508096 100644
      private static void unresolvedCostume(final Appearance appearance, final String kind, final String name) {
          if (appearance.unresolvedCostumes.add(kind + ':' + name)) LOGGER.warn("Unresolved server player costume {}: {}", kind, name);
      }
-@@ -525,7 +537,8 @@ public final class BedrockPlayerSkins {
+@@ -583,7 +595,8 @@ public final class BedrockPlayerSkins {
          final Map<String, Float> variables = actorVariables(entity, state, false);
          final var pose = actor.sample(
                  (System.nanoTime() - appearance.started) / 1_000_000_000F,
@@ -1625,7 +1640,7 @@ index 5dbe52c..7508096 100644
                  eventsEnabled, sounds::add, particles::add);
          playEffects(appearance, entity, state, pose, sounds, particles);
          return pose;
-@@ -599,7 +612,7 @@ public final class BedrockPlayerSkins {
+@@ -657,7 +670,7 @@ public final class BedrockPlayerSkins {
                  items.mainHandHeight, items.oldOffHandHeight, items.offHandHeight, partialTick);
          appearance.firstPersonActor.commands(BedrockActorState.animations(player.getUUID()));
          final var pose = appearance.firstPersonActor.sample((System.nanoTime() - appearance.started) / 1_000_000_000F,
@@ -1634,7 +1649,7 @@ index 5dbe52c..7508096 100644
          final var camera = Minecraft.getInstance().options.bobView().get()
                  ? appearance.firstPersonCamera.sample(player.xRotO, player.getXRot(), player.yRotO, player.getYRot(),
                      partialTick, System.nanoTime() / 1_000_000_000D)
-@@ -616,13 +629,16 @@ public final class BedrockPlayerSkins {
+@@ -674,13 +687,16 @@ public final class BedrockPlayerSkins {
              appearance.firstPersonModels = List.copyOf(surfaces);
          }
          final List<FirstPersonSurface> draws = selection == null ? appearance.firstPersonModels : selection.surfaces();
@@ -1652,7 +1667,7 @@ index 5dbe52c..7508096 100644
                  nativeDrawing ? BedrockFirstPersonActor.root(BedrockFirstPersonActor.PLAYER_RENDER_HEIGHT, player.getScale() / 16F,
                          new org.joml.Vector3f(scale.x(), scale.y(), scale.z()), false,
                          BedrockFirstPersonActor.global(player.deathTime, partialTick,
-@@ -704,11 +720,23 @@ public final class BedrockPlayerSkins {
+@@ -759,11 +775,23 @@ public final class BedrockPlayerSkins {
                          BedrockActorRenderTypes.lightCoords(packedLight, surface.material.ignoreLighting()),
                          net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY, null);
              }
@@ -1676,7 +1691,7 @@ index 5dbe52c..7508096 100644
      public static boolean firstPersonActorSubmitted() {
          return firstPersonFrame != null && !firstPersonFrame.surfaces.isEmpty();
      }
-@@ -797,7 +825,7 @@ public final class BedrockPlayerSkins {
+@@ -852,7 +880,7 @@ public final class BedrockPlayerSkins {
  
      private record FirstPersonFrame(Identifier texture, BedrockActorAnimation.Visibility visibility,
                                      BedrockFirstPersonCamera.Rotation camera, List<FirstPersonSurface> surfaces,
@@ -1685,7 +1700,7 @@ index 5dbe52c..7508096 100644
  
      static Map<String, Object> geometryQueries(final AvatarRenderState state) {
          final Geometry geometry = geometry(appearance(state.skin), true);
-@@ -1054,10 +1082,12 @@ public final class BedrockPlayerSkins {
+@@ -1109,10 +1137,12 @@ public final class BedrockPlayerSkins {
          BedrockActorResources.clear();
          rendererContext = context;
          rendererEpoch++;
@@ -2279,10 +2294,10 @@ index 0000000..226d011
 +
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
-index ffda595..34940ba 100644
+index 03b1ffe..ddfc76e 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
-@@ -57,6 +57,28 @@ class BedrockPlayerControllersTest {
+@@ -63,6 +63,28 @@ class BedrockPlayerControllersTest {
          assertFalse(controllers.select(2, Map.of("visible", false), Map.of(), Map.of()).bodyVisible());
      }
  
@@ -2311,7 +2326,7 @@ index ffda595..34940ba 100644
      @Test
      void resolvesOnlyDeclaredControllersWhenCreatingAnEquipmentScope() throws Exception {
          final var entity = new BedrockEntityData("test:item", new BedrockEntityData.Scripts(List.of(), List.of(),
-@@ -98,7 +120,6 @@ class BedrockPlayerControllersTest {
+@@ -104,7 +126,6 @@ class BedrockPlayerControllersTest {
          }
      }
  
@@ -2675,7 +2690,7 @@ index 0000000..c02a65c
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentOwnerTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentOwnerTest.java
 new file mode 100644
-index 0000000..d0708a6
+index 0000000..151fc11
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentOwnerTest.java
 @@ -0,0 +1,71 @@
@@ -2692,7 +2707,7 @@ index 0000000..d0708a6
 +import java.util.Map;
 +import net.minecraft.client.model.player.PlayerModel;
 +import net.minecraft.client.renderer.entity.state.AvatarRenderState;
-+import net.minecraft.resources.Identifier;
++import net.minecraft.client.renderer.rendertype.RenderType;
 +import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 +import org.junit.jupiter.api.Test;
 +import static org.junit.jupiter.api.Assertions.*;
@@ -2708,11 +2723,11 @@ index 0000000..d0708a6
 +        state.pose = Map.of("head", new BedrockBoneAnimation.Transform(new BedrockBoneAnimation.Vector(32, 0, 0),
 +                new BedrockBoneAnimation.Vector(0, 0, 0), new BedrockBoneAnimation.Vector(1, 1, 1), false));
 +        skin.setupAnim(state);
-+        final var texture = Identifier.fromNamespaceAndPath("test", "owner");
++        final var renderType = mock(RenderType.class);
 +        try (final var skins = mockStatic(BedrockPlayerSkins.class, CALLS_REAL_METHODS)) {
 +            skins.when(() -> BedrockPlayerSkins.costumes(state)).thenReturn(List.of(
-+                    new BedrockPlayerSkins.CostumeSurface(costume, texture, true),
-+                    new BedrockPlayerSkins.CostumeSurface(replacement, texture, true)));
++                    new BedrockPlayerSkins.CostumeSurface(costume, renderType, false, false),
++                    new BedrockPlayerSkins.CostumeSurface(replacement, renderType, false, false)));
 +            final var selected = BedrockPlayerSkins.equipmentOwner(state, skin);
 +            assertSame(costume, selected);
 +            final var matrices = BedrockAnimatedModel.boneMatrices(selected);
@@ -2722,7 +2737,7 @@ index 0000000..d0708a6
 +            assertEquals(0F, BedrockAnimatedModel.boneMatrices(skin).get("body").m31());
 +
 +            skins.when(() -> BedrockPlayerSkins.costumes(state)).thenReturn(List.of(
-+                    new BedrockPlayerSkins.CostumeSurface(replacement, texture, true)));
++                    new BedrockPlayerSkins.CostumeSurface(replacement, renderType, false, false)));
 +            assertSame(replacement, BedrockPlayerSkins.equipmentOwner(state, skin));
 +            assertEquals(12F, BedrockAnimatedModel.boneMatrices(replacement).get("body").m31());
 +            assertEquals(32F, BedrockAnimatedModel.boneMatrices(replacement).get("head").m30());

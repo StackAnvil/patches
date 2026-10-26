@@ -1,4 +1,4 @@
-From c3423be9d2fdcd6bb92a935abe1bb436e482e259 Mon Sep 17 00:00:00 2001
+From 04ee256b78364f5fb098558cf63ff1c456136126 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -460,6 +460,10 @@ it does not reproduce or close the reported missing inventory background.
 Consume the shared controller's immutable ordered sampler bindings.
 Explicitly use slot zero for the existing single-sampler material path;
 secondary slots remain available for multi-texture shader integration.
+
+Pass explicit texture binding lists and the masked material mode through
+the shared GPU material API. Existing single-image appearances retain a
+one-element binding list and unchanged ordinary material flags.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -477,12 +481,12 @@ secondary slots remain available for multi-texture shader integration.
  .../render/MixinNativeUiPictures.java         |  72 ++
  .../render/MixinNativeUiViewport.java         |  25 +
  .../BedrockActorMaterialDefinitions.java      |   4 +-
- .../render/BedrockActorRenderTypes.java       |  38 +-
+ .../render/BedrockActorRenderTypes.java       |  40 +-
  .../render/BedrockAnimatedEntityState.java    |  16 +
  .../bedrock/render/BedrockEntityRenderer.java |   6 +-
  .../bedrock/render/BedrockGeometry.java       |   4 +-
  .../render/BedrockGuiActorContext.java        | 151 +++
- .../render/BedrockGuiActorRenderer.java       | 130 +++
+ .../render/BedrockGuiActorRenderer.java       | 133 +++
  .../render/BedrockPlayerAttachables.java      |  15 +-
  .../bedrock/render/BedrockPlayerSkins.java    |  43 +-
  .../bedrock/screen/ui/BedrockHudOverlays.java | 129 +++
@@ -558,7 +562,7 @@ secondary slots remain available for multi-texture shader integration.
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |  86 ++
  .../screen/ui/NativeUiViewportTest.java       |  95 ++
- 97 files changed, 11044 insertions(+), 29 deletions(-)
+ 97 files changed, 11048 insertions(+), 30 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -1318,10 +1322,10 @@ index 0000000..254b407
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
-index ec7c3bb..24393c5 100644
+index 3bb710c..e09a72e 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
-@@ -55,12 +55,12 @@ public final class BedrockActorMaterialDefinitions {
+@@ -56,12 +56,12 @@ public final class BedrockActorMaterialDefinitions {
          return read(documents);
      }
  
@@ -1337,7 +1341,7 @@ index ec7c3bb..24393c5 100644
          final JsonElement materials = compiled.get("materials");
          if (materials == null || !materials.isJsonObject()) return compiled;
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
-index d4e4a8b..6f0ec3c 100644
+index 25e7542..80060fd 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
 @@ -6,6 +6,8 @@
@@ -1347,30 +1351,32 @@ index d4e4a8b..6f0ec3c 100644
 +import com.mojang.renderpearl.api.pipeline.BlendFactor;
 +import com.mojang.renderpearl.api.pipeline.BlendFunction;
  import com.mojang.renderpearl.api.pipeline.RenderPipeline;
- import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockActorRenderType;
- import com.viaversion.viafabricplus.ViaFabricPlus;
-@@ -32,27 +34,32 @@ public final class BedrockActorRenderTypes {
+ import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
+ import com.mojang.renderpearl.api.pipeline.UniformType;
+@@ -34,30 +36,35 @@ public final class BedrockActorRenderTypes {
              for (final boolean cull : new boolean[] {false, true})
                  for (final boolean unlit : new boolean[] {false, true})
                      for (final boolean emissive : new boolean[] {false, true})
--                        for (final boolean nether : new boolean[] {false, true}) {
--                            if (unlit && nether) continue;
--                            final var key = new PipelineKey(alphaTest, cull, unlit, emissive, nether);
+-                        for (final boolean nether : new boolean[] {false, true})
+-                            for (final boolean masked : new boolean[] {false, true}) {
+-                            if (unlit && nether || masked && (!alphaTest || emissive)) continue;
+-                            final var key = new PipelineKey(alphaTest, cull, unlit, emissive, nether, masked);
 -                            result.put(key, pipeline(key));
 -                        }
 +                        for (final boolean gui : new boolean[] {false, true})
-+                            for (final boolean nether : new boolean[] {false, true}) {
-+                                if ((unlit || gui) && nether) continue;
-+                                final var key = new PipelineKey(alphaTest, cull, unlit, emissive, nether, gui);
-+                                result.put(key, pipeline(key));
-+                            }
++                            for (final boolean nether : new boolean[] {false, true})
++                                for (final boolean masked : new boolean[] {false, true}) {
++                                    if ((unlit || gui) && nether || masked && (!alphaTest || emissive)) continue;
++                                    final var key = new PipelineKey(alphaTest, cull, unlit, emissive, nether, gui, masked);
++                                    result.put(key, pipeline(key));
++                                }
          return java.util.Collections.unmodifiableMap(result);
      }
  
      private static RenderPipeline pipeline(final PipelineKey key) {
          final var builder = RenderPipeline.builder(RenderPipelines.ENTITY_SNIPPET)
--            .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/actor_" + key.alphaTest + "_" + key.cull + "_" + key.unlit + "_" + key.emissive + "_" + key.nether))
-+            .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/actor_" + key.alphaTest + "_" + key.cull + "_" + key.unlit + "_" + key.emissive + "_" + key.nether + (key.gui ? "_gui" : "")))
+-            .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/actor_" + key.alphaTest + "_" + key.cull + "_" + key.unlit + "_" + key.emissive + "_" + key.nether + (key.masked ? "_masked" : "")))
++            .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/actor_" + key.alphaTest + "_" + key.cull + "_" + key.unlit + "_" + key.emissive + "_" + key.nether + (key.gui ? "_gui" : "") + (key.masked ? "_masked" : "")))
              .withVertexShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_actor"))
              .withFragmentShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_actor"))
              .withBindGroupLayout(BindGroupLayouts.SAMPLER1)
@@ -1379,6 +1385,8 @@ index d4e4a8b..6f0ec3c 100644
 +        if (key.gui) builder.withShaderDefine("GUI_PORTRAIT").withColorTargetState(new ColorTargetState(
 +                new BlendFunction(BlendFactor.SRC_ALPHA, BlendFactor.ONE_MINUS_SRC_ALPHA,
 +                        BlendFactor.ONE, BlendFactor.ONE_MINUS_SRC_ALPHA)));
+         if (key.masked) builder.withShaderDefine("MASKED_MULTITEXTURE")
+             .withBindGroupLayout(BindGroupLayout.builder().withUniform("BedrockMaskTexture", UniformType.COMBINED_IMAGE_SAMPLER).build());
          if (key.alphaTest) builder.withShaderDefine("ALPHA_TEST");
          if (key.unlit) builder.withShaderDefine("IGNORE_LIGHTING");
          if (key.nether) builder.withShaderDefine("NETHER_LIGHTING");
@@ -1389,32 +1397,37 @@ index d4e4a8b..6f0ec3c 100644
              : !key.alphaTest ? RenderPipelines.ENTITY_SOLID
              : key.unlit ? RenderPipelines.ENTITY_CUTOUT_Z_OFFSET
              : key.cull ? RenderPipelines.ENTITY_CUTOUT_CULL : RenderPipelines.ENTITY_CUTOUT;
-@@ -83,11 +90,24 @@ public final class BedrockActorRenderTypes {
+@@ -88,10 +95,23 @@ public final class BedrockActorRenderTypes {
          return type;
      }
  
-+    public static RenderType createGui(final Identifier texture, final BedrockActorMaterialDefinitions.Material material,
++    public static RenderType createGui(final List<Identifier> textures, final BedrockActorMaterialDefinitions.Material material,
 +                                       final boolean ignoreLighting, final float multiplier, final BedrockActorUvTransform uv) {
-+        final var type = RenderType.create("bedrock_gui_actor", RenderSetup.builder(selectGuiPipeline(material, ignoreLighting))
-+            .withTexture("Sampler0", texture).useLightmap().useOverlay().createRenderSetup());
++        final var setup = textures(RenderSetup.builder(selectGuiPipeline(material, ignoreLighting)), textures, material);
++        final var type = RenderType.create("bedrock_gui_actor", setup.useLightmap().useOverlay().createRenderSetup());
 +        ((IBedrockActorRenderType) type).bedrock$lightColorMultiplier(multiplier);
 +        ((IBedrockActorRenderType) type).bedrock$uvTransform(uv);
 +        return type;
 +    }
 +
 +    static RenderPipeline selectGuiPipeline(final BedrockActorMaterialDefinitions.Material material, final boolean ignoreLighting) {
-+        return MATERIAL_PIPELINES.get(new PipelineKey(material.alphaTest(), material.cull(), ignoreLighting, material.emissive(), false, true));
++        return MATERIAL_PIPELINES.get(new PipelineKey(material.alphaTest(), material.cull(), ignoreLighting, material.emissive(), false, true, material.masked()));
 +    }
 +
      static RenderPipeline selectPipeline(final BedrockActorMaterialDefinitions.Material material,
                                           final boolean ignoreLighting, final boolean netherLighting) {
          return MATERIAL_PIPELINES.get(new PipelineKey(material.alphaTest(), material.cull(), ignoreLighting,
--                material.emissive(), netherLighting && !ignoreLighting));
-+                material.emissive(), netherLighting && !ignoreLighting, false));
+-                material.emissive(), netherLighting && !ignoreLighting, material.masked()));
++                material.emissive(), netherLighting && !ignoreLighting, false, material.masked()));
      }
  
--    private record PipelineKey(boolean alphaTest, boolean cull, boolean unlit, boolean emissive, boolean nether) {}
-+    private record PipelineKey(boolean alphaTest, boolean cull, boolean unlit, boolean emissive, boolean nether, boolean gui) {}
+     private static RenderSetup.RenderSetupBuilder textures(final RenderSetup.RenderSetupBuilder setup,
+@@ -112,5 +132,5 @@ public final class BedrockActorRenderTypes {
+                 original.getMinFilter(), original.getMagFilter(), original.getMaxLod().isEmpty());
+     }
+ 
+-    private record PipelineKey(boolean alphaTest, boolean cull, boolean unlit, boolean emissive, boolean nether, boolean masked) {}
++    private record PipelineKey(boolean alphaTest, boolean cull, boolean unlit, boolean emissive, boolean nether, boolean gui, boolean masked) {}
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedEntityState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedEntityState.java
 new file mode 100644
@@ -1439,10 +1452,10 @@ index 0000000..0cd79ee
 +    BedrockActorAnimation.Visibility visibility();
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-index af272bd..8c97c36 100644
+index 6cf01a9..aa9d3b5 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-@@ -319,7 +319,7 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -322,7 +322,7 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
          poseStack.translate(0F, -1.5F, 0F);
      }
  
@@ -1451,7 +1464,7 @@ index af272bd..8c97c36 100644
          private List<RenderedModel> models = List.of();
          private Map<String, BedrockBoneAnimation.Transform> pose = Map.of();
          private BedrockActorAnimation.Visibility visibility = BedrockActorAnimation.Visibility.UNSPECIFIED;
-@@ -328,8 +328,8 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -331,8 +331,8 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
          private NativeActorMessage.Snapshot nativeState;
          private float yaw;
          private float scale = 1F;
@@ -1637,10 +1650,10 @@ index 0000000..6a9fa61
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGuiActorRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGuiActorRenderer.java
 new file mode 100644
-index 0000000..b68cf3d
+index 0000000..f1b616a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGuiActorRenderer.java
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,133 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1715,7 +1728,10 @@ index 0000000..b68cf3d
 +            final var material = appearance.materials().material(surface.material())
 +                .orElseThrow(() -> new IOException("Unsupported native GUI actor material " + surface.material()));
 +            final var uv = surface.uv();
-+            final var type = BedrockActorRenderTypes.createGui(this.texture(appearance, surface.textures().getFirst()), material,
++            if (surface.textures().size() < material.textureCount()) throw new IOException("Missing native GUI actor sampler binding");
++            final List<Identifier> textures = new ArrayList<>();
++            for (int slot = 0; slot < material.textureCount(); slot++) textures.add(this.texture(appearance, surface.textures().get(slot)));
++            final var type = BedrockActorRenderTypes.createGui(textures, material,
 +                surface.ignoreLighting(), surface.lightMultiplier(),
 +                new BedrockActorUvTransform(uv.offsetX(), uv.offsetY(), uv.scaleX(), uv.scaleY()));
 +            draws.add(new Draw(model, type));
@@ -1772,7 +1788,7 @@ index 0000000..b68cf3d
 +    private record Draw(Model<EntityRenderState> model, RenderType type) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
-index d820046..22724d0 100644
+index 7e4dd5a..aa23fc6 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 @@ -99,6 +99,9 @@ public final class BedrockPlayerAttachables {
@@ -1824,7 +1840,7 @@ index d820046..22724d0 100644
              } catch (IOException | RuntimeException invalid) {
                  if (FAILED_SELECTIONS.add(stack.getItem().toString()))
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 7508096..f86be5b 100644
+index 6c20acb..54ed6d7 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -371,7 +371,9 @@ public final class BedrockPlayerSkins {
@@ -1851,14 +1867,14 @@ index 7508096..f86be5b 100644
 +            final var selection = appearance.serverControllers.select(state.ageInTicks / 20F,
                      actor == null ? Map.of() : actor.properties(), queries,
                      Map.of("is_first_person", 0F, "is_paperdoll", 0F, "map_face_icon", 0F, "attack_time", state.swingAnimation,
--                            "player_x_rotation", state.xRot, "player_y_rotation", state.yRot, "gliding_speed_value", Math.max(1, state.speedValue)));
-+                            "player_x_rotation", state.xRot, "player_y_rotation", gui == null ? state.yRot : gui.yaw(), "gliding_speed_value", Math.max(1, state.speedValue)));
+-                            "player_x_rotation", state.xRot, "player_y_rotation", state.yRot, "gliding_speed_value", Math.max(1, state.speedValue)), Map.of(), true);
++                            "player_x_rotation", state.xRot, "player_y_rotation", gui == null ? state.yRot : gui.yaw(), "gliding_speed_value", Math.max(1, state.speedValue)), Map.of(), true);
 +            if (gui != null) { gui.selection(selection); return selection; }
 +            appearance.serverSelection = selection;
              appearance.selectionAge = state.ageInTicks;
              appearance.selectionActor = actor;
              return appearance.serverSelection;
-@@ -496,7 +501,8 @@ public final class BedrockPlayerSkins {
+@@ -554,7 +559,8 @@ public final class BedrockPlayerSkins {
      }
  
      public static BedrockActorAnimation.Visibility bodyVisibility(final UUID uuid) {
@@ -1868,7 +1884,7 @@ index 7508096..f86be5b 100644
          return playback == null ? BedrockActorAnimation.Visibility.UNSPECIFIED : playback.visibility();
      }
  
-@@ -509,6 +515,8 @@ public final class BedrockPlayerSkins {
+@@ -567,6 +573,8 @@ public final class BedrockPlayerSkins {
      public static Map<String, BedrockBoneAnimation.Transform> pose(
              final Avatar entity, final AvatarRenderState state, final float partialTick) {
          final Appearance appearance = APPEARANCES.get(entity.getUUID());
@@ -1877,7 +1893,7 @@ index 7508096..f86be5b 100644
          final var actor = actor(appearance);
          final List<BedrockActorAnimation.SoundCue> sounds = new ArrayList<>();
          final List<BedrockActorAnimation.ParticleCue> particles = new ArrayList<>();
-@@ -544,6 +552,26 @@ public final class BedrockPlayerSkins {
+@@ -602,6 +610,26 @@ public final class BedrockPlayerSkins {
          return pose;
      }
  
@@ -1904,7 +1920,7 @@ index 7508096..f86be5b 100644
      private static Map<String, Float> actorVariables(final Avatar entity, final AvatarRenderState state,
                                                       final boolean firstPerson) {
          final Map<String, Float> variables = new HashMap<>();
-@@ -558,7 +586,7 @@ public final class BedrockPlayerSkins {
+@@ -616,7 +644,7 @@ public final class BedrockPlayerSkins {
                          .variables());
          variables.put("attack_time", state.swingAnimation);
          variables.put("player_x_rotation", state.xRot);
@@ -1913,7 +1929,7 @@ index 7508096..f86be5b 100644
          variables.put("gliding_speed_value", Math.max(1, state.speedValue));
          variables.put(
                  "is_holding_right",
-@@ -835,6 +863,7 @@ public final class BedrockPlayerSkins {
+@@ -890,6 +918,7 @@ public final class BedrockPlayerSkins {
      static Map<String, Object> actorQueries(final Avatar entity, final AvatarRenderState state, final float partialTick) {
          final Map<String, Object> queries = new HashMap<>();
          queries.putAll(BedrockActorQueries.nativeState(BedrockActorState.state(entity.getUUID())));
@@ -1921,7 +1937,7 @@ index 7508096..f86be5b 100644
          queries.put("life_time", state.ageInTicks / 20F);
          queries.put("frame_alpha", partialTick);
          queries.put("is_alive", entity.isAlive());
-@@ -857,7 +886,7 @@ public final class BedrockPlayerSkins {
+@@ -912,7 +941,7 @@ public final class BedrockPlayerSkins {
          queries.put("shield_blocking_bob", BedrockActorState.shieldBlockingBob(entity.getUUID(), partialTick));
          queries.put("target_x_rotation", state.xRot);
          queries.put("head_x_rotation", BedrockPlayerQueries.headPitch(state.xRot));
@@ -7525,10 +7541,10 @@ index 545727e..d0fac3c 100644
    "bedrock_settings.viafabricplus.particle_view_distance": "Particle render distance",
    "bedrock_settings.viafabricplus.captions": "Bedrock closed captions",
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
-index 118981a..6870056 100644
+index 2ea0cad..fb1a745 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
 +++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
-@@ -43,6 +43,9 @@ void main() {
+@@ -51,6 +51,9 @@ void main() {
  #ifndef IGNORE_LIGHTING
      color.rgb *= lightMapColor.rgb;
  #endif
@@ -7548,10 +7564,10 @@ index 8e8672c..e52389d 100644
  accessible field net/minecraft/client/renderer/RenderPipelines EYES_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 +accessible method net/minecraft/client/gui/GuiGraphicsExtractor innerBlit (Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;Lnet/minecraft/resources/Identifier;IIIIFFFFI)V
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 6306dad..7dfc2e2 100644
+index a2dd1df..ba8efbd 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -139,6 +139,8 @@
+@@ -142,6 +142,8 @@
      "features.render.MixinBedrockModelPartTransforms",
      "features.render.MixinPlayerSkinWidget",
      "features.render.MixinGuiSkinRenderer",
@@ -7560,7 +7576,7 @@ index 6306dad..7dfc2e2 100644
      "features.input.MixinKeyboardInput",
      "features.input.MixinLocalPlayerInput",
      "features.input.MixinClientInput",
-@@ -193,7 +195,11 @@
+@@ -196,7 +198,11 @@
      "features.render.MixinBedrockCameraFade",
      "features.entities.MixinClientEntityTracking",
      "features.entities.MixinMinecraftProjectileOwners",
@@ -7843,7 +7859,7 @@ index d47b872..f4f4f89 100644
          assertNull(packs.get(1).content().get("textures/items/casesensitive.jpg"));
          assertArrayEquals(new byte[] {9}, packs.get(2).content().get("textures/items/shared.png"));
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java
-index c9f050d..0512214 100644
+index e04661c..f687eb7 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java
 @@ -33,6 +33,25 @@ final class BedrockShaderPipelinesTest {
@@ -7856,7 +7872,7 @@ index c9f050d..0512214 100644
 +            for (final boolean cull : new boolean[] {false, true})
 +                for (final boolean unlit : new boolean[] {false, true})
 +                    for (final boolean emissive : new boolean[] {false, true}) {
-+                        final var material = new BedrockActorMaterialDefinitions.Material(alphaTest, cull, emissive, false);
++                        final var material = new BedrockActorMaterialDefinitions.Material(alphaTest, cull, emissive, false, false);
 +                        final var gui = BedrockActorRenderTypes.selectGuiPipeline(material, unlit);
 +                        final var world = BedrockActorRenderTypes.selectPipeline(material, unlit, false);
 +                        assertSame(alphaTest ? RenderPipelines.ENTITY_TRANSLUCENT : RenderPipelines.ENTITY_SOLID,

@@ -1,3 +1,17 @@
+## Sampled masked materials, October 26, 2026
+
+Support the target's nonemissive alpha-test `MASKED_MULTITEXTURE` family with two GPU images in one geometry draw. Preserve independent image dimensions and normalized UV sampling. Keep the mask separate from Minecraft's overlay sampler. Missing bindings retain the legacy custom-actor fallback, including older version-one snapshots.
+
+The production shader passes all 512 original sampled masked fragment controls and the existing 672 ordinary controls at tolerance 1e-6. These compare color, discard, and depth with supplied sampling and buffer boundaries. A deliberate floor substitution fails; restoring native upward rounding passes. Native material selection, other constant/shared-input variants, sampler filtering, and graphical parity remain outside these controls.
+
+The Iris bridge composes normalized primary-image reads before pack shading and tests native coverage at the original UV. It forwards sampler identity through helper parameters, prototypes, and overloads, while preserving unrelated images. A separate reserved texture unit retains overlay and lightmap bindings. A configuration plugin gates Iris hooks by the installed mod while keeping strict injection checks for that integration. GPU regressions cover ordinary, LOD, and gradient reads, mask overwrite/keep/discard, and reuse of shared native/Java programs. Geometry/tessellation transport and other sampling operations remain incomplete or unverified.
+
+The full replayed four-project build passes 3,080 tests with 152 optional skips and no failures or errors. Packaged classes, shader assets, and embedded dependencies match the compiled inputs.
+
+Fresh direct and Iris-enabled ViaProxy sessions change only the secondary image. Both show blue overwrite, red base retention, restoration and removal with one model and a stable native actor lifetime. The 16 × 16 primary and 13 × 9 / 7 × 11 secondary images keep independent dimensions. Native component events, received bindings, refreshed draw caches and eight reviewed screenshots support the checks. Runtime artifact hashes match the final build. These authored controls do not establish native graphical parity or fresh player-costume visual coverage.
+
+The owning equipment, costume, hand, world, and portrait patches consume the ordered bindings. The bundled villager profession now resolves its masked pair. These changes do not establish complete pack, skin, or emote parity. Raw native assets, shader IR, controls, and screenshots remain private.
+
 Install supplied player skin geometry even when its identifier uses the standard humanoid alias. Queue skin updates for their exact source connection while Java is still configuring, then install them in arrival order when the play listener becomes available. Disconnected sources cannot leak updates into another connection.
 
 ## Explicit default depth declarations, October 26, 2026
