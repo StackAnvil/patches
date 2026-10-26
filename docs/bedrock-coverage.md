@@ -11140,3 +11140,22 @@ The four bundled emote animations declare no sound or particle effects, so they 
 Native graphical equality, remote metadata precedence, remote skin visuals, and broader skin and emote parity remain open.
 The original inventory, locator, rollback, and eating reports remain separate work.
 The full implementation goal stays active.
+
+## Aim actor selection prerequisites, October 26, 2026
+
+Fresh target-executable controls characterize actor filtering needed by the unfinished live aim adapter.
+The 2,958 controls cover cached exclusions, component eligibility, signed priority keys, typed actor-ID metadata, capacity, and the player predicate.
+Exclusion updates still execute after the candidate vector reaches its geometry capacity.
+Existing cache entries retain their decisions until the caller requests a recheck.
+
+The player predicate reads raw native game type and an optional editor service.
+Default and Undefined differ when the level uses Spectator mode.
+Creative mode alone does not reject a player.
+The [camera evidence](../patches/viabedrock/upstreamable/0089-resolve-and-transport-native-camera-instructions.pr.md#native-actor-targeting-requirements-october-26-2026) records the native inputs and supplied boundaries.
+
+The current client transport lacks some required actor inputs, and remote spawn handling discards raw game type after Java conversion.
+The native block mirror already retains both block layers and properties.
+A complete native selection-shape provider, actor enumeration order, and final hit construction remain unfinished.
+These controls change the requirements for live wiring.
+They do not establish target selection, interaction rotation, reticles, or native gameplay parity.
+The full five-area goal remains active.
