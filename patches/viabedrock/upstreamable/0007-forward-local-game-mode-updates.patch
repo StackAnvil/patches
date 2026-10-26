@@ -1,18 +1,63 @@
-From 4b4aaf263da6ca71c24ea378e9a3bdbc9464f6e3 Mon Sep 17 00:00:00 2001
+From 494e02da7568fb8efe4841f23744bc15b3095d45 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:33 +0200
-Subject: [PATCH] fix(input): forward local game mode updates
+Subject: [PATCH] fix(players): refresh local and inherited game modes
 
-Bedrock can identify the local actor in UPDATE_PLAYER_GAME_TYPE before it appears in the player list. Resolve the local player by the unique ID from StartGame so Java receives the game mode event and creative inventory opens after an earlier survival scenario.
+Bedrock can update the local actor before it appears in the player list.
+Resolve that actor by its StartGame unique ID so Java receives the mode
+event and can open the correct inventory.
+
+Retain remote game types from spawn and player updates. A world-default
+change must refresh inheriting Java profiles even outside render distance;
+otherwise remote spectator visibility and interaction state remain stale.
+Bind cached modes to both profile and actor identity, preserving list
+refreshes and clearing removed or replaced actors.
+
+Send only changed remote modes. Keep the existing local profile/event
+updates and Java effective-mode fallback separate from native aim rules.
 ---
- .../protocol/packet/ClientPlayerPackets.java     | 16 +++++++++++-----
- 1 file changed, 11 insertions(+), 5 deletions(-)
+ .../protocol/packet/ClientPlayerPackets.java  |  38 ++-
+ .../protocol/packet/HudPackets.java           |   3 +-
+ .../protocol/packet/OtherPlayerPackets.java   |   2 +
+ .../protocol/storage/PlayerListStorage.java   |  37 ++-
+ .../packet/PlayerGameTypePacketTest.java      | 259 ++++++++++++++++++
+ .../storage/PlayerListGameTypeTest.java       |  75 +++++
+ 6 files changed, 405 insertions(+), 9 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerGameTypePacketTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerListGameTypeTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index 85cba248b..f1cdec782 100644
+index 85cba248b..bdc6a19fe 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-@@ -227,18 +227,24 @@ public final class ClientPlayerPackets {
+@@ -210,8 +210,24 @@ public final class ClientPlayerPackets {
+             protected void register() {
+                 handler(wrapper -> {
+                     wrapper.cancel();
+-                    wrapper.user().get(GameSessionStorage.class).setLevelGameType(GameType.getByValue(wrapper.read(BedrockTypes.VAR_INT), GameType.Undefined)); // game type
+-                    wrapper.user().get(EntityTracker.class).getClientPlayer().updateJavaGameMode();
++                    final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
++                    final GameType previousDefault = gameSession.getLevelGameType();
++                    final GameType nextDefault = GameType.getByValue(wrapper.read(BedrockTypes.VAR_INT), GameType.Undefined); // game type
++                    gameSession.setLevelGameType(nextDefault);
++                    final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
++                    clientPlayer.updateJavaGameMode();
++                    final var updates = wrapper.user().get(PlayerListStorage.class).getGameModeUpdates(previousDefault, nextDefault);
++                    updates.remove(clientPlayer.javaUuid());
++                    if (!updates.isEmpty()) {
++                        final PacketWrapper playerInfoUpdate = PacketWrapper.create(ClientboundPackets26_3.PLAYER_INFO_UPDATE, wrapper.user());
++                        playerInfoUpdate.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.UPDATE_GAME_MODE)); // actions
++                        playerInfoUpdate.write(Types.VAR_INT, updates.size()); // length
++                        updates.forEach((uuid, mode) -> {
++                            playerInfoUpdate.write(Types.UUID, uuid);
++                            playerInfoUpdate.write(Types.VAR_INT, mode.ordinal());
++                        });
++                        playerInfoUpdate.send(BedrockProtocol.class);
++                    }
+                 });
+                 handler(CLIENT_PLAYER_GAME_MODE_INFO_UPDATE);
+                 handler(CLIENT_PLAYER_GAME_MODE_UPDATE);
+@@ -227,18 +243,26 @@ public final class ClientPlayerPackets {
              wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // tick
  
              final Pair<UUID, String> playerListEntry = playerList.getPlayer(entityUniqueId);
@@ -26,6 +71,8 @@ index 85cba248b..f1cdec782 100644
              }
 +            if (localPlayer) {
 +                clientPlayer.setGameType(gameType);
++            } else {
++                playerList.setGameType(playerListEntry.key(), entityUniqueId, gameType);
 +            }
  
              wrapper.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.UPDATE_GAME_MODE)); // actions
@@ -42,5 +89,457 @@ index 85cba248b..f1cdec782 100644
                  CLIENT_PLAYER_GAME_MODE_UPDATE.handle(wrapper);
              }
          });
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+index b2035a6aa..45ca6182f 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+@@ -141,12 +141,13 @@ public final class HudPackets {
+ 
+             if (!profiles.isEmpty()) {
+                 final PacketWrapper infoAddPacket = PacketWrapper.create(ClientboundPackets26_3.PLAYER_INFO_UPDATE, wrapper.user());
+-                infoAddPacket.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.ADD_PLAYER, PlayerInfoUpdateAction.UPDATE_LISTED, PlayerInfoUpdateAction.UPDATE_DISPLAY_NAME)); // actions
++                infoAddPacket.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.ADD_PLAYER, PlayerInfoUpdateAction.UPDATE_GAME_MODE, PlayerInfoUpdateAction.UPDATE_LISTED, PlayerInfoUpdateAction.UPDATE_DISPLAY_NAME)); // actions
+                 infoAddPacket.write(Types.VAR_INT, profiles.size()); // length
+                 for (GameProfile profile : profiles) {
+                     infoAddPacket.write(Types.UUID, profile.id()); // uuid
+                     infoAddPacket.write(Types.STRING, StringUtil.encodeUuid(profile.id())); // username
+                     infoAddPacket.write(Types.PROFILE_PROPERTY_ARRAY, profile.properties()); // properties
++                    infoAddPacket.write(Types.VAR_INT, playerListStorage.getJavaGameMode(profile.id(), wrapper.user().get(GameSessionStorage.class).getLevelGameType()).ordinal()); // game mode
+                     infoAddPacket.write(Types.BOOLEAN, true); // listed
+                     infoAddPacket.write(Types.OPTIONAL_TAG, TextUtil.stringToNbt(profile.name())); // display name
+                 }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+index a906dcd80..d92da82d0 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+@@ -50,6 +50,7 @@ import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.util.UUID;
+@@ -81,6 +82,7 @@ public final class OtherPlayerPackets {
+             entity.setPosition(position);
+             entity.setRotation(rotation);
+             entity.updateName(username);
++            wrapper.user().get(PlayerListStorage.class).setGameType(uuid, abilities.entityUniqueId(), gameType);
+ 
+             final PacketWrapper playerInfoUpdate = PacketWrapper.create(ClientboundPackets26_3.PLAYER_INFO_UPDATE, wrapper.user());
+             playerInfoUpdate.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.ADD_PLAYER, PlayerInfoUpdateAction.UPDATE_GAME_MODE)); // actions
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerListStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerListStorage.java
+index 7faac3277..e0da85722 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerListStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerListStorage.java
+@@ -19,6 +19,9 @@ package net.raphimc.viabedrock.protocol.storage;
+ 
+ import com.viaversion.viaversion.api.connection.StorableObject;
+ import com.viaversion.viaversion.util.Pair;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GameType;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
++import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
+ 
+ import java.util.HashMap;
+ import java.util.Map;
+@@ -28,14 +31,43 @@ public class PlayerListStorage implements StorableObject {
+ 
+     private final Map<UUID, Pair<Long, String>> playerList = new HashMap<>();
+ 
++    private final Map<UUID, PlayerGameType> gameTypes = new HashMap<>();
++
+     public Pair<Long, String> addPlayer(final UUID uuid, final long entityUniqueId, final String name) {
+-        return this.playerList.put(uuid, new Pair<>(entityUniqueId, name));
++        final Pair<Long, String> previous = this.playerList.put(uuid, new Pair<>(entityUniqueId, name));
++        final PlayerGameType gameType = this.gameTypes.get(uuid);
++        if (gameType != null && gameType.entityUniqueId != entityUniqueId) {
++            this.gameTypes.remove(uuid);
++        }
++        return previous;
+     }
+ 
+     public Pair<Long, String> removePlayer(final UUID uuid) {
++        this.gameTypes.remove(uuid);
+         return this.playerList.remove(uuid);
+     }
+ 
++    public void setGameType(final UUID uuid, final long entityUniqueId, final GameType gameType) {
++        this.gameTypes.put(uuid, new PlayerGameType(entityUniqueId, gameType));
++    }
++
++    public GameMode getJavaGameMode(final UUID uuid, final GameType levelGameType) {
++        final PlayerGameType gameType = this.gameTypes.get(uuid);
++        return gameType == null ? GameMode.SURVIVAL : GameTypeRewriter.getEffectiveGameMode(gameType.value, levelGameType);
++    }
++
++    public Map<UUID, GameMode> getGameModeUpdates(final GameType previousDefault, final GameType nextDefault) {
++        final Map<UUID, GameMode> updates = new HashMap<>();
++        this.gameTypes.forEach((uuid, gameType) -> {
++            final GameMode previous = GameTypeRewriter.getEffectiveGameMode(gameType.value, previousDefault);
++            final GameMode next = GameTypeRewriter.getEffectiveGameMode(gameType.value, nextDefault);
++            if (previous != next) {
++                updates.put(uuid, next);
++            }
++        });
++        return updates;
++    }
++
+     public boolean containsPlayer(final UUID uuid) {
+         return this.playerList.containsKey(uuid);
+     }
+@@ -54,4 +86,7 @@ public class PlayerListStorage implements StorableObject {
+         return null;
+     }
+ 
++    private record PlayerGameType(long entityUniqueId, GameType value) {
++    }
++
+ }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerGameTypePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerGameTypePacketTest.java
+new file mode 100644
+index 000000000..6f5dcd998
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerGameTypePacketTest.java
+@@ -0,0 +1,259 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.google.common.collect.HashBiMap;
++import com.viaversion.viaversion.api.Via;
++import com.viaversion.viaversion.api.ViaManager;
++import com.viaversion.viaversion.api.protocol.ProtocolManager;
++import com.viaversion.viaversion.api.protocol.packet.PacketType;
++import com.viaversion.viaversion.api.protocol.packet.mapping.PacketMapping;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.protocol.ProtocolPipeline;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.UnpooledByteBufAllocator;
++import io.netty.channel.Channel;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GameType;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Proxy;
++import java.util.HashMap;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class PlayerGameTypePacketTest {
++
++    @Test
++    void remoteUpdatesRetainRawInheritanceOutsideRenderDistance() throws Exception {
++        final var fixture = new Fixture();
++        final var players = fixture.players;
++        final UUID remote = UUID.randomUUID();
++        players.addPlayer(remote, 20, remote.toString());
++
++        for (final var mode : new GameType[]{GameType.Creative, GameType.Default, GameType.Spectator, GameType.Undefined}) {
++            final var packet = fixture.updatePlayer(20, mode);
++            assertFalse(packet.isCancelled());
++            assertEquals(ClientboundPackets26_3.PLAYER_INFO_UPDATE, packet.getPacketType());
++            assertEquals(remote, packet.get(Types.UUID, 0));
++            assertEquals(mode == GameType.Creative ? GameMode.CREATIVE.ordinal()
++                    : mode == GameType.Spectator ? GameMode.SPECTATOR.ordinal() : GameMode.SURVIVAL.ordinal(),
++                    packet.get(Types.VAR_INT, 1));
++            final boolean inherited = mode == GameType.Default || mode == GameType.Undefined;
++            assertEquals(inherited ? Map.of(remote, GameMode.SPECTATOR) : Map.of(),
++                    players.getGameModeUpdates(GameType.Survival, GameType.Spectator));
++        }
++        players.removePlayer(remote);
++        assertTrue(fixture.updatePlayer(20, GameType.Default).isCancelled());
++        assertTrue(players.getGameModeUpdates(GameType.Survival, GameType.Spectator).isEmpty());
++    }
++
++    @Test
++    void defaultPacketsRefreshOnlyChangedRemoteProfilesAndPreserveLocalEvents() throws Exception {
++        final var fixture = new Fixture();
++        final UUID inherited = UUID.randomUUID();
++        final UUID undefined = UUID.randomUUID();
++        fixture.players.setGameType(inherited, 20, GameType.Default);
++        fixture.players.setGameType(undefined, 21, GameType.Undefined);
++        fixture.players.setGameType(UUID.randomUUID(), 22, GameType.Creative);
++        fixture.players.setGameType(UUID.randomUUID(), 23, GameType.Spectator);
++        fixture.local.setGameType(GameType.Survival);
++
++        fixture.updateDefault(GameType.Spectator);
++        assertEquals(List.of(Map.of(inherited, GameMode.SPECTATOR, undefined, GameMode.SPECTATOR),
++                Map.of(fixture.local.javaUuid(), GameMode.SURVIVAL)), fixture.profileUpdates());
++        assertEquals(GameMode.SURVIVAL, fixture.local.javaGameMode());
++
++        fixture.sent.clear();
++        fixture.updateDefault(GameType.Survival);
++        assertEquals(List.of(Map.of(inherited, GameMode.SURVIVAL, undefined, GameMode.SURVIVAL),
++                Map.of(fixture.local.javaUuid(), GameMode.SURVIVAL)), fixture.profileUpdates());
++
++        fixture.players.removePlayer(inherited);
++        fixture.players.removePlayer(undefined);
++        fixture.sent.clear();
++        fixture.updateDefault(GameType.Creative);
++        assertEquals(List.of(Map.of(fixture.local.javaUuid(), GameMode.SURVIVAL)), fixture.profileUpdates());
++    }
++
++    @Test
++    void localUpdatesWithoutListEntriesKeepInheritanceAndTheGameModeEvent() throws Exception {
++        final var fixture = new Fixture();
++        final var packet = fixture.updatePlayer(10, GameType.Default);
++        assertFalse(packet.isCancelled());
++        assertEquals(fixture.local.javaUuid(), packet.get(Types.UUID, 0));
++        assertEquals(GameMode.SURVIVAL, fixture.local.javaGameMode());
++        assertTrue(fixture.profileUpdates().isEmpty());
++
++        fixture.sent.clear();
++        fixture.updateDefault(GameType.Spectator);
++        assertEquals(GameMode.SPECTATOR, fixture.local.javaGameMode());
++        assertEquals(List.of(Map.of(fixture.local.javaUuid(), GameMode.SPECTATOR)), fixture.profileUpdates());
++    }
++
++    private static final class Fixture {
++        private final Map<Class<?>, Object> storage = new HashMap<>();
++        private final List<byte[]> sent = new ArrayList<>();
++        private final PlayerListStorage players = new PlayerListStorage();
++        private final TestProtocol protocol = new TestProtocol();
++        private final UserConnection user;
++        private final ClientPlayerEntity local;
++
++        private Fixture() throws Exception {
++            final ProtocolPipeline pipeline = (ProtocolPipeline) Proxy.newProxyInstance(ProtocolPipeline.class.getClassLoader(),
++                    new Class<?>[]{ProtocolPipeline.class}, (proxy, method, args) -> List.of());
++            final ProtocolInfo info = (ProtocolInfo) Proxy.newProxyInstance(ProtocolInfo.class.getClassLoader(),
++                    new Class<?>[]{ProtocolInfo.class}, (proxy, method, args) -> switch (method.getName()) {
++                        case "getPipeline" -> pipeline;
++                        case "getServerState", "getClientState", "getState" -> State.PLAY;
++                        default -> throw new UnsupportedOperationException(method.getName());
++                    });
++            final Channel channel = (Channel) Proxy.newProxyInstance(Channel.class.getClassLoader(),
++                    new Class<?>[]{Channel.class}, (proxy, method, args) -> UnpooledByteBufAllocator.DEFAULT);
++            this.user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                    new Class<?>[]{UserConnection.class}, (proxy, method, args) -> switch (method.getName()) {
++                        case "get" -> this.storage.get(args[0]);
++                        case "getProtocolInfo" -> info;
++                        case "getChannel" -> channel;
++                        case "sendRawPacket" -> {
++                            final ByteBuf buffer = (ByteBuf) args[0];
++                            try {
++                                final byte[] bytes = new byte[buffer.readableBytes()];
++                                buffer.readBytes(bytes);
++                                this.sent.add(bytes);
++                            } finally {
++                                buffer.release();
++                            }
++                            yield null;
++                        }
++                        default -> throw new UnsupportedOperationException(method.getName());
++                    });
++            final var entities = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("bedrockEntities");
++            entities.setAccessible(true);
++            final Object previousEntities = entities.get(BedrockProtocol.MAPPINGS);
++            final GameSessionStorage session;
++            try {
++                entities.set(BedrockProtocol.MAPPINGS, HashBiMap.create());
++                session = new GameSessionStorage(this.user);
++            } finally {
++                entities.set(BedrockProtocol.MAPPINGS, previousEntities);
++            }
++            session.setLevelGameType(GameType.Survival);
++            this.storage.put(GameSessionStorage.class, session);
++            this.storage.put(PlayerListStorage.class, this.players);
++            final var tracker = new EntityTracker(this.user);
++            this.storage.put(EntityTracker.class, tracker);
++            this.local = tracker.addEntity(new ClientPlayerEntity(this.user, 100, UUID.randomUUID(),
++                    new PlayerAbilities(10, (byte) 0, (byte) 0)), false);
++        }
++
++        private PacketWrapper updatePlayer(final long uniqueId, final GameType gameType) throws Exception {
++            final var input = Unpooled.buffer();
++            try {
++                BedrockTypes.VAR_INT.write(input, gameType.getValue());
++                BedrockTypes.VAR_LONG.write(input, uniqueId);
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 0L);
++                return this.translate(ClientboundBedrockPackets.UPDATE_PLAYER_GAME_TYPE, input);
++            } finally {
++                input.release();
++            }
++        }
++
++        private void updateDefault(final GameType gameType) throws Exception {
++            final var input = Unpooled.buffer();
++            try {
++                BedrockTypes.VAR_INT.write(input, gameType.getValue());
++                assertTrue(this.translate(ClientboundBedrockPackets.SET_DEFAULT_GAME_TYPE, input).isCancelled());
++            } finally {
++                input.release();
++            }
++        }
++
++        private PacketWrapper translate(final ClientboundBedrockPackets type, final ByteBuf input) throws Exception {
++            final var packet = new PacketWrapperImpl(type, input, this.user);
++            final var mapping = this.protocol.clientbound(packet);
++            mapping.applyType(packet);
++            final ProtocolManager protocolManager = (ProtocolManager) Proxy.newProxyInstance(ProtocolManager.class.getClassLoader(),
++                    new Class<?>[]{ProtocolManager.class}, (proxy, method, args) ->
++                            new PacketWrapperImpl((PacketType) args[0], (ByteBuf) args[1], (UserConnection) args[2]));
++            final ViaManager manager = (ViaManager) Proxy.newProxyInstance(ViaManager.class.getClassLoader(),
++                    new Class<?>[]{ViaManager.class}, (proxy, method, args) -> protocolManager);
++            final var managerField = Via.class.getDeclaredField("manager");
++            managerField.setAccessible(true);
++            final Object previousManager = managerField.get(null);
++            try {
++                managerField.set(null, manager);
++                mapping.handler().handle(packet);
++            } finally {
++                managerField.set(null, previousManager);
++            }
++            assertFalse(input.isReadable());
++            return packet;
++        }
++
++        private List<Map<UUID, GameMode>> profileUpdates() {
++            final var profiles = new ArrayList<Map<UUID, GameMode>>();
++            int events = 0;
++            for (final byte[] bytes : this.sent) {
++                final var input = Unpooled.wrappedBuffer(bytes);
++                try {
++                    final int id = Types.VAR_INT.read(input);
++                    if (id == ClientboundPackets26_3.PLAYER_INFO_UPDATE.getId()) {
++                        final var actions = Types.PROFILE_ACTIONS_ENUM1_21_4.read(input);
++                        assertEquals(1, actions.cardinality());
++                        assertTrue(actions.get(2)); // UPDATE_GAME_MODE
++                        final int size = Types.VAR_INT.read(input);
++                        final Map<UUID, GameMode> modes = new HashMap<>();
++                        for (int i = 0; i < size; i++) {
++                            modes.put(Types.UUID.read(input), GameMode.values()[Types.VAR_INT.read(input)]);
++                        }
++                        profiles.add(modes);
++                    } else {
++                        assertEquals(ClientboundPackets26_3.GAME_EVENT.getId(), id);
++                        assertEquals(3, Types.UNSIGNED_BYTE.read(input).intValue()); // CHANGE_GAME_MODE
++                        assertEquals((float) this.local.javaGameMode().ordinal(), Types.FLOAT.read(input));
++                        events++;
++                    }
++                    assertFalse(input.isReadable());
++                } finally {
++                    input.release();
++                }
++            }
++            assertEquals(1, events);
++            return profiles;
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private TestProtocol() {
++            ClientPlayerPackets.register(this);
++        }
++
++        private PacketMapping clientbound(final PacketWrapper packet) {
++            return this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerListGameTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerListGameTypeTest.java
+new file mode 100644
+index 000000000..8636a2c36
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerListGameTypeTest.java
+@@ -0,0 +1,75 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GameType;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
++import org.junit.jupiter.api.Test;
++
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class PlayerListGameTypeTest {
++
++    @Test
++    void worldDefaultChangesRefreshInheritedModesAndKeepExplicitModes() {
++        final var players = new PlayerListStorage();
++        final UUID inherited = UUID.randomUUID();
++        final UUID undefined = UUID.randomUUID();
++        players.setGameType(inherited, 1, GameType.Default);
++        players.setGameType(undefined, 1, GameType.Undefined);
++        players.setGameType(UUID.randomUUID(), 1, GameType.Creative);
++        players.setGameType(UUID.randomUUID(), 1, GameType.Spectator);
++
++        assertEquals(Map.of(inherited, GameMode.SPECTATOR, undefined, GameMode.SPECTATOR),
++                players.getGameModeUpdates(GameType.Survival, GameType.Spectator));
++        assertEquals(Map.of(inherited, GameMode.SURVIVAL, undefined, GameMode.SURVIVAL),
++                players.getGameModeUpdates(GameType.Spectator, GameType.Survival));
++        assertTrue(players.getGameModeUpdates(GameType.Survival, GameType.Survival).isEmpty());
++
++        players.setGameType(inherited, 1, GameType.Adventure);
++        assertEquals(Map.of(undefined, GameMode.CREATIVE),
++                players.getGameModeUpdates(GameType.Survival, GameType.Creative));
++    }
++
++    @Test
++    void listRefreshKeepsTheSameActorModeAndReplacementDiscardsIt() {
++        final var players = new PlayerListStorage();
++        final UUID uuid = UUID.randomUUID();
++        // ADD_PLAYER can provide the mode before the list record arrives.
++        players.setGameType(uuid, 11, GameType.Default);
++        players.addPlayer(uuid, 11, uuid.toString());
++        players.addPlayer(uuid, 11, UUID.randomUUID().toString());
++        assertEquals(GameMode.SPECTATOR, players.getJavaGameMode(uuid, GameType.Spectator));
++        assertEquals(Map.of(uuid, GameMode.SPECTATOR),
++                players.getGameModeUpdates(GameType.Survival, GameType.Spectator));
++
++        players.addPlayer(uuid, 12, uuid.toString());
++        assertEquals(GameMode.SURVIVAL, players.getJavaGameMode(uuid, GameType.Spectator));
++        assertTrue(players.getGameModeUpdates(GameType.Survival, GameType.Spectator).isEmpty());
++        // A new spawn can precede replacement of the old list record.
++        players.setGameType(uuid, 13, GameType.Default);
++        players.addPlayer(uuid, 13, uuid.toString());
++        assertEquals(Map.of(uuid, GameMode.SPECTATOR),
++                players.getGameModeUpdates(GameType.Survival, GameType.Spectator));
++        players.removePlayer(uuid);
++        players.addPlayer(uuid, 12, uuid.toString());
++        assertEquals(GameMode.SURVIVAL, players.getJavaGameMode(uuid, GameType.Spectator));
++        assertTrue(players.getGameModeUpdates(GameType.Survival, GameType.Spectator).isEmpty());
++    }
++
++    @Test
++    void removalAlsoClearsSpawnModesWithoutListEntries() {
++        final var players = new PlayerListStorage();
++        final UUID uuid = UUID.randomUUID();
++        players.setGameType(uuid, 12, GameType.Default);
++        assertNull(players.removePlayer(uuid));
++        assertTrue(players.getGameModeUpdates(GameType.Survival, GameType.Spectator).isEmpty());
++    }
++
++}
 -- 
 2.56.0

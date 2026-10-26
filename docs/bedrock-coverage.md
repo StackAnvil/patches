@@ -11153,9 +11153,35 @@ Default and Undefined differ when the level uses Spectator mode.
 Creative mode alone does not reject a player.
 The [camera evidence](../patches/viabedrock/upstreamable/0089-resolve-and-transport-native-camera-instructions.pr.md#native-actor-targeting-requirements-october-26-2026) records the native inputs and supplied boundaries.
 
-The current client transport lacks some required actor inputs, and remote spawn handling discards raw game type after Java conversion.
+The current client transport lacks some required actor inputs.
+The remote-mode cache below retains decoded game types for Java profile updates.
+Native aim execution still needs verified input producers and transport.
 The native block mirror already retains both block layers and properties.
 A complete native selection-shape provider, actor enumeration order, and final hit construction remain unfinished.
 These controls change the requirements for live wiring.
 They do not establish target selection, interaction rotation, reticles, or native gameplay parity.
 The full five-area goal remains active.
+
+
+## Remote profile game modes, October 26, 2026
+
+World-default changes now refresh affected remote Java profiles, including players outside render distance.
+Explicit modes keep their values.
+The cache retains decoded game types from player spawn and update packets.
+Player-list refreshes include the retained effective mode, so they no longer reset known spectator profiles to Java defaults.
+Replacement actor identities and player removal clear old state.
+
+Six focused tests cover translated packet fields, default transitions, explicit modes, local mode events, and cache cleanup.
+The previous packet handlers fail both remote-update regressions.
+The corrected handlers pass after replay of the full 104-patch core stack.
+The [game-mode patch notes](../patches/viabedrock/upstreamable/0007-forward-local-game-mode-updates.pr.md) record the packet references and test scope.
+
+Java's existing Undefined fallback stays unchanged.
+These tests do not establish the distinct native spectator predicate, live aim selection, remote skin visuals, or native graphical equality.
+The broader pack, interaction, skin, emote, and original gameplay requirements remain open.
+
+The four-project build reports 2,941 passed tests, 312 optional skips, and no failures or errors.
+Both core Checkstyle tasks pass.
+All six new mode tests pass without skips.
+The packaged client classes, core and converter dependencies, and four source snapshots match the tested outputs.
+Optional native-reference and GPU controls from earlier rendering milestones are outside this build run.
