@@ -613,3 +613,55 @@ The restored focused suites pass without errors.
 Fresh plain and Iris/EntityCulling live controls pass with the final packaged artifact.
 The world actor owner adds the selective occlusion integration that these predicates require.
 The [coverage record](../../../docs/bedrock-coverage.md#actor-material-depth-and-occlusion-october-26-2026) records the causal isolation, final build totals, and remaining limits.
+
+## Native player layer lifetime, October 26, 2026
+
+Native appearances now reuse ordinary avatar layer roots within one renderer resource generation.
+Their native body models, poses, and persona surfaces remain separate.
+The original Minecraft model set keeps its ordinary behavior.
+Resource reload creates a fresh native context and both layer caches.
+
+The full modpack exposed repeated armor, cape, ear, and effect baking through native player construction.
+A production JFR capture includes `AvatarRenderer` and `ArmorModelSet.bake` in those constructor stacks.
+These samples establish the allocation path, without an exact allocation rate.
+EMF 3.3.8 counts those root transformations and eventually declines its custom model substitution.
+Its shoulder-parrot hook also creates a separate root outside Minecraft's model set.
+The first cache prototype retained 18 ordinary roots, but its shoulder counter still increased.
+
+The optional EMF integration now retains those transformed roots during native renderer construction.
+A separate map avoids recursive cache updates from hooks inside `bakeLayer`.
+The [Java 25 scoped-value API](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/ScopedValue.html)
+restores nested bindings and exception paths automatically.
+Calls outside native construction retain EMF's normal behavior.
+EMF remains optional and is not bundled.
+
+Four lifecycle tests cover 128 avatar constructors, both arm widths, ordinary baking, replacement generations, nested construction, and exception restoration.
+Removing ordinary root reuse fails the original two tests.
+Removing external root reuse fails the two new scoped-cache tests.
+Both restored suites pass.
+
+The complete build passes 2,961 tests and skips 315 optional tests, with no failures or errors.
+Both core Checkstyle tasks pass.
+Packaged client classes, embedded dependencies, shader resources, and all four source snapshots match the tested outputs.
+The tested development add-on has SHA-256 `37b5823147da4232fc62219524af5e8b37593155930ddba1cd17eabb9a6f1f8c`.
+
+A direct WildMC control uses Minecraft 26.3, EMF 3.3.8, EntityCulling, Iris 1.11.7, and Complementary Reimagined r5.9.3.
+The previous control records 14 model-limit diagnostics; the corrected full-modpack run records none.
+All 19 EMF counters remain one per generation, including the separate shoulder root.
+The retained native renderer count increases from 26 to 30 before reload, then from 44 to 54 afterward.
+Every observed appearance retains a distinct body root.
+All 18 ordinary roots and 19 transformed roots change on reload and remain stable during the following observation window.
+
+The read-only probe initially used an obsolete screen API.
+A corrected probe continued in the same client process, without a restart.
+All six final screenshots received visual review.
+Nearby actors obscure the front-facing local player, so these images do not establish skin composition or native graphical parity.
+This change fixes layer lifetime and EMF admission, without a claim about all skin allocation costs or arbitrary EMF versions.
+Packs, interactions, skins, emotes, and the original five-area goal remain unfinished.
+
+The same artifact also passes startup and resource replacement in the plain client without EMF or Iris.
+That absence control retains 18 ordinary roots and distinct native bodies as its renderer count increases from 23 to 34.
+Its actual window is 854 by 480; the full modpack control uses 1920 by 1013.
+The plain control uses model readiness because its profile lacks the modpack's reload-log marker.
+All six plain screenshots received visual review, including the reload overlay and the final unobscured world.
+Both final clients close normally, retire their owned processes, and restore the prepared profiles.

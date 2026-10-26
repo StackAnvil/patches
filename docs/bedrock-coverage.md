@@ -11297,3 +11297,44 @@ The inventory/background, rollback, and eating reports remain open.
 Crafting stays parked.
 The [material notes](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#actor-material-depth-state-october-26-2026)
 and [occlusion notes](../patches/viafabricplus-bedrock/upstreamable/0030-use-supported-native-world-actor-definitions.pr.md#material-depth-and-entityculling-october-26-2026) record ownership and evidence.
+
+## Native player layer lifetime, October 26, 2026
+
+Native appearances now reuse ordinary avatar layer geometry for one renderer resource generation.
+Their native body models, poses, and persona surfaces remain separate.
+Resource reload replaces the shared roots through a fresh native context.
+The original Minecraft model set retains ordinary baking behavior.
+
+A production JFR capture attributes repeated root baking to native renderer construction through `AvatarRenderer` and `ArmorModelSet.bake`.
+EMF 3.3.8 counts those transformations and eventually declines its custom model substitution.
+Its shoulder-parrot hook bypasses Minecraft's model set, which left the first cache prototype incomplete.
+An optional integration now retains that transformed root during native construction too.
+EMF remains optional and is not bundled.
+
+Four lifecycle tests pass, including 128 avatar constructors, both arm widths, replacement generations, nested construction, and exception restoration.
+Removing ordinary or external root reuse fails the corresponding regressions.
+The complete four-project build passes 2,961 tests, skips 315 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass, and packaged classes, dependencies, shaders, and source snapshots match the tested outputs.
+
+A direct WildMC control uses the complete shader modpack with EMF 3.3.8, EntityCulling, Iris 1.11.7, and Complementary Reimagined r5.9.3.
+The previous control records 14 model-limit diagnostics; the corrected full-modpack run records none.
+All 19 EMF counters remain one per generation while observed native renderers increase from 26 to 30 before reload.
+After reload, that count increases from 44 to 54 while the counters remain one.
+Each observed appearance retains a distinct body root.
+Both layer caches contain fresh roots after reload and retain stable identities afterward.
+A corrected read-only probe continues in the same client after an initial screen-API error.
+All six final screenshots received visual review; nearby actors obscure the front-facing local player.
+These controls establish model lifetime and EMF admission, without native graphical or complete skin parity.
+
+The original E-key inventory panel, locator, rollback, and eating reports remain open.
+Packs, interactions, skins, emotes, and the original five-area goal remain unfinished.
+Crafting stays parked.
+The [owning skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#native-player-layer-lifetime-october-26-2026)
+record the construction scope and verification limits.
+
+The same artifact also passes startup and resource replacement in the plain client without EMF or Iris.
+That absence control retains 18 ordinary roots and distinct native bodies as its renderer count increases from 23 to 34.
+Its actual window is 854 by 480; the full modpack control uses 1920 by 1013.
+The plain control uses model readiness because its profile lacks the modpack's reload-log marker.
+All six plain screenshots received visual review, including the reload overlay and the final unobscured world.
+Both final clients close normally, retire their owned processes, and restore the prepared profiles.
