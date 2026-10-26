@@ -2437,3 +2437,20 @@ Both bindings reach the client, snapshots and draw caches change, and the native
 The renderer retains one red model from slot zero throughout; the blue and green secondary images never become extra geometry draws.
 Read-only observations, replay audit bindings, server component transitions, and eight reviewed screenshots support these checks.
 These authored fixtures use ordinary single-sampler materials and do not establish masked blending or native graphical parity.
+
+
+## Static player visibility, October 26, 2026
+
+Native player models now apply specified visibility even when their bone pose is empty.
+Previously, the early return restored the Java hierarchy and ignored visibility-only controllers.
+An empty pose without specified visibility still restores the ordinary Java model.
+Hidden parent surfaces do not hide separately controlled child surfaces.
+
+The target is Bedrock 1.26.51.1, protocol 2193.
+Its bundled player controllers declare independent part visibility for first-person, third-person, spectator, and map views.
+The archived `vanilla_1.21.30/render_controllers/player.render_controllers.json` has SHA-256 `a8dc82bf865ddde43a407a476632263f6aefad89166779a4ff7977248acd554d`.
+The [Creator reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/render_controller.v1.8.0?view=minecraft-bedrock-stable) describes visibility as a controller selection.
+
+The regression fails against the previous early return and passes with the correction.
+It covers empty poses, hidden parent surfaces, independently visible children, and restoration of the ordinary hierarchy.
+The [costume controls](0016-render-server-player-costumes.pr.md#independent-player-controller-draws-october-26-2026) exercise the installed implementation on both routes.

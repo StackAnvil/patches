@@ -1,4 +1,4 @@
-From 687d07c5128ffed9e21f023a907caba815e97c8c Mon Sep 17 00:00:00 2001
+From c8d4754967c1d053364188aac9af79eef9ad1ad0 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -315,6 +315,17 @@ shader supports additional bindings. Preserve all slots through player,
 equipment, world and portrait selection rather than discard the data at
 the shared selector. This complements the core's negotiated sampler
 snapshots without admitting unsupported multi-texture materials early.
+
+Apply authored player part visibility even when no bone animation changes
+are selected. A visibility-only controller still needs the native hierarchy
+so a hidden bone's surfaces do not hide independently controlled children.
+Restore ordinary Java animation only when neither native pose nor native
+visibility is specified. Allow individual draws to supply their own sampled
+visibility without modifying the shared avatar render state.
+
+The target 1.26.51.1 player render controllers independently declare body,
+arm and spectator part rules. A regression fails on the previous empty-pose
+early return and covers visibility changes plus ordinary-tree restoration.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -426,7 +437,7 @@ snapshots without admitting unsupported multi-texture materials early.
  .../render/BedrockModelTransforms.java        |   82 ++
  .../render/BedrockPlayerAnimationState.java   |   21 +
  .../render/BedrockPlayerBodyRotation.java     |   35 +
- .../bedrock/render/BedrockPlayerModel.java    |   44 +
+ .../bedrock/render/BedrockPlayerModel.java    |   53 +
  .../bedrock/render/BedrockViewBobbing.java    |   51 +
  .../render/BedrockWalkingAnimation.java       |   35 +
  .../render/NativeActorBoundsPayload.java      |   22 +
@@ -515,10 +526,10 @@ snapshots without admitting unsupported multi-texture materials early.
  .../render/BedrockModelLocatorsTest.java      |  112 ++
  .../render/BedrockModelTransformsTest.java    |   97 ++
  .../render/BedrockPlayerBodyRotationTest.java |   53 +
- .../render/BedrockPlayerModelTest.java        |  104 ++
+ .../render/BedrockPlayerModelTest.java        |  145 +++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 202 files changed, 24279 insertions(+), 15 deletions(-)
+ 202 files changed, 24329 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -13562,16 +13573,19 @@ index 0000000..56d63f5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
 new file mode 100644
-index 0000000..3baf776
+index 0000000..4bedd7f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,53 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
 + * SPDX-License-Identifier: GPL-3.0-or-later
 + */
 +package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
 +
 +import net.minecraft.client.model.geom.ModelPart;
 +import net.minecraft.client.model.player.PlayerModel;
@@ -13598,13 +13612,19 @@ index 0000000..3baf776
 +
 +    @Override
 +    public void setupAnim(final AvatarRenderState state) {
++        this.setupAnim(state, state instanceof BedrockPlayerAnimationState nativeState
++                ? nativeState.bedrockBodyVisibility() : BedrockActorAnimation.Visibility.UNSPECIFIED);
++    }
++
++    void setupAnim(final AvatarRenderState state, final BedrockActorAnimation.Visibility visibility) {
 +        this.children.clear();
 +        this.children.putAll(this.ordinary);
 +        super.setupAnim(state);
-+        if (!(state instanceof BedrockPlayerAnimationState emote) || emote.bedrockAnimationPose().isEmpty())
-+            return;
-+        this.animated.pose(emote.bedrockAnimationPose());
-+        this.animated.visibility(emote.bedrockBodyVisibility());
++        final Map<String, BedrockBoneAnimation.Transform> pose = state instanceof BedrockPlayerAnimationState nativeState
++                ? nativeState.bedrockAnimationPose() : Map.of();
++        if (pose.isEmpty() && !visibility.specified()) return;
++        this.animated.pose(pose);
++        this.animated.visibility(visibility);
 +        this.animated.copyHumanoidPose(this);
 +        this.children.clear();
 +        this.children.put("animated", this.animated.model().root());
@@ -14200,10 +14220,10 @@ index 0000000..ff0be71
 +    #endif
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 2c43442..b39403d 100644
+index b0bfb8d..5bdbf66 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -5,6 +5,13 @@
+@@ -6,6 +6,13 @@
    "compatibilityLevel": "JAVA_25",
    "priority": 1001,
    "client": [
@@ -14217,7 +14237,7 @@ index 2c43442..b39403d 100644
      "compat.iris.MixinIrisPipelines",
      "compat.iris.IrisProgramSourceConstructor",
      "compat.iris.MixinIrisEmissionPrograms",
-@@ -59,6 +66,8 @@
+@@ -62,6 +69,8 @@
      "features.misc.MixinClientSuggestionProvider",
      "features.misc.MixinInventoryScreen",
      "features.misc.MixinMinecraft",
@@ -14226,7 +14246,7 @@ index 2c43442..b39403d 100644
      "features.render.MixinAbstractClientPlayer",
      "features.render.MixinPlayerInfoSkin",
      "features.render.MixinPlayerSkinRenderCache",
-@@ -75,6 +84,11 @@
+@@ -78,6 +87,11 @@
      "features.render.MixinEntityRenderDispatcher",
      "features.render.MixinMinecraftSkinLifecycle",
      "features.render.MixinLivingEntitySkinLayers",
@@ -14238,7 +14258,7 @@ index 2c43442..b39403d 100644
      "features.render.MixinPlayerSkinWidget",
      "features.render.MixinGuiSkinRenderer",
      "features.movement.MixinEntity",
-@@ -83,7 +97,17 @@
+@@ -86,7 +100,17 @@
      "features.movement.MixinHoneyBlock",
      "features.movement.MixinLivingEntity",
      "features.movement.MixinLocalPlayer",
@@ -26102,16 +26122,18 @@ index 0000000..cd7051b
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java
 new file mode 100644
-index 0000000..676f14e
+index 0000000..166bca7
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,145 @@
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +import com.google.gson.JsonParser;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockBonePattern;
 +
 +import net.minecraft.client.renderer.entity.state.AvatarRenderState;
 +
@@ -26119,8 +26141,47 @@ index 0000000..676f14e
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.Map;
++import java.util.List;
 +
 +final class BedrockPlayerModelTest {
++    @Test
++    void appliesControllerVisibilityWithoutBoneTransformsAndRestoresTheJavaTree() {
++        final var geometry = BedrockGeometryModel.fromJson("""
++                {"minecraft:geometry":[{"description":{"identifier":"geometry.visibility","texture_width":64,"texture_height":64},
++                "bones":[{"name":"root","pivot":[0,0,0]},
++                {"name":"body","parent":"root","pivot":[0,24,0],"cubes":[{"origin":[-4,12,-2],"size":[8,12,4],"uv":[0,0]}]},
++                {"name":"head","parent":"root","pivot":[0,24,0],"cubes":[{"origin":[-4,24,-4],"size":[8,8,8],"uv":[0,0]}]},
++                {"name":"badge","parent":"head","pivot":[0,24,0],"cubes":[{"origin":[0,24,-5],"size":[1,1,1],"uv":[0,0]}]}]}]}
++                """).getFirst();
++        final var model = BedrockGeometry.playerModel(geometry, false);
++        final State state = new State();
++        state.visibility = visibility(true);
++        model.setupAnim(state);
++        assertTrue(model.root().hasChild("animated"));
++        final var root = model.root().getChild("animated").getChild("root");
++        assertFalse(root.getChild("body").getChild("cube_0").visible);
++        assertTrue(root.getChild("head").getChild("cube_0").visible);
++        assertTrue(root.getChild("head").getChild("badge").getChild("cube_0").visible);
++
++        state.visibility = visibility(false);
++        model.setupAnim(state);
++        assertFalse(root.getChild("head").getChild("cube_0").visible);
++        assertTrue(root.getChild("head").getChild("badge").getChild("cube_0").visible);
++
++        state.visibility = BedrockActorAnimation.Visibility.UNSPECIFIED;
++        model.setupAnim(state);
++        assertFalse(model.root().hasChild("animated"));
++        assertTrue(model.body.getChild("cube_0").visible);
++        assertTrue(model.head.getChild("cube_0").visible);
++    }
++
++    private static BedrockActorAnimation.Visibility visibility(final boolean head) {
++        return new BedrockActorAnimation.Visibility(true, List.of(List.of(
++                new BedrockActorAnimation.PartVisibility(BedrockBonePattern.wildcard("*"), false),
++                new BedrockActorAnimation.PartVisibility(BedrockBonePattern.wildcard("head"), head),
++                new BedrockActorAnimation.PartVisibility(BedrockBonePattern.wildcard("badge"), true))));
++    }
++
 +    @Test
 +    void switchesTreesForAnEmoteAndRestoresTheOrdinaryPlayer() throws Exception {
 +        final var geometry =
@@ -26194,10 +26255,10 @@ index 0000000..676f14e
 +
 +    private static final class State extends AvatarRenderState implements BedrockPlayerAnimationState {
 +        private Map<String, BedrockBoneAnimation.Transform> pose = Map.of();
-+        private com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation.Visibility visibility =
-+                com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation.Visibility.UNSPECIFIED;
-+        @Override public com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation.Visibility bedrockBodyVisibility() { return this.visibility; }
-+        @Override public void bedrockBodyVisibility(final com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation.Visibility visibility) { this.visibility = visibility; }
++        private BedrockActorAnimation.Visibility visibility =
++                BedrockActorAnimation.Visibility.UNSPECIFIED;
++        @Override public BedrockActorAnimation.Visibility bedrockBodyVisibility() { return this.visibility; }
++        @Override public void bedrockBodyVisibility(final BedrockActorAnimation.Visibility visibility) { this.visibility = visibility; }
 +
 +        @Override
 +        public Map<String, BedrockBoneAnimation.Transform> bedrockAnimationPose() {

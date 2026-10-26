@@ -10926,3 +10926,33 @@ The Iris bridge covers normalized texture, LOD, and gradient reads in the suppor
 Geometry/tessellation transport and other shader-pack sampling operations still need implementation or verification.
 The shared consumer changes do not establish complete skin, emote, equipment, interaction, or pack parity.
 Native graphical comparisons and the original inventory, locator, movement, and eating reports remain open.
+
+
+## Independent player controller visibility, October 26, 2026
+
+**Corrected within scope:** Visibility-only native player models now use their native hierarchy even with an empty bone pose.
+Each third-person costume draw retains its own controller visibility through deferred submission of shared geometry.
+Separate controllers no longer paint each other's selected body parts.
+Base skins and persona surfaces retain the same per-controller rules.
+
+The target Bedrock 1.26.51.1 player assets define separate part rules for first-person, third-person, spectator, and map views.
+The [runtime notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#static-player-visibility-october-26-2026) record the source hash and failing-before regression.
+The [costume notes](../patches/viafabricplus-bedrock/upstreamable/0016-render-server-player-costumes.pr.md#independent-player-controller-draws-october-26-2026) describe shared-model replay and live controls.
+
+A declared BDS pack selects separate blue and red arms and a masked head from the same geometry, without world bone animation.
+The earlier artifact draws a complete red body and no blue arm.
+Fresh direct and Iris-enabled ViaProxy captures show separate arms, hidden torso and legs, and the declared yellow persona face.
+The native server confirms the persona through the production skin-change API.
+Physical sneak transitions change the right-arm mask while retaining the left arm and face.
+First-person hands and the creative survival-tab avatar preview also receive visual review.
+All twelve final candidate screenshots receive review.
+
+All ten focused regressions pass without skips.
+The full build passes 3,083 tests with 152 optional skips and no failures or errors.
+Packaged classes, embedded dependencies, and installed runtime hashes match.
+
+The final face shell avoids coincident geometry and does not establish native depth ordering.
+The read-only observer never samples the ephemeral first-person frame, and its player-frame counter stays zero.
+Pixels and actual cached model state support the rendering results.
+These authored controls do not establish native graphical parity, remote-player skin parity, or complete persona composition.
+The original E-key inventory report, emote timing, pack interactions, and other in-game behavior remain separate work.

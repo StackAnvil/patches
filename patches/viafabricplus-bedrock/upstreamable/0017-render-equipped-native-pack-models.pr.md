@@ -113,3 +113,12 @@ All 28 final screenshots receive visual review, and installed runtime JAR hashes
 The fixture also exposed blank ViaProxy hotbar icons while the direct route displayed vanilla icons.
 Core patch 0068 now supplies shared native image layers and atlases, which addresses that separate conversion difference.
 The equipment-owner correction retains its own validation boundaries.
+
+
+## Prepare the selected controller owner, October 26, 2026
+
+Equipment prepares the primary costume's typed draw before reading its underlying native model matrices.
+This retains the selected controller visibility without changing the shared avatar state or advancing graph playback.
+The existing equipment-owner regression uses the real costume wrapper and passes alongside the new deferred-draw regressions.
+The [player costume controls](0016-render-server-player-costumes.pr.md#independent-player-controller-draws-october-26-2026) verify the installed wrapper on both routes.
+This adaptation does not add new live equipment-placement coverage.
