@@ -1,5 +1,32 @@
 Actor properties and native state transport use the preceding [shared float runtime](0064-share-native-float-molang-runtime.pr.md). Interpreter, parser and math ownership is separate from actor integration.
 
+## Typed appearance queries, October 26, 2026
+
+Actor-state v5 carries an immutable map of typed INT metadata.
+Revisions 2 through 4 retain their existing bytes and leave this map unavailable.
+A known empty map supplies native zero defaults; an unavailable map supplies no integer queries.
+Shared channel selection covers state replay, identity consumers, animation commands, and picking.
+
+Core controllers and frontend actor scopes share `skin_id` and `trade_tier` conversion.
+The pinned Bedrock 1.26.51.1 callbacks read slots 104 and 101, respectively.
+They require native INT entries and convert signed int32 directly to float.
+Absent entries, short vectors, and wrong types return zero.
+Java profession, variant, and trading levels do not supply these inputs.
+
+Original callbacks `1422134f0` and `142213ca0` pass 640 bounded executions.
+Controls cover missing actors, vector bounds, absent entries, five metadata types, and eight signed or rounding boundaries.
+The harness supplies backing memory and virtual type dispatch; the original callback instructions execute unchanged.
+The executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Raw binaries, disassembly, captures, and execution fixtures remain private.
+
+Semantic tests cover codec bounds, truncation, immutable ownership, sparse updates, strict metadata types, controller selection, and capability downgrade.
+These controls establish query semantics and transport boundaries, not complete native actor or trading parity.
+
+Fresh direct and ViaProxy BDS journals confirm native INT skin values 1, 2, and 1, with explicit trading tier 0.
+The [frontend notes](../../viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#integer-metadata-in-actor-scopes-october-26-2026) record visible texture, geometry, particle, and capability controls.
+Higher trading tiers have native callback and semantic coverage only.
+The full replayed build passes 3,065 tests with 152 optional skips and no failures.
+
 ## Negotiated custom actor state
 
 Core publishes complete evaluated controller snapshots through `viabedrock:custom_entity`.

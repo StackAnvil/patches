@@ -1,5 +1,30 @@
 The shared runtime owns actor graphs, float evaluation, accepted resource decoding, sound and particles. Account selection and purchases remain in the following [appearance patch](0009-manage-character-creator-accounts-and-wardrobes.pr.md). The following research supports these APIs; historical suite counts do not replace a fresh build.
 
+## Integer metadata in actor scopes, October 26, 2026
+
+The frontend negotiates actor-state v5 and shares `skin_id` and `trade_tier` bindings with core controller evaluation.
+Animation graphs and attached effects use the same immutable native values.
+Legacy snapshots remove cached values for these queries instead of retaining stale state or inventing a native zero.
+Known v5 metadata supplies native zero defaults for absent or wrongly typed entries.
+The [core notes](../../viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#typed-appearance-queries-october-26-2026) record the target callbacks and bounded execution evidence.
+
+Semantic tests evaluate Molang expressions across metadata changes, known defaults, legacy fallback, retirement, and immutable earlier samples.
+They retain unrelated render inputs through each transition.
+This change does not establish complete skin, emote, or native actor parity.
+
+Fresh direct and ViaProxy sessions load an authored villager pack on BDS 1.26.51.1.
+Native journals contain typed INT skin changes from 1 to 2 and back to 1, plus trading tier 0.
+Texture selection, body width, and parent/child particle colors follow these changes without replacing actor playback.
+Real Fabric receiver withdrawal selects Java fallback; restoration recovers the native body with the same playback.
+Withdrawal retires the one-shot effects, and restoration does not replay their consumed animation event.
+After actor removal, no actor state or attached effects remain.
+All 12 screenshots receive visual review, and runtime artifact hashes match the build.
+
+The full four-project replay and build pass 3,065 tests, skip 152 optional tests, and report no failures.
+Compiled client classes and embedded core classes match the distributed artifacts.
+These authored controls do not establish a native graphical baseline or live behavior for higher trading tiers.
+Complete player skins, emotes, and other native actor features remain separate requirements.
+
 ## Target queries and recoverable frame admission, October 26, 2026
 
 The frontend negotiates actor-state v4 and binds `has_target` from its typed native metadata.

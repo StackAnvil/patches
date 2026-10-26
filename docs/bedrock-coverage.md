@@ -283,7 +283,7 @@ Transport passes; complete scene rendering still fails on unresolved mappings. N
 | --- | --- | --- | --- |
 | R1 | General actor controllers and scripts | Incomplete | Core-evaluated custom actor model selections now travel through the negotiated channel on both routes. Complete transitions, weighted entries, variables, events, queries, and native comparisons. |
 | R2 | Server particle dispatch | Incomplete | Core transports complete requests, typed variables, actor identity, and Java fallback bodies to native clients. Direct and ViaProxy authored fixtures verify dispatch, typed size/tint records, and fallback decoding. Complete actor queries, remote actor transport, interpolation, lifecycle comparisons, and visible native parity remain open. |
-| R3 | Particle runtime | Incomplete | [Live actor queries](#live-actor-state-for-attached-effects-october-26-2026) include [target metadata and rendering recovery](#native-target-queries-and-rendering-recovery-october-26-2026). Complete components, child effects, concurrency, and native visible lifecycle comparisons remain required. |
+| R3 | Particle runtime | Incomplete | [Live actor queries](#live-actor-state-for-attached-effects-october-26-2026) include [target metadata and rendering recovery](#native-target-queries-and-rendering-recovery-october-26-2026). [Typed appearance metadata](#typed-appearance-metadata-and-actor-scopes-october-26-2026) supplies skin and trading queries. Complete components, child effects, concurrency, and native visible lifecycle comparisons remain required. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
 | R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties and per-face ambient strengths through ViaProxy. Native material arithmetic matches 576 executable cases. Native corner maxima also match 12,288 executable samples. Both routes retain the settings through model baking and injected terrain lighting. Java still supplies corner sampling and interpolation. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Core carries native random offsets in converted metadata. The add-on verifies continuous terrain, outline, and camera offsets separately from floored movement collision on both routes, including edge and corner queries. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, vanilla per-type collision shapes, and native collision solving. |
 | R6 | Equipped attachables | Incomplete | Both routes receive accepted graphs and named properties. Supported equipment uses shared item scopes and complete owner matrices. Explicit unresolved targets retain their local hierarchy. Third-person equipment now selects the rendered primary costume. Complete variants, per-bone materials, additional material families, multi-geometry ownership, and native visual comparisons. |
@@ -10646,3 +10646,33 @@ Twelve baseline controls include six expected chicken depth mismatches of `0.000
 The other 96 controls match body and emission clip positions at tolerance `1e-7` across both routes and reload phases.
 Inputs supply matrices, vertex attributes, entity identifiers, color alpha, and the overlay texture.
 These controls establish the tested geometry correction, not complete native rasterization or arbitrary shader-pack parity.
+
+
+## Typed appearance metadata and actor scopes, October 26, 2026
+
+**Status:** Incomplete. Core and frontend scopes now share `skin_id` and `trade_tier` from typed native INT metadata.
+Actor-state v5 preserves signed values and distinguishes known zero defaults from unavailable legacy metadata.
+Older snapshots remove cached values for these queries.
+Shared capability selection also retains state replay, movement identity, animation commands, and picking support.
+
+**Native evidence:** Bedrock 1.26.51.1/protocol 2193 reads metadata slots 104 and 101 and converts signed int32 directly to float.
+Original callbacks pass 640 bounded executions across presence, bounds, metadata types, and signed or rounding boundaries.
+The harness supplies backing storage and virtual type dispatch.
+The [core notes](../patches/viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#typed-appearance-queries-october-26-2026) record target identity and limits.
+
+**Live verification:** Direct and ViaProxy sessions load the same authored villager pack on BDS 1.26.51.1.
+Native journals contain INT skin values 1, 2, and 1, plus explicit trading tier 0.
+Texture selection, body width, and parent/child particle colors follow those values.
+Real receiver withdrawal selects Java fallback; restoration recovers the native body with the same actor playback.
+Withdrawal retires one-shot particles, and restoration does not replay their consumed event.
+After removal, no actor state or attached effects remain.
+All 12 screenshots receive visual review, and runtime hashes match the build.
+
+The full four-project build passes 3,065 tests, skips 152 optional tests, and reports no failures.
+All 1,213 compiled client classes match the add-on.
+Both consumers contain matching copies of 1,559 core classes, 200 assets, and 39 converter classes.
+The full replay preserves source contents after removal of generated metadata changes.
+
+**Remaining:** Higher trading tiers have callback and semantic coverage only.
+These authored controls do not establish native graphical parity, complete player skins, emote behavior, or complete actor query support.
+The [frontend notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#integer-metadata-in-actor-scopes-october-26-2026) record the shared scope behavior and tests.
