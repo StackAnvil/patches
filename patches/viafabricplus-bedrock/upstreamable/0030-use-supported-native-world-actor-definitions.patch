@@ -1,4 +1,4 @@
-From a19e61a71ce89817d6d6f42c57a9c51f9b84260b Mon Sep 17 00:00:00 2001
+From 92a8f44af9f3921be1177cea33c6898227ed6efa Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(render): use supported native world actor definitions
@@ -105,20 +105,122 @@ an unavailable group retains fallback rather than presenting a partial
 native actor. Keep empty transform helpers outside material partitioning,
 retain complete animation and effect skeletons, and use each draw's bone
 subset together with controller visibility in the rendered model key.
+
+Keep pack-authored depth overlays visible with EntityCulling. Resolve all
+supported declared material alternatives before drawing, so a culled or
+not-yet-drawn actor can become eligible when its resources finish loading.
+Cache the result with the resolved actor definition and publish immutable
+entity snapshots from the client tick. Worker predicates never load
+resources, sample animations or consume effects. Clear the snapshot with
+the accepted resource lifetime and retire removed entity instances.
+
+Use EntityCulling's optional public dynamic whitelist API and clear stale
+culled state for those actors. Keep ordinary materials under its normal
+occlusion policy. A fresh Iris/Complementary modpack scene hides all three
+native parts behind stone before this integration; removing only
+EntityCulling restores the Always and disabled-depth parts. This isolates
+the failure before final full-modpack validation. The public API dependency
+is compile-only and the bridge loads only when the mod is installed.
+
+The final Iris/Complementary scene passes with EntityCulling enabled:
+normal depth is hidden behind stone, while Always and disabled testing
+remain visible. The final four-project build passes without failures;
+the material GPU controls separately verify comparisons and depth writes.
+This is scoped Java rendering integration evidence, without a native
+graphical baseline or a complete pack-rendering parity claim.
 ---
+ build.gradle.kts                              |   2 +
+ settings.gradle.kts                           |   5 +-
+ .../bedrock/ViaFabricPlusBedrock.java         |   1 +
+ .../appearance/BedrockEntityResources.java    |   6 +
  .../BedrockWorldActorAppearance.java          |  81 +++++
  .../render/MixinEntityRenderDispatcher.java   |  16 +
+ .../bedrock/render/BedrockActorOcclusion.java |  64 ++++
+ .../bedrock/render/BedrockActorResources.java |   1 +
  .../bedrock/render/BedrockAnimatedModel.java  |   7 +-
  .../render/BedrockWorldActorRenderer.java     | 316 ++++++++++++++++++
+ .../entityculling/BedrockEntityCulling.java   |  24 ++
+ .../BedrockEntityResourcesTest.java           |  15 +
  .../BedrockWorldActorAppearanceTest.java      | 305 +++++++++++++++++
+ .../render/BedrockActorOcclusionTest.java     |  42 +++
  .../render/BedrockCustomActorModelTest.java   |   7 +
  .../render/BedrockWorldActorQueryTest.java    | 121 +++++++
- 7 files changed, 852 insertions(+), 1 deletion(-)
+ 16 files changed, 1011 insertions(+), 2 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorOcclusion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/entityculling/BedrockEntityCulling.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorOcclusionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java
 
+diff --git a/build.gradle.kts b/build.gradle.kts
+index 0340595..03a46be 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -22,6 +22,8 @@ tasks.withType<Jar>().configureEach {
+ }
+ 
+ dependencies {
++    // Optional integration only. EntityCulling supplies the public whitelist API.
++    compileOnly("maven.modrinth:entityculling:YuGJTeFm")
+     implementation(viaFabricPlusDependency)
+     // Optional integration only. Iris supplies these classes when installed.
+     compileOnly("maven.modrinth:iris:vTN4NRGW")
+diff --git a/settings.gradle.kts b/settings.gradle.kts
+index e1bd73b..ef45d56 100644
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -15,7 +15,10 @@ plugins {
+ dependencyResolutionManagement {
+     repositories {
+         maven("https://api.modrinth.com/maven") {
+-            content { includeModule("maven.modrinth", "iris") }
++            content {
++                includeModule("maven.modrinth", "iris")
++                includeModule("maven.modrinth", "entityculling")
++            }
+         }
+         val stackAnvilMavenRepo = providers.gradleProperty("stackanvilMavenRepo")
+         if (stackAnvilMavenRepo.isPresent) {
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index deaf201..3f7a4ec 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -114,6 +114,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+ 
+     @Override
+     public void onPreSettingsLoading() {
++        com.viaversion.viafabricplus.bedrock.render.BedrockActorOcclusion.register();
+         com.viaversion.viafabricplus.bedrock.appearance.BedrockSkinChange.register();
+         com.viaversion.viafabricplus.bedrock.appearance.BedrockEmotePlayback.register();
+         BedrockNativeForms.register();
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
+index f4837bc..01b1285 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
+@@ -106,15 +106,21 @@ public final class BedrockEntityResources {
+         private final ResourcePackStorage packs;
+         private final BedrockResourceLibrary library;
+         private final String identifier;
++        private final boolean ignoresOcclusion;
+ 
+         private Definition(final ResourcePackStorage packs, final BedrockResourceLibrary library, final String identifier) {
+             this.packs = packs;
+             this.library = library;
+             this.identifier = identifier;
++            this.ignoresOcclusion = com.viaversion.viafabricplus.bedrock.render.BedrockActorOcclusion.ignoresOcclusion(
++                    packs.getEntities().get(identifier).entityData().getMaterials().values(),
++                    com.viaversion.viafabricplus.bedrock.render.BedrockActorMaterialDefinitions.load(packs));
+         }
+ 
+         public ResourcePackStorage packs() { return this.packs; }
+ 
++        public boolean ignoresOcclusion() { return this.ignoresOcclusion; }
++
+         public BedrockActorAnimation animation() throws IOException {
+             return this.animation(BedrockClassicOptions.EMPTY);
+         }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
 new file mode 100644
 index 0000000..b37e301
@@ -257,6 +359,88 @@ index 94877d4..7b5265c 100644
          if (state instanceof BedrockGuiActorRenderer.State && this.stackanvil$guiActorRenderer != null) {
              cir.setReturnValue((EntityRenderer<?, ? super S>) this.stackanvil$guiActorRenderer);
              return;
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorOcclusion.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorOcclusion.java
+new file mode 100644
+index 0000000..017fb8e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorOcclusion.java
+@@ -0,0 +1,64 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.mojang.renderpearl.api.pipeline.CompareOp;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockEntityResources;
++import java.util.Collection;
++import java.util.HashSet;
++import java.util.Set;
++import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
++import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
++import net.fabricmc.loader.api.FabricLoader;
++import net.minecraft.client.Minecraft;
++import net.minecraft.world.entity.Entity;
++
++/** Occlusion acceleration cannot discard materials that intentionally draw behind opaque geometry. */
++public final class BedrockActorOcclusion {
++    private static volatile Set<Entity> visible = Set.of();
++
++    private BedrockActorOcclusion() {}
++
++    public static void register() {
++        if (!FabricLoader.getInstance().isModLoaded("entityculling")) return;
++        ClientLifecycleEvents.CLIENT_STARTED.register(client ->
++                com.viaversion.viafabricplus.bedrock.render.compat.entityculling.BedrockEntityCulling.register());
++        ClientTickEvents.END_CLIENT_TICK.register(BedrockActorOcclusion::tick);
++    }
++
++    /** The culling worker reads only an immutable snapshot, never resource managers or actor graphs. */
++    public static boolean ignoresOcclusion(final Entity entity) { return visible.contains(entity); }
++
++    private static void tick(final Minecraft client) {
++        final Set<Entity> next = new HashSet<>();
++        if (client.level != null) {
++            final var accepted = BedrockActorResources.get();
++            if (accepted != null) for (final var entity : client.level.entitiesForRendering()) {
++                final var snapshot = BedrockActorState.state(entity.getUUID());
++                if (snapshot == null || !entity.isAlive()) continue;
++                final var resources = BedrockEntityResources.get(accepted, snapshot.identifier());
++                if (resources != null && resources.ignoresOcclusion()) next.add(entity);
++            }
++        }
++        visible = Set.copyOf(next);
++        // A definition can finish loading after the worker has already marked its entity as culled.
++        next.forEach(com.viaversion.viafabricplus.bedrock.render.compat.entityculling.BedrockEntityCulling::show);
++    }
++
++    /** Inspect all declared alternatives without advancing animation or emitting effects. */
++    public static boolean ignoresOcclusion(final Collection<String> names, final BedrockActorMaterialDefinitions definitions) {
++        return names.stream().map(definitions::material).flatMap(java.util.Optional::stream)
++                .anyMatch(material -> ignoresOcclusion(material.depth()));
++    }
++
++    static boolean ignoresOcclusion(final BedrockActorDepth depth) {
++        final var comparison = depth.comparison();
++        return comparison == null || comparison == CompareOp.ALWAYS_PASS || comparison == CompareOp.NOT_EQUAL
++                || comparison == CompareOp.LESS_THAN || comparison == CompareOp.LESS_THAN_OR_EQUAL;
++    }
++
++    public static void clear() { visible = Set.of(); }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
+index fc18adc..8aef816 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
+@@ -35,6 +35,7 @@ public final class BedrockActorResources {
+     }
+ 
+     public static void clear() {
++        BedrockActorOcclusion.clear();
+         BedrockEquipmentResources.clear();
+         com.viaversion.viafabricplus.bedrock.appearance.BedrockEntityResources.clear();
+         BedrockShaderEmission.clear();
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 index e076c9d..898f90e 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
@@ -602,6 +786,62 @@ index 0000000..245bdb2
 +    private record GeometryKey(ResourcePackStorage packs, String geometry) {}
 +    private record Draw(Model<EntityRenderState> model, RenderType type, boolean ignoreLighting) {}
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/entityculling/BedrockEntityCulling.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/entityculling/BedrockEntityCulling.java
+new file mode 100644
+index 0000000..a7d9469
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/entityculling/BedrockEntityCulling.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.compat.entityculling;
++
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorOcclusion;
++import dev.tr7zw.entityculling.EntityCullingModBase;
++import dev.tr7zw.entityculling.access.Cullable;
++import net.minecraft.world.entity.Entity;
++
++/** Loaded only when EntityCulling is installed; its worker and render checks retain their normal policy. */
++public final class BedrockEntityCulling {
++    private BedrockEntityCulling() {}
++
++    public static void register() {
++        EntityCullingModBase.instance.addDynamicEntityWhitelist(BedrockActorOcclusion::ignoresOcclusion);
++    }
++
++    public static void show(final Entity entity) {
++        if (entity instanceof Cullable cullable) cullable.setCulled(false);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResourcesTest.java
+index 11be60b..894d88b 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResourcesTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResourcesTest.java
+@@ -99,6 +99,21 @@ final class BedrockEntityResourcesTest {
+         assertArrayEquals(new byte[]{9}, resources.get().particleTexture("textures/particles/test"));
+     }
+ 
++    @Test
++    void resolvesOcclusionFromTheAcceptedMaterialGenerationBeforeAnyDraw() throws Exception {
++        Assumptions.assumeTrue(getClass().getResource("/assets/viafabricplus-bedrock/builtin/manifest.json") != null);
++        final var builtin = BedrockBuiltinAssets.load().library();
++        final var ordinary = BedrockEntityResources.merge(builtin, List.of(), "minecraft:ender_crystal");
++        assertFalse(ordinary.ignoresOcclusion());
++        final var overlay = layer(Map.of("materials/overlay.material", bytes("""
++                {"materials":{"entity_alphatest:entity_nocull":{"defines":["USE_OVERLAY","ALPHA_TEST"],
++                  "depthFunc":"Always"}}}
++                """)));
++        final var accepted = BedrockEntityResources.merge(builtin, List.of(overlay), "minecraft:ender_crystal");
++        assertTrue(accepted.ignoresOcclusion());
++        assertFalse(BedrockEntityResources.merge(builtin, List.of(), "minecraft:ender_crystal").ignoresOcclusion());
++    }
++
+     private static NativeActorLibrary.Layer layer(final Map<String, byte[]> resources) {
+         final var files = new java.util.HashMap<>(resources);
+         files.put("manifest.json", bytes("{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\"" + java.util.UUID.randomUUID()
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
 new file mode 100644
 index 0000000..91372c5
@@ -912,6 +1152,54 @@ index 0000000..91372c5
 +        }
 +    }
 +
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorOcclusionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorOcclusionTest.java
+new file mode 100644
+index 0000000..35852a5
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorOcclusionTest.java
+@@ -0,0 +1,42 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.mojang.renderpearl.api.pipeline.CompareOp;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.util.List;
++import java.util.Set;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockActorOcclusionTest {
++    @Test
++    void retainsExactlyThePredicatesThatCanPassBehindAnOpaqueOccluder() {
++        // Reversed depth: an occluded fragment has a smaller value than the existing opaque depth.
++        final Set<CompareOp> behind = Set.of(CompareOp.ALWAYS_PASS, CompareOp.NOT_EQUAL,
++                CompareOp.LESS_THAN, CompareOp.LESS_THAN_OR_EQUAL);
++        for (final var comparison : CompareOp.values()) for (final boolean write : new boolean[]{false, true}) {
++            assertEquals(behind.contains(comparison), BedrockActorOcclusion.ignoresOcclusion(new BedrockActorDepth(comparison, write)));
++        }
++        assertTrue(BedrockActorOcclusion.ignoresOcclusion(BedrockActorDepth.DISABLED));
++    }
++
++    @Test
++    void resolvesInheritedAlternativesWithoutExemptingUnknownOrOrdinaryMaterials() {
++        final var definitions = BedrockActorMaterialDefinitions.read(List.of(JsonParser.parseString("""
++                {"materials":{
++                  "overlay:entity":{"depthFunc":"Always"},
++                  "inherited:overlay":{"+states":["DisableDepthWrite"]},
++                  "restored:inherited":{"depthFunc":"LessEqual"},
++                  "unsupported:overlay":{"geometryShader":"custom"},
++                  "disabled:entity":{"+states":["DisableDepthTest"]}
++                }}
++                """).getAsJsonObject()));
++        assertFalse(BedrockActorOcclusion.ignoresOcclusion(List.of("entity", "restored", "missing", "unsupported"), definitions));
++        assertTrue(BedrockActorOcclusion.ignoresOcclusion(List.of("entity", "inherited"), definitions));
++        assertTrue(BedrockActorOcclusion.ignoresOcclusion(List.of("disabled"), definitions));
++    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCustomActorModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCustomActorModelTest.java
 index 4676741..4556267 100644

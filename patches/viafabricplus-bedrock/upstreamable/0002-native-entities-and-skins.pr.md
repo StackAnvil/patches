@@ -578,3 +578,38 @@ Both transformed and fallback programs pass after the fix, across opaque, cutout
 
 Fresh installed results and build totals appear in the [coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026).
 Other shader-pack branches, native graphical parity, and inventory avatars remain separate verification work.
+
+## Actor material depth state, October 26, 2026
+
+Actor materials now retain inherited depth comparison, test, and write controls.
+The previous reader rejected every comparison except `LessEqual` and rejected both depth-control states.
+That rejection could retire the complete native actor presentation and restore a vanilla model.
+
+Ordered comparisons reverse for Java's reversed depth buffer.
+Equality, inequality, and always-pass comparisons retain their meaning.
+An always-passing test can write depth; disabled testing cannot.
+Removing an inherited disable state restores the declared comparison and write behavior.
+Material identity retains these values across bone grouping, caches, world draws, and GUI consumers.
+Uncommon fixed-state variants compile on demand; the ordinary preload set stays small.
+
+The Iris emission pass now inherits the body's comparison and keeps depth writes disabled.
+A depth-writing body with a strict comparison cannot repeat that predicate after changing the buffer.
+That pairing remains unsupported until emission can retain the original depth outcome.
+Read-only strict emission and repeatable comparisons retain a valid paired state.
+This limit remains part of the full rendering integration work.
+
+The pinned 1.26.51.1 resource library contains 95 depth-related material declarations.
+Entity materials declare `Equal` and `LessEqual`; other renderer materials declare `Always` and depth-disable controls.
+Their source hashes and inheritance remain recorded privately.
+These are versioned declarations, not executed native backend state creation.
+The [creator material reference](https://learn.microsoft.com/en-us/minecraft/creator/documents/material-files?view=minecraft-bedrock-stable) describes renderer states and material inheritance.
+
+A surfaceless GPU control uses the production fragment shader and selected pipeline through Java's actual OpenGL comparison mapper.
+Its 168 cases cover near, equal, and far fragments, discarded and covered texels, and independent test/write settings.
+Existing native fragment comparisons and GUI coverage controls still pass.
+Wrong reversed comparison, ignored write state, ignored test state, and a default emission comparison each fail assertions.
+The restored focused suites pass without errors.
+
+Fresh plain and Iris/EntityCulling live controls pass with the final packaged artifact.
+The world actor owner adds the selective occlusion integration that these predicates require.
+The [coverage record](../../../docs/bedrock-coverage.md#actor-material-depth-and-occlusion-october-26-2026) records the causal isolation, final build totals, and remaining limits.

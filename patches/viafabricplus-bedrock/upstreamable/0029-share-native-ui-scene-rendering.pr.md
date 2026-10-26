@@ -455,3 +455,10 @@ Downloaded pack files, installed artifacts, binding matrices, cache retirement, 
 This supersedes the earlier empty-avatar observation for the authored fixture.
 The [coverage record](../../../docs/bedrock-coverage.md#inventory-avatar-coverage-october-26-2026) records the full build and remaining limits.
 The original E-key background/scale report, generic native portraits, remote skins, persona composition, and emote effects remain separate work.
+
+## Native actor depth in GUI consumers, October 26, 2026
+
+GUI actor selection retains the shared material's depth state when choosing its own blending pipeline.
+Default, read-only equality, and disabled-depth cases keep their world-state identity without replacing GUI blending.
+Uncommon variants enter the shared runtime cache rather than expanding the default preload list.
+The shared actor owner contains comparison parsing, reversed-depth mapping, GPU controls, and emission limits.

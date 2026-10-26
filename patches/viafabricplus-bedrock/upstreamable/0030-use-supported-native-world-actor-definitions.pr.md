@@ -177,3 +177,32 @@ The controller retains one native actor lifetime across those changes.
 This authored scene does not provide a native expression or graphical baseline.
 
 The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.
+
+
+## Material depth and EntityCulling, October 26, 2026
+
+An ordinary occlusion test can discard an actor whose material intentionally draws behind an opaque wall.
+The resolved actor definition now retains this requirement across all supported declared material alternatives.
+It resolves before the first draw and does not sample animations or emit effects.
+Unknown materials retain their existing fallback policy.
+
+The optional EntityCulling integration uses its public dynamic whitelist API.
+The client tick publishes an immutable set of entity instances for its worker.
+The integration clears stale culled state after a definition finishes loading.
+Resource replacement and disconnect clear the snapshot, while removed entity instances leave it on the next tick.
+Ordinary material comparisons retain the normal culling policy.
+The dependency is compile-only, and the bridge loads only with EntityCulling installed.
+
+Tests cover each depth comparison, independent depth writes, inherited alternatives, unsupported materials, and resource generations before any draw.
+A fresh Iris scene hides all three authored parts behind stone before the hook.
+Removing only EntityCulling restores the Always and disabled-depth parts.
+The [public implementation](https://github.com/tr7zw/EntityCulling/blob/main/src/main/java/dev/tr7zw/entityculling/EntityCullingModBase.java) defines the dynamic whitelist API.
+The installed 1.11.1 Fabric artifact matches the pinned Modrinth version and its SHA-512.
+
+This correction does not establish native backend state creation or complete graphical parity.
+
+The final artifact passes the same scene with EntityCulling enabled, Iris 1.11.7, and Complementary Reimagined r5.9.3.
+Normal depth disappears behind stone; Always and disabled testing remain visible.
+The plain profile also passes with EntityCulling absent.
+All six final screenshots received visual review, and both temporary server installations were restored.
+The [coverage record](../../../docs/bedrock-coverage.md#actor-material-depth-and-occlusion-october-26-2026) records final test totals and remaining limits.

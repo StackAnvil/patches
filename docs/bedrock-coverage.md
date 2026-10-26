@@ -11254,3 +11254,46 @@ Four deliberately incorrect variants fail assertions; restored focused suites pa
 The permanent creative-flight and reconnect control passes on a private display with the final add-on artifact.
 It records about 9.95 blocks of ascent and 41 flying samples.
 Delayed mode-event replay still needs a live trace.
+
+
+## Actor material depth and occlusion, October 26, 2026
+
+Actor materials now retain inherited depth comparisons and independent depth-test and depth-write controls.
+The reader previously rejected these declarations and restored the Java fallback for the complete native actor.
+World and GUI pipelines now retain the selected state, including uncommon variants compiled on demand.
+The Iris emission pass retains the body comparison and disables its own depth writes.
+
+EntityCulling can otherwise hide the complete actor before these material rules run.
+The optional integration exempts actors with supported materials that intentionally draw behind opaque geometry.
+It resolves declared alternatives before a draw, without sampling animations or emitting effects.
+Its worker reads an immutable snapshot from the client tick.
+Ordinary materials retain their normal occlusion policy.
+
+The pinned 1.26.51.1 library contains 95 depth-related material declarations.
+These declarations establish authored state, without executing native backend state creation.
+A real OpenGL control covers 168 combinations of depth comparison, coverage, and write behavior through the production pipeline mapper.
+Separate GPU checks retain the 672 ordinary and 512 masked native fragment controls, plus 3,552 GUI opacity combinations.
+Four incorrect depth and emission variants fail assertions.
+
+A fresh Java-to-ViaProxy-to-BDS scene tests three authored materials against the same stone wall.
+The previous artifact restores a vanilla crystal instead of the authored model.
+The intermediate depth implementation passes in the plain profile, but EntityCulling hides all three parts in the full modpack.
+Removing only EntityCulling restores the two through-wall parts under Iris.
+The final artifact passes with EntityCulling enabled, Iris 1.11.7, and Complementary Reimagined r5.9.3.
+Its normal material disappears behind stone, while Always and disabled-depth materials remain visible.
+The same artifact also passes in the plain profile without EntityCulling installed.
+All six final phase screenshots received visual review, and the source server installation was restored after each run.
+
+The four-project build reports 2,957 passed tests, 315 optional skips, and no failures or errors.
+The separate focused run passes 34 tests and skips one optional licensed NPC-variant control outside this change.
+Both core Checkstyle tasks pass.
+Packaged client classes, embedded dependencies, shader resources, and source snapshots match the tested outputs.
+EntityCulling remains an optional compile dependency and is not bundled.
+
+Depth-writing strict comparisons with split emission remain unsupported because the second pass cannot repeat the original depth outcome.
+The authored live scene supplies no native graphical baseline.
+Other shaderpacks, pack features, skins, emotes, interactions, and the original five-area goal remain unfinished.
+The inventory/background, rollback, and eating reports remain open.
+Crafting stays parked.
+The [material notes](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#actor-material-depth-state-october-26-2026)
+and [occlusion notes](../patches/viafabricplus-bedrock/upstreamable/0030-use-supported-native-world-actor-definitions.pr.md#material-depth-and-entityculling-october-26-2026) record ownership and evidence.
