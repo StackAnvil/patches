@@ -1,4 +1,4 @@
-From 15aa5877ac4690c00188cfb1da53b8bce59ccca7 Mon Sep 17 00:00:00 2001
+From 4e1cef72ce00fedb262100d0bc78c9b96d6d1cb7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(appearance): manage Character Creator accounts and
@@ -92,6 +92,34 @@ https://www.minecraft.net/en-us/article/new-emote-features-bedrock-edition
 This establishes default availability, not complete native wheel, camera,
 pose or emote-effect parity. Do not require a separate account selection
 or catalog request for resources already supplied with the game.
+
+Observe Fabric's action-channel registration lifecycle instead of relying
+on a disabled emote tick. A server can withdraw and restore support in
+one tick: the old implementation keeps the local pose and its advertised
+wheel cache, while ViaBedrock retires EmoteStorage. A later selection then
+plays locally but fails the new server state's availability check.
+
+Retire local playback, sent state and policy on withdrawal. Re-advertise
+ready assets after registration without replacing the wheel, downloading
+again, or interrupting remote playback. Guard both events by their current
+Java listener, and retain fresh policy that precedes registration.
+
+Fabric networking 6.3.8 schedules these channel events on the client main
+thread. An owned 1.26.51.1 BDS/ViaProxy baseline produces both notifications
+in one measured client tick, retains the old local animation and receives
+no native emote from the subsequent local selection. The fixture sends
+ordinary registration packets only; it never seeds a wheel, alters core
+storage or starts playback. The public API regression exercises stale
+owners, unrelated channels, rapid renewal and repeated registration.
+
+Retain policy already current in Fabric's channel registry when a queued
+withdrawal notification runs after rapid re-registration. The first live
+candidate cleared that policy and kept controls disabled. Local playback
+still retires for every withdrawal; policy retires only while the channel
+is currently unavailable. This keeps the actual registry and fresh server
+context authoritative instead of inferring current support from an older
+notification. A fresh live control must verify both rapid and held-disabled
+renewal with the corrected artifact.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockActorQueries.java       |   10 +
@@ -100,7 +128,7 @@ or catalog request for resources already supplied with the game.
  .../appearance/BedrockClassicAssets.java      |   77 +
  .../appearance/BedrockClassicSkinPack.java    |  123 +-
  .../appearance/BedrockEmoteMessages.java      |   24 +-
- .../appearance/BedrockEmotePlayback.java      |  524 ++++++
+ .../appearance/BedrockEmotePlayback.java      |  547 ++++++
  .../bedrock/appearance/BedrockEmotes.java     |  167 ++
  .../BedrockMarketplaceTransactions.java       |  253 +++
  .../appearance/BedrockOwnedSkinPacks.java     |  162 ++
@@ -147,6 +175,7 @@ or catalog request for resources already supplied with the game.
  .../BedrockCharacterProfilesTest.java         |  487 ++++++
  .../appearance/BedrockClassicAccountTest.java |  192 ++
  .../appearance/BedrockClassicCapeTest.java    |  126 ++
+ .../BedrockEmoteChannelLifecycleTest.java     |   74 +
  .../appearance/BedrockEmoteMessagesTest.java  |    7 +-
  .../appearance/BedrockEmoteQueriesTest.java   |  124 ++
  .../bedrock/appearance/BedrockEmotesTest.java |  250 +++
@@ -167,7 +196,7 @@ or catalog request for resources already supplied with the game.
  .../appearance/NativeEmotePayloadTest.java    |  103 ++
  .../render/BedrockActorQuerySnapshotTest.java |   89 +
  .../BedrockStandardPlayerGeometryTest.java    |   28 +
- 74 files changed, 14779 insertions(+), 118 deletions(-)
+ 75 files changed, 14876 insertions(+), 118 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicAssets.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
@@ -208,6 +237,7 @@ or catalog request for resources already supplied with the game.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicAccountTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicCapeTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteChannelLifecycleTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteQueriesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSelectionTest.java
@@ -2534,10 +2564,10 @@ index 1e1b478..ca831f1 100644
      static String format(final String template, final String player) {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
 new file mode 100644
-index 0000000..03e6dcc
+index 0000000..efe81aa
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
-@@ -0,0 +1,524 @@
+@@ -0,0 +1,547 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2555,11 +2585,14 @@ index 0000000..03e6dcc
 +
 +import net.minecraft.client.KeyMapping;
 +import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientPacketListener;
 +import net.minecraft.network.Connection;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.fabricmc.fabric.api.client.networking.v1.ServerboundPlayChannelEvents;
 +import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 +import net.minecraft.network.chat.ComponentSerialization;
++import net.minecraft.resources.Identifier;
 +import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
 +import net.raphimc.viabedrock.api.util.TextUtil;
 +import net.raphimc.viabedrock.api.model.EmoteAction;
@@ -2630,6 +2663,26 @@ index 0000000..03e6dcc
 +        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> {
 +            if (networkConnection == listener.getConnection()) clearConnection(null, null);
 +        });
++        ServerboundPlayChannelEvents.REGISTER.register((listener, sender, client, channels) ->
++                channelsChanged(client, listener, channels, true));
++        ServerboundPlayChannelEvents.UNREGISTER.register((listener, sender, client, channels) ->
++                channelsChanged(client, listener, channels, false));
++    }
++
++    static void channelsChanged(final Minecraft client, final ClientPacketListener listener,
++                                final List<Identifier> channels, final boolean registered) {
++        if (client.getConnection() != listener || !channels.contains(NativeEmoteActionPayload.TYPE.id())) return;
++        lastAdvertised = null;
++        if (!registered) {
++            if (client.player != null) PLAYING.remove(client.player.getUUID());
++            localEmoting = false;
++            sentLocalEmote = false;
++            // A later REGISTER can already be in Fabric's registry when this queued event runs.
++            if (!ClientPlayNetworking.canSend(NativeEmoteActionPayload.TYPE)) {
++                policyReceived = false;
++                worldEmoteChatMuted = true;
++            }
++        }
 +    }
 +
 +    private static void synchronizeConnection() {
@@ -12357,6 +12410,86 @@ index 0000000..58fd075
 +        final var bytes = new ByteArrayOutputStream();
 +        ImageIO.write(image, "png", bytes);
 +        return bytes.toByteArray();
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteChannelLifecycleTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteChannelLifecycleTest.java
+new file mode 100644
+index 0000000..82df499
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteChannelLifecycleTest.java
+@@ -0,0 +1,74 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonParser;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.minecraft.SharedConstants;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.phys.Vec3;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class BedrockEmoteChannelLifecycleTest {
++    @BeforeAll
++    static void bootstrap() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void renewsOnlyTheCurrentActionChannelWithoutResumingOldOrStoppingRemotePlayback() throws Exception {
++        final var client = mock(Minecraft.class);
++        final var listener = mock(ClientPacketListener.class);
++        when(client.getConnection()).thenReturn(listener);
++        client.player = mock(LocalPlayer.class);
++        final UUID local = UUID.randomUUID(), remote = UUID.randomUUID();
++        when(client.player.getUUID()).thenReturn(local);
++        final var animation = BedrockBoneAnimation.parse(JsonParser.parseString("""
++                {"loop":true,"animation_length":10,"bones":{"root":{"position":[0,1,0]}}}
++                """).getAsJsonObject());
++        final var emote = new BedrockEmotes.Emote(UUID.randomUUID(), animation, BedrockEmoteMessages.read(Map.of()));
++        final var channels = List.of(NativeEmoteActionPayload.TYPE.id());
++        try (final var networking = mockStatic(ClientPlayNetworking.class)) {
++            networking.when(() -> ClientPlayNetworking.canSend(NativeEmoteActionPayload.TYPE)).thenReturn(true);
++            BedrockEmotePlayback.start(local, emote, System.nanoTime(), 200);
++            BedrockEmotePlayback.start(remote, emote, System.nanoTime(), 200);
++            BedrockEmotePlayback.channelsChanged(client, mock(ClientPacketListener.class), channels, false);
++            BedrockEmotePlayback.channelsChanged(client, listener, List.of(NativeEmotePayload.TYPE.id()), false);
++            assertTrue(BedrockEmotePlayback.playing(local));
++            assertTrue(BedrockEmotePlayback.playing(remote));
++            // Renewal can arrive before the next emote tick, so withdrawal must retire playback now.
++            BedrockEmotePlayback.channelsChanged(client, listener, channels, false);
++            BedrockEmotePlayback.channelsChanged(client, listener, channels, true);
++            assertFalse(BedrockEmotePlayback.playing(local));
++            assertTrue(BedrockEmotePlayback.playing(remote));
++
++            BedrockEmotePlayback.start(local, emote, System.nanoTime(), 200);
++            BedrockEmotePlayback.channelsChanged(client, listener, channels, true);
++            assertTrue(BedrockEmotePlayback.playing(local));
++            assertTrue(BedrockEmotePlayback.playing(remote));
++            networking.when(() -> ClientPlayNetworking.canSend(NativeEmoteActionPayload.TYPE)).thenReturn(false);
++            BedrockEmotePlayback.channelsChanged(client, listener, channels, false);
++            assertFalse(BedrockEmotePlayback.playing(local));
++            assertTrue(BedrockEmotePlayback.playing(remote));
++        } finally {
++            for (final UUID player : List.of(local, remote)) {
++                BedrockEmotePlayback.sample(player, Vec3.ZERO, Map.of(), false, _ -> {}, _ -> {});
++                BedrockEmotePlayback.sample(player, new Vec3(1, 0, 0), Map.of(), false, _ -> {}, _ -> {});
++            }
++        }
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessagesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessagesTest.java

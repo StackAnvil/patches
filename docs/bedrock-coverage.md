@@ -11378,3 +11378,40 @@ The original E-key inventory, locator, rollback, and eating reports remain open.
 The full five-area goal stays active, and crafting stays parked.
 The [owning emote notes](../patches/viafabricplus-bedrock/upstreamable/0009-manage-character-creator-accounts-and-wardrobes.pr.md#bundled-default-emote-wheel-october-26-2026)
 record the default selection and verification limits.
+
+## Emote capability renewal, October 27, 2026
+
+Emote controls now retire local playback when support is withdrawn on the current connection.
+Renewal invalidates the advertisement cache, so ready choices reach fresh ViaBedrock state before another selection.
+Stale listeners and unrelated channels cannot change the current emote session.
+The wheel and loaded assets remain available, and the API regression preserves independent remote playback.
+
+The previous live client receives withdrawal and renewal within one measured client tick but retains its old local emote.
+Its next selection animates locally without reaching BDS because it does not advertise to the fresh server state.
+The correction observes Fabric's channel events rather than depending on a disabled tick.
+Fabric updates its registry before delivering the queued notification.
+The handler checks current support before retiring policy, so a late withdrawal notification cannot discard current policy.
+A first candidate exposed that ordering problem and is excluded from the passing controls.
+
+Fresh plain and Iris/full-modpack ViaProxy controls pass against a private BDS 1.26.51.1 server.
+The shader control loads Iris 1.11.7 and Complementary Reimagined r5.9.3.
+The declared fixture sends ordinary registration packets; physical B and slot keys exercise production playback.
+It never replaces the wheel, seeds assets, changes core storage, or starts playback itself.
+Both rapid renewal and held withdrawal restore native playback in each final run.
+Each packet journal records four native emotes and three matching four-ID advertisements, including both renewals.
+The Java connection and asset-future identities remain unchanged, and final input flags are inactive.
+All six final screenshots received visual review.
+Both final clients and servers close successfully, retire owned processes, and restore their profiles.
+An earlier shader attempt timed out before the control; the fresh same-artifact run passes.
+
+Removing immediate local retirement or the listener guard fails the API regression; the restored test passes.
+The complete build passes 2,963 tests, skips 315 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass.
+Packaged classes, dependencies, shaders, and four source snapshots match the tested outputs.
+Offline tooling and patch-metadata validation pass.
+
+Configuration-transfer behavior, native camera and timing equality, remote skins, and emote effects still need further work.
+The original inventory, locator, rollback, and eating reports remain open.
+The full five-area goal stays active, and crafting stays parked.
+The [owning emote notes](../patches/viafabricplus-bedrock/upstreamable/0009-manage-character-creator-accounts-and-wardrobes.pr.md#emote-capability-renewal-october-27-2026)
+record the registry ordering and live evidence.

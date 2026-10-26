@@ -1265,3 +1265,51 @@ Live controls cover the accountless path; saved account selection preservation h
 Native quick-wheel behavior, controller navigation, automatic perspective, broader skin composition, and emote effects remain unfinished.
 The four free animations contain no sound or particle declarations, so they provide no new effect-ownership proof.
 The original five-area goal and the reported gameplay problems remain open.
+
+## Emote capability renewal, October 27, 2026
+
+Emote controls now handle withdrawal and renewal on an existing Java connection.
+Withdrawal retires local playback and invalidates the advertised-wheel cache.
+Registration sends the ready wheel through the existing advertisement path again.
+The current packet listener owns these changes; stale listeners and unrelated channels have no effect.
+Remote playback and loaded assets remain available.
+
+ViaBedrock correctly creates fresh emote storage after withdrawal.
+The previous client retained its advertisement cache, so a later selection animated locally but failed the server's availability check.
+A rapid renewal also retained the previous local emote because no disabled client tick occurred between notifications.
+The live baseline reproduces both failures with both notifications in one measured client tick.
+Its second selection enters local world sampling but produces no second native BDS receipt or advertisement.
+
+Fabric networking 6.3.8 updates its channel registry before scheduling the main-thread notification.
+A queued withdrawal can therefore run after support and policy are current again.
+The handler always retires old local playback, but clears policy only while the actual channel remains unavailable.
+This preserves current policy during rapid renewal and retires it during held withdrawal.
+The first candidate exposed this ordering requirement by leaving controls disabled after rapid renewal.
+That candidate is excluded from the passing evidence.
+
+Fresh plain and full-modpack ViaProxy controls use the final development artifact with a private BDS 1.26.51.1 server.
+The add-on SHA-256 is `38497e22c74cc93c8b89dd4981e68537dbf9ad1bd999f9c213fb8925dc123faa`.
+The full modpack loads Iris 1.11.7 and Complementary Reimagined r5.9.3.
+A declared fixture sends ordinary registration packets only; it never changes the wheel, assets, playback, or core storage.
+Physical B and slot controls start the emotes.
+
+Each final run records rapid withdrawal and registration in the same measured client tick.
+The old local playback retires, and a subsequent selection reaches BDS.
+A second control holds support disabled, observes retired policy and playback, then restores support and native playback.
+Each packet journal contains four native emotes and three matching four-ID advertisements, including a fresh advertisement after each renewal.
+Actor ownership, flags, inactive final input, one Java connection, and unchanged asset-future identities pass.
+Both final recorders and servers exit successfully, restore their prepared profiles, and retire all owned processes.
+All six final screenshots received visual review.
+An earlier full-modpack attempt ended with a read timeout before the control; the fresh run passes with the same artifact.
+
+The API regression covers current and stale listeners, unrelated channels, rapid renewal, repeated registration, and independent remote playback.
+Removing local retirement or listener ownership causes an assertion failure; the restored test passes.
+All 38 patches replay, and only the owning wardrobe patch changes.
+The full four-project build passes 2,963 tests, skips 315 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass.
+Compiled client classes, embedded dependencies, shaders, and four source snapshots match the tested outputs.
+Offline tooling and patch-metadata validation pass.
+
+These controls establish the tested channel lifecycle, without complete configuration-transfer, native camera, pose, or timing equality.
+Live remote-player visuals and emote sound or particle ownership remain unfinished.
+The full five-area goal and the original gameplay reports remain open.
