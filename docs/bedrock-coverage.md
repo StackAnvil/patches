@@ -11044,3 +11044,55 @@ Fresh multi-material persona layers, masked native hands, and generic portrait r
 The creative inventory avatar is a separate renderer and does not establish generic portrait coverage.
 The original E-key background/scale report, locator report, rollback, and endless eating remain open.
 Remote skins, native depth and animation equality, emote effect ownership, and broader pack and interaction parity also remain open.
+
+
+## Inventory avatar coverage, October 26, 2026
+
+**Corrected within scope:** Native material coverage now survives texture-backed inventory avatars and other picture-in-picture submissions.
+The earlier zero-alpha fixture renders its opaque blue body in the world but leaves its inventory avatar empty.
+Minecraft 26.3 composites that avatar through a GUI shader that discards zero alpha.
+Native opaque world fragments retain their source alpha, so the previous intermediate texture loses those otherwise visible surfaces.
+
+Picture-in-picture submission now selects a separate GUI variant for each native material.
+The lazy variant retains its image bindings, lighting, multiplier, and UV transform without changing the cached world material.
+Ordinary Java materials retain their existing paths.
+The submission scope restores nested failures and does not create an actor perspective or advance its playback.
+GUI materials retain their native emission calculation instead of acquiring world Iris additive passes.
+
+After native cutout and emission calculations, surviving GUI fragments use control opacity as coverage.
+Source alpha still controls those earlier calculations, but it no longer multiplies control opacity again.
+World shader output remains unchanged.
+The [shared UI notes](../patches/viafabricplus-bedrock/upstreamable/0029-share-native-ui-scene-rendering.pr.md#texture-backed-avatar-coverage-october-26-2026) describe the owning correction and verification.
+
+A new real EGL regression fails on the previous GUI shader with expected coverage 0.0925 and actual coverage zero.
+The correction passes 3,552 GUI blends at three opacity values across ordinary, cutout, emissive, and masked controls.
+All 1,184 existing native color, discard, and depth controls still pass.
+These GUI opacity expectations describe the Java compositor integration, not a native GUI graphical baseline.
+All 15 focused tests pass without skips, including nested submission recovery.
+
+The normal four-project build passes 3,092 tests, skips 152 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass, and all 38 add-on patches replay.
+All 1,230 client classes and the shader assets match compilation.
+Both consumers retain matching copies of 1,559 core classes, 200 assets, and 40 converter classes.
+All four source snapshots remain unchanged through the build.
+
+Fresh direct and Iris-enabled ViaProxy captures now show the blue avatar body on both inventory openings.
+The zero-alpha yellow cutout surface remains hidden, and the red equipment parent remains visible.
+Closing the inventory preserves the world body and item appearance.
+Actual cached GUI variants remain distinct from world materials and retain their identities across reopening.
+Their pipelines carry the GUI flag while the original world pipelines retain their original flags.
+Both routes also preserve the earlier world, player, item, binding, and cache-retirement controls.
+All 26 main screenshots receive visual review, and the strict state and pixel checks pass.
+
+A separate unchanged-artifact Iris probe repeats three physical sneak cycles.
+Its 15 reviewed captures retain the red parent and show the green child only during sneaking.
+Restoration checks include the first accepted released sample and samples after 500 and 1,500 milliseconds.
+The equipment entry and its complete binding matrices remain stable through all three cycles.
+
+All three successful sessions download the exact 22 fixture files and use the verified build artifacts.
+Every owned process retires after normal recorder and server shutdown.
+An earlier Iris launch stops at the disk-reserve check before creating a client and supplies no live result.
+
+This supersedes the empty-avatar limit for this authored pack and these installed artifacts.
+The original E-key background/scale report and generic native portrait visuals remain separate work.
+Native graphical equality, remote skins, broader persona composition, emote effects, and complete pack and interaction parity remain open.

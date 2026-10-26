@@ -422,3 +422,36 @@ Fresh installed portrait rendering with several bone materials remains unverifie
 The separate creative inventory avatar preview is empty in the zero-alpha player fixture and does not verify this renderer.
 
 The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.
+
+
+## Texture-backed avatar coverage, October 26, 2026
+
+Native opaque costumes can retain zero source alpha while remaining visible in the world.
+Minecraft 26.3 blits inventory avatars through a shader that discards zero alpha.
+The previous intermediate texture therefore loses those surfaces before the final GUI draw.
+This explains the earlier empty avatar in the zero-alpha fixture.
+
+Picture-in-picture model submission now selects a lazy GUI variant for each native material.
+The variant retains images, lighting, multiplier, and UV transforms while leaving the cached world material intact.
+Ordinary Java materials retain their current rendering path.
+The submission scope restores nesting and failures independently of native camera and animation contexts.
+GUI emission stays in the native GUI shader and does not acquire world Iris additive passes.
+
+After native cutout and emission calculations, surviving GUI fragments use control opacity as coverage.
+Source alpha retains its earlier cutout and emission roles without multiplying opacity again.
+World fragment output remains unchanged.
+
+The old GUI shader fails the new EGL coverage regression with expected coverage 0.0925 and actual coverage zero.
+The corrected shader passes 3,552 GUI blends and all 1,184 existing native color, discard, and depth controls.
+All 15 focused tests pass without skips, including recovery after nested submission failures.
+These opacity controls describe Java compositor integration, not a native GUI graphical baseline.
+
+Fresh direct and Iris-enabled ViaProxy runs show the blue body on both inventory openings.
+They retain cutout rejection, equipment, and the world appearance after closing the inventory.
+Actual GUI variants remain distinct and stable across reopening while world pipeline flags remain unchanged.
+All 26 main captures and a separate 15-capture Iris sneak probe receive review and pass their strict checks.
+Downloaded pack files, installed artifacts, binding matrices, cache retirement, and owned process retirement also pass.
+
+This supersedes the earlier empty-avatar observation for the authored fixture.
+The [coverage record](../../../docs/bedrock-coverage.md#inventory-avatar-coverage-october-26-2026) records the full build and remaining limits.
+The original E-key background/scale report, generic native portraits, remote skins, persona composition, and emote effects remain separate work.
