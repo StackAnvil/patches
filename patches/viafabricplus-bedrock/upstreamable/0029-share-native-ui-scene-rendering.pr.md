@@ -475,3 +475,6 @@ Frame-glint world materials retain their captured state when converted to GUI ma
 The GUI variant uses explicit neutral tile RGB with the existing independent fullbright portrait policy.
 Its cached variant does not sample a world entity's lightmap.
 The final full-stack build and focused shader controls pass; native GUI glint equality remains unverified.
+
+The replay retains the shared Iris glint mapping instead of restoring the earlier exclusion.
+The new client check covers world actor draws and shader toggles; native GUI glint remains unverified.

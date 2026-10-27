@@ -761,3 +761,22 @@ A plain client exercises 1,581 prepared draws across frame-light, explicit-light
 All six tracked buffers close during normal shutdown; the original profile is restored and all recorded process identities retire.
 The fixture supplies the secondary image and selects compatible actor draws; production equipment admission and Iris remain open.
 The [coverage record](../../../docs/bedrock-coverage.md#captured-glint-frames-and-gpu-tile-lighting-october-27-2026) records the candidate identity and verification boundaries.
+
+## Iris glint program variants and uniform ownership, October 27, 2026
+
+Native glint now feeds Iris's combined-glint API through separately cached programs.
+The pack retains its stages, directives, fog, alpha, and output targets.
+A source specialization keeps the transform cache independent of ordinary Java glint programs.
+The secondary image uses unit four; a separate native lightmap alias uses unit two.
+Native buffer descriptors and shader blocks share a free binding after Iris's reserved slots.
+The allocator preserves pack-owned blocks, including slot seven in the GPU control.
+
+All 17 focused tests pass, including 648 Iris UV comparisons, 1,008 native RGB comparisons, and 672 ordinary Java comparisons.
+The normal build passes 1,110 tests with 144 optional skips and no failures.
+Removing the native block assignment fails numerical UV and color checks.
+The corrected client binds the submitted 64-byte range and survives physical shader toggles with separate replacement programs.
+All eight tracked buffers close; the original profile and Iris configuration are restored.
+The [coverage record](../../../docs/bedrock-coverage.md#iris-glint-programs-and-native-buffer-bindings-october-27-2026) records the final artifact, lifecycle observations, and limits.
+
+This is a shared draw-API check with supplied actor selection and a reused image.
+It does not validate native GUI glint, geometry or tessellation interpolation, other shader packs, or actual enchanted-equipment admission.

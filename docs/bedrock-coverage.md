@@ -11640,3 +11640,49 @@ An earlier candidate-hash guard stops before client launch; its profile restorat
 This establishes the host input connection and GPU light sampling in that client.
 It does not establish native clock epoch, general UV-scale selection, Iris glint support, or production enchanted-equipment admission.
 The reported shield remains unresolved, and the full five-area goal remains active.
+
+## Iris glint programs and native buffer bindings, October 27, 2026
+
+Native glint now feeds Iris's `mc_sampleGlint()` API through separate cached program variants.
+The variants retain the pack's stages and directives without replacing ordinary Java programs.
+The shader pack controls composition, fog, alpha, and framebuffer outputs.
+The variant reuses the native UV library and computes the native squared RGB contribution.
+
+The glint image uses external texture unit four.
+A separate native lightmap alias uses unit two, independently of the pack's `lightmap` override.
+The native uniform block and its pipeline descriptor receive the same free binding after Iris's reserved slots zero through six.
+The allocator retains other active block bindings, including a pack-owned block at slot seven.
+Each prepared draw keeps its existing immutable 64-byte slice.
+
+The live check exposed two integration errors before the final candidate passed.
+Iris requires a version directive when parsing the shared library as a translation unit.
+Iris also ignores unknown buffer descriptions, which left the native block reading the 160-byte dynamic-transform range at slot zero.
+The final code imports a versioned library and binds the native block explicitly on both sides.
+
+All 17 final focused tests pass without skips.
+The Iris path matches 648 native UV controls and 336 surviving native fragment controls in each of three lighting modes.
+Another 672 comparisons retain ordinary Java glint before and after the native variants.
+The pack's independent lightmap override, buffer contents, RGB contribution, and alpha remain separate in these controls.
+Removing the native block assignment fails both numerical GPU tests; the restored implementation passes.
+The normal build passes 1,110 tests with 144 optional skips and no failures or errors.
+The 38-patch stack replays, and offline tooling and metadata validation pass.
+
+The final candidate SHA-256 is `f61ee9567e2496aa8b4208f44e12313128d8bb3903b9b941484496c01bccf949`.
+A full modpack client runs Minecraft 26.3 with Iris and Complementary Reimagined r5.9.3 at 1920 by 1013.
+The private fixture replaces compatible actor draws and reuses their primary image as the secondary image.
+It observes 334 prepared draws: 133 frame-light draws and 201 explicit-light draws, with no state mismatches.
+Sixty backend observations verify active Iris programs, image unit four, and the submitted 64-byte range.
+Lit variants also verify the native lightmap on unit two.
+The final profile selects uniform binding seven.
+
+Physical shader toggles close the two original native Iris programs and create two replacements that resume drawing.
+The replacement programs remain active until client termination; no explicit close callbacks are observed for those two programs.
+All eight tracked uniform buffers close during normal shutdown.
+All 41 unique recorded process identities retire, and the original profile, artifact, and Iris configuration are restored.
+Six screenshots received visual review; the shader-off image captures a rebuild transient, and the world returns after re-enabling shaders.
+The final client log contains no native-program compilation, missing-uniform, invalid-pipeline, or mixin failures.
+
+This validates the shared API and buffer ownership in the tested shader pack.
+Other packs, geometry and tessellation interpolation, native GUI glint, clock epoch, general scale selection, and actual enchanted-equipment routing remain unverified.
+Production GLINT material admission and the equipped foil fallback remain unchanged.
+The reported shield and the full five-area goal remain unfinished.
