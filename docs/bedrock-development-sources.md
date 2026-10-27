@@ -1,12 +1,12 @@
 # Bedrock Edition development sources
 
-Use this reference when changing ViaBedrock, the ViaFabricPlus Bedrock add-on, or their data generators. The links were checked on 2026-09-25. Recheck versions and source branches before using a numeric protocol value.
+Use this reference when changing ViaBedrock, the ViaFabricPlus Bedrock add-on, or their data generators. The target protocol and GDK snapshot were updated on 2026-10-27. Recheck versions and source branches before using a numeric protocol value.
 
 ## Choose the protocol version first
 
-The current StackAnvil ViaBedrock checkout targets Bedrock **1.26.51**, network protocol **2193**. Its source of truth is `BEDROCK_VERSION_NAME` and `BEDROCK_PROTOCOL_VERSION` in [ViaBedrock's `ProtocolConstants.java`](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/src/main/java/net/raphimc/viabedrock/protocol/data/ProtocolConstants.java). Check the same file in `.worktrees/viabedrock` after syncing the stack. A later checkout can target another version.
+The current StackAnvil ViaBedrock checkout targets Bedrock **1.26.60**, network protocol **2225**. The [first upstreamable patch](../patches/viabedrock/upstreamable/0001-update-bedrock-to-1-26-60.patch) contains the update. Check `BEDROCK_VERSION_NAME` and `BEDROCK_PROTOCOL_VERSION` in `.worktrees/viabedrock` after syncing the stack.
 
-Mojang's latest protocol preview at the time of this review is **1.26.60-beta.28**, protocol **2216**. The [1.26.50-beta.26 preview](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/) uses protocol **2192**. These are useful for finding changes, but neither describes protocol 2193 exactly.
+[Mojang's 1.26.60 release metadata](https://github.com/Mojang/bedrock-protocol-docs/releases/tag/v1.26.60) identifies protocol 2225. Its schema version label is `1.26.60-beta.0`. Use the network protocol number to match evidence. A preview for another protocol provides leads but requires wire checks.
 
 For protocol and enum work:
 
@@ -14,12 +14,12 @@ For protocol and enum work:
 2. Use Mojang's **beta/preview** packet and type pages to investigate field order, conditions, and enum values. The stable protocol pages have shown incorrect enum mappings; do not use them as the sole authority for numeric values.
 3. Select a preview with the same protocol number when one exists. If none exists, treat the closest preview as a lead, then compare the release changelog, current codecs, and a native client or server trace.
 4. Check the enum's wire type and encoding as well as its numeric value. Add a focused encode/decode test when a mapping affects packets we send or receive.
-5. Record the game build and network protocol with any capture. Never copy values from protocol 2216 into a protocol 2193 implementation without evidence.
+5. Record the game build and network protocol with any capture. Never copy values from another protocol into the target implementation without matching evidence.
 
 The [preview `TextProcessingEventOrigin` page](https://mojang.github.io/bedrock-protocol-docs/1.26.60-preview.25/types/text-processing-event-origin/) shows a concrete enum renumbering in its **All builds** changelog. Use the changelog to locate a change, then check the schema for the target build.
 
 Preview tables also need wire checks.
-The target protocol 2193 actor-event table lists sequential values that contradict the matching BDS and native client.
+The earlier protocol 2193 actor-event table lists sequential values that contradict the matching BDS and native client.
 BDS sends rocket explosion 25 and crossbow charge completion 74; the target documentation lists 24 and 54.
 The [actor-event evidence](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.pr.md) records the discrepancy.
 Keep verified sparse IDs even when a versioned table gives different values.
@@ -75,7 +75,11 @@ For a specific feature, search the local `protocol/packet`, `protocol/types`, an
 ## Versioned Windows GDK reference
 
 The community [Windows GDK archive](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive) publishes unpacked packages and standalone executables as release assets.
-The [1.26.51.1 release](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive/releases/tag/1.26.51.1) matches the current native research target.
+The [1.26.60.5 release](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive/releases/tag/1.26.60.5) supplies the current client resource snapshot.
+Its package SHA-256 is `a36945ad3b28d762d31d4533168a102294b55e8f88fe2c570485493fb3d15f08`.
+Its `Minecraft.Windows.exe` SHA-256 is `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`.
+
+The [1.26.51.1 release](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive/releases/tag/1.26.51.1) remains the historical native reference for earlier comparisons.
 Its `Minecraft.Windows.exe` has SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
 The existing private executable matches that digest and the published file size.
 This provides a reproducible source for the native instruction controls without another executable download.

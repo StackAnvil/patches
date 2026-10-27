@@ -370,7 +370,7 @@ async function launchJava(
   await mkdir(config, { recursive: true, mode: 0o700 });
   const settingsFile = join(config, "settings.json");
   const settings = existsSync(settingsFile) ? JSON.parse(await readFile(settingsFile, "utf8")) : {};
-  settings.selected_protocol_version = client === "addon" ? "Bedrock 1.26.51" : "26.3";
+  settings.selected_protocol_version = client === "addon" ? "Bedrock 1.26.60" : "26.3";
   await writeFile(settingsFile, JSON.stringify(settings), { mode: 0o600 });
   await rm(join(config, "bedrock.json"), { force: true });
   if (account)
@@ -843,7 +843,7 @@ Live add-on recordings accept --allow-transfers to save each connection separate
           "--target-address",
           target!,
           "--target-version",
-          "Bedrock 1.26.51",
+          "Bedrock 1.26.60",
           "--auth-method",
           mode === "record" && (input !== "local" || option("--account")) ? "ACCOUNT" : "NONE",
           "--minecraft-account-index",

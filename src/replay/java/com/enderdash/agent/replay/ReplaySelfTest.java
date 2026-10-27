@@ -350,7 +350,7 @@ public final class ReplaySelfTest {
     }
 
     private static SkinData appearance(String geometry) {
-        return new SkinData("fixture", "", "", new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB), List.of(), null,
+        return new SkinData("fixture", "", new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB), List.of(), null,
                 geometry, "1.26.51", "", false, false, false, false,
                 "", "fixture", "Wide", "#FFFFFFFF", List.of(), List.of(), false, "", "");
     }

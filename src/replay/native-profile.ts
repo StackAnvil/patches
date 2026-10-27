@@ -227,8 +227,8 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
     string,
     unknown
   >;
-  if (typeof original.mc_version !== "string" || !/^1\.26\.51(?:\.|$)/.test(original.mc_version)) {
-    throw new Error("Native recording requires the official Bedrock 1.26.51 client.");
+  if (typeof original.mc_version !== "string" || !/^1\.26\.60(?:\.|$)/.test(original.mc_version)) {
+    throw new Error("Native recording requires the official Bedrock 1.26.60 client.");
   }
   const sourcePaths: Record<string, string> = {};
   const sourceGames = await realpath(join(source, "games"));
