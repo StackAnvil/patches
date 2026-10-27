@@ -8,6 +8,27 @@ Experimental content uses documented Java fallbacks. Block seating and signed au
 
 Validation:
 
-- Standalone build, style checks, five targeted binary-layout and connection-upgrade tests, and mapping validation pass on pinned upstream without StackAnvil setup.
-- An isolated official BDS 1.26.60.6 NetherNet bootstrap reaches StartGame and captures the stable actor registry with the unchanged production login helper.
-- All 105 core patches and 38 add-on patches replay. Core, add-on, CubeConverter, and ViaProxy builds pass. The relay self-tests pass. A Java 26.3 client with Iris shaders reaches StartGame and spawns on official BDS 1.26.60.6. No uncompressed frames are dropped.
+- The standalone patch applies and builds on pinned upstream without StackAnvil setup. Style checks, mapping validation, and 13 targeted tests pass.
+- All 104 core patches and 38 add-on patches replay. Core, add-on, CubeConverter, and ViaProxy builds pass. Relay self-tests pass.
+- Enum regeneration from the 2225 archive leaves no diff in the standalone and complete core checkouts.
+
+Earlier migration validation used official BDS 1.26.60.6.
+An isolated NetherNet bootstrap reached StartGame and captured the stable actor registry with the unchanged production login helper.
+A fully patched Java 26.3 client with Iris shaders also spawned, with no dropped uncompressed frames.
+That downstream join does not establish a standalone-patch join test.
+
+## Metadata cleanup
+
+Use the explicit protocol-2225 enum values without the old protocol-2193 container and text-origin corrections.
+The former container correction patch is removed. Its wire test belongs to this version update.
+
+Keep response variant indexes in the packet codec and remove the synthetic unknown entity-data enum member.
+Malformed entity metadata still fails before the payload is read.
+The resource-pack response codec and its wire tests move here from the later cache patch.
+
+The packet-ID enum still omits declared packets.
+Supplement its entries from same-protocol packet schemas and reject conflicts or mixed protocols.
+This replaces manual packet additions in the locator and sound patches and the camera patch's literal control-scheme ID.
+The remaining Cereal action indexes and width-specific compression sentinels describe actual wire fields.
+
+The full stack also removes the inventory-source override; this enum field serializes value 99999 directly.

@@ -11,8 +11,8 @@ The current StackAnvil ViaBedrock checkout targets Bedrock **1.26.60**, network 
 For protocol and enum work:
 
 1. Read the target protocol number from the checked-out ViaBedrock source.
-2. Use Mojang's **beta/preview** packet and type pages to investigate field order, conditions, and enum values. The stable protocol pages have shown incorrect enum mappings; do not use them as the sole authority for numeric values.
-3. Select a preview with the same protocol number when one exists. If none exists, treat the closest preview as a lead, then compare the release changelog, current codecs, and a native client or server trace.
+2. Start with Mojang's metadata archive for the target protocol. Use explicit `x-enum-binary-value` values instead of enum declaration order.
+3. Compare matching beta/preview schemas and implementation evidence when release metadata omits values or conflicts with captures. A newer preview can target another protocol.
 4. Check the enum's wire type and encoding as well as its numeric value. Add a focused encode/decode test when a mapping affects packets we send or receive.
 5. Record the game build and network protocol with any capture. Never copy values from another protocol into the target implementation without matching evidence.
 
@@ -20,9 +20,22 @@ The [preview `TextProcessingEventOrigin` page](https://mojang.github.io/bedrock-
 
 Preview tables also need wire checks.
 The earlier protocol 2193 actor-event table lists sequential values that contradict the matching BDS and native client.
-BDS sends rocket explosion 25 and crossbow charge completion 74; the target documentation lists 24 and 54.
+BDS sends rocket explosion 25 and crossbow charge completion 74. The old table lists 24 and 54.
+The protocol 2225 metadata now supplies the correct explicit values.
 The [actor-event evidence](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.pr.md) records the discrepancy.
 Keep verified sparse IDs even when a versioned table gives different values.
+
+The 2225 archive resolves the old container-slot and text-origin enum corrections.
+The generator no longer repairs protocol 2193 metadata.
+It supplements `MinecraftPacketIds` from packet schemas because that enum still omits declared packets, including stonecutter and block-passenger packets.
+Schema and enum protocol numbers must match. Conflicting IDs fail generation.
+
+Enum values and Cereal variant indexes are separate wire fields.
+`ResourcePackResponse` uses enum values 1 through 4 and variant indexes 0 through 3.
+Item stack actions retain unused enum values 7 and 8, which the variant list omits.
+Keep these translations in codecs, not generated enums.
+`InventorySourceType.Non_Implemented_Feature_TODO` instead uses `Enum-as-Value`: its wire value is 99999, not declaration index 4.
+Likewise, no-compression sentinels use all bits at their wire width: 65535 for NetworkSettings and 255 for frame headers.
 
 ## Establish the behavior to port
 
@@ -39,9 +52,7 @@ These links cover packet shape and protocol behavior. A versioned link is a snap
 | Source | Use |
 | --- | --- |
 | [Latest protocol portal](https://mojang.github.io/bedrock-protocol-docs/) | Find the newest preview and its network protocol number. |
-| [1.26.60-beta.28 packet index](https://mojang.github.io/bedrock-protocol-docs/1.26.60-preview.28/) | Inspect packets in the latest checked preview, protocol 2216. |
-| [1.26.60-beta.28 type index](https://mojang.github.io/bedrock-protocol-docs/1.26.60-preview.28/types/) | Find supporting objects, unions, and enums for that preview. |
-| [1.26.50-beta.26 packet index](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/) | Compare a preview near the current ViaBedrock target. |
+| [1.26.60 metadata archive](https://github.com/Mojang/bedrock-protocol-docs/releases/download/v1.26.60/metadata.zip) | Read packet schemas and explicit enum values for protocol 2225. |
 | [Protocol changelog](https://mojang.github.io/bedrock-protocol-docs/changelog/) | Compare stable and preview builds; inspect **All builds** for preview changes. |
 | [Protocol schema releases](https://github.com/Mojang/bedrock-protocol-docs/releases) | Get versioned JSON schema archives and their protocol numbers. |
 | [Protocol docs repository](https://github.com/Mojang/bedrock-protocol-docs) | Inspect schema generation and guide sources. Its site is assembled from releases, not only `main`. |

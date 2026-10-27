@@ -542,7 +542,8 @@ public final class NativeCaptureSelfTest {
 
     private static ByteBuf response(ChannelHandlerContext ctx, ResourcePackResponse status) {
         ByteBuf response = ctx.alloc().buffer(); Types.VAR_INT.writePrimitive(response, 8);
-        BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(response, status.getValue());
+        // The response union is zero-based; ResourcePackResponse is one-based.
+        BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(response, status.getValue() - 1);
         BedrockTypes.STRING.write(response, switch (status) {
             case Downloading -> "downloading";
             case DownloadingFinished -> "downloadingfinished";

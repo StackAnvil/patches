@@ -2,11 +2,22 @@
 
 Keep inventory request, response, and recipe codecs together before the container implementation.
 
-## Filter origin correction
+## Enum values and wire variants
 
-Native Bedrock 1.26.51.1, build 51061372, protocol 2193, sent filter origin `-1` in accepted merchant requests. The release metadata lists enum names without their numeric starting value. Preserve the upstream mapping with `unknown=-1` and prevent the enum generator from replacing it with zero for protocol 2193.
+Protocol 2225 metadata explicitly defines `TextProcessingEventOrigin.unknown=-1`.
+The old protocol-2193 generator correction is no longer necessary.
+The retained merchant and anvil wire tests cover the same signed origin values.
 
-Wire tests cover the unknown sentinel and the existing anvil origin mapping. The tool source compiles. The full core suite and Checkstyle pass after replay.
+Keep generated item action values unchanged.
+The Cereal variant list omits enum values 7 and 8, so the codec translates later action values to variant indexes.
+For example, `CraftCreative` remains enum value 14 and uses variant index 12.
+The existing byte-level tests cover both discriminators.
+
+`InventorySourceType.Non_Implemented_Feature_TODO` is 99999 in the
+[2225 metadata](https://github.com/Mojang/bedrock-protocol-docs/releases/tag/v1.26.60).
+Its field uses `Enum-as-Value`, so the codec writes 99999 directly, not declaration index 4.
+The [Cloudburst inventory-source model](https://github.com/CloudburstMC/Protocol/blob/3.0/bedrock-codec/src/main/java/org/cloudburstmc/protocol/bedrock/data/inventory/transaction/InventorySource.java) also assigns 99999.
+Remove the generated enum override and cover the complete unsigned-varint encoding and decoding.
 
 This codec foundation belongs to the inventory work in [ViaBedrock #276](https://github.com/ViaVersionAddons/ViaBedrock/pull/276).
 
