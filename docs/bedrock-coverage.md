@@ -11837,3 +11837,40 @@ Native first acknowledges a same-tick teleport at the target with unintegrated v
 This timing difference remains open and prevents a complete trajectory parity claim.
 The scripted impulses do not establish actual pearl and wind-charge behavior or resolve endless rollback and endless eating.
 The original inventory and locator reports and the full five-area goal remain open.
+
+## Native teleport travel filtering, October 27, 2026
+
+The next movement investigation separates live velocity delivery from travel during the teleport acknowledgement frame.
+Final protocol 2193 journals compare the corrected Java client with official Bedrock 1.26.51.1, build 51061372, against the same owned BDS fixture.
+Both native same-tick controls first acknowledge at the teleport target with the received, unintegrated velocity.
+Java first acknowledges after movement and velocity decay.
+
+In the next-tick control, native acknowledges before the impulse, while Java combines acknowledgement with its first impulse frame.
+Native receives corrections in two cases. Java receives corrections in those cases and the next-tick case.
+These are finite controlled corrections, not a reproduction of the reported endless rollback.
+
+Static inspection identifies a native travel filter that the Java path does not yet implement.
+Native teleport setup calls marker setter `14253c950` with a true value.
+That setter manages `HasTeleportedFlagComponent`, whose type hash is `0x42cb24ca`.
+`MobTravelTeleportedFilterSystem` at `1431d7890` intersects that marker with `MobTravelComponent` (`0x39cf8d64`) and removes travel for matching actors.
+The cleanup system at `146872d30` removes the marker from matching world actors.
+This is a candidate explanation for the observed acknowledgement frame, not proof of complete scheduling equivalence.
+
+Another path sets bit 30 of `PlayerActionComponent` (`0x3000f399`).
+Original converter `143ca9a90` maps it to `HandledTeleport` input bit 37.
+Input construction at `1447696a0` calls that converter, then clears the action component through `14287a010`.
+`ForceSendMotionPacketComponent` (`0x147bba17`) is a separate type and does not identify the travel marker.
+
+Seventy-two bounded controls execute original native instructions from the pinned executable.
+Twelve controls verify action conversion and reset, including unrelated action bits.
+Twenty-four controls verify marker insertion, erasure and cleanup with current, missing and stale generations.
+Thirty-six controls verify travel removal through both view drivers and matching or stale generations.
+The filter controls execute the original loop, sparse membership checks and iterator.
+
+Their registry discovery, generic insertion and virtual erasure remain observed return boundaries.
+They supply valid stores and cached views without executing native world physics or the complete scheduler.
+Raw executable data, journals and controls remain private.
+
+The production travel filter, its historical replay state and a rebuilt Java comparison remain unfinished.
+A future implementation must preserve the native marker lifecycle and isolate ordinary Java sessions and historical corrections.
+It must also verify actual pearl/wind-charge use, mounts and the remaining gameplay reports separately.
