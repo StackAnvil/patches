@@ -154,3 +154,17 @@ records the resumed same-client observation, failed initial controls, and verifi
 The target material library defines glint with a second repeated texture sampler.
 This material family and complete animated enchanted equipment remain unsupported.
 The issue requires native material and animation work; the static fallback does not establish shield parity.
+
+## Plain shield banner-data routing, October 27, 2026
+
+Held-item admission now checks visible banner data instead of component presence.
+An empty pattern list without a base color no longer prevents native equipped rendering.
+A nonempty list or a base color still reserves the Java banner atlas path.
+Both perspectives use this shared check.
+
+A regression test covers missing, empty, colored, and patterned components, then replacement with empty layers.
+The focused equipment tests pass at the owning prefix.
+The complete stack replays, and its add-on suite reports 1,108 passed, 139 optional skipped, and no failures.
+The isolated upstream check still requires earlier StackAnvil actor-animation changes; its temporary apply was aborted.
+The reported WildFFA shield also has enchantment glint, which still keeps its existing fallback.
+This change does not resolve that separate shader and animation gap or establish visible shield parity.

@@ -11507,3 +11507,22 @@ These controls establish shader arithmetic, without establishing native frame in
 Engine animation timing, glint strength, texture-scale production, sampler bindings, and the Java/Iris implementation remain pending.
 The enchanted shield still uses the previously recorded static fallback path.
 No production shader or renderer changes accompany this reference milestone.
+
+## Plain shield banner-data routing, October 27, 2026
+
+The native equipped renderer now distinguishes an empty banner component from visible banner data.
+Missing or empty patterns without a base color no longer prevent native held rendering.
+A nonempty pattern list or a base color still reserves the Java banner atlas path.
+This shared admission rule applies in first-person and third-person views.
+
+The regression test uses real item components and covers missing, empty, colored, and patterned shields, then replacement with empty layers.
+The focused equipment tests pass at the owning patch prefix.
+The complete 38-patch add-on stack replays, and its suite reports 1,108 passed, 139 optional skipped, and no failures.
+
+The isolated upstream check cannot apply this equipment patch without earlier StackAnvil changes.
+It stops at the absent actor-animation source; that temporary PR apply was aborted.
+The full-stack tests do not establish standalone upstream compatibility.
+
+No new client build or live comparison validates this change.
+The observed WildFFA shield is enchanted and still takes the existing glint fallback.
+Native glint, complete shield animation, and visible placement remain open.

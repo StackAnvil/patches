@@ -1,4 +1,4 @@
-From 8b8623fa2a5bc554971dd188b2ec6f930368b755 Mon Sep 17 00:00:00 2001
+From 180b856076315149450750d80753a56053aa1ff1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(attachables): render equipped native pack models
@@ -263,6 +263,17 @@ from the filtered draw models, and retire historical model subsets. Admit
 supported per-bone materials instead of rejecting the entire item whenever
 a controller contains a non-wildcard rule. Keep atomic slot fallback when
 an active material or required image is unavailable.
+
+Check visible banner data before reserving a held item for the Java atlas.
+Plain converted shields can carry an empty BANNER_PATTERNS component; its
+presence must not suppress native equipped geometry and animations. Retain
+the atlas for non-empty layers and for a base color even without layers.
+Enchanted equipment still retains the existing glint fallback.
+
+Test missing, empty, colored and patterned components, including transitions
+back to empty. A passive WildFFA trace establishes empty layers and no base
+color on the reported enchanted shield, but does not validate this change
+visually or resolve the separate native glint gap.
 ---
  .../appearance/BedrockActorAnimation.java     |  66 ++-
  .../appearance/BedrockAttachableBindings.java |  66 +++
@@ -277,7 +288,7 @@ an active material or required image is unavailable.
  .../bedrock/render/BedrockEquipmentCache.java |  41 ++
  .../BedrockEquippedAttachableLayer.java       |  36 ++
  .../render/BedrockHeldAttachableBindings.java |  59 +++
- .../render/BedrockPlayerAttachables.java      | 465 ++++++++++++++++++
+ .../render/BedrockPlayerAttachables.java      | 470 ++++++++++++++++++
  .../bedrock/render/BedrockPlayerModel.java    |   8 +
  .../bedrock/render/BedrockPlayerSkins.java    |  37 +-
  .../bedrock/render/BedrockTextureMeshes.java  | 109 ++++
@@ -292,12 +303,12 @@ an active material or required image is unavailable.
  .../render/BedrockAttachableMatricesTest.java | 150 ++++++
  .../render/BedrockCostumeVisibilityTest.java  |  45 ++
  .../render/BedrockEquipmentOwnerTest.java     |  71 +++
- .../render/BedrockEquippedAttachableTest.java |  98 ++++
+ .../render/BedrockEquippedAttachableTest.java | 137 +++++
  .../render/BedrockExplicitBindingsTest.java   | 230 +++++++++
  .../BedrockHeldAttachableBindingsTest.java    | 126 +++++
  .../render/BedrockPlayerModelTest.java        |  59 +++
  .../render/BedrockTextureMeshesTest.java      |  87 ++++
- 33 files changed, 2620 insertions(+), 23 deletions(-)
+ 33 files changed, 2664 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableBindings.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java
@@ -1129,10 +1140,10 @@ index 0000000..1ea81dc
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 new file mode 100644
-index 0000000..096a937
+index 0000000..cb30052
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
-@@ -0,0 +1,465 @@
+@@ -0,0 +1,470 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1284,7 +1295,7 @@ index 0000000..096a937
 +        for (final EquipmentSlot slot : firstPerson ? List.of(EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND) : SLOTS) {
 +            final ItemStack stack = firstPerson ? slot == EquipmentSlot.MAINHAND ? main : off : entity.getItemBySlot(slot);
 +            final boolean hand = slot == EquipmentSlot.MAINHAND || slot == EquipmentSlot.OFFHAND;
-+            if (hand && (stack.hasFoil() || stack.has(DataComponents.BANNER_PATTERNS) || !BedrockPlayerSkins.options(state.skin).rendering().getOrDefault("enable_attachables", true))) continue;
++            if (hand && (stack.hasFoil() || requiresBannerAtlas(stack) || !BedrockPlayerSkins.options(state.skin).rendering().getOrDefault("enable_attachables", true))) continue;
 +            final Map<String, Object> context = Map.of("is_first_person", firstPerson ? 1F : 0F, "item_slot", slotName(slot));
 +            final Map<String, Object> itemQueries = new HashMap<>(queries);
 +            itemQueries.put("get_animation_frame", BedrockFirstPersonItemRendering.animationFrame(stack));
@@ -1449,6 +1460,11 @@ index 0000000..096a937
 +
 +    private static String slotName(final EquipmentSlot slot) {
 +        return switch (slot) { case MAINHAND -> "main_hand"; case OFFHAND -> "off_hand"; default -> slot.getName(); };
++    }
++
++    static boolean requiresBannerAtlas(final ItemStack stack) {
++        final var patterns = stack.get(DataComponents.BANNER_PATTERNS);
++        return stack.has(DataComponents.BASE_COLOR) || patterns != null && !patterns.layers().isEmpty();
 +    }
 +
 +    private static ItemIdentity identify(final ItemStack stack, final ResourcePackStorage packs, final BedrockAttachableSelection selector,
@@ -1623,7 +1639,7 @@ index 4bedd7f..acf0f1b 100644
 +
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 096b997..0285a87 100644
+index 74b22b4..f1a0f99 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -474,6 +474,17 @@ public final class BedrockPlayerSkins {
@@ -1714,7 +1730,7 @@ index 096b997..0285a87 100644
  
      static Map<String, Object> geometryQueries(final AvatarRenderState state) {
          final Geometry geometry = geometry(appearance(state.skin), true);
-@@ -1151,10 +1178,12 @@ public final class BedrockPlayerSkins {
+@@ -1152,10 +1179,12 @@ public final class BedrockPlayerSkins {
          final var client = Minecraft.getInstance();
          rendererContext = BedrockPlayerLayerModels.context(context, client.getAtlasManager(), client.getPalettedTextureManager());
          rendererEpoch++;
@@ -2781,25 +2797,64 @@ index 0000000..bd73433
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
 new file mode 100644
-index 0000000..d9f0c69
+index 0000000..b9394af
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,137 @@
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerControllers;
 +import java.util.List;
 +import java.util.Map;
 +import java.util.Set;
++import net.minecraft.SharedConstants;
++import net.minecraft.core.Holder;
++import net.minecraft.core.component.DataComponentMap;
++import net.minecraft.core.component.DataComponents;
 +import net.minecraft.resources.Identifier;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.item.DyeColor;
++import net.minecraft.world.item.ItemStack;
++import net.minecraft.world.item.Items;
++import net.minecraft.world.level.block.entity.BannerPattern;
++import net.minecraft.world.level.block.entity.BannerPatternLayers;
 +import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 +import org.joml.Matrix4f;
 +import org.joml.Vector3f;
 +import org.junit.jupiter.api.Test;
-+import com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerControllers;
 +
 +final class BedrockEquippedAttachableTest {
++    @Test
++    void reservesTheBannerAtlasForVisiblePatternsOrBaseColor() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++        final var shield = Items.SHIELD;
++        if (!shield.builtInRegistryHolder().areComponentsBound()) {
++            shield.builtInRegistryHolder().bindComponents(DataComponentMap.EMPTY);
++        }
++        final var stack = new ItemStack(shield);
++        stack.remove(DataComponents.BANNER_PATTERNS);
++        stack.remove(DataComponents.BASE_COLOR);
++        assertFalse(BedrockPlayerAttachables.requiresBannerAtlas(stack));
++
++        stack.set(DataComponents.BANNER_PATTERNS, BannerPatternLayers.EMPTY);
++        assertFalse(BedrockPlayerAttachables.requiresBannerAtlas(stack));
++        stack.set(DataComponents.BASE_COLOR, DyeColor.RED);
++        assertTrue(BedrockPlayerAttachables.requiresBannerAtlas(stack));
++        stack.remove(DataComponents.BASE_COLOR);
++
++        final var pattern = Holder.direct(new BannerPattern(
++                Identifier.withDefaultNamespace("stripe_center"), "block.minecraft.banner.stripe_center"));
++        stack.set(DataComponents.BANNER_PATTERNS,
++                new BannerPatternLayers(List.of(
++                        new BannerPatternLayers.Layer(pattern, DyeColor.WHITE))));
++        assertTrue(BedrockPlayerAttachables.requiresBannerAtlas(stack));
++        stack.set(DataComponents.BANNER_PATTERNS, BannerPatternLayers.EMPTY);
++        assertFalse(BedrockPlayerAttachables.requiresBannerAtlas(stack));
++    }
++
 +    @Test
 +    void resolvesCanonicalPackIdentityAndRetainsTheSelectedVariant() {
 +        final var model = Identifier.fromNamespaceAndPath("viabedrock", "attachables/test/wearable");
