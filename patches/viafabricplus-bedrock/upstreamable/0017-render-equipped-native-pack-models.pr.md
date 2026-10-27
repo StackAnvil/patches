@@ -224,3 +224,11 @@ The physical controls pass all eight phases.
 The private proxy runner needs an explicit stop because its timer waits for a direct-recorder marker.
 That capture does not count as a normal timed-recorder pass.
 The owned client closes through the runner cleanup, and saved profile bytes are restored exactly.
+
+## Retain world resource context
+
+Equipment normalization now carries the selected library's base-game version
+into its native actor storage. The owner-binding regression uses an older
+world cutoff while retaining server replacement conditions. This prevents
+attachables from resetting the shared resource context to latest.
+It does not establish native armor masking or graphical equipment parity.

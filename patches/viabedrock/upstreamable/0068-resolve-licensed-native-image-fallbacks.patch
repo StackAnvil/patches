@@ -1,7 +1,8 @@
-From 6afb49bf48361a257bad31c3acecff0de547a19d Mon Sep 17 00:00:00 2001
+From 74a7f05f10f5d015ba48b38ea48778624abaaf49 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
-Subject: [PATCH] feat(resource-packs): resolve licensed native image fallbacks
+Subject: [PATCH] feat(resource-packs): select native resources by world
+ version
 
 Bedrock 1.26.51.1 protocol 2193 accepts Hive item atlas aliases to vanilla images which the server does not resend. The bundled metadata archives intentionally contain no images, leaving these aliases unresolved during Java conversion.
 
@@ -37,26 +38,66 @@ case, numeric/base overlay order, invalid manifests and immutable lists.
 The StackAnvil build verifies the exact bundle in core and both consumers.
 This supplies the same native image fallback on proxy and direct routes;
 it does not establish complete native visuals or other actor semantics.
+
+Select cumulative vanilla metadata and licensed resource layers using the
+base-game version advertised by RESOURCE_PACK_STACK. Preserve server pack
+priority independently of that vanilla cutoff. Delay licensed acquisition
+until preparation on the existing worker after STACK supplies the version.
+
+Carry the immutable version through native resource archive format2 for
+direct and ViaProxy clients, and include it in conversion cache identity
+even when selected file bytes happen to match. Reject malformed archive
+version data rather than silently selecting current resources.
+
+Official BDS1.26.60.6, protocol2225, advertises * for an ordinary world and
+1.20.0 for an isolated template-marked world with that baseGameVersion.
+The executable SHA-256 is
+ea16b541a448e07c337848d2c5f37321b706554b5216dd942f3f11e7a8ed2bad.
+Microsoft's base-game version guide specifies cumulative vanilla overlay
+selection and leaves server resource/skin packs independent of it:
+https://learn.microsoft.com/en-us/minecraft/creator/documents/basegameversioning
+
+Regressions cover numeric cutoffs, newer/older/newer resource selection,
+server priority, immutable raw layers, versioned archive/storage transfer,
+and cache separation with identical resource bytes. BDS packet evidence
+does not establish native client graphical or complete audio parity.
+
+Verify the cutoff metadata against all55 versioned vanilla manifests in
+the matching1.26.60.5 client and generated core metadata: every layer's
+minimum engine version matches its numeric overlay version. Archive
+validation tests derive count and provenance offsets after the variable
+version field, retaining malformed-role and truncated-header coverage.
 ---
  build.gradle                                  |  11 ++
+ .../api/resourcepack/BaseGameVersion.java     |  94 ++++++++++
+ .../api/resourcepack/NativeActorLibrary.java  |  25 ++-
+ .../http/ConvertedResourcePackCache.java      |   1 +
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
- .../protocol/packet/ResourcePackPackets.java  |   2 +-
- .../provider/BuiltinResourcePackProvider.java |  26 +++
- .../protocol/provider/BundledImagePacks.java  | 169 ++++++++++++++++++
+ .../protocol/packet/ResourcePackPackets.java  |  15 +-
+ .../provider/BuiltinResourcePackProvider.java |  27 +++
+ .../protocol/provider/BundledImagePacks.java  | 176 ++++++++++++++++++
+ .../NativeEffectsResourceRewriter.java        |   2 +-
  .../storage/ResourcePackLoadStateTracker.java |  19 +-
- .../protocol/storage/ResourcePackStorage.java |  27 ++-
- .../BuiltinActorResourcesTest.java            |  51 ++++++
+ .../protocol/storage/ResourcePackStorage.java |  53 ++++--
+ .../api/resourcepack/BaseGameVersionTest.java |  90 +++++++++
+ .../BuiltinActorResourcesTest.java            |  51 +++++
+ .../resourcepack/NativeActorLibraryTest.java  |  45 +++--
+ .../resourcepack/SoundTranslationsTest.java   |   6 +-
  .../http/ConvertedResourcePackCacheTest.java  |  22 +++
- .../provider/BundledImagePacksTest.java       | 163 +++++++++++++++++
- .../resourcepack/ModelResourceAssetsTest.java |  78 ++++++++
- 11 files changed, 563 insertions(+), 7 deletions(-)
+ .../http/WorldVersionCacheTest.java           |  27 +++
+ .../provider/BundledImagePacksTest.java       | 163 ++++++++++++++++
+ .../resourcepack/ModelResourceAssetsTest.java |  84 ++++++++-
+ 19 files changed, 864 insertions(+), 49 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/BaseGameVersion.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacks.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/BaseGameVersionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/BuiltinActorResourcesTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/http/WorldVersionCacheTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacksTest.java
 
 diff --git a/build.gradle b/build.gradle
-index 9f006788f..22579d236 100644
+index a11a7635d..48fa47909 100644
 --- a/build.gradle
 +++ b/build.gradle
 @@ -12,6 +12,17 @@ tasks.withType(Jar).configureEach {
@@ -77,6 +118,192 @@ index 9f006788f..22579d236 100644
  checkstyleMain {
      exclude("**/generated/**")
  }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/BaseGameVersion.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/BaseGameVersion.java
+new file mode 100644
+index 000000000..c332d736b
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/BaseGameVersion.java
+@@ -0,0 +1,94 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++import java.util.StringJoiner;
++
++/** The cumulative vanilla resource cutoff advertised by a world, independent of server packs. */
++public record BaseGameVersion(int major, int minor, int patch) implements Comparable<BaseGameVersion> {
++
++    public static final BaseGameVersion CURRENT = parse(ProtocolConstants.BEDROCK_VERSION_NAME);
++    private static final BaseGameVersion ORIGINAL = new BaseGameVersion(1, 13, 0);
++
++    public BaseGameVersion {
++        if (major < 0 || minor < 0 || patch < 0) {
++            throw new IllegalArgumentException("Negative base game version");
++        }
++    }
++
++    public static BaseGameVersion parse(final String value) {
++        if ("*".equals(value)) {
++            return CURRENT;
++        }
++        if (value == null || value.length() > 64) {
++            throw new IllegalArgumentException("Invalid base game version");
++        }
++        final String[] parts = value.split("\\.", -1);
++        if (parts.length < 2 || parts.length > 4) {
++            throw new IllegalArgumentException("Invalid base game version: " + value);
++        }
++        final int[] numbers = new int[4];
++        for (int i = 0; i < parts.length; i++) {
++            if (!parts[i].matches("[0-9]+")) {
++                throw new IllegalArgumentException("Invalid base game version: " + value);
++            }
++            numbers[i] = Integer.parseInt(parts[i]);
++        }
++        return new BaseGameVersion(numbers[0], numbers[1], numbers[2]);
++    }
++
++    public static BaseGameVersion vanillaLayer(final String name) {
++        if (name.equals("vanilla") || name.equals("vanilla_base")) {
++            return ORIGINAL;
++        }
++        if (!name.startsWith("vanilla_")) {
++            throw new IllegalArgumentException("Invalid vanilla resource layer: " + name);
++        }
++        return parse(name.substring("vanilla_".length()));
++    }
++
++    public boolean includes(final ResourcePack pack) {
++        final String manifest = pack.content().contains("manifest.json") ? "manifest.json" : "pack_manifest.json";
++        final var header = pack.content().getJson(manifest).getAsJsonObject("header");
++        final JsonElement minimum = header.get("min_engine_version");
++        if (minimum == null) {
++            return true;
++        }
++        final String version;
++        if (minimum.isJsonArray()) {
++            final var parts = minimum.getAsJsonArray();
++            if (parts.size() < 2 || parts.size() > 4) {
++                throw new IllegalArgumentException("Invalid vanilla resource version");
++            }
++            final StringJoiner components = new StringJoiner(".");
++            for (final JsonElement part : parts) {
++                components.add(part.getAsString());
++            }
++            version = components.toString();
++        } else {
++            version = minimum.getAsString();
++        }
++        return parse(version).compareTo(this) <= 0;
++    }
++
++    @Override
++    public int compareTo(final BaseGameVersion other) {
++        int order = Integer.compare(this.major, other.major);
++        if (order == 0) {
++            order = Integer.compare(this.minor, other.minor);
++        }
++        return order != 0 ? order : Integer.compare(this.patch, other.patch);
++    }
++
++    @Override
++    public String toString() {
++        return this.major + "." + this.minor + "." + this.patch;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java
+index 7448e5169..c91f7513e 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java
+@@ -18,6 +18,7 @@ import java.util.ArrayList;
+ import java.util.Collection;
+ import java.util.List;
+ import java.util.Map;
++import java.util.Objects;
+ import java.util.function.Predicate;
+ 
+ /** Native actor resources in resolved pack order, including their server or built-in provenance. */
+@@ -28,15 +29,16 @@ public final class NativeActorLibrary {
+     private static final List<String> ROOT_PATHS = List.of("manifest.json", "pack_manifest.json", "sounds.json");
+     private static final List<String> EXTENSIONS = List.of(".json", ".material", ".png", ".tga", ".jpg", ".ogg", ".fsb", ".wav", ".lang");
+ 
+-    public static byte[] encode(final Collection<ResourcePack> bottomToTop, final Predicate<ResourcePack> server) throws IOException {
++    public static byte[] encode(final BaseGameVersion version, final Collection<ResourcePack> bottomToTop, final Predicate<ResourcePack> server) throws IOException {
+         final List<ResourcePack> packs = List.copyOf(bottomToTop);
+         if (packs.size() > MAX_PACKS) {
+             throw new IOException("Too many native actor packs");
+         }
+         final var bytes = UnsynchronizedByteArrayOutputStream.builder().get();
+         try (DataOutputStream fields = new DataOutputStream(bytes)) {
+-            fields.writeInt(1);
++            fields.writeInt(2);
+             fields.writeInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            fields.writeUTF(version.toString());
+             fields.writeInt(packs.size());
+             for (final ResourcePack pack : packs) {
+                 fields.writeByte(server.test(pack) ? 1 : 0);
+@@ -79,11 +81,17 @@ public final class NativeActorLibrary {
+                 || path.endsWith(".png") || path.endsWith(".tga");
+     }
+ 
+-    public static List<Layer> decode(final InputStream input) throws IOException {
++    public static Archive decode(final InputStream input) throws IOException {
+         final DataInputStream fields = new DataInputStream(input);
+-        if (fields.readInt() != 1 || fields.readInt() != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++        if (fields.readInt() != 2 || fields.readInt() != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
+             throw new IOException("Unsupported native actor library");
+         }
++        final BaseGameVersion version;
++        try {
++            version = BaseGameVersion.parse(fields.readUTF());
++        } catch (final IllegalArgumentException invalid) {
++            throw new IOException("Invalid native resource base game version", invalid);
++        }
+         final int count = fields.readInt();
+         if (count < 0 || count > MAX_PACKS) {
+             throw new IOException("Invalid native actor pack count");
+@@ -104,7 +112,7 @@ public final class NativeActorLibrary {
+         for (int index = 0; index < count; index++) {
+             layers.add(new Layer(servers.get(index), packs.get(index)));
+         }
+-        return List.copyOf(layers);
++        return new Archive(version, layers);
+     }
+ 
+     private static boolean resource(final String path) {
+@@ -127,6 +135,13 @@ public final class NativeActorLibrary {
+     private NativeActorLibrary() {
+     }
+ 
++    public record Archive(BaseGameVersion version, List<Layer> layers) {
++        public Archive {
++            Objects.requireNonNull(version);
++            layers = List.copyOf(layers);
++        }
++    }
++
+     public record Layer(boolean server, Map<String, byte[]> resources) {
+         public Layer {
+             resources = Map.copyOf(resources);
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
+index d9ce5c69d..1cad5c75b 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
+@@ -294,6 +294,7 @@ public class ConvertedResourcePackCache {
+ 
+     static String fingerprint(final ResourcePackStorage storage) {
+         final StringBuilder identity = new StringBuilder(fingerprint(storage.getPackStackTopToBottom()));
++        identity.append("\nbase-game:").append(storage.getBaseGameVersion());
+         storage.getCustomBlockVisuals().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).forEach(entry -> {
+             final var visual = entry.getValue();
+             identity.append('\n').append(entry.getKey()).append(':').append(visual.bedrockState()).append(':').append(visual.modelJson())
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index aa4cef92d..163a5c3a9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -98,24 +325,83 @@ index aa4cef92d..163a5c3a9 100644
          providers.register(EmoteProvider.class, new EmoteProvider());
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index 1a6e4d3f1..64aac34a6 100644
+index 1a6e4d3f1..8454de390 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-@@ -338,7 +338,7 @@ public final class ResourcePackPackets {
+@@ -23,6 +23,7 @@ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ServerboundConfigurationPackets1_21_9;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundConfigurationPackets26_3;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.api.resourcepack.http.ConvertedResourcePackCache;
+@@ -139,7 +140,7 @@ public final class ResourcePackPackets {
+                 subpackNames[i] = wrapper.read(BedrockTypes.STRING); // selected subpack name
+                 keys[i] = new ResourcePack.Key(id, version);
+             }
+-            wrapper.read(BedrockTypes.STRING); // base game version
++            final var baseGameVersion = BaseGameVersion.parse(wrapper.read(BedrockTypes.STRING)); // base game version
+             final Experiment[] experiments = wrapper.read(BedrockTypes.EXPERIMENT_ARRAY); // experiments
+             wrapper.read(Types.BOOLEAN); // experiments previously toggled
+             wrapper.read(Types.BOOLEAN); // include editor packs
+@@ -163,7 +164,7 @@ public final class ResourcePackPackets {
+                         BedrockProtocol.kickForIllegalState(user, "One of the server resource packs failed to load. Try again later.", error);
+                     } else {
+                         try {
+-                            finishStack(user, loadStateTracker, keys, subpackNames);
++                            finishStack(user, loadStateTracker, keys, subpackNames, baseGameVersion);
+                         } catch (final Throwable e) {
+                             BedrockProtocol.kickForIllegalState(user, "Failed to prepare the server resource packs.", e);
+                         }
+@@ -171,7 +172,7 @@ public final class ResourcePackPackets {
+                 }, user.getChannel().eventLoop());
+             } else {
+                 try {
+-                    finishStack(user, loadStateTracker, keys, subpackNames);
++                    finishStack(user, loadStateTracker, keys, subpackNames, baseGameVersion);
+                 } catch (final Throwable e) {
+                     BedrockProtocol.kickForIllegalState(user, "Failed to prepare the server resource packs.", e);
+                 }
+@@ -280,12 +281,12 @@ public final class ResourcePackPackets {
+         BedrockProtocol.kickForIllegalState(user, "One of the server resource packs failed to load. Try again later.", error);
+     }
+ 
+-    private static void finishStack(final UserConnection user, final ResourcePackLoadStateTracker loadStateTracker, final ResourcePack.Key[] keys, final String[] subpackNames) {
++    private static void finishStack(final UserConnection user, final ResourcePackLoadStateTracker loadStateTracker, final ResourcePack.Key[] keys, final String[] subpackNames, final BaseGameVersion baseGameVersion) {
+         final Function<Supplier<ResourcePackStorage>, CompletableFuture<ResourcePackStorage>> preparation = ViaBedrock.getResourcePackServer() != null
+                 ? ViaBedrock.getResourcePackServer()::prepareStorage : loadStateTracker::prepareStack;
+         ResourcePackPreparation.prepare(preparation, user.getChannel().eventLoop(),
+                 () -> user.getChannel().isActive() && user.get(ResourcePackLoadStateTracker.class) == loadStateTracker,
+-                () -> prepareStack(loadStateTracker, keys, subpackNames), (storage, error) -> {
++                () -> prepareStack(loadStateTracker, keys, subpackNames, baseGameVersion), (storage, error) -> {
+                     if (error != null) {
+                         BedrockProtocol.kickForIllegalState(user, "Failed to prepare the server resource packs.", error);
+                         return;
+@@ -315,7 +316,7 @@ public final class ResourcePackPackets {
+                 }, error -> BedrockProtocol.kickForIllegalState(user, "Failed to publish the server resource packs.", error));
+     }
+ 
+-    private static ResourcePackStorage prepareStack(final ResourcePackLoadStateTracker loadStateTracker, final ResourcePack.Key[] keys, final String[] subpackNames) {
++    private static ResourcePackStorage prepareStack(final ResourcePackLoadStateTracker loadStateTracker, final ResourcePack.Key[] keys, final String[] subpackNames, final BaseGameVersion baseGameVersion) {
+         loadStateTracker.saveRemoteResourcePacks();
+         loadStateTracker.loadUnrequestedResourcePacks(keys);
+         final List<ResourcePack> resourcePacks = new ArrayList<>();
+@@ -338,7 +339,7 @@ public final class ResourcePackPackets {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing resource pack: " + key);
              }
          }
 -        return new ResourcePackStorage(resourcePacks);
-+        return new ResourcePackStorage(resourcePacks, loadStateTracker.getBuiltinResourcePacks());
++        return new ResourcePackStorage(resourcePacks, loadStateTracker.loadBuiltinResourcePacks(baseGameVersion), baseGameVersion);
      }
  
      private static void sendStackFinished(final UserConnection user) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
 new file mode 100644
-index 000000000..74b16bfb3
+index 000000000..ea8045e80
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,27 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -125,6 +411,7 @@ index 000000000..74b16bfb3
 +
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.platform.providers.Provider;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +
 +import java.util.List;
@@ -137,17 +424,17 @@ index 000000000..74b16bfb3
 +     * Return image and actor resource packs (plus manifests) in bottom-to-top order, or an empty list.
 +     * The packs supply lower-priority resources and are never advertised to the server.
 +     */
-+    public List<ResourcePack> load(final UserConnection user) throws Exception {
-+        return BundledImagePacks.load();
++    public List<ResourcePack> load(final UserConnection user, final BaseGameVersion version) throws Exception {
++        return BundledImagePacks.load().stream().filter(version::includes).toList();
 +    }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacks.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacks.java
 new file mode 100644
-index 000000000..bd18f82ce
+index 000000000..149a9f78b
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacks.java
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,176 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -158,6 +445,7 @@ index 000000000..bd18f82ce
 +import com.viaversion.viaversion.libs.gson.JsonArray;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
@@ -272,6 +560,12 @@ index 000000000..bd18f82ce
 +                revision.add(0);
 +                revision.add(0);
 +                header.add("version", revision);
++                final var minimum = BaseGameVersion.vanillaLayer(entry.getKey());
++                final JsonArray minimumVersion = new JsonArray();
++                minimumVersion.add(minimum.major());
++                minimumVersion.add(minimum.minor());
++                minimumVersion.add(minimum.patch());
++                header.add("min_engine_version", minimumVersion);
 +                pack.add("header", header);
 +                entry.getValue().putJson("manifest.json", pack);
 +                result.add(new ResourcePack(entry.getValue()));
@@ -317,11 +611,32 @@ index 000000000..bd18f82ce
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
+index d045933a0..e17ec8fd7 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
+@@ -20,7 +20,7 @@ public final class NativeEffectsResourceRewriter implements ResourcePackRewriter
+ 
+     @Override
+     public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
+-        submitter.accept(() -> archive(NativeActorLibrary.PATH, () -> NativeActorLibrary.encode(storage.getPackStackBottomToTop(), storage::isServerPack)));
++        submitter.accept(() -> archive(NativeActorLibrary.PATH, () -> NativeActorLibrary.encode(storage.getBaseGameVersion(), storage.getPackStackBottomToTop(), storage::isServerPack)));
+     }
+ 
+     private static Content archive(final String path, final Encoder encoder) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
-index 5bc485dc8..d6b8385f0 100644
+index 5bc485dc8..d208f0ceb 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
-@@ -29,6 +29,7 @@ import net.raphimc.viabedrock.api.resourcepack.http.BedrockPackDownloader;
+@@ -21,6 +21,7 @@ import com.viaversion.viaversion.api.Via;
+ import com.viaversion.viaversion.api.connection.StoredObject;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePackExecutor;
+@@ -29,6 +30,7 @@ import net.raphimc.viabedrock.api.resourcepack.http.BedrockPackDownloader;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.packet.ResourcePackClientResponse;
@@ -329,25 +644,19 @@ index 5bc485dc8..d6b8385f0 100644
  import net.raphimc.viabedrock.protocol.provider.ResourcePackProvider;
  
  import java.net.URL;
-@@ -53,6 +54,7 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+@@ -53,6 +55,7 @@ public class ResourcePackLoadStateTracker extends StoredObject {
          return thread;
      }, null, true);
      private final CompletableFuture<Void> loadFuture = new CompletableFuture<>();
-+    private CompletableFuture<List<ResourcePack>> builtinFuture = CompletableFuture.completedFuture(List.of());
++    private volatile boolean builtinRequested;
      private volatile boolean stackReceived;
      private ResourcePackExecutor preparationExecutor;
  
-@@ -106,9 +108,16 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+@@ -106,9 +109,10 @@ public class ResourcePackLoadStateTracker extends StoredObject {
      }
  
      public CompletableFuture<Void> loadRequestedResourcePacks() {
-+        this.builtinFuture = CompletableFuture.supplyAsync(() -> {
-+            try {
-+                return Via.getManager().getProviders().get(BuiltinResourcePackProvider.class).load(this.user());
-+            } catch (final Exception e) {
-+                throw new CompletionException("Failed to load built-in resource images", e);
-+            }
-+        }, this.executor);
++        this.builtinRequested = true;
          if (this.requests.isEmpty()) {
              this.loadFuture.complete(null);
 -            return this.loadFuture;
@@ -355,7 +664,7 @@ index 5bc485dc8..d6b8385f0 100644
          }
          final List<Callable<Void>> asyncTasks = new ArrayList<>();
          final List<ResourcePack.Key> downloadList = Collections.synchronizedList(new ArrayList<>());
-@@ -167,7 +176,7 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+@@ -167,7 +171,7 @@ public class ResourcePackLoadStateTracker extends StoredObject {
              this.loadFuture.completeExceptionally(e);
              return null;
          });
@@ -364,39 +673,62 @@ index 5bc485dc8..d6b8385f0 100644
      }
  
      public void loadUnrequestedResourcePacks(final ResourcePack.Key[] keys) {
-@@ -192,7 +201,11 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+@@ -195,6 +199,17 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+         return this.loadFuture;
      }
  
-     public CompletableFuture<Void> loadedFuture() {
--        return this.loadFuture;
-+        return CompletableFuture.allOf(this.loadFuture, this.builtinFuture);
++    public List<ResourcePack> loadBuiltinResourcePacks(final BaseGameVersion version) {
++        if (!this.builtinRequested) {
++            return List.of();
++        }
++        try {
++            return Via.getManager().getProviders().get(BuiltinResourcePackProvider.class).load(this.user(), version);
++        } catch (final Exception error) {
++            throw new CompletionException("Failed to load built-in resources", error);
++        }
 +    }
 +
-+    public List<ResourcePack> getBuiltinResourcePacks() {
-+        return this.builtinFuture.join();
-     }
- 
      public void markStackReceived() {
+         this.stackReceived = true;
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
-index 8082865c1..24ba877e1 100644
+index 8082865c1..51f1bef68 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
-@@ -58,10 +58,27 @@ public class ResourcePackStorage implements StorableObject {
+@@ -18,6 +18,7 @@
+ package net.raphimc.viabedrock.protocol.storage;
+ 
+ import com.viaversion.viaversion.api.connection.StorableObject;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
+ import net.raphimc.viabedrock.api.model.CustomBlockVisual;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
+@@ -57,24 +58,50 @@ public class ResourcePackStorage implements StorableObject {
+     private final BiomeDefinitions biomes;
      private final RenderControllerDefinitions renderControllers;
  
++    private final BaseGameVersion baseGameVersion;
++
      public ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom) {
 -        this(resourcePacksTopToBottom, (Set<ResourcePack>) null);
 +        this(resourcePacksTopToBottom, List.of());
++    }
++
++    public ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom, final List<ResourcePack> builtinImagesBottomToTop) {
++        this(resourcePacksTopToBottom, builtinImagesBottomToTop, BaseGameVersion.CURRENT);
      }
  
 -    private ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom, final Set<ResourcePack> sourceServers) {
-+    public ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom, final List<ResourcePack> builtinImagesBottomToTop) {
-+        this(resourcePacksTopToBottom, builtinImagesBottomToTop, null);
++    public ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom, final List<ResourcePack> builtinImagesBottomToTop,
++                               final BaseGameVersion baseGameVersion) {
++        this(resourcePacksTopToBottom, builtinImagesBottomToTop, baseGameVersion, null);
 +    }
 +
 +    private ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom, final List<ResourcePack> builtinImagesBottomToTop,
-+                                final Set<ResourcePack> sourceServers) {
-+        for (ResourcePack builtinImages : builtinImagesBottomToTop) {
++                                final BaseGameVersion baseGameVersion, final Set<ResourcePack> sourceServers) {
++        this.baseGameVersion = Objects.requireNonNull(baseGameVersion);
++        final List<ResourcePack> selectedBuiltins = builtinImagesBottomToTop.stream().filter(baseGameVersion::includes).toList();
++        for (ResourcePack builtinImages : selectedBuiltins) {
 +            for (String path : builtinImages.content().getFilesDeep("", "")) {
 +                if (!path.equals("manifest.json") && !path.equals("textures/item_texture.json") && !path.equals("textures/terrain_texture.json") && !(path.startsWith("textures/")
 +                        && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")))
@@ -410,27 +742,152 @@ index 8082865c1..24ba877e1 100644
 +        }
          final List<ResourcePack> orderedPacks = sourceServers == null ? ResourcePackStack.orderTopToBottom(resourcePacksTopToBottom) : resourcePacksTopToBottom;
          this.serverPacks.addAll(sourceServers == null ? orderedPacks : sourceServers);
-         if (sourceServers == null && BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) { // null if ran from ResourcePackConverterTest
-@@ -77,6 +94,10 @@ public class ResourcePackStorage implements StorableObject {
-             }
+-        if (sourceServers == null && BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) { // null if ran from ResourcePackConverterTest
+-            this.packStackBottomToTop.addAll(BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks());
+-        }
++        final List<ResourcePack> vanilla = sourceServers == null && BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null
++                ? BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().stream().filter(baseGameVersion::includes).toList() : List.of();
++        this.packStackBottomToTop.addAll(vanilla);
+         for (int i = orderedPacks.size() - 1; i >= 0; i--) {
+             this.packStackBottomToTop.add(orderedPacks.get(i));
+         }
+         this.packStackTopToBottom.addAll(orderedPacks);
+-        if (sourceServers == null && BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) { // null if ran from ResourcePackConverterTest
+-            for (int i = BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().size() - 1; i >= 0; i--) {
+-                this.packStackTopToBottom.add(BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().get(i));
+-            }
++        this.packStackTopToBottom.addAll(vanilla.reversed());
++
++        for (int i = selectedBuiltins.size() - 1; i >= 0; i--) {
++            this.packStackTopToBottom.add(selectedBuiltins.get(i));
          }
  
-+        for (int i = builtinImagesBottomToTop.size() - 1; i >= 0; i--) {
-+            this.packStackTopToBottom.add(builtinImagesBottomToTop.get(i));
-+        }
-+
          this.texts = new TextDefinitions(this);
-         this.blocks = new BlockDefinitions(this);
-         this.blockCulling = new BlockCullingDefinitions(this);
-@@ -107,7 +128,7 @@ public class ResourcePackStorage implements StorableObject {
+@@ -93,7 +120,7 @@ public class ResourcePackStorage implements StorableObject {
+     }
+ 
+     /** Uses the converter's resolved order and provenance without adding local vanilla definitions again. */
+-    public static ResourcePackStorage nativeActors(final List<NativeActorLibrary.Layer> layers) throws IOException {
++    public static ResourcePackStorage nativeActors(final List<NativeActorLibrary.Layer> layers, final BaseGameVersion baseGameVersion) throws IOException {
+         final List<ResourcePack> topToBottom = new ArrayList<>();
+         final Set<ResourcePack> servers = new HashSet<>();
+         try {
+@@ -107,7 +134,7 @@ public class ResourcePackStorage implements StorableObject {
                      servers.add(pack);
                  }
              }
 -            final ResourcePackStorage storage = new ResourcePackStorage(topToBottom, servers);
-+            final ResourcePackStorage storage = new ResourcePackStorage(topToBottom, List.of(), servers);
++            final ResourcePackStorage storage = new ResourcePackStorage(topToBottom, List.of(), baseGameVersion, servers);
              storage.setLoadedOnJavaClient();
              return storage;
          } catch (final RuntimeException invalid) {
+@@ -115,6 +142,10 @@ public class ResourcePackStorage implements StorableObject {
+         }
+     }
+ 
++    public BaseGameVersion getBaseGameVersion() {
++        return this.baseGameVersion;
++    }
++
+     public boolean isServerPack(final ResourcePack pack) {
+         return this.serverPacks.contains(pack);
+     }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/BaseGameVersionTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/BaseGameVersionTest.java
+new file mode 100644
+index 000000000..3aab3b12b
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/BaseGameVersionTest.java
+@@ -0,0 +1,90 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.io.ByteArrayInputStream;
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BaseGameVersionTest {
++
++    @Test
++    void normalizesWildcardAndNativeVersionFormsWithoutLexicalOrdering() {
++        assertEquals(BaseGameVersion.CURRENT, BaseGameVersion.parse("*"));
++        assertEquals(new BaseGameVersion(1, 20, 0), BaseGameVersion.parse("1.20"));
++        assertEquals(new BaseGameVersion(1, 26, 60), BaseGameVersion.parse("1.26.60.6"));
++        assertTrue(BaseGameVersion.parse("1.20.100").compareTo(BaseGameVersion.parse("1.20.90")) > 0);
++        assertEquals(BaseGameVersion.parse("1.13"), BaseGameVersion.vanillaLayer("vanilla_base"));
++    }
++
++    @Test
++    void rejectsMalformedOrOverflowingCutoffs() {
++        for (final String invalid : List.of("", "*.*", "1", "1..20", "1.-20.0", "1.+20.0", "1.20.0.0.1", "1.2147483648.0")) {
++            assertThrows(IllegalArgumentException.class, () -> BaseGameVersion.parse(invalid));
++        }
++    }
++
++    @Test
++    void switchesWorldCutoffsWithoutMutatingRawLayersOrFilteringServerPacks() {
++        final var original = pack(new BaseGameVersion(1, 13, 0));
++        final var earlier = pack(new BaseGameVersion(1, 20, 0));
++        final var later = pack(new BaseGameVersion(1, 26, 60));
++        final var server = pack(new BaseGameVersion(1, 26, 60));
++        final var raw = List.of(original, earlier, later);
++        final var latest = new ResourcePackStorage(List.of(server), raw, BaseGameVersion.CURRENT);
++        final var older = new ResourcePackStorage(List.of(server), raw, BaseGameVersion.parse("1.20.0"));
++        assertTrue(latest.getPackStackBottomToTop().containsAll(raw));
++        assertTrue(older.getPackStackBottomToTop().containsAll(List.of(original, earlier, server)));
++        assertFalse(older.getPackStackBottomToTop().contains(later));
++        assertSame(server, older.getPackStackBottomToTop().stream().toList().getLast());
++        assertTrue(older.isServerPack(server));
++        assertFalse(older.isServerPack(earlier));
++        assertTrue(new ResourcePackStorage(List.of(server), raw, BaseGameVersion.CURRENT).getPackStackBottomToTop().contains(later));
++        assertEquals(3, raw.size());
++    }
++
++    @Test
++    void carriesTheWorldCutoffThroughTheProxyArchiveAndNativeStorage() throws Exception {
++        final var version = BaseGameVersion.parse("1.20.0");
++        final var source = List.of(pack(version));
++        final var archive = NativeActorLibrary.decode(new ByteArrayInputStream(NativeActorLibrary.encode(version, source, _ -> true)));
++        assertEquals(version, archive.version());
++        final var storage = ResourcePackStorage.nativeActors(archive.layers(), archive.version());
++        assertEquals(version, storage.getBaseGameVersion());
++        assertTrue(storage.isServerPack(storage.getPackStackTopToBottom().iterator().next()));
++    }
++
++    private static ResourcePack pack(final BaseGameVersion minimum) {
++        final var content = new InMemoryContent();
++        final var manifest = new JsonObject();
++        final var header = new JsonObject();
++        header.addProperty("name", "World resource fixture");
++        header.addProperty("uuid", UUID.randomUUID().toString());
++        final var revision = new JsonArray();
++        revision.add(1);
++        revision.add(0);
++        revision.add(0);
++        header.add("version", revision);
++        final var engine = new JsonArray();
++        engine.add(minimum.major());
++        engine.add(minimum.minor());
++        engine.add(minimum.patch());
++        header.add("min_engine_version", engine);
++        manifest.addProperty("format_version", 2);
++        manifest.add("header", header);
++        content.putJson("manifest.json", manifest);
++        return new ResourcePack(content);
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/BuiltinActorResourcesTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/BuiltinActorResourcesTest.java
 new file mode 100644
 index 000000000..b508d8527
@@ -488,8 +945,169 @@ index 000000000..b508d8527
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibraryTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibraryTest.java
+index 1d517698b..842ae74d2 100644
+--- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibraryTest.java
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibraryTest.java
+@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
+ 
+ import java.io.ByteArrayInputStream;
+ import java.io.ByteArrayOutputStream;
++import java.io.DataInputStream;
+ import java.io.DataOutputStream;
+ import java.io.IOException;
+ import java.nio.ByteBuffer;
+@@ -45,8 +46,8 @@ class NativeActorLibraryTest {
+         final ResourcePack lower = new ResourcePack(builtin);
+         final ResourcePack actor = new ResourcePack(definition);
+         final ResourcePack upper = new ResourcePack(overlay);
+-        final byte[] encoded = NativeActorLibrary.encode(List.of(lower, actor, upper), pack -> pack != lower);
+-        final var layers = NativeActorLibrary.decode(new ByteArrayInputStream(encoded));
++        final byte[] encoded = NativeActorLibrary.encode(BaseGameVersion.CURRENT, List.of(lower, actor, upper), pack -> pack != lower);
++        final var layers = NativeActorLibrary.decode(new ByteArrayInputStream(encoded)).layers();
+         assertEquals(List.of(false, true, true), layers.stream().map(NativeActorLibrary.Layer::server).toList());
+         assertEquals(1, layers.get(0).resources().size());
+         assertEquals(14, layers.get(1).resources().size());
+@@ -54,7 +55,7 @@ class NativeActorLibraryTest {
+         assertArrayEquals(new byte[]{8}, layers.get(2).resources().get("textures/actor.png"));
+         assertArrayEquals(new byte[]{9}, layers.get(2).resources().get("textures/builtin.jpg"));
+         assertFalse(layers.get(1).resources().containsKey("scripts/private.js"));
+-        assertArrayEquals(encoded, NativeActorLibrary.encode(List.of(lower, actor, upper), pack -> pack != lower));
++        assertArrayEquals(encoded, NativeActorLibrary.encode(BaseGameVersion.CURRENT, List.of(lower, actor, upper), pack -> pack != lower));
+         assertThrows(UnsupportedOperationException.class, () -> layers.get(1).resources().clear());
+     }
+ 
+@@ -75,7 +76,7 @@ class NativeActorLibraryTest {
+         final List<ResourcePack> packs = List.of(new ResourcePack(empty), new ResourcePack(definitions), new ResourcePack(textures));
+         final var local = NativeActorLibrary.effects(NativeActorLibrary.resources(packs, pack -> pack != packs.get(0)));
+         final var decoded = NativeActorLibrary.effects(NativeActorLibrary.decode(new ByteArrayInputStream(
+-                NativeActorLibrary.encode(packs, pack -> pack != packs.get(0)))));
++                NativeActorLibrary.encode(BaseGameVersion.CURRENT, packs, pack -> pack != packs.get(0)))).layers());
+         assertEquals(3, decoded.size());
+         assertTrue(decoded.get(0).isEmpty());
+         assertEquals(paths.size(), decoded.get(1).size());
+@@ -99,9 +100,9 @@ class NativeActorLibraryTest {
+         lower.put("textures/b.png", new byte[data.length]);
+         upper.put("textures/a.png", data.clone());
+         final List<ResourcePack> packs = List.of(new ResourcePack(lower), new ResourcePack(empty), new ResourcePack(upper));
+-        final byte[] archive = NativeActorLibrary.encode(packs, pack -> pack == packs.get(2));
++        final byte[] archive = NativeActorLibrary.encode(BaseGameVersion.CURRENT, packs, pack -> pack == packs.get(2));
+         assertTrue(archive.length > 4 * 1024 * 1024);
+-        final var layers = NativeActorLibrary.decode(new ByteArrayInputStream(archive));
++        final var layers = NativeActorLibrary.decode(new ByteArrayInputStream(archive)).layers();
+         assertEquals(List.of(false, false, true), layers.stream().map(NativeActorLibrary.Layer::server).toList());
+         for (int index = 0; index < packs.size(); index++) {
+             final var expected = packs.get(index).content();
+@@ -110,7 +111,7 @@ class NativeActorLibraryTest {
+                 assertArrayEquals(expected.get(path), layers.get(index).resources().get(path));
+             }
+         }
+-        assertArrayEquals(archive, NativeActorLibrary.encode(packs, pack -> pack == packs.get(2)));
++        assertArrayEquals(archive, NativeActorLibrary.encode(BaseGameVersion.CURRENT, packs, pack -> pack == packs.get(2)));
+     }
+ 
+     @Test
+@@ -121,8 +122,8 @@ class NativeActorLibraryTest {
+         overlay.putString("entity/player.json", "{\"format_version\":\"1.10.0\",\"minecraft:client_entity\":{\"description\":{\"identifier\":\"minecraft:player\",\"textures\":{\"default\":\"textures/upper\"}}}}");
+         final ResourcePack lower = new ResourcePack(builtin);
+         final ResourcePack upper = new ResourcePack(overlay);
+-        final var layers = NativeActorLibrary.decode(new ByteArrayInputStream(NativeActorLibrary.encode(List.of(lower, upper), pack -> pack == upper)));
+-        final var storage = ResourcePackStorage.nativeActors(layers);
++        final var layers = NativeActorLibrary.decode(new ByteArrayInputStream(NativeActorLibrary.encode(BaseGameVersion.CURRENT, List.of(lower, upper), pack -> pack == upper))).layers();
++        final var storage = ResourcePackStorage.nativeActors(layers, BaseGameVersion.CURRENT);
+         final var packs = List.copyOf(storage.getPackStackTopToBottom());
+         assertEquals(List.of(upper.key(), lower.key()), packs.stream().map(ResourcePack::key).toList());
+         assertTrue(storage.isServerPack(packs.get(0)));
+@@ -134,21 +135,28 @@ class NativeActorLibraryTest {
+         final byte first = packs.get(0).content().get("entity/player.json")[0];
+         layers.get(layers.size() - 1).resources().get("entity/player.json")[0] = 0;
+         assertEquals(first, packs.get(0).content().get("entity/player.json")[0]);
+-        assertThrows(IOException.class, () -> ResourcePackStorage.nativeActors(List.of(new NativeActorLibrary.Layer(true, Map.of()))));
++        assertThrows(IOException.class, () -> ResourcePackStorage.nativeActors(List.of(new NativeActorLibrary.Layer(true, Map.of())), BaseGameVersion.CURRENT));
+     }
+ 
+     @Test
+     void rejectsMalformedHeadersRolesArchiveIndexesAndResourcePaths() throws Exception {
+         final ResourcePack pack = new ResourcePack(content(1));
+-        final byte[] valid = NativeActorLibrary.encode(List.of(pack), ignored -> true);
+-        for (final int offset : List.of(0, 4, 8, 12)) {
++        final byte[] valid = NativeActorLibrary.encode(BaseGameVersion.CURRENT, List.of(pack), ignored -> true);
++        final var header = new DataInputStream(new ByteArrayInputStream(valid));
++        header.readInt();
++        header.readInt();
++        final int versionOffset = valid.length - header.available();
++        header.readUTF();
++        final int countOffset = valid.length - header.available();
++        final int roleOffset = countOffset + Integer.BYTES;
++        for (final int offset : List.of(0, 4, versionOffset, versionOffset + Short.BYTES, countOffset, roleOffset)) {
+             final byte[] invalid = valid.clone();
+             invalid[offset] = 127;
+-            assertThrows(IOException.class, () -> NativeActorLibrary.decode(new ByteArrayInputStream(invalid)));
++            assertThrows(IOException.class, () -> NativeActorLibrary.decode(new ByteArrayInputStream(invalid)).layers());
+         }
+-        for (int size = 0; size < 13; size++) {
++        for (int size = 0; size <= roleOffset + 1; size++) {
+             final byte[] truncated = Arrays.copyOf(valid, size);
+-            assertThrows(IOException.class, () -> NativeActorLibrary.decode(new ByteArrayInputStream(truncated)));
++            assertThrows(IOException.class, () -> NativeActorLibrary.decode(new ByteArrayInputStream(truncated)).layers());
+         }
+         for (final String path : List.of("1/entity/actor.json", "0/textures/../actor.png", "0/textures//actor.png", "0/scripts/private.js")) {
+             assertThrows(IOException.class, () -> decode(1, path));
+@@ -156,7 +164,7 @@ class NativeActorLibraryTest {
+         assertThrows(IOException.class, () -> decode(0, "0/entity/actor.json"));
+         final InMemoryContent escaping = content(2);
+         escaping.put("textures/../actor.png", new byte[]{1});
+-        assertThrows(IOException.class, () -> NativeActorLibrary.encode(List.of(new ResourcePack(escaping)), ignored -> true));
++        assertThrows(IOException.class, () -> NativeActorLibrary.encode(BaseGameVersion.CURRENT, List.of(new ResourcePack(escaping)), ignored -> true));
+     }
+ 
+     private static InMemoryContent content(final long id) {
+@@ -168,8 +176,9 @@ class NativeActorLibraryTest {
+     private static void decode(final int innerCount, final String path) throws IOException {
+         final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+         final DataOutputStream fields = new DataOutputStream(bytes);
+-        fields.writeInt(1);
++        fields.writeInt(2);
+         fields.writeInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++        fields.writeUTF(BaseGameVersion.CURRENT.toString());
+         fields.writeInt(1);
+         fields.writeByte(1);
+         try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
+@@ -180,7 +189,7 @@ class NativeActorLibraryTest {
+             zip.write(1);
+             zip.closeEntry();
+         }
+-        NativeActorLibrary.decode(new ByteArrayInputStream(bytes.toByteArray()));
++        NativeActorLibrary.decode(new ByteArrayInputStream(bytes.toByteArray())).layers();
+     }
+ 
+ }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
+index de4a1c640..8505d480a 100644
+--- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
+@@ -32,8 +32,8 @@ class SoundTranslationsTest {
+                     + UUID.randomUUID() + "\",\"version\":[1,0,0]}}");
+             return new ResourcePack(content);
+         }).toList();
+-        final byte[] archive = NativeActorLibrary.encode(sources, ignored -> true);
+-        final var packs = NativeActorLibrary.effects(NativeActorLibrary.decode(new ByteArrayInputStream(archive)));
++        final byte[] archive = NativeActorLibrary.encode(BaseGameVersion.CURRENT, sources, ignored -> true);
++        final var packs = NativeActorLibrary.effects(NativeActorLibrary.decode(new ByteArrayInputStream(archive)).layers());
+         final var translations = new SoundTranslations(packs);
+         assertEquals("selected=a", translations.translate("first", "de_de"));
+         assertEquals("upper", translations.translate("second", "de_DE"));
+@@ -41,7 +41,7 @@ class SoundTranslationsTest {
+         assertEquals("", translations.translate("empty", "de_de"));
+         assertEquals("base", translations.translate("first", "unknown"));
+         assertEquals("absent", translations.translate("absent", "de_de"));
+-        assertArrayEquals(archive, NativeActorLibrary.encode(sources, ignored -> true));
++        assertArrayEquals(archive, NativeActorLibrary.encode(BaseGameVersion.CURRENT, sources, ignored -> true));
+     }
+ 
+     @Test
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-index bc3d4f4a3..6bd107273 100644
+index d9c133861..d6c48abde 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 @@ -29,6 +29,7 @@ import net.raphimc.viabedrock.platform.ViaBedrockConfig;
@@ -528,9 +1146,42 @@ index bc3d4f4a3..6bd107273 100644
      @Test
      void selectedSubpackChangesCacheIdentity() {
          final InMemoryContent content = new InMemoryContent();
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/WorldVersionCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/WorldVersionCacheTest.java
+new file mode 100644
+index 000000000..59f35de52
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/WorldVersionCacheTest.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.http;
++
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class WorldVersionCacheTest {
++
++    @Test
++    void separatesIdenticalResourceBytesWhenTheirWorldContextsDiffer() throws Exception {
++        final var first = ResourcePackStorage.nativeActors(List.of(), BaseGameVersion.parse("1.20.0"));
++        final var second = ResourcePackStorage.nativeActors(List.of(), BaseGameVersion.CURRENT);
++        final var repeat = ResourcePackStorage.nativeActors(List.of(), BaseGameVersion.parse("1.20.0.99"));
++        assertNotEquals(ConvertedResourcePackCache.fingerprint(first), ConvertedResourcePackCache.fingerprint(second));
++        assertEquals(ConvertedResourcePackCache.fingerprint(first), ConvertedResourcePackCache.fingerprint(repeat));
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacksTest.java b/src/test/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacksTest.java
 new file mode 100644
-index 000000000..41b1f79a0
+index 000000000..9214c4e84
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacksTest.java
 @@ -0,0 +1,163 @@
@@ -629,7 +1280,7 @@ index 000000000..41b1f79a0
 +    @Test
 +    void suppliesRealBundledItemImagesThroughTheDefaultProvider() throws Exception {
 +        assumeTrue(BundledImagePacks.class.getResource("/assets/viabedrock/builtin_images.zip") != null);
-+        final var layers = new BuiltinResourcePackProvider().load(null);
++        final var layers = new BuiltinResourcePackProvider().load(null, net.raphimc.viabedrock.api.resourcepack.BaseGameVersion.CURRENT);
 +        final var server = new InMemoryContent();
 +        server.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"fixture\"}}");
 +        server.put("textures/probe.png", image(0xFFFF0000));
@@ -698,10 +1349,30 @@ index 000000000..41b1f79a0
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
-index 5d513b681..0e7bbc30f 100644
+index 5d513b681..5bee7007f 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
-@@ -256,6 +256,84 @@ class ModelResourceAssetsTest {
+@@ -5,6 +5,8 @@
+  */
+ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
+ 
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
++
+ import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
+ import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
+ import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
+@@ -215,8 +217,8 @@ class ModelResourceAssetsTest {
+         assertNull(definitions.get(alias).itemCondition("minecraft:apple"));
+         assertThrows(UnsupportedOperationException.class, () -> definitions.get(alias).itemBindings().clear());
+         final var restored = ResourcePackStorage.nativeActors(net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.decode(
+-                new ByteArrayInputStream(net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.encode(
+-                        storage.getPackStackBottomToTop(), storage::isServerPack))));
++                new ByteArrayInputStream(net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.encode(BaseGameVersion.CURRENT,
++                        storage.getPackStackBottomToTop(), storage::isServerPack))).layers(), BaseGameVersion.CURRENT);
+         assertEquals(definitions.get(alias).itemBindings(), restored.getAttachables().attachables().get(alias).itemBindings());
+     }
+ 
+@@ -256,6 +258,84 @@ class ModelResourceAssetsTest {
          return data;
      }
  

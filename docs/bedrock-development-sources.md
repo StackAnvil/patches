@@ -50,6 +50,7 @@ A schema update establishes wire compatibility. Each existing feature must also 
 | Animation and interaction hands | The updated codecs carry hand fields. Native offhand item restrictions still apply. |
 | Skins and player lists | PlayFab identity comes from player-list entries and reaches Java profile properties. Serialized skin data no longer carries that field. |
 | Sound updates | Decode the new tagged event union through the sound model. |
+| Vanilla resources | Apply the advertised world cutoff to metadata and native libraries. Archive format 2 carries it through ViaProxy. Native visual/audio transition checks remain pending. |
 | Chunk biomes | Consume the new override flag. Java uses received biome data because it does not run Bedrock's client biome generator. |
 | Block seating and signed audio | Spawn fields are decoded, but seating and signed content playback remain unsupported. |
 | Matchmaking and environment layers | Queue-state UI integration and attribute-layer rendering remain feature gaps. |
@@ -113,15 +114,19 @@ Player and persona controller assets do not establish the engine's new armor mas
 
 ### Work still needed
 
-1. **Select vanilla resources by world version.**
-   `ResourcePackPackets` discards the base-game version in `ResourcePackStack`.
-   `BedrockResourceLibrary` loads every bundled vanilla overlay.
-   Actor and sound loaders also use the global latest library.
+1. **Verify vanilla resource transitions against the native client.**
+   The audit found that `ResourcePackPackets` discarded the base-game version
+   and native loaders selected every vanilla overlay.
+   The implementation now retains that version and selects metadata, textures,
+   actor graphs, and audio together before applying server overrides.
+   Native archive format 2 carries the context through ViaProxy.
+   The conversion cache includes it even when the selected file bytes match.
    Microsoft's [base-game version guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/basegameversioning)
-   says older templates must skip later vanilla resources.
-   A complete fix must select metadata, textures, actors, and audio together.
-   Filtering images alone would leave mixed-version resources.
-   A latest-world to older-template transition needs a native comparison.
+   specifies cumulative vanilla overlay selection and independent server packs.
+   BDS 1.26.60.6 captures confirm `*` for an ordinary world and `1.20.0`
+   for an isolated template-marked world with that version.
+   Unit tests cover newer/older/newer selection and resource-manager reuse.
+   Native graphical and audible world-transition comparisons remain pending.
 2. **Implement held trapdoor placement.**
    The 26.60 release locks placement direction until the use control is released
    and suppresses block interactions during that placement.

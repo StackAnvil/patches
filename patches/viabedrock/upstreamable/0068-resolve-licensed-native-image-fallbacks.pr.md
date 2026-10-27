@@ -60,3 +60,34 @@ Screenshot review shows all five icons in the hotbar and the creative inventory 
 Each route also passes 16 equipped-state checks, including real sneak transitions and equipment removal.
 All 30 screenshots receive visual review, and installed runtime hashes match the build.
 These creative-screen controls do not reproduce the reported survival inventory or establish complete native visual parity.
+
+## Select vanilla resources by world version
+
+Core now reads the base-game version in `ResourcePackStack`. The resource
+preparation worker selects cumulative vanilla metadata and licensed layers
+using that cutoff. Server packs keep their priority independently of it.
+Raw verified bundles remain shared and immutable.
+
+Official BDS 1.26.60.6 on protocol 2225 advertises `*` for an ordinary world.
+A separate copied world with `baseGameVersion` set to `1.20.0` and template
+flags advertises `1.20.0`. These are private packet captures from an owned
+loopback server. They establish the input, not the native client's graphics.
+Microsoft's [base-game version guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/basegameversioning)
+establishes cumulative vanilla overlay selection and independent server packs.
+
+`ResourcePackStorage` retains the canonical world cutoff. Native resource
+archive format 2 carries it through ViaProxy alongside immutable pack layers.
+The conversion cache includes the context even when resource bytes match.
+Malformed archive context fails decoding instead of selecting current assets.
+
+Targeted tests cover numeric ordering, newer/older/newer selection, retained
+server priority, archive/storage context, and identical-byte cache separation.
+The full core build and tests pass with the repository's packaged UI and images.
+The matching add-on integration and native graphical/audio world-transition
+comparisons are still in progress. This area is not complete.
+
+All 55 versioned vanilla manifests in the matching client snapshot and
+generated core metadata have minimum engine versions equal to their numeric
+overlay versions. This validates the metadata cutoff used for this target.
+Archive corruption tests locate count and provenance fields after the variable
+version field, preserving malformed-role and truncated-header coverage.

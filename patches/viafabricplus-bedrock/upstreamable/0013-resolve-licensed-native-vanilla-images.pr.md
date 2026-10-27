@@ -54,3 +54,24 @@ Different server documents preserve their override order and do not enter the gl
 Tests cover byte identity, duplicate native layers, server provenance, inherited definitions and changed server documents.
 
 The complete add-on suite passes 880 tests with no failures; 120 optional fixture tests remain skipped.
+
+## World-version resource selection
+
+The provider now receives the world cutoff from core. The shared raw vanilla
+library creates immutable selected views before applying server overrides.
+A bounded cache retains four views. An older view keeps its complete source,
+so selecting a newer world restores later layers.
+
+Accepted native archive format 2 supplies the same cutoff on direct and
+ViaProxy paths. Actor storage, geometry, graphs, sounds, particles, and captions
+retain it. Effect caches compare the whole accepted archive identity. Missing
+world context selects the existing fallback instead of guessing latest vanilla.
+Account-owned skin and emote assets remain independent of world version.
+
+The [core evidence](../../viabedrock/upstreamable/0068-resolve-licensed-native-image-fallbacks.pr.md#select-vanilla-resources-by-world-version)
+records BDS 1.26.60.6 packet inputs and Microsoft's selection rules.
+New regressions switch texture bytes, sound definitions, and animation poses
+together across newer/older/newer worlds. They also cover server priority,
+earlier view immutability, cache eviction, absent context, and resource-manager
+reuse with changed archive context. These are runtime/fixture checks.
+Native graphical and audible transition comparisons remain pending.
