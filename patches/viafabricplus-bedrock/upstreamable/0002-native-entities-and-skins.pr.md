@@ -678,3 +678,32 @@ Its actual window is 854 by 480; the full modpack control uses 1920 by 1013.
 The plain control uses model readiness because its profile lacks the modpack's reload-log marker.
 All six plain screenshots received visual review, including the reload overlay and the final unobscured world.
 Both final clients close normally, retire their owned processes, and restore the prepared profiles.
+
+
+## Native glint shader reference, October 27, 2026
+
+The pinned Bedrock 1.26.51.1 `Entity.material.bin` provides sampled `Glint` and `AlphaTestGlint` programs.
+Its SHA-256 is `403efcc7777c9712176f6715f861c873e31d8e45d0b73b8e320bd29754789058`.
+The original SM65 vertex and fragment programs pass 1,128 controlled cases after host retargeting.
+These cases supply inputs and uniforms rather than running native engine uniform production.
+
+The vertex program creates two UV pairs by rotating the original UV around the normalized texture center `(0.5, 0.5)`.
+Each pair uses its own rotation and horizontal offset, followed by the supplied UV scale.
+The fragment program samples the primary texture once and the secondary glint texture twice.
+Both secondary samples use fractional UV coordinates.
+It tints their sum with glint color and tile-light color, squares each RGB channel, and adds the result after fog.
+The alpha result uses an absolute value and can exceed one.
+This differs from a clamped alpha result.
+The cutout family retains the strict primary-alpha threshold before glint composition.
+
+The [DXIL opcode reference](https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst)
+identifies absolute value, fractional coordinates, trigonometry, and multiply-add operations.
+The controls retain the original shader arithmetic and control flow.
+Their supplied boundaries cover texture results, shader inputs, uniforms, output, and discard.
+They do not execute filtering, rasterization, material selection, engine timing, or native graphical comparison.
+
+The shader reference establishes 648 vertex controls and 480 fragment controls for the Java implementation.
+Native frame timing, glint strength, texture-scale production, sampler binding, Iris integration, and animated equipped drawing remain unfinished.
+The binary's uniform defaults do not establish the values of an animated native draw.
+The oversized enchanted shield remains unfixed.
+Private reference programs, source buffers, and controls remain under `.stackanvil/research/native-glint/`.

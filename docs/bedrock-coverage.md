@@ -11492,3 +11492,18 @@ The resumed idle, use, and release control passes without restarting the client.
 The recorder exits successfully, all 35 tracked identities retire, and the prepared profile is restored.
 The initial controller failure remains recorded; this is scoped draw attribution, without a full successful control wrapper or native graphical parity claim.
 Private evidence is `.stackanvil/research/shield-draw/attribution.json`.
+
+
+## Native glint shader reference, October 27, 2026
+
+Original shaders from the pinned Bedrock 1.26.51.1 material binary now provide a controlled reference for the glint implementation.
+Host execution passes 648 vertex controls and 480 fragment controls.
+The controls verify two independent UV transforms, fractional secondary sampling, tint and tile-light multiplication, squared RGB addition after fog, and cutout behavior.
+The original alpha operation takes an absolute value; it does not clamp the result to one.
+The [owning material notes](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#native-glint-shader-reference-october-27-2026)
+record the target identity, supplied boundaries, and excluded behavior.
+
+These controls establish shader arithmetic, without establishing native frame inputs or live rendering parity.
+Engine animation timing, glint strength, texture-scale production, sampler bindings, and the Java/Iris implementation remain pending.
+The enchanted shield still uses the previously recorded static fallback path.
+No production shader or renderer changes accompany this reference milestone.
