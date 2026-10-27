@@ -11793,7 +11793,7 @@ Mandatory regressions compare actual native matrices for both geometries through
 The earlier implementation fails at the missing rest translation.
 Supplied-order kernel snapshots no longer serve as final-frame integration expectations.
 
-All 38 add-on patches replay. The full build passes 1,257 tests, with 133 optional skips and no failures or errors.
+All 38 add-on patches replay for the shield-only build. Its 1,257 tests include 1,124 passes and 133 optional skips, with no failures or errors.
 All 1,256 compiled main classes match the tested JAR.
 Offline tooling, regression and patch-metadata checks pass.
 A live Java control uses the full optimized modpack, the rebuilt artifact and an ordinary offhand shield against owned BDS.
@@ -11821,7 +11821,7 @@ Actor identity, lifetime, world, connection and controlled vehicle checks remain
 Four mandatory lifecycle regressions cover the session gap, receipt order, stale identities and vehicle control epochs.
 Three cases fail on the corrected test baseline and pass with the fix.
 All 38 add-on patches replay to the tested source tree.
-The full build passes 1,128 tests, with 133 optional skips and no failures or errors.
+The later motion build has 1,261 tests: 1,128 pass and 133 optional tests skip, with no failures or errors.
 All 1,256 compiled main classes match the tested artifact.
 
 Owned BDS 1.26.51.1, build 51061372, protocol 2193 supplies one ordinary impulse and three post-teleport impulses.

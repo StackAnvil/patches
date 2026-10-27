@@ -25,7 +25,7 @@ Unsupported queries, variants, or material families retain the existing fallback
 
 Implicit same-name bindings apply the complete owner deformation matrix.
 Explicit bindings replace the selected bone's bind transform with the complete owner matrix.
-The current item's sampled animation follows that copied transform.
+The complete posed local transform follows that owner matrix, including authored rest translation, rest rotation and animation channels.
 Entity-relative rotation retains the owner origin and clears its inherited basis.
 Independently bound children work beneath singular parents without parent inversion.
 Locators and Java drawing retain the same complete matrices, including shear and reflected scale.
@@ -54,18 +54,20 @@ The transform comparison uses these unchanged native routines:
 - Owner hash search, matrix copy, and local-channel reset through `0x141c3a8fe`.
 - Recursive hierarchy `0x141c22010` and matrix composition `0x141bc3d20`.
 
-The existing 96 controls cover successful nested bindings, reflected and singular owners, animation, and entity-relative rotation.
-Another 96 fresh-frame controls cover valid, missing, empty, whitespace, numeric, and unknown results with a colliding same-name owner.
-Java bone and locator matrices match both sets.
-The regression comparison fails when declaration-based suppression alone is removed.
-Scope tests cover ordered writes, owner and perspective isolation, replacement, rewind, standalone selection, and unsupported-query fallback.
-Other tests cover actual emitted Java vertices, normals, repeated binding, and binding removal.
+Two earlier private sets contain 96 native kernel controls each.
+They cover nested bindings, owner matrices, typed results and missing names, but supply their stage order and omit the retained local pose.
+Their Java matrix comparisons and declaration-suppression diagnostic no longer serve as final-frame expectations.
+The optional comparisons are removed, and the original private fixtures remain available as evidence for the isolated stages.
 
-Parsed definitions, typed expression values, animation samples, owner matrices, and weak-reference backing are supplied inputs.
-Diagnostic formatting and logging are explicit return boundaries.
-Native JSON and Molang admission, component cleanup, and valid-to-missing lifecycle transitions do not run in these controls.
-Name normalization, native cube assembly, and complete visible parity remain unverified.
-The original executable, raw native fixtures, and diagnostic variants remain private.
+Mandatory rest-pose tests compare complete native idle, blocking and release matrices for vanilla and rotated-rest shields.
+Scope tests cover ordered writes, owner and perspective isolation, replacement, rewind, standalone selection and unsupported-query fallback.
+Other tests cover hierarchy, reflection, singular owners, entity-relative rotation, locators, emitted vertices, normals and binding removal.
+Resolver tests retain result-kind, name and declared-ancestry coverage.
+
+Parsed definitions, typed values, animation samples, owner matrices and weak-reference backing remain supplied inputs in the earlier kernel controls.
+Native JSON and Molang admission, component cleanup and valid-to-missing lifecycle transitions do not run there.
+Name normalization, native cube assembly and complete visible parity remain unverified.
+The original executable, raw native fixtures and diagnostic variants remain private.
 
 Earlier live Hive checks restore the supported wing and head geometry with stable playback and no duplicate vanilla head item.
 Earlier CubeCraft checks reach playable spawn but retain the unresolved overall rendering gate.
@@ -207,7 +209,7 @@ This control establishes that rest rotation remains after binding too.
 A mandatory regression compares all observed matrix elements for both geometries through idle, blocking and release.
 It fails on the earlier implementation at the missing translation.
 Hierarchy controls retain reflection, shear, singular owners, entity-relative descendants, locators, vertices and normals.
-The full add-on build passes 1,257 tests, including 133 optional skips, with no failures or errors.
+The shield-only build has 1,257 tests: 1,124 pass and 133 optional tests skip, with no failures or errors.
 All 38 patches replay, and offline tooling, regression and metadata checks pass.
 
 The rebuilt artifact completes live idle, use, release and third-person controls with Iris enabled and disabled.
