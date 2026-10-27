@@ -11686,3 +11686,58 @@ This validates the shared API and buffer ownership in the tested shader pack.
 Other packs, geometry and tessellation interpolation, native GUI glint, clock epoch, general scale selection, and actual enchanted-equipment routing remain unverified.
 Production GLINT material admission and the equipped foil fallback remain unchanged.
 The reported shield and the full five-area goal remain unfinished.
+
+
+## Equipped native glint and current item channels, October 27, 2026
+
+Supported enchanted hand attachables now select native GLINT materials and their ordered second texture.
+Each draw retains its extraction frame and the verified item UV scale of `(0.5, 0.5)`.
+Ordinary actor, armor, and GUI consumers keep their existing material admission limits.
+Patterned shields still require native atlas composition and retain their existing fallback.
+
+The accepted shield uses `controller.render.shield`, including nested patterned and enchanted branches.
+Supported plain items now supply an explicit false `is_patterned` value.
+Previously, that missing variable made material selection return numeric zero before any texture loaded.
+The shared equipment snapshot also supplies `query.is_item_name_any` with full item identifiers and explicit empty equipment slots.
+The deprecated equipped-name query still returns the item path.
+The target shield script uses the new query to select the blocking hand.
+The [Mojang query reference](https://github.com/Mojang/bedrock-samples/blob/main/documentation/Molang.html) describes namespaced matching and the optional slot index.
+This adapter covers its captured single-item equipment slots; it does not supply hotbar or inventory lookup.
+
+Explicit binding now retains the current item's sampled animation after the owner matrix replaces its bind transform.
+An initial admitted draw lost those channels, which left the shield outside the first-person view.
+A new 96-case control executes the original channel producer `0x141e62f40` after the original owner-copy path.
+It then executes the original recursive hierarchy and matrix composition.
+The comparison covers typed and missing names, independent children, reflected and singular owners, and entity-relative rotation.
+Discarding the current channels fails the comparison; the corrected renderer passes.
+The earlier pre-binding reset controls still pass.
+The new control supplies the stage order and constant channel inputs.
+It does not establish complete native frame scheduling, JSON admission, or interpolation.
+
+The normal add-on build passes 1,126 tests, with 133 optional skips and no failures or errors.
+All 1,256 compiled client classes match the distributable artifact.
+All 45 embedded dependency archives retain the baseline entry contents; one archive differs only in container bytes.
+The tested add-on has SHA-256 `9a8edeef683685faff420a25e3272b9243b3c8aa9cb8ecb88f71554f49b39e17`.
+
+The final full-modpack client uses Minecraft 26.3, the target Bedrock 1.26.51.1 resources, and a 1920 by 1013 window at GUI scale four.
+Physical input selects a real enchanted off-hand shield on WildFFA.
+Eight reviewed captures cover idle, use, release, and third person with Complementary Reimagined r5.9.3 enabled and disabled.
+All 302 sampled shield hand observations retain one native attachable surface and no Java shield submission.
+Prepared and draw observations retain 64-byte native slices, changing glint values, and the pack's two required textures.
+All 74 sampled Iris backend observations retain a 64-byte block and range, texture unit four, and buffer binding seven.
+These are throttled observations, not total draw counts.
+No shader-disabled backend uniform observation is claimed.
+The shader-disabled images show the native surface, visible glint, and a changed blocking pose.
+All 45 recorded process identities retire, and the final run restores its valid starting profile bytes.
+
+Earlier attempts remain separate failures or diagnostics.
+An interrupted capture exhausted storage and left corrupt settings in the owned lab profile.
+Valid saved lab settings restored that profile before the final run; exact recovery of its earlier bytes is not established.
+The final recorder persists private originals before profile changes.
+Raw captures, account data, probes, native fixtures, and recovery records remain private.
+
+The shield remains large in first person.
+Exact native size, placement, full frame order, main-hand equipment, Java display overrides, and other resource packs remain unverified.
+Native GUI glint, enchanted armor, banner composition, other shader packs, and geometry or tessellation interpolation remain open.
+This checkpoint does not resolve the original E-key inventory background, locator, intermittent rollback, or endless-eating reports.
+The complete five-area goal and the broader pack, interaction, skin, and emote work remain incomplete.

@@ -1,4 +1,4 @@
-From 180b856076315149450750d80753a56053aa1ff1 Mon Sep 17 00:00:00 2001
+From c429296c0f18afbce423d1c4f55fb58701a75531 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(attachables): render equipped native pack models
@@ -80,8 +80,8 @@ reference documents rightItem/leftItem slot binding:
 https://learn.microsoft.com/en-us/minecraft/creator/documents/attachables
 
 Suppress a Java held draw only after every native surface resolves. Keep
-Java rendering for glint, banner atlases, unsupported materials, or missing
-owner bones. The Java-hand preference bypasses native held drawing too.
+Java rendering for unverified glint contexts, banner atlases, unsupported
+materials, or missing owner bones. The Java-hand preference bypasses native held drawing too.
 
 Apply the current equipment's parent_setup after every owner pre_animation
 reset and before its animation graph. The target player script resets
@@ -172,14 +172,14 @@ declaration inspection, string results and actual drawing matrices.
 Native component lifetime, render-controller internals, nested binding
 transforms, missing-bone behavior and visible parity remain unverified.
 
-Use the selected owner's complete bone matrix for explicit bindings.
-The previous path multiplied the item's unbound global transform into
-that matrix, so authored pivots, rotations and item animation moved the
-attachment again. Native binding clears local position and rotation,
-sets scale to one and retains entity-relative basis handling. Independent
-bound children replace their own matrices without parent inversion.
-Retain the authored Java pose for subsequent unbound frames, locators,
-and cube-local geometry. Remove redundant reconstruction of global poses.
+Use the selected owner's complete bone matrix as the explicit bind
+transform. Multiplying the item's unbound global matrix into that result
+duplicates authored pivots and rest rotations. Native binding clears
+local position and rotation, sets scale to one, and retains entity-relative
+basis handling. The current item channels follow that copied transform
+as a separate draw input. Independently bound children retain their own
+complete matrices without parent inversion. Preserve the authored Java
+pose for unbound frames, locators, and cube-local geometry.
 
 Evidence uses the same pinned Bedrock executable. Complete original bone
 constructors at 0x141c1b620 establish native pivots and default offsets.
@@ -187,10 +187,11 @@ Original rest setup at 0x141c32b7a preserves the coordinate conversion.
 Binding selection at 0x141c3a65c searches owner name hashes, copies the
 matrix and resets local channels. Complete hierarchy 0x141c22010 and
 composition 0x141bc3d20 then resolve all three bones in each fixture.
-Ninety-six controls cover nonzero pivots, authored and animated rotations,
-nested bindings, reflected and singular owners, and entity-relative bones.
-Parsed definition lookup and empty CRT copies are bounded. Animation
-samples, binding names and owner matrices are supplied inputs.
+Ninety-six pre-binding controls cover nonzero pivots, authored and
+animated rotations, nested bindings, reflected and singular owners, and
+entity-relative bones. These samples enter before the owner-copy/reset
+stage. Parsed definition lookup and empty CRT copies are bounded.
+Animation samples, binding names, and owner matrices are supplied inputs.
 
 All four regressions fail against the previous implementation and pass
 after the correction. Compare complete matrices and locators with the
@@ -274,6 +275,48 @@ Test missing, empty, colored and patterned components, including transitions
 back to empty. A passive WildFFA trace establishes empty layers and no base
 color on the reported enchanted shield, but does not validate this change
 visually or resolve the separate native glint gap.
+
+Route supported enchanted held items through the native GLINT material
+selected by their own controller. Load the declared secondary image and
+capture one immutable extraction frame. The target item renderer at
+0x14559c99a supplies UVScale(.5,.5) to 0x141eb77e0; three other item callers
+supply the same pair. Scope that scale to held items rather than applying
+it to unverified actor, armor or GUI producers.
+
+Create the glint draw from its captured frame instead of retaining it in
+the long-lived material cache. This keeps time and user options current
+without mutating queued draws or multiplying glint by directional face
+shading. Remove the blanket hand foil rejection only after complete
+native material, secondary texture, frame and binding selection succeeds.
+Ordinary materials retain their bounded cache and existing fallbacks.
+
+A persistent item-controller regression changes is_enchanted from plain
+to enchanted and back, preserving the authored two-image order and each
+caller's material admission. Keep the actual native shield placement and
+first/third-person visual comparison as separate live verification.
+
+The accepted target shield uses controller.render.shield with a nested
+is_patterned/is_enchanted selection, not only the older item_default
+controller. Supply explicit false for the supported unpatterned draw.
+An absent variable aborts that expression as undefined, producing numeric
+zero instead of a material identifier even when bindings and frame inputs
+are complete. The controller regression retains this nested selection.
+Visible patterned hand items still require the native atlas composition
+and retain their existing fallback before this scope is created.
+
+Keep the current item's animation channels after selecting an explicit
+owner matrix. Binding replaces the authored bind pose, but discarding the
+sampled frame as well leaves the admitted enchanted shield above the
+player in third person and outside the first-person view. The draw now
+carries that immutable frame through binding instead of losing it.
+
+The original pre-binding reset controls remain unchanged. A separate
+96-case control executes original channel producer 141e62f40 after the
+original owner-copy path, then original recursive hierarchy and matrix
+composition. It covers missing and typed names, independent children,
+reflections, singular owners and entity-relative rotation. Its stage order
+is supplied; it does not establish complete native frame scheduling.
+The renderer comparison fails if the current channels are discarded.
 ---
  .../appearance/BedrockActorAnimation.java     |  66 ++-
  .../appearance/BedrockAttachableBindings.java |  66 +++
@@ -284,11 +327,11 @@ visually or resolve the separate native glint gap.
  .../render/MixinAvatarAnimationState.java     |  11 +-
  .../MixinBedrockFirstPersonVisibility.java    |   8 +
  .../bedrock/render/BedrockActorResources.java |   3 +
- .../bedrock/render/BedrockAnimatedModel.java  |  94 +++-
+ .../bedrock/render/BedrockAnimatedModel.java  |  99 +++-
  .../bedrock/render/BedrockEquipmentCache.java |  41 ++
  .../BedrockEquippedAttachableLayer.java       |  36 ++
  .../render/BedrockHeldAttachableBindings.java |  59 +++
- .../render/BedrockPlayerAttachables.java      | 470 ++++++++++++++++++
+ .../render/BedrockPlayerAttachables.java      | 479 ++++++++++++++++++
  .../bedrock/render/BedrockPlayerModel.java    |   8 +
  .../bedrock/render/BedrockPlayerSkins.java    |  37 +-
  .../bedrock/render/BedrockTextureMeshes.java  | 109 ++++
@@ -304,11 +347,12 @@ visually or resolve the separate native glint gap.
  .../render/BedrockCostumeVisibilityTest.java  |  45 ++
  .../render/BedrockEquipmentOwnerTest.java     |  71 +++
  .../render/BedrockEquippedAttachableTest.java | 137 +++++
- .../render/BedrockExplicitBindingsTest.java   | 230 +++++++++
+ .../render/BedrockExplicitBindingsTest.java   | 264 ++++++++++
  .../BedrockHeldAttachableBindingsTest.java    | 126 +++++
+ .../render/BedrockHeldGlintMaterialsTest.java |  39 ++
  .../render/BedrockPlayerModelTest.java        |  59 +++
  .../render/BedrockTextureMeshesTest.java      |  87 ++++
- 33 files changed, 2664 insertions(+), 23 deletions(-)
+ 34 files changed, 2751 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableBindings.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java
@@ -328,6 +372,7 @@ visually or resolve the separate native glint gap.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockExplicitBindingsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHeldAttachableBindingsTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHeldGlintMaterialsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockTextureMeshesTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
@@ -834,7 +879,7 @@ index da726c2..fc18adc 100644
          BedrockAcceptedResources.clear();
          loaded = false;
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
-index 1c1c8c8..e076c9d 100644
+index 1c1c8c8..a62b33a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 @@ -5,7 +5,9 @@
@@ -889,7 +934,7 @@ index 1c1c8c8..e076c9d 100644
      }
  
      Map<ModelPart, Matrix4f> drawingMatrices() {
-@@ -168,9 +175,94 @@ public final class BedrockAnimatedModel {
+@@ -168,9 +175,99 @@ public final class BedrockAnimatedModel {
          target.jacket.loadPose(target.body.storePose());
      }
  
@@ -904,9 +949,9 @@ index 1c1c8c8..e076c9d 100644
 +        });
 +    }
 +
-+    /** Explicit bindings replace local bone animation with the selected owner's complete matrix. */
++    /** Explicit bindings replace the bind pose; the current item channels follow the owner matrix. */
 +    void bind(final Map<String, Matrix4f> deformations, final Map<String, Matrix4f> ownerBones,
-+              final BedrockAttachableBindings.Resolved bindings) {
++              final BedrockAttachableBindings.Resolved bindings, final Map<String, BedrockBoneAnimation.Transform> animation) {
 +        this.bind(deformations);
 +        bindings.declared().forEach(name -> {
 +            final var part = this.parts.get(normalize(name));
@@ -917,7 +962,12 @@ index 1c1c8c8..e076c9d 100644
 +            final var parent = ownerBones.get(normalize(owner));
 +            if (part != null && parent != null) {
 +                final var matrix = new Matrix4f(parent);
++                final var transform = animation.get(name);
++                if (transform != null) matrix.translate(transform.position().x(), -transform.position().y(), transform.position().z());
 +                if (this.entityRelative.contains(part)) BedrockBoneTransform.resetBasis(matrix);
++                if (transform != null) matrix.rotateZYX((float) Math.toRadians(transform.rotation().z()),
++                        (float) Math.toRadians(transform.rotation().y()), (float) Math.toRadians(transform.rotation().x()))
++                        .scale(transform.scale().x(), transform.scale().y(), transform.scale().z());
 +                this.boundMatrices.put(part, matrix);
 +            }
 +        });
@@ -1140,10 +1190,10 @@ index 0000000..1ea81dc
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 new file mode 100644
-index 0000000..cb30052
+index 0000000..2bf8669
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
-@@ -0,0 +1,470 @@
+@@ -0,0 +1,479 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1282,6 +1332,7 @@ index 0000000..cb30052
 +                                          final BedrockActorAnimation.Frame input) {
 +        final ResourcePackStorage packs = resources(entity);
 +        if (packs == null) return List.of();
++        final var glintFrame = BedrockActorGlintFrames.current();
 +        final BedrockEquipmentCache<Equipped> equipment = (firstPerson ? FIRST_PERSON : EQUIPPED).computeIfAbsent(entity, _ -> new BedrockEquipmentCache<>());
 +        final List<Surface> result = new ArrayList<>();
 +        final Map<String, Object> queries = new HashMap<>(input == null ? BedrockPlayerSkins.actorQueries(entity, state, partialTick) : input.queries());
@@ -1295,12 +1346,14 @@ index 0000000..cb30052
 +        for (final EquipmentSlot slot : firstPerson ? List.of(EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND) : SLOTS) {
 +            final ItemStack stack = firstPerson ? slot == EquipmentSlot.MAINHAND ? main : off : entity.getItemBySlot(slot);
 +            final boolean hand = slot == EquipmentSlot.MAINHAND || slot == EquipmentSlot.OFFHAND;
-+            if (hand && (stack.hasFoil() || requiresBannerAtlas(stack) || !BedrockPlayerSkins.options(state.skin).rendering().getOrDefault("enable_attachables", true))) continue;
++            if (hand && (requiresBannerAtlas(stack) || !BedrockPlayerSkins.options(state.skin).rendering().getOrDefault("enable_attachables", true))) continue;
 +            final Map<String, Object> context = Map.of("is_first_person", firstPerson ? 1F : 0F, "item_slot", slotName(slot));
 +            final Map<String, Object> itemQueries = new HashMap<>(queries);
 +            itemQueries.put("get_animation_frame", BedrockFirstPersonItemRendering.animationFrame(stack));
 +            final Map<String, Float> variables = Map.of("is_first_person", firstPerson ? 1F : 0F,
-+                    "is_enchanted", stack.hasFoil() ? 1F : 0F);
++                    "is_enchanted", stack.hasFoil() ? 1F : 0F,
++                    // Patterned hand items retain their atlas fallback, but plain native controllers still read this flag.
++                    "is_patterned", 0F);
 +            ItemIdentity identity;
 +            try {
 +                identity = identify(stack, packs, SELECTORS.computeIfAbsent(entity, _ -> new BedrockAttachableSelection()), properties,
@@ -1359,8 +1412,8 @@ index 0000000..cb30052
 +                        if (!heldBindings.hasBindingPath(bindings.declared())) { supported = false; break; }
 +                    }
 +                    for (final var group : BedrockGeometry.partitionMaterials(geometry, Map.of(), selected.materials()).entrySet()) {
-+                        final var material = materials.material(group.getKey()).orElse(null);
-+                        if (material == null || selected.textures().size() < material.textureCount()) { supported = false; break; }
++                        final var material = (hand ? materials.heldItemMaterial(group.getKey()) : materials.material(group.getKey())).orElse(null);
++                        if (material == null || material.glint() && glintFrame == null || selected.textures().size() < material.textureCount()) { supported = false; break; }
 +                        final List<Identifier> textures = new ArrayList<>();
 +                        for (int index = 0; index < material.textureCount(); index++) {
 +                            final Identifier texture = texture(selected.textures().get(index), packs);
@@ -1375,7 +1428,7 @@ index 0000000..cb30052
 +                            model = model(geometry, group.getValue());
 +                            equipped.resource.models.put(key, model);
 +                        }
-+                        slotSurfaces.add(new Surface(slot, model, selected, pose, bindings, renderType(List.copyOf(textures), selected, material)));
++                        slotSurfaces.add(new Surface(slot, model, selected, pose, bindings, renderType(List.copyOf(textures), selected, material, glintFrame)));
 +                    }
 +                    if (!supported) break;
 +                }
@@ -1509,7 +1562,7 @@ index 0000000..cb30052
 +            @Override
 +            public void setupAnim(final Draw draw) {
 +                animated.pose(draw.pose());
-+                animated.bind(draw.deformations(), draw.ownerBones(), draw.bindings());
++                animated.bind(draw.deformations(), draw.ownerBones(), draw.bindings(), draw.pose());
 +                animated.visibility(draw.selection().visibility());
 +            }
 +        };
@@ -1545,9 +1598,15 @@ index 0000000..cb30052
 +    }
 +
 +    private static RenderType renderType(final List<Identifier> textures, final BedrockPlayerControllers.Surface selection,
-+                                         final BedrockActorMaterialDefinitions.Material material) {
++                                         final BedrockActorMaterialDefinitions.Material material, final BedrockActorGlintFrames.Frame frame) {
++        final boolean nether = BedrockActorRenderTypes.usesNetherLighting();
++        if (material.glint()) {
++            // Target item renderers supply UVScale(.5,.5); retain this extraction frame for the queued draw.
++            return BedrockActorRenderTypes.createFrameGlint(textures, material, selection.ignoreLighting(),
++                    selection.lightMultiplier(), frame, .5F, .5F, nether);
++        }
 +        final MaterialKey key = new MaterialKey(textures, material, selection.ignoreLighting(), selection.lightMultiplier(),
-+                selection.uv(), BedrockActorRenderTypes.usesNetherLighting());
++                selection.uv(), nether);
 +        return RENDER_TYPES.computeIfAbsent(key, value -> {
 +            final var uv = value.uv();
 +            return BedrockActorRenderTypes.create(value.textures(), value.material(), value.ignoreLighting(),
@@ -2472,7 +2531,7 @@ index 74c64c4..a162777 100644
          @Override
          public byte[] get(final String path) {
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModelTest.java
-index 0ab89b1..0fa2a15 100644
+index 0ab89b1..a5a6d84 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModelTest.java
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModelTest.java
 @@ -12,10 +12,35 @@ import org.joml.Vector3f;
@@ -2494,7 +2553,7 @@ index 0ab89b1..0fa2a15 100644
 +        final var item = BedrockGeometry.animatedModel(geometry, Map.of());
 +        final var owner = new org.joml.Matrix4f().translation(5, 9, 1).rotateZ((float) Math.PI / 2);
 +        item.pose(Map.of());
-+        item.bind(Map.of(), Map.of("rightitem", owner), new BedrockAttachableBindings.Resolved(Set.of("item"), Map.of("item", "rightItem")));
++        item.bind(Map.of(), Map.of("rightitem", owner), new BedrockAttachableBindings.Resolved(Set.of("item"), Map.of("item", "rightItem")), Map.of());
 +        final var matrix = item.drawingMatrices().get(item.model().root().getChild("item"));
 +        final var position = matrix.transformPosition(new Vector3f());
 +        assertEquals(5F / 16F, position.x, .00001F);
@@ -2504,7 +2563,7 @@ index 0ab89b1..0fa2a15 100644
 +        assertEquals(0, direction.x, .00001F);
 +        assertEquals(1, direction.y, .00001F);
 +        item.pose(Map.of());
-+        item.bind(Map.of(), Map.of("leftitem", new org.joml.Matrix4f().translation(-5,9,1)), new BedrockAttachableBindings.Resolved(Set.of("item"), Map.of("item", "leftItem")));
++        item.bind(Map.of(), Map.of("leftitem", new org.joml.Matrix4f().translation(-5,9,1)), new BedrockAttachableBindings.Resolved(Set.of("item"), Map.of("item", "leftItem")), Map.of());
 +        assertEquals(-5F / 16F, item.drawingMatrices().get(item.model().root().getChild("item")).m30(), .00001F);
 +    }
 +
@@ -2940,10 +2999,10 @@ index 0000000..b9394af
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockExplicitBindingsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockExplicitBindingsTest.java
 new file mode 100644
-index 0000000..4eb5071
+index 0000000..290b768
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockExplicitBindingsTest.java
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,264 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2986,7 +3045,7 @@ index 0000000..4eb5071
 +            model.pose(pose);
 +            final var owner = new Matrix4f().translation(6, 22, 2).rotateY(.4F).scale(2 * reflection, 1, .5F)
 +                    .rotateZ(.3F);
-+            model.bind(Map.of(), Map.of("rightitem", owner), resolved(Map.of("socket", "rightitem")));
++            model.bind(Map.of(), Map.of("rightitem", owner), resolved(Map.of("socket", "rightitem")), Map.of());
 +            assertTrue(owner.equals(model.boneMatrices().get("socket"), .000002F));
 +            final var expectedTip = new Matrix4f(owner).translate(4, -7, -4)
 +                    .rotateZYX(radians(30), radians(20), radians(10));
@@ -3012,14 +3071,14 @@ index 0000000..4eb5071
 +        for (final var order : List.of(List.of("root", "socket", "tip"), List.of("tip", "socket", "root"))) {
 +            final Map<String, String> bindings = new LinkedHashMap<>();
 +            order.forEach(name -> bindings.put(name, name + "_anchor"));
-+            model.bind(Map.of(), owners, resolved(bindings));
++            model.bind(Map.of(), owners, resolved(bindings), Map.of());
 +            assertTrue(root.equals(model.boneMatrices().get("root"), .000002F));
 +            assertTrue(socket.equals(model.boneMatrices().get("socket"), .000002F));
 +            assertTrue(tip.equals(model.boneMatrices().get("tip"), .000002F));
 +        }
-+        model.bind(Map.of(), Map.of(), BedrockAttachableBindings.Resolved.EMPTY);
++        model.bind(Map.of(), Map.of(), BedrockAttachableBindings.Resolved.EMPTY, Map.of());
 +        unbound.forEach((name, matrix) -> assertTrue(matrix.equals(model.boneMatrices().get(name), .000002F)));
-+        model.bind(Map.of("root", new Matrix4f().scale(0)), owners, resolved(Map.of("socket", "socket_anchor")));
++        model.bind(Map.of("root", new Matrix4f().scale(0)), owners, resolved(Map.of("socket", "socket_anchor")), Map.of());
 +        assertEquals(0, model.boneMatrices().get("root").determinant());
 +        final var selected = new Matrix4f(socket);
 +        socket.identity();
@@ -3035,7 +3094,7 @@ index 0000000..4eb5071
 +                new Matrix4f().translation(2, -3, 4).rotateZYX(.5F, -.2F, .7F).scale(-2, 3, .5F),
 +                new Matrix4f().translation(-5, 9, 3).scale(0))) {
 +            model.pose(Map.of("socket", transform(true)));
-+            model.bind(Map.of(), Map.of("rightitem", owner), resolved(Map.of("socket", "rightitem")));
++            model.bind(Map.of(), Map.of("rightitem", owner), resolved(Map.of("socket", "rightitem")), Map.of());
 +            final var expected = new Matrix4f().translation(owner.getTranslation(new Vector3f()));
 +            assertTrue(expected.equals(model.boneMatrices().get("socket"), .000002F));
 +        }
@@ -3061,7 +3120,7 @@ index 0000000..4eb5071
 +            final Map<String, String> bindings = new HashMap<>();
 +            row.getAsJsonObject("bindings").entrySet().forEach(entry -> bindings.put(entry.getKey(), entry.getValue().getAsString()));
 +            model.pose(poses);
-+            model.bind(Map.of(), owners, resolved(bindings));
++            model.bind(Map.of(), owners, resolved(bindings), Map.of());
 +            for (final var entry : row.getAsJsonObject("matrices").entrySet()) {
 +                final float[] expected = floats(entry.getValue().getAsJsonArray());
 +                assertArrayEquals(expected, model.boneMatrices().get(entry.getKey()).get(new float[16]), .00006F, row.toString());
@@ -3095,7 +3154,41 @@ index 0000000..4eb5071
 +            final var declarations = java.util.Set.copyOf(targets.keySet());
 +            if (java.util.Set.of("number", "unknown").contains(row.get("resultType").getAsString())) targets.remove("socket");
 +            model.pose(poses);
-+            model.bind(Map.of("socket", sameName), owners, new BedrockAttachableBindings.Resolved(declarations, targets));
++            model.bind(Map.of("socket", sameName), owners, new BedrockAttachableBindings.Resolved(declarations, targets), Map.of());
++            for (final var entry : row.getAsJsonObject("matrices").entrySet()) {
++                final float[] expected = floats(entry.getValue().getAsJsonArray());
++                assertArrayEquals(expected, model.boneMatrices().get(entry.getKey()).get(new float[16]), .00006F, row.toString());
++                final var locator = new BedrockModelLocators.Locator(entry.getKey(), 0, 0, 0, 0, 0, 0, false);
++                assertArrayEquals(expected, model.locatorTransform(locator).get(new float[16]), .00006F, row.toString());
++            }
++        }
++        assertEquals(96, reference.getAsJsonArray("rows").size());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_BOUND_ANIMATION", matches = ".+")
++    void matchesNativeChannelsAppliedToBoundBonesWithoutLosingIndependentChildren() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_BOUND_ANIMATION")))).getAsJsonObject();
++        final var collision = new Matrix4f().set(floats(reference.getAsJsonObject("collisionOwner").getAsJsonArray("matrix")));
++        for (final var value : reference.getAsJsonArray("rows")) {
++            final var row = value.getAsJsonObject();
++            final var model = BedrockGeometry.animatedModel(BedrockGeometryModel.fromJson(reference.get("geometry").toString()).getFirst(), Map.of());
++            final var sameName = new Matrix4f(collision).mul(new Matrix4f(model.boneMatrices().get("socket")).invert());
++            final Map<String, BedrockBoneAnimation.Transform> poses = new HashMap<>();
++            row.getAsJsonObject("poses").entrySet().forEach(entry -> {
++                final var pose = entry.getValue().getAsJsonObject();
++                poses.put(entry.getKey(), new BedrockBoneAnimation.Transform(vector(pose.getAsJsonArray("position")),
++                        vector(pose.getAsJsonArray("rotation")), vector(pose.getAsJsonArray("scale")), pose.get("relative").getAsBoolean()));
++            });
++            final Map<String, Matrix4f> owners = new HashMap<>();
++            row.getAsJsonObject("owners").entrySet().forEach(entry -> owners.put(entry.getKey(), new Matrix4f().set(floats(entry.getValue().getAsJsonArray()))));
++            owners.put("socket", collision);
++            final Map<String, String> targets = new HashMap<>();
++            row.getAsJsonObject("bindings").entrySet().forEach(entry -> targets.put(entry.getKey(), entry.getValue().getAsString()));
++            final var declarations = java.util.Set.copyOf(targets.keySet());
++            if (java.util.Set.of("number", "unknown").contains(row.get("resultType").getAsString())) targets.remove("socket");
++            model.pose(poses);
++            model.bind(Map.of("socket", sameName), owners, new BedrockAttachableBindings.Resolved(declarations, targets), poses);
 +            for (final var entry : row.getAsJsonObject("matrices").entrySet()) {
 +                final float[] expected = floats(entry.getValue().getAsJsonArray());
 +                assertArrayEquals(expected, model.boneMatrices().get(entry.getKey()).get(new float[16]), .00006F, row.toString());
@@ -3176,7 +3269,7 @@ index 0000000..4eb5071
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHeldAttachableBindingsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHeldAttachableBindingsTest.java
 new file mode 100644
-index 0000000..6b5f62b
+index 0000000..84ff2cb
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHeldAttachableBindingsTest.java
 @@ -0,0 +1,126 @@
@@ -3230,7 +3323,7 @@ index 0000000..6b5f62b
 +            final var bindings = playback.bindings(resolver);
 +            assertTrue(ancestry.hasBindingPath(bindings.declared()));
 +            model.pose(Map.of());
-+            model.bind(Map.of(), owners, bindings);
++            model.bind(Map.of(), owners, bindings, Map.of());
 +            assertTrue(slot.getValue().equals(model.boneMatrices().get("socket"), .000002F));
 +            final var expected = new Matrix4f(slot.getValue()).translate(2, -3, 4);
 +            expected.m30(expected.m30() / 16F).m31(expected.m31() / 16F).m32(expected.m32() / 16F);
@@ -3241,7 +3334,7 @@ index 0000000..6b5f62b
 +            final var bindings = playback.bindings(resolver);
 +            assertTrue(ancestry.hasBindingPath(bindings.declared()));
 +            model.pose(Map.of());
-+            model.bind(Map.of("socket", new Matrix4f().translation(101, 202, 303)), owners, bindings);
++            model.bind(Map.of("socket", new Matrix4f().translation(101, 202, 303)), owners, bindings, Map.of());
 +            assertArrayEquals(new Matrix4f().translation(0, 24, 0).get(new float[16]), model.boneMatrices().get("socket").get(new float[16]), .000002F, slot + bindings);
 +            final var expected = new Matrix4f().translation(2F / 16F, 21F / 16F, 4F / 16F);
 +            assertArrayEquals(expected.get(new float[16]), model.drawingMatrices().get(blade).get(new float[16]), .000002F);
@@ -3304,6 +3397,51 @@ index 0000000..6b5f62b
 +    private static BedrockGeometryModel geometry(final String bones) throws Exception {
 +        return BedrockGeometryModel.fromJson("{\"minecraft:geometry\":[{\"description\":{\"identifier\":\"geometry.test\","
 +                + "\"texture_width\":64,\"texture_height\":64},\"bones\":[" + bones + "]}]}").getFirst();
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHeldGlintMaterialsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHeldGlintMaterialsTest.java
+new file mode 100644
+index 0000000..f7b23fc
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHeldGlintMaterialsTest.java
+@@ -0,0 +1,39 @@
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerControllers;
++import java.util.List;
++import java.util.Map;
++import org.cube.converter.data.bedrock.BedrockEntityData;
++import org.cube.converter.data.bedrock.controller.BedrockRenderController;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockHeldGlintMaterialsTest {
++    @Test
++    void followsEnchantmentChangesInTheSameItemControllerAndKeepsTextureOrder() throws Exception {
++        final String primary = "textures/base", secondary = "textures/enchanted";
++        final var entity = new BedrockEntityData("test:held", new BedrockEntityData.Scripts(List.of(), List.of(),
++                new BedrockEntityData.Scripts.Scale("1", "1", "1", "1"), List.of()),
++                List.of(new BedrockEntityData.RenderController("test:item", "")),
++                Map.of("default", "entity_alphatest", "enchanted", "entity_alphatest_glint"), Map.of(),
++                Map.of("default", primary, "enchanted", secondary), Map.of("default", "geometry.item"));
++        final var controller = new BedrockRenderController("test:item", List.of(new BedrockRenderController.MaterialAssignment(
++                "*", "variable.is_patterned ? (variable.is_enchanted ? material.pattern_enchanted : material.pattern) : (variable.is_enchanted ? material.enchanted : material.default)")), "geometry.default",
++                List.of("texture.default", "texture.enchanted"), List.of(), List.of(), List.of(), false, "1",
++                BedrockRenderController.UvAnimation.IDENTITY, List.of());
++        final var renderer = new BedrockPlayerControllers(entity, Map.of(controller.identifier(), controller));
++        final var materials = BedrockActorMaterialDefinitions.read(List.of());
++        int frame = 0;
++        for (final float enchanted : new float[] {0, 1, 1, 0}) {
++            final var selected = renderer.select(frame++, Map.of(), Map.of(), Map.of("is_enchanted", enchanted, "is_patterned", 0F),
++                    Map.of("is_first_person", 1F, "item_slot", "off_hand")).surfaces().getFirst();
++            assertEquals(primary, selected.textures().getFirst());
++            assertEquals(secondary, selected.textures().get(1));
++            final var material = materials.heldItemMaterial(selected.materials().get("*")).orElseThrow();
++            assertEquals(enchanted != 0, material.glint());
++            assertEquals(enchanted == 0 ? 1 : 2, material.textureCount());
++            assertEquals(enchanted == 0, materials.material(selected.materials().get("*")).isPresent());
++        }
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java

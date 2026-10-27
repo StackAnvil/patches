@@ -2541,3 +2541,13 @@ Nine physical control phases cover HUD visibility, shield use and release, camer
 All nine screenshots received visual review; the oversized shield remains a separate rendering issue.
 The recorder exits successfully, retires its owned processes, and restores its prepared profile.
 The live control does not establish mounted matches or native graphical equality.
+
+
+## Namespaced equipment matching, October 27, 2026
+
+The equipment snapshot now retains full identifiers for `query.is_item_name_any`.
+It supports multiple candidate names, explicit empty slots, and the captured single-item equipment slots.
+The deprecated equipped-name query still returns the path.
+The target shield uses namespaced matching during blocking; the missing query previously rejected its native binding evaluation.
+The [equipped check](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) records that failure and the final client observations.
+Hotbar and inventory lookup require their own native inventory owner and remain outside this adapter.

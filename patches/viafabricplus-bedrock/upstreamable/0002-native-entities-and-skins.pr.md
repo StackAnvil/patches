@@ -780,3 +780,13 @@ The [coverage record](../../../docs/bedrock-coverage.md#iris-glint-programs-and-
 
 This is a shared draw-API check with supplied actor selection and a reused image.
 It does not validate native GUI glint, geometry or tessellation interpolation, other shader packs, or actual enchanted-equipment admission.
+
+
+## Equipped GLINT material admission, October 27, 2026
+
+Material classification now retains a GLINT flag and two required sampler slots.
+Held-item callers provide the verified item scale and immutable extraction frame.
+Ordinary actor and GUI lookup still rejects glint without those inputs.
+The same cached definition supports both lookup domains without a rejected lookup hiding the held material.
+World held draws retain the Iris program and native buffer ownership verified in the preceding shader work.
+The [equipped check](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) records the tested artifact, actual enchanted shield, and remaining limits.

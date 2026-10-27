@@ -24,8 +24,8 @@ Unsupported queries, variants, or material families retain the existing fallback
 ## Owner bone transforms
 
 Implicit same-name bindings apply the complete owner deformation matrix.
-Explicit bindings replace the selected bone transform with the complete owner matrix.
-They discard local position, rotation, and scale from that bound result.
+Explicit bindings replace the selected bone's bind transform with the complete owner matrix.
+The current item's sampled animation follows that copied transform.
 Entity-relative rotation retains the owner origin and clears its inherited basis.
 Independently bound children work beneath singular parents without parent inversion.
 Locators and Java drawing retain the same complete matrices, including shear and reflected scale.
@@ -168,3 +168,21 @@ The complete stack replays, and its add-on suite reports 1,108 passed, 139 optio
 The isolated upstream check still requires earlier StackAnvil actor-animation changes; its temporary apply was aborted.
 The reported WildFFA shield also has enchantment glint, which still keeps its existing fallback.
 This change does not resolve that separate shader and animation gap or establish visible shield parity.
+
+
+## Enchanted held materials and current animation, October 27, 2026
+
+Supported enchanted hand items now use native materials, secondary textures, and a fresh extraction frame.
+The nested target shield controller receives an explicit unpatterned flag.
+Visible banner data retains its existing atlas fallback.
+The current item's sampled animation follows the copied owner matrix instead of disappearing during explicit binding.
+
+The controller regression switches one item between plain and enchanted states and checks material selection and texture order.
+A separate 96-case comparison executes original native channel and hierarchy routines with a supplied stage order.
+The earlier pre-binding reset comparisons remain valid; the new control does not establish complete native frame scheduling.
+
+A real enchanted off-hand shield now submits one native surface and no observed Java shield draw.
+Blocking changes its visible pose with shaders enabled and disabled.
+All eight captures receive visual review.
+The shield remains large, and exact native size, placement, main-hand behavior, and banner composition remain unverified.
+The [coverage record](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) includes build counts, artifact identity, client evidence, and the failed attempts.

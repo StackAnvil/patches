@@ -478,3 +478,11 @@ The final full-stack build and focused shader controls pass; native GUI glint eq
 
 The replay retains the shared Iris glint mapping instead of restoring the earlier exclusion.
 The new client check covers world actor draws and shader toggles; native GUI glint remains unverified.
+
+
+## Held glint remains separate from GUI admission, October 27, 2026
+
+GUI actor extraction keeps its own resources and selection scopes when world held items gain native GLINT admission.
+A GUI portrait does not inherit the held-item material route or assume the world item's verified UV scale.
+The pipeline guard rejects glint without explicit draw inputs.
+The [held-item checkpoint](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) leaves native GUI glint unverified.

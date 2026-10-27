@@ -1,4 +1,4 @@
-From ea5b3cb2267062dc69b657bd952556cdfccbb73d Mon Sep 17 00:00:00 2001
+From 907fb32275989bb3c6815f4494b5514fe6bab445 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -358,6 +358,20 @@ any designated ridden entity type. These controls do not establish full
 mount, hierarchy, equipment-transport or native visual parity.
 https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions/query_has_head_gear
 https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions/query_is_riding_any_entity_of_type
+
+Preserve namespaced equipment identifiers for query.is_item_name_any,
+while the deprecated equipped-name query still returns only the path.
+The target 1.26.51.1 shield pre-animation script uses this query to select
+main-hand and off-hand blocking. Live scope observations identify it as
+the missing query that prevents the native binding evaluation during use.
+The captured equipment map owns its identities and empty-slot values;
+rendered hand interpolation cannot change the query snapshot.
+
+The supported equipment slots have one item, at index zero. Inventory and
+hotbar queries require their own native inventory owner and are not routed
+through this equipment snapshot. Target resources and the Mojang Molang
+query reference establish the namespaced names and optional slot index.
+https://github.com/Mojang/bedrock-samples/blob/main/documentation/Molang.html
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -374,7 +388,7 @@ https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangrefe
  .../appearance/BedrockClassicModel.java       |    1 +
  .../appearance/BedrockEmitterEvents.java      |   74 ++
  .../appearance/BedrockEmoteMessages.java      |  124 ++
- .../appearance/BedrockItemAnimation.java      |  173 +++
+ .../appearance/BedrockItemAnimation.java      |  193 +++
  .../appearance/BedrockItemMetadata.java       |   44 +
  .../appearance/BedrockLevelSounds.java        |  164 +++
  .../bedrock/appearance/BedrockLimbSide.java   |   67 +
@@ -500,7 +514,7 @@ https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangrefe
  .../BedrockControllerSoundTest.java           |  150 +++
  .../appearance/BedrockEmitterEventsTest.java  |  181 +++
  .../appearance/BedrockEmoteMessagesTest.java  |   94 ++
- .../appearance/BedrockItemAnimationTest.java  |  427 +++++++
+ .../appearance/BedrockItemAnimationTest.java  |  448 +++++++
  .../appearance/BedrockItemMetadataTest.java   |  102 ++
  .../appearance/BedrockLimbSideTest.java       |   89 ++
  .../appearance/BedrockMolangColorTest.java    |  110 ++
@@ -562,7 +576,7 @@ https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangrefe
  .../render/BedrockPlayerModelTest.java        |  145 +++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 203 files changed, 24579 insertions(+), 15 deletions(-)
+ 203 files changed, 24620 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -3495,10 +3509,10 @@ index 0000000..1e1b478
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimation.java
 new file mode 100644
-index 0000000..a475715
+index 0000000..a6c7571
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimation.java
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,193 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3519,13 +3533,20 @@ index 0000000..a475715
 +        Item renderedMainHand,
 +        Item renderedOffHand,
 +        int remainingTicks) {
-+    public record Item(String name, int maxUseTicks, boolean charged, ItemAnimationData animation) {
++    public record Item(String identifier, int maxUseTicks, boolean charged, ItemAnimationData animation) {
++        public Item {
++            if (!identifier.isEmpty() && identifier.indexOf(':') < 0) identifier = "minecraft:" + identifier;
++        }
++
++        /** The deprecated equipped-name query returns the path, while name matching retains the namespace. */
++        public String name() { return this.identifier.substring(this.identifier.indexOf(':') + 1); }
++
 +        public static final Item EMPTY = new Item("", 0, false, ItemAnimationData.EMPTY);
 +
 +        public static Item fromIdentifiers(final String bedrockIdentifier, final String javaName,
 +                                           final int maxUseTicks, final boolean charged, final ItemAnimationData animation) {
 +            final String name = bedrockIdentifier == null || bedrockIdentifier.isEmpty()
-+                    ? javaName : bedrockIdentifier.substring(bedrockIdentifier.indexOf(':') + 1);
++                    ? javaName : bedrockIdentifier;
 +            return new Item(name, animation.useDurationTicks() == null ? maxUseTicks : animation.useDurationTicks(), charged, animation);
 +        }
 +    }
@@ -3615,7 +3636,20 @@ index 0000000..a475715
 +
 +    public static Map<String, Object> equipmentQueries(final Map<String, Item> equipment) {
 +        final Map<String, Item> snapshot = Map.copyOf(equipment);
-+        return Map.of("equipped_item_any_tag", (BedrockActorAnimation.Query) arguments -> {
++        return Map.of("is_item_name_any", (BedrockActorAnimation.Query) arguments -> {
++            if (arguments.size() < 2 || !(arguments.getFirst() instanceof String slot)) return false;
++            final Item item = snapshot.get(slot);
++            if (item == null) return false;
++            int firstName = 1;
++            if (arguments.get(1) instanceof Number index) {
++                if (index.floatValue() != 0) return false;
++                firstName++;
++            }
++            for (final Object name : arguments.subList(firstName, arguments.size())) {
++                if (item.identifier().equals(name)) return true;
++            }
++            return false;
++        }, "equipped_item_any_tag", (BedrockActorAnimation.Query) arguments -> {
 +            if (arguments.size() < 2 || !(arguments.getFirst() instanceof String slot)) return false;
 +            final Item item = snapshot.get(slot);
 +            if (item == null) return false;
@@ -14315,7 +14349,7 @@ index 0000000..ff0be71
 +    #endif
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 178777b..177f892 100644
+index bb7d6ff..7f9bd45 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
 @@ -7,6 +7,13 @@
@@ -14332,7 +14366,7 @@ index 178777b..177f892 100644
      "compat.iris.MixinIrisPipelines",
      "compat.iris.IrisProgramSourceConstructor",
      "compat.iris.MixinIrisEmissionPrograms",
-@@ -63,6 +70,8 @@
+@@ -66,6 +73,8 @@
      "features.misc.MixinClientSuggestionProvider",
      "features.misc.MixinInventoryScreen",
      "features.misc.MixinMinecraft",
@@ -14341,7 +14375,7 @@ index 178777b..177f892 100644
      "features.render.MixinAbstractClientPlayer",
      "features.render.MixinPlayerInfoSkin",
      "features.render.MixinPlayerSkinRenderCache",
-@@ -82,6 +91,11 @@
+@@ -85,6 +94,11 @@
      "features.render.MixinEntityRenderDispatcher",
      "features.render.MixinMinecraftSkinLifecycle",
      "features.render.MixinLivingEntitySkinLayers",
@@ -14353,7 +14387,7 @@ index 178777b..177f892 100644
      "features.render.MixinPlayerSkinWidget",
      "features.render.MixinGuiSkinRenderer",
      "features.movement.MixinEntity",
-@@ -90,7 +104,17 @@
+@@ -93,7 +107,17 @@
      "features.movement.MixinHoneyBlock",
      "features.movement.MixinLivingEntity",
      "features.movement.MixinLocalPlayer",
@@ -17496,10 +17530,10 @@ index 0000000..ff33158
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimationTest.java
 new file mode 100644
-index 0000000..658bb70
+index 0000000..a2d8350
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimationTest.java
-@@ -0,0 +1,427 @@
+@@ -0,0 +1,448 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -17524,6 +17558,27 @@ index 0000000..658bb70
 +        return supplied instanceof BedrockActorAnimation.Query function
 +                ? function.evaluate(arguments)
 +                : supplied;
++    }
++
++    @Test
++    void matchesEquipmentNamesWithoutLosingNamespacesOrEmptySlots() {
++        final var shield = BedrockItemAnimation.Item.fromIdentifiers("minecraft:shield", "paper", 72000, false, ItemAnimationData.EMPTY);
++        final var custom = BedrockItemAnimation.Item.fromIdentifiers("probe:shield", "paper", 72000, false, ItemAnimationData.EMPTY);
++        final var slots = new java.util.HashMap<String, BedrockItemAnimation.Item>();
++        slots.put("slot.weapon.offhand", shield);
++        slots.put("slot.weapon.mainhand", custom);
++        slots.put("slot.armor.head", BedrockItemAnimation.Item.EMPTY);
++        final var queries = BedrockItemAnimation.equipmentQueries(slots);
++        slots.clear();
++        assertEquals("shield", shield.name());
++        assertEquals("shield", custom.name());
++        assertEquals(true, query(queries, "is_item_name_any", List.of("slot.weapon.offhand", "probe:missing", "minecraft:shield")));
++        assertEquals(false, query(queries, "is_item_name_any", List.of("slot.weapon.offhand", "probe:shield")));
++        assertEquals(true, query(queries, "is_item_name_any", List.of("slot.weapon.mainhand", 0, "probe:shield")));
++        assertEquals(false, query(queries, "is_item_name_any", List.of("slot.weapon.mainhand", 1, "probe:shield")));
++        assertEquals(false, query(queries, "is_item_name_any", List.of("slot.weapon.offhand", "shield")));
++        assertEquals(true, query(queries, "is_item_name_any", List.of("slot.armor.head", "")));
++        assertEquals(false, query(queries, "is_item_name_any", List.of("unknown", "")));
 +    }
 +
 +    @Test
