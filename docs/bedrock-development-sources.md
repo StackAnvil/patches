@@ -62,6 +62,96 @@ The new bitmap atlas layout metadata is a separate rendering gap.
 The current UI font importer handles TrueType declarations, not bitmap atlas layout or extended character mapping.
 Do not claim that the protocol migration implements the changelog's font or Character Creator rendering fixes.
 
+## 26.60 behavior audit
+
+This audit compares the official 26.60 changes with our protocol 2225 stack.
+Packet decoding alone does not establish behavior parity.
+The source checks below identify confirmed handling and remaining gaps.
+They do not replace a native gameplay comparison.
+
+### Confirmed correction
+
+The neighbor-shape patch reconstructed redstone connections after the version
+patch mapped the server's explicit states. This discarded command-authored
+shapes, custom-block connections, and opposite up/down steps.
+`ConnectedBlockShapes` now reconstructs only fences and stairs.
+All 1,296 wire connection/power combinations retain their supplied properties
+without neighbor or conductor queries.
+The regression fails before the correction and passes afterward.
+The [owning patch notes](../patches/viabedrock/upstreamable/0010-render-neighbor-dependent-block-shapes.pr.md#authoritative-redstone-states-in-2660)
+record the evidence and verification limits.
+Chorus and fire connections already use the server's explicit properties.
+No later neighbor reconstruction overrides those properties.
+
+### Existing paths checked
+
+| Change | What the current code establishes | Remaining limit |
+| --- | --- | --- |
+| Resumed weaker effects | `LivingEntity.updateEffect` replaces the active effect, including a lower amplifier, and sends duration and HUD flags. | No new native stronger/shorter versus weaker/longer capture. The server owns the effect stack. |
+| Sneaking at water contact | `PlayerPosture.next` retains requested sneaking in water when the pose fits. | Full movement and collision parity still require native traces. |
+| Sound volume and fade | `BedrockSoundPlayback` multiplies the envelope by sample gain. `BedrockSoundEnvelope` retargets from its current value. Pending controls apply when playback starts. | Native timing for queued fades, pause, and synchronized broadcast remains unverified. |
+| Custom collision arrays | `CustomBlockModel.boxes` reads the server's normalized list of min/max boxes. | Authoring JSON arrays do not prove a different network representation. |
+| Custom dimension clouds | Dimension definitions retain height and visibility and project them through the existing Java environment override. | This does not implement every environment attribute layer. |
+| World clock commands | `WorldClockTracker` applies named clock updates and paused state. | Command validation and rollover belong to BDS. Java can only project registered clocks. |
+| Drowned helmets | Equipped living actors retain Java equipment rendering instead of entering our native body renderer. | The native equipment/model combination still needs a visual comparison. |
+| Strider dismount | The server's new `ExitVehicleLookDirectionSystem` chooses the destination. | Do not duplicate that server system in Java input code. |
+| Fireball ignition, Wind Burst targets, arrows, piston push eligibility, loot functions, and stricter behavior schemas | These changes belong to authoritative server simulation or content loading. | Shared client prediction and visuals can still need native checks. No client rule was added from the changelog alone. |
+
+The bundled resource comparison covers 5,164 old and 5,175 new JSON documents.
+Thirteen new or changed documents include cat and sheep graphs, zombie-villager
+animation bindings, and the drowned model. They introduce no new Molang query names.
+The sheep controller now exits grazing through `any_animation_finished`, with
+separate adult and baby tracks. Our runtime supports that query and persistent
+loop-completion flags. A private probe runs the bundled controller for both
+ages, verifies the adult and baby grazing offsets, and returns both to walking.
+This checks our runtime with actual assets, not native graphical parity.
+The refreshed assets carry these changes; they do not require a second
+hardcoded animal animation.
+The drowned geometry change is in the new `vanilla_1.26.60` overlay.
+Comparing only the old overlay paths would miss it.
+Player and persona controller assets do not establish the engine's new armor masking behavior.
+
+### Work still needed
+
+1. **Select vanilla resources by world version.**
+   `ResourcePackPackets` discards the base-game version in `ResourcePackStack`.
+   `BedrockResourceLibrary` loads every bundled vanilla overlay.
+   Actor and sound loaders also use the global latest library.
+   Microsoft's [base-game version guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/basegameversioning)
+   says older templates must skip later vanilla resources.
+   A complete fix must select metadata, textures, actors, and audio together.
+   Filtering images alone would leave mixed-version resources.
+   A latest-world to older-template transition needs a native comparison.
+2. **Implement held trapdoor placement.**
+   The 26.60 release locks placement direction until the use control is released
+   and suppresses block interactions during that placement.
+   `InteractionPackets` forwards each Java use-on-block independently.
+   `MixinTrapDoorBlock` changes shape only. No placement-session state implements the new rule.
+   Capture direction choice, release, item changes, and interaction suppression
+   before changing outgoing requests or client prediction.
+3. **Implement bitmap font layout.**
+   `UiFonts` imports TrueType metadata. The bundled pack provider skips bitmap atlases and their layout files.
+   The new vanilla `default8.json` requests extended mapping, height 12, and offset -3.
+   Custom atlases without their own metadata must retain legacy layout.
+   Glyph mapping and same-pack metadata ownership both need implementation.
+4. **Verify skin masking and profile changes.**
+   Persona assembly combines piece geometry into shared surfaces.
+   The renderer does not explicitly preserve every clothing category for equipment masking.
+   Account replacement and native LOD texture selection need visual fixtures.
+   Updated assets alone do not prove these engine fixes work here.
+5. **Verify movement and rendering boundaries.**
+   Falls at water/solid boundaries still need native movement traces.
+   Dragon-dependent fog distances, combined blindness/night vision, and changed
+   block picking need visual or native checks.
+   Existing lightmap and collision code cannot establish those fixes by itself.
+6. **Complete remaining content features.**
+   Item-component custom swing, use-start, and durability sounds have no matching
+   component consumer in the current item path.
+   Boolean geometry bone visibility also needs a verified network representation and consumer.
+   Block seating, signed audio, matchmaking UI, and environment layers remain separate gaps.
+   Experimental freezing, Frostbite, and ice features require feature-specific
+   evidence; generated IDs or Java fallbacks do not establish parity.
+
 ## Establish the behavior to port
 
 Confirm that the target Bedrock version has the feature before you implement it. Record what players observe and what the client or server sends. Use versioned protocol documentation, game assets, implementation code, or native captures as evidence. When these sources leave a behavior uncertain, test it in the native game.

@@ -1,9 +1,11 @@
-From ca1dfeaa043a837d7b742157891d05c5b8471f76 Mon Sep 17 00:00:00 2001
+From ed39989e848cae153999c49152426e7aab613717 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] fix(world): render neighbor-dependent block shapes
 
-Bedrock omits the Java connection states for redstone wire, fences, and stair corners. Resolve each shape through one shared chunk update path, including multi-block packets and chunk borders, so later block types can use the same refresh mechanism without patching a redstone-only path.
+Bedrock omits the Java connection states for fences and stair corners.
+Resolve these shapes through a shared chunk update path, including
+multi-block packets and chunk borders.
 
 Supply client-neutral FenceBlock geometry recovered from the official
 Windows Bedrock 1.26.51.1 executable (build 51061372, protocol 2193).
@@ -39,7 +41,14 @@ with varying direction, half and unrelated state bits; the original code
 rejects the first case. These fixtures supply packed maps, component IDs,
 allocator and region lookup, and stop before callback registration.
 
-Connect redstone wire to piston and sticky piston power targets, except their front face, matching the target block behavior. Directional tests cover both piston kinds.
+Trust the redstone connection states supplied by Bedrock 1.26.60
+(protocol 2225). The release adds explicit connection properties and
+preserves command- or script-authored shapes until the server updates
+them. Reconstructing those properties from neighbors would overwrite
+authoritative states, including custom-block connections and simultaneous
+up/down steps. Remove the obsolete wire reconstruction and verify all
+1296 connection/power combinations survive without neighbor queries.
+Evidence: https://feedback.minecraft.net/hc/en-us/articles/49852828563853-Minecraft-Bedrock-Edition-26-60-Changelog
 
 Classify connected states once per palette and visit only candidate cells. Restrict neighbor refreshes to the shared chunk border. Use the palette coordinate mapping and preserve waterlogged states. Differential tests cover all borders, palette mutation and relevant state selection.
 
@@ -48,20 +57,16 @@ Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.gith
  .../api/model/BedrockFenceGeometry.java       |  57 ++++++
  .../protocol/packet/WorldPackets.java         |  17 ++
  .../protocol/storage/ChunkTracker.java        | 105 ++++++++++-
- .../storage/ConnectedBlockShapes.java         | 175 ++++++++++++++++++
- .../storage/RedstoneWireConnections.java      | 134 ++++++++++++++
+ .../storage/ConnectedBlockShapes.java         | 172 ++++++++++++++++++
  .../api/model/BedrockFenceGeometryTest.java   |  50 +++++
- .../ConnectedBlockShapeCandidatesTest.java    | 163 ++++++++++++++++
- .../storage/ConnectedBlockShapesTest.java     | 120 ++++++++++++
- .../storage/RedstoneWireConnectionsTest.java  |  87 +++++++++
- 9 files changed, 905 insertions(+), 3 deletions(-)
+ .../ConnectedBlockShapeCandidatesTest.java    | 163 +++++++++++++++++
+ .../storage/ConnectedBlockShapesTest.java     | 140 ++++++++++++++
+ 7 files changed, 701 insertions(+), 3 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java
- create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnections.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapeCandidatesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapesTest.java
- create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnectionsTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometry.java b/src/main/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometry.java
 new file mode 100644
@@ -127,7 +132,7 @@ index 000000000..5d48a0ced
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
-index 4f7a3e57b..457c5e383 100644
+index 50e6231d1..33284cb20 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 @@ -90,6 +90,7 @@ public final class WorldPackets {
@@ -138,7 +143,7 @@ index 4f7a3e57b..457c5e383 100644
  
          if (remappedBlock.value() != null) {
              wrapper.send(BedrockProtocol.class);
-@@ -422,12 +423,14 @@ public final class WorldPackets {
+@@ -423,12 +424,14 @@ public final class WorldPackets {
  
              final Map<BlockPosition, List<BlockChangeRecord>> blockChanges = new HashMap<>();
              final Map<BlockPosition, BlockEntity> blockEntities = new HashMap<>();
@@ -153,7 +158,7 @@ index 4f7a3e57b..457c5e383 100644
                      if (remappedBlock.value() != null) {
                          blockEntities.put(entry.position(), remappedBlock.value());
                      }
-@@ -438,6 +441,19 @@ public final class WorldPackets {
+@@ -439,6 +442,19 @@ public final class WorldPackets {
                  }
              }
  
@@ -173,7 +178,7 @@ index 4f7a3e57b..457c5e383 100644
              for (Map.Entry<BlockPosition, List<BlockChangeRecord>> entry : blockChanges.entrySet()) {
                  final BlockPosition chunkPosition = entry.getKey();
                  final List<BlockChangeRecord> changes = entry.getValue();
-@@ -451,6 +467,7 @@ public final class WorldPackets {
+@@ -452,6 +468,7 @@ public final class WorldPackets {
              for (Map.Entry<BlockPosition, BlockEntity> entry : blockEntities.entrySet()) {
                  PacketFactory.sendJavaBlockEntityData(wrapper.user(), entry.getKey(), entry.getValue());
              }
@@ -349,10 +354,10 @@ index 844a7036b..a5da475d8 100644
                  for (int i = 0; i < ChunkSection.SIZE; i++) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java
 new file mode 100644
-index 000000000..646565d63
+index 000000000..c8108b1ff
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,172 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -381,7 +386,7 @@ index 000000000..646565d63
 +    }
 +
 +    static boolean isConnected(final BlockState state) {
-+        return RedstoneWireConnections.isWire(state) || isFence(state) || isStairs(state);
++        return isFence(state) || isStairs(state);
 +    }
 +
 +    /** Visits relevant positions as {@code y << 8 | z << 4 | x}, using the palette's own coordinate order. */
@@ -412,9 +417,6 @@ index 000000000..646565d63
 +
 +    static BlockState shape(final BlockPosition position, final BlockState state,
 +            final Function<BlockPosition, BlockState> blockAt, final Predicate<BlockState> fullBlock) {
-+        if (RedstoneWireConnections.isWire(state)) {
-+            return RedstoneWireConnections.shape(position, state, blockAt, fullBlock);
-+        }
 +        if (isFence(state)) {
 +            return state.withProperties(Map.of(
 +                    "north", Boolean.toString(connectsFence(state, stateAt(position, Direction.NORTH, blockAt), Direction.NORTH, fullBlock)),
@@ -524,146 +526,6 @@ index 000000000..646565d63
 +
 +        int axis() {
 +            return this.dx == 0 ? 0 : 1;
-+        }
-+    }
-+
-+}
-diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnections.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnections.java
-new file mode 100644
-index 000000000..724e476d4
---- /dev/null
-+++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnections.java
-@@ -0,0 +1,134 @@
-+/*
-+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
-+ * Copyright (C) 2026 RK_01/RaphiMC and contributors
-+ *
-+ * This program is free software: you can redistribute it and/or modify
-+ * it under the terms of the GNU General Public License as published by
-+ * the Free Software Foundation, either version 3 of the License, or
-+ * (at your option) any later version.
-+ */
-+package net.raphimc.viabedrock.protocol.storage;
-+
-+import com.viaversion.viaversion.api.minecraft.BlockPosition;
-+import net.raphimc.viabedrock.api.model.BlockState;
-+
-+import java.util.Map;
-+import java.util.function.Function;
-+import java.util.function.Predicate;
-+
-+final class RedstoneWireConnections {
-+
-+    private RedstoneWireConnections() {
-+    }
-+
-+    static boolean isWire(final BlockState state) {
-+        return state != null && state.namespacedIdentifier().equals("minecraft:redstone_wire");
-+    }
-+
-+    static BlockState shape(final BlockPosition position, final BlockState wire,
-+                            final Function<BlockPosition, BlockState> blockAt,
-+                            final Predicate<BlockState> conductor) {
-+        if (!isWire(wire)) {
-+            return wire;
-+        }
-+
-+        final Connections connections = connections(position, blockAt, conductor);
-+        return wire.withProperties(Map.of("north", connections.north().property(),
-+                "east", connections.east().property(), "south", connections.south().property(),
-+                "west", connections.west().property()));
-+    }
-+
-+    static Connections connections(final BlockPosition position, final Function<BlockPosition, BlockState> blockAt,
-+                                   final Predicate<BlockState> conductor) {
-+        Connection north = connection(position, 0, -1, "north", blockAt, conductor);
-+        Connection east = connection(position, 1, 0, "east", blockAt, conductor);
-+        Connection south = connection(position, 0, 1, "south", blockAt, conductor);
-+        Connection west = connection(position, -1, 0, "west", blockAt, conductor);
-+
-+        // Java extends a lone connection into a straight line and renders an isolated wire as a cross.
-+        if (north == Connection.NONE && south == Connection.NONE) {
-+            if (east == Connection.NONE && west == Connection.NONE) {
-+                north = Connection.SIDE;
-+                south = Connection.SIDE;
-+            }
-+            if (east == Connection.NONE) {
-+                east = Connection.SIDE;
-+            }
-+            if (west == Connection.NONE) {
-+                west = Connection.SIDE;
-+            }
-+        } else if (east == Connection.NONE && west == Connection.NONE) {
-+            if (north == Connection.NONE) {
-+                north = Connection.SIDE;
-+            }
-+            if (south == Connection.NONE) {
-+                south = Connection.SIDE;
-+            }
-+        }
-+
-+        return new Connections(north, east, south, west);
-+    }
-+
-+    private static Connection connection(final BlockPosition position, final int x, final int z, final String direction,
-+                                     final Function<BlockPosition, BlockState> blockAt,
-+                                     final Predicate<BlockState> conductor) {
-+        final BlockPosition adjacentPosition = new BlockPosition(position.x() + x, position.y(), position.z() + z);
-+        final BlockState adjacent = blockAt.apply(adjacentPosition);
-+        if (!conductor.test(blockAt.apply(new BlockPosition(position.x(), position.y() + 1, position.z())))
-+                && conductor.test(adjacent)
-+                && isWire(blockAt.apply(new BlockPosition(adjacentPosition.x(), adjacentPosition.y() + 1, adjacentPosition.z())))) {
-+            return Connection.UP;
-+        }
-+        if (connectsTo(adjacent, direction)) {
-+            return Connection.SIDE;
-+        }
-+        if (!conductor.test(adjacent)
-+                && isWire(blockAt.apply(new BlockPosition(adjacentPosition.x(), adjacentPosition.y() - 1, adjacentPosition.z())))) {
-+            return Connection.SIDE;
-+        }
-+        return Connection.NONE;
-+    }
-+
-+    private static boolean connectsTo(final BlockState state, final String direction) {
-+        if (state == null) {
-+            return false;
-+        }
-+        final String identifier = state.identifier();
-+        if (identifier.equals("redstone_wire")) {
-+            return true;
-+        }
-+        if (identifier.equals("repeater") || identifier.equals("comparator")) {
-+            final String facing = state.properties().get("facing");
-+            return direction.equals("north") || direction.equals("south")
-+                    ? "north".equals(facing) || "south".equals(facing)
-+                    : "east".equals(facing) || "west".equals(facing);
-+        }
-+        if (identifier.equals("observer")) {
-+            return direction.equals(state.properties().get("facing"));
-+        }
-+        return switch (identifier) {
-+            case "piston", "sticky_piston", "redstone_block", "redstone_torch", "redstone_wall_torch", "lever", "daylight_detector",
-+                 "target", "tripwire_hook", "trapped_chest", "lectern", "sculk_sensor", "calibrated_sculk_sensor",
-+                 "lightning_rod", "detector_rail", "pressure_plate", "button" -> true;
-+            default -> identifier.endsWith("_button") || identifier.endsWith("_pressure_plate");
-+        };
-+    }
-+
-+    record Connections(Connection north, Connection east, Connection south, Connection west) {
-+    }
-+
-+    enum Connection {
-+        NONE("none"), SIDE("side"), UP("up");
-+
-+        private final String property;
-+
-+        Connection(final String property) {
-+            this.property = property;
-+        }
-+
-+        String property() {
-+            return this.property;
 +        }
 +    }
 +
@@ -895,10 +757,10 @@ index 000000000..271990374
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapesTest.java
 new file mode 100644
-index 000000000..b24440d48
+index 000000000..e78e3ec2f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapesTest.java
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,140 @@
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -910,6 +772,8 @@ index 000000000..b24440d48
 +import java.util.Map;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertSame;
 +
 +class ConnectedBlockShapesTest {
 +
@@ -918,10 +782,28 @@ index 000000000..b24440d48
 +    private final Map<BlockPosition, BlockState> blocks = new HashMap<>();
 +
 +    @Test
-+    void routesRedstoneThroughTheSharedShapePath() {
-+        final BlockState wire = BlockState.fromString("minecraft:redstone_wire[east=none,north=none,power=0,south=none,west=none]");
-+        this.blocks.put(new BlockPosition(1, 64, 0), wire);
-+        assertEquals("side", this.shape(wire).properties().get("east"));
++    void preservesEveryServerWireShapeWithoutConsultingNeighbors() {
++        for (final String north : new String[]{"none", "side", "up"}) {
++            for (final String east : new String[]{"none", "side", "up"}) {
++                for (final String south : new String[]{"none", "side", "up"}) {
++                    for (final String west : new String[]{"none", "side", "up"}) {
++                        for (int power = 0; power < 16; power++) {
++                            final BlockState wire = BlockState.fromString("minecraft:redstone_wire")
++                                    .withProperties(Map.of("north", north, "east", east, "south", south,
++                                            "west", west, "power", Integer.toString(power)));
++                            assertFalse(ConnectedBlockShapes.isConnected(wire));
++                            assertSame(wire, ConnectedBlockShapes.shape(CENTER, wire,
++                                    position -> {
++                                        throw new AssertionError("Server wire state must not query neighbors");
++                                    },
++                                    state -> {
++                                        throw new AssertionError("Server wire state must not query conductors");
++                                    }));
++                        }
++                    }
++                }
++            }
++        }
 +    }
 +
 +    @Test
@@ -1016,99 +898,6 @@ index 000000000..b24440d48
 +        return ConnectedBlockShapes.shape(CENTER, state,
 +                position -> this.blocks.getOrDefault(position, AIR),
 +                block -> "stone".equals(block.identifier()));
-+    }
-+
-+}
-diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnectionsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnectionsTest.java
-new file mode 100644
-index 000000000..304095fae
---- /dev/null
-+++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnectionsTest.java
-@@ -0,0 +1,87 @@
-+/*
-+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
-+ * Copyright (C) 2026 RK_01/RaphiMC and contributors
-+ *
-+ * This program is free software: you can redistribute it and/or modify
-+ * it under the terms of the GNU General Public License as published by
-+ * the Free Software Foundation, either version 3 of the License, or
-+ * (at your option) any later version.
-+ */
-+package net.raphimc.viabedrock.protocol.storage;
-+
-+import com.viaversion.viaversion.api.minecraft.BlockPosition;
-+import net.raphimc.viabedrock.api.model.BlockState;
-+import org.junit.jupiter.api.Test;
-+
-+import java.util.HashMap;
-+import java.util.Map;
-+
-+import static net.raphimc.viabedrock.protocol.storage.RedstoneWireConnections.Connection.*;
-+import static org.junit.jupiter.api.Assertions.assertEquals;
-+
-+class RedstoneWireConnectionsTest {
-+
-+    private static final BlockPosition CENTER = new BlockPosition(0, 64, 0);
-+    private static final BlockState AIR = BlockState.fromString("minecraft:air");
-+    private static final BlockState WIRE = BlockState.fromString("minecraft:redstone_wire[power=7]");
-+    private static final BlockState STONE = BlockState.fromString("minecraft:stone");
-+
-+    private final Map<BlockPosition, BlockState> blocks = new HashMap<>();
-+
-+    @Test
-+    void connectsPistonsAlongEveryFacingInsteadOfDroppingTheCorner() {
-+        this.blocks.put(new BlockPosition(0, 64, -1), WIRE);
-+        for (final String piston : new String[]{"piston", "sticky_piston"}) {
-+            for (final String facing : new String[]{"north", "east", "south", "west", "up", "down"}) {
-+                this.blocks.put(new BlockPosition(1, 64, 0), BlockState.fromString("minecraft:" + piston + "[facing=" + facing + ",extended=false]"));
-+                assertEquals(new RedstoneWireConnections.Connections(SIDE, SIDE, NONE, NONE), this.connections());
-+            }
-+        }
-+    }
-+
-+    @Test
-+    void isolatedWireRendersAsCrossAndKeepsItsPower() {
-+        assertEquals(new RedstoneWireConnections.Connections(SIDE, SIDE, SIDE, SIDE), this.connections());
-+        assertEquals(WIRE.withProperties(Map.of("north", "side", "east", "side", "south", "side", "west", "side")),
-+                RedstoneWireConnections.shape(CENTER, WIRE, this::blockAt, this::conductor));
-+    }
-+
-+    @Test
-+    void horizontalWiresFormStraightLinesAndCorners() {
-+        this.blocks.put(new BlockPosition(1, 64, 0), WIRE);
-+        assertEquals(new RedstoneWireConnections.Connections(NONE, SIDE, NONE, SIDE), this.connections());
-+
-+        this.blocks.put(new BlockPosition(0, 64, -1), WIRE);
-+        assertEquals(new RedstoneWireConnections.Connections(SIDE, SIDE, NONE, NONE), this.connections());
-+    }
-+
-+    @Test
-+    void wireClimbsConductorOnlyWhenSpaceAboveIsOpen() {
-+        this.blocks.put(new BlockPosition(1, 64, 0), STONE);
-+        this.blocks.put(new BlockPosition(1, 65, 0), WIRE);
-+        assertEquals(new RedstoneWireConnections.Connections(NONE, UP, NONE, SIDE), this.connections());
-+
-+        this.blocks.put(new BlockPosition(0, 65, 0), STONE);
-+        assertEquals(new RedstoneWireConnections.Connections(SIDE, SIDE, SIDE, SIDE), this.connections());
-+    }
-+
-+    @Test
-+    void wireConnectsDownNonConductorAndAlongRepeaterAxis() {
-+        this.blocks.put(new BlockPosition(1, 63, 0), WIRE);
-+        this.blocks.put(new BlockPosition(0, 64, -1), BlockState.fromString("minecraft:repeater[facing=south]"));
-+        assertEquals(new RedstoneWireConnections.Connections(SIDE, SIDE, NONE, NONE), this.connections());
-+    }
-+
-+    private RedstoneWireConnections.Connections connections() {
-+        return RedstoneWireConnections.connections(CENTER, this::blockAt, this::conductor);
-+    }
-+
-+    private BlockState blockAt(final BlockPosition position) {
-+        return this.blocks.getOrDefault(position, AIR);
-+    }
-+
-+    private boolean conductor(final BlockState state) {
-+        return STONE.equals(state);
 +    }
 +
 +}

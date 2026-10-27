@@ -1,6 +1,6 @@
 # Neighbor shapes and native fence geometry
 
-Bedrock omits Java connection states for redstone wire, fences, and stair corners.
+Bedrock omits Java connection states for fences and stair corners.
 The shared chunk update path resolves these states across chunk borders and multi-block updates.
 
 Core also supplies `BedrockFenceGeometry` for clients that can consume native physical bounds.
@@ -118,3 +118,26 @@ CubeConverter passes 18 tests and ViaProxy passes four tests.
 The standalone cache patch passes 45 tests and both Checkstyle tasks.
 TypeScript checking and patch whitespace checks also pass.
 These results establish stack replay and test behavior. Live server frame-time profiling remains separate.
+
+## Authoritative redstone states in 26.60
+
+The [26.60 changelog](https://feedback.minecraft.net/hc/en-us/articles/49852828563853-Minecraft-Bedrock-Edition-26-60-Changelog)
+adds explicit redstone connection states. Command- and script-authored values
+remain until a server update recalculates them. The version migration maps
+these values directly to Java wire properties.
+
+The shared shape pass must preserve those properties. It now handles fences
+and stairs only. The obsolete wire reconstruction and its tests are removed.
+This also preserves server-supplied custom-block connections and opposite
+up/down steps.
+
+A regression checks all 1,296 combinations of four connection properties and
+16 power levels. It rejects any neighbor or conductor lookup. The regression
+fails on the previous implementation and passes after the correction.
+Targeted shape tests and main/test Checkstyle pass. This is a source-level
+regression; it does not establish full native redstone rendering parity.
+
+The full 103-patch core stack and all four project builds pass after this
+correction. Core reports 2,024 tests with 176 optional skips and no failures
+or errors. The add-on reports 1,265 tests with 142 optional skips and no
+failures or errors. No fresh native gameplay capture was made for this change.
