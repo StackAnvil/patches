@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::collections::{HashSet, VecDeque};
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -16,12 +17,14 @@ use signal_hook::{
 use x11rb::CURRENT_TIME;
 use x11rb::connection::Connection;
 use x11rb::image::Image;
+use x11rb::protocol::Event;
 use x11rb::protocol::xproto::{
-    self, AtomEnum, ClientMessageEvent, ConfigureWindowAux, ConnectionExt as _, EventMask,
-    InputFocus, MapState, StackMode, Visualtype, Window,
+    self, AtomEnum, ClientMessageEvent, ConfigureWindowAux, ConnectionExt as _, CreateWindowAux,
+    EventMask, InputFocus, MapState, PropMode, StackMode, Visualtype, Window, WindowClass,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 use crate::{
     Result,
@@ -201,15 +204,36 @@ impl Display {
     }
 
     fn windows(&self) -> Result<Vec<WindowInfo>> {
-        let children = match self.window_property(self.root(), b"_NET_CLIENT_LIST", 4096)? {
-            Some(children) => children,
-            None => self.connection.query_tree(self.root())?.reply()?.children,
-        };
+        if let Some(children) = self.window_property(self.root(), b"_NET_CLIENT_LIST", 4096)? {
+            return Ok(children
+                .into_iter()
+                .filter_map(|window| self.window_info(window).ok().flatten())
+                .collect());
+        }
+        // Some window managers reparent clients without publishing an EWMH list.
+        // Walk unnamed frames, stopping at named clients and bounding work even
+        // if windows are reparented or destroyed during discovery.
+        let mut pending: VecDeque<_> = self
+            .connection
+            .query_tree(self.root())?
+            .reply()?
+            .children
+            .into_iter()
+            .take(4096)
+            .collect();
+        let mut visited = HashSet::new();
         let mut windows = Vec::new();
-        for window in children {
-            // A client may close between discovery and any of these replies.
-            if let Ok(info) = self.window_info(window) {
-                windows.extend(info);
+        while let Some(window) = pending.pop_front() {
+            if visited.len() >= 4096 {
+                break;
+            }
+            if !visited.insert(window) {
+                continue;
+            }
+            if let Ok(Some(info)) = self.window_info(window) {
+                windows.push(info);
+            } else if let Ok(tree) = self.connection.query_tree(window)?.reply() {
+                pending.extend(tree.children.into_iter().take(4096 - pending.len()));
             }
         }
         Ok(windows)
@@ -269,8 +293,48 @@ impl Display {
         Ok(())
     }
 
+    fn server_time(&self) -> Result<u32> {
+        // ICCCM focus requests need a real server timestamp. Keep the property
+        // exchange on our own unmapped window, without changing client masks.
+        let window = self.connection.generate_id()?;
+        self.connection
+            .create_window(
+                x11rb::COPY_DEPTH_FROM_PARENT,
+                window,
+                self.root(),
+                0,
+                0,
+                1,
+                1,
+                0,
+                WindowClass::INPUT_ONLY,
+                0,
+                &CreateWindowAux::new().event_mask(EventMask::PROPERTY_CHANGE),
+            )?
+            .check()?;
+        self.connection
+            .change_property8(
+                PropMode::REPLACE,
+                window,
+                AtomEnum::WM_NAME,
+                AtomEnum::INTEGER,
+                &[0],
+            )?
+            .check()?;
+        let time = loop {
+            if let Event::PropertyNotify(event) = self.connection.wait_for_event()? {
+                if event.window == window {
+                    break event.time;
+                }
+            }
+        };
+        self.connection.destroy_window(window)?.check()?;
+        Ok(time)
+    }
+
     fn focus(&self, window: Window) -> Result<()> {
         self.geometry(window)?;
+        let time = self.server_time()?;
         self.connection
             .configure_window(
                 window,
@@ -278,8 +342,39 @@ impl Display {
             )?
             .check()?;
         self.connection
-            .set_input_focus(InputFocus::PARENT, window, CURRENT_TIME)?
+            .set_input_focus(InputFocus::PARENT, window, time)?
             .check()?;
+        let protocols = self
+            .connection
+            .get_property(
+                false,
+                window,
+                self.atom(b"WM_PROTOCOLS")?,
+                AtomEnum::ATOM,
+                0,
+                1024,
+            )?
+            .reply()?;
+        let take_focus = self.atom(b"WM_TAKE_FOCUS")?;
+        if protocols.type_ == u32::from(AtomEnum::ATOM)
+            && protocols
+                .value32()
+                .is_some_and(|mut atoms| atoms.any(|atom| atom == take_focus))
+        {
+            self.connection
+                .send_event(
+                    false,
+                    window,
+                    EventMask::NO_EVENT,
+                    ClientMessageEvent::new(
+                        32,
+                        window,
+                        self.atom(b"WM_PROTOCOLS")?,
+                        [take_focus, time, 0, 0, 0],
+                    ),
+                )?
+                .check()?;
+        }
         Ok(())
     }
 

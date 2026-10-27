@@ -400,6 +400,110 @@ fn captures_windows_and_pixels_on_16_and_24_bit_displays() {
 
 #[test]
 #[ignore = "requires Xvfb; run cargo test -- --include-ignored"]
+fn discovers_reparented_clients_and_delivers_their_focus_protocol_before_input() {
+    let fixture = Fixture::new(24);
+    let frame = fixture.connection.generate_id().unwrap();
+    fixture
+        .connection
+        .create_window(
+            COPY_DEPTH_FROM_PARENT,
+            frame,
+            fixture.root,
+            5,
+            7,
+            800,
+            500,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &CreateWindowAux::new(),
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+    fixture
+        .connection
+        .reparent_window(fixture.window, frame, 30, 40)
+        .unwrap()
+        .check()
+        .unwrap();
+    fixture
+        .connection
+        .map_window(frame)
+        .unwrap()
+        .check()
+        .unwrap();
+    let list: Vec<serde_json::Value> = serde_json::from_str(&fixture.success(&["list"])).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["id"], format!("0x{:x}", fixture.window));
+    assert_eq!(
+        (list[0]["x"].as_i64(), list[0]["y"].as_i64()),
+        (Some(35), Some(47))
+    );
+
+    let protocols = fixture.atom(b"WM_PROTOCOLS");
+    let take_focus = fixture.atom(b"WM_TAKE_FOCUS");
+    fixture
+        .connection
+        .change_property32(
+            PropMode::REPLACE,
+            fixture.window,
+            protocols,
+            AtomEnum::ATOM,
+            &[take_focus],
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+    fixture
+        .connection
+        .change_property32(
+            PropMode::REPLACE,
+            fixture.window,
+            fixture.atom(b"WM_HINTS"),
+            fixture.atom(b"WM_HINTS"),
+            &[1, 0, 0, 0, 0, 0, 0, 0, 0],
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+    fixture.events();
+    fixture.success(&["key", &fixture.window.to_string(), "b"]);
+    let events = fixture.events();
+    let focus = events
+        .iter()
+        .position(|event| {
+            matches!(event, Event::ClientMessage(message)
+        if message.window == fixture.window && message.type_ == protocols && message.format == 32
+            && message.data.as_data32()[0] == take_focus
+            && message.data.as_data32()[1] != CURRENT_TIME
+            && message.data.as_data32()[2..] == [0, 0, 0])
+        })
+        .unwrap();
+    let key = events
+        .iter()
+        .position(|event| matches!(event, Event::KeyPress(_)))
+        .unwrap();
+    assert!(focus < key);
+
+    fixture
+        .connection
+        .delete_property(fixture.window, protocols)
+        .unwrap()
+        .check()
+        .unwrap();
+    fixture.events();
+    fixture.success(&["focus", &fixture.window.to_string()]);
+    assert!(
+        !fixture
+            .events()
+            .iter()
+            .any(|event| matches!(event, Event::ClientMessage(_)))
+    );
+}
+
+#[test]
+#[ignore = "requires Xvfb; run cargo test -- --include-ignored"]
 fn emits_ordered_input_and_releases_it_on_interrupts_and_window_failure() {
     let fixture = Fixture::new(24);
     let id = fixture.window.to_string();
