@@ -1201,3 +1201,17 @@ The pinned data adds 299 initial factory minima and 540 Block minima.
 Eight original registry controls compare 15,672 definition minima, 676 Tag sets and 7,765 member references.
 Full nested scope destruction and original final cleanup leave no allocations or held locks.
 See the [versioned Tag reference](../../../docs/bedrock-coverage.md#versioned-tag-admission-october-25-2026) for supplied contexts and remaining limits.
+
+## Protocol 2225 inventory UI notifications
+
+Send `ServerboundStonecutterSetRecipePacket` for valid recipe buttons.
+Apply `ClientboundStonecutterSetRecipePacket` only to the local player's current matching stonecutter.
+Retain server deselection without echoing it back. Reject invalid indexes and ignore unrelated or closing containers.
+Crafting still uses the existing stack-request and response tracking.
+
+Bracket Java split drags with `ServerboundCursorItemDragPacket` Start and Stop.
+Send the transfer request before Stop. End the drag on failure, invalid phases, screen retirement, and queue recovery.
+Repeated cancellation does not send duplicate Stop packets.
+
+[Mojang's 26.60 developer notes and schemas](https://github.com/Mojang/bedrock-protocol-docs/releases/tag/v1.26.60) define these lifecycles in `us_1660009` and `us1662263`.
+Five packet regressions cover complete wire fields, distribution and ordering, cancellation, failure, server selection scope, and unsigned container IDs.

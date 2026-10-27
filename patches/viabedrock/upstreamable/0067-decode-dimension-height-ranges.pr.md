@@ -5,3 +5,17 @@ The [protocol 2192 preview metadata](https://github.com/Mojang/bedrock-protocol-
 An official Bedrock 1.26.51.1 capture from The Hive supplies minimum 0 and range 256 before `StartGame`. The native client spawns successfully. The old decoder exports height -256 and prevents the ViaBedrock chunk tracker from starting. The capture remains private.
 
 Four synthetic tests cover negative and positive minima, remaining packet fields, signed bounds, nonpositive ranges, and overflow. The full core suite passes 265 tests across 75 suites, with no failures or skips. Main and test Checkstyle pass on Java 17.
+
+## Protocol 2225 cloud settings
+
+Keep the new cloud height and visibility with dimension bounds in one model.
+Project the height through Java 26.3's `minecraft:visual/cloud_height` attribute.
+Use transparent cloud color when the server disables clouds. Java's day timeline multiplies this color and preserves zero alpha.
+Other dimension attributes stay intact. The existing Overworld override boundary remains.
+
+[Mojang's 26.60 schema](https://github.com/Mojang/bedrock-protocol-docs/releases/tag/v1.26.60) defines both cloud fields.
+Its `us_1665751` note describes height synchronization.
+The [26.60 changelog](https://feedback.minecraft.net/hc/en-us/articles/49852828563853-Minecraft-Bedrock-Edition-26-60-Changelog) permits cloud heights across the custom dimension band.
+The matching Java 26.3 client reads these environment attributes and suppresses clouds with zero color alpha.
+
+Six focused tests cover complete dimension records, following-field boundaries, signed bounds, overflow, attribute preservation, and disabled clouds.

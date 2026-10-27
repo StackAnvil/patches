@@ -37,6 +37,31 @@ Keep these translations in codecs, not generated enums.
 `InventorySourceType.Non_Implemented_Feature_TODO` instead uses `Enum-as-Value`: its wire value is 99999, not declaration index 4.
 Likewise, no-compression sentinels use all bits at their wire width: 65535 for NetworkSettings and 255 for frame headers.
 
+## Protocol 2225 consumers
+
+The packet audit also checks the [official 26.60 changelog](https://feedback.minecraft.net/hc/en-us/articles/49852828563853-Minecraft-Bedrock-Edition-26-60-Changelog).
+A schema update establishes wire compatibility. Each existing feature must also use the new fields or notifications.
+
+| Area | Current handling |
+| --- | --- |
+| Stonecutter selection | Send recipe buttons with packet 354. Apply packet 355 only to the local player's current matching container, without an echo. |
+| Cursor split drags | Send packet 358 Start and Stop around transfers. Screen retirement, invalid phases, recovery, and failed sends end the drag. |
+| Dimension clouds | Retain height and visibility with dimension bounds. Project them through Java environment attributes within the existing Overworld override boundary. |
+| Animation and interaction hands | The updated codecs carry hand fields. Native offhand item restrictions still apply. |
+| Skins and player lists | PlayFab identity comes from player-list entries and reaches Java profile properties. Serialized skin data no longer carries that field. |
+| Sound updates | Decode the new tagged event union through the sound model. |
+| Chunk biomes | Consume the new override flag. Java uses received biome data because it does not run Bedrock's client biome generator. |
+| Block seating and signed audio | Spawn fields are decoded, but seating and signed content playback remain unsupported. |
+| Matchmaking and environment layers | Queue-state UI integration and attribute-layer rendering remain feature gaps. |
+
+The changelog's collision-box JSON arrays do not require a decoder change by themselves.
+Our block renderer consumes the server's normalized `boxes` list, rather than block-authoring JSON.
+Keep legacy authoring support separate from the network shape representation.
+
+The new bitmap atlas layout metadata is a separate rendering gap.
+The current UI font importer handles TrueType declarations, not bitmap atlas layout or extended character mapping.
+Do not claim that the protocol migration implements the changelog's font or Character Creator rendering fixes.
+
 ## Establish the behavior to port
 
 Confirm that the target Bedrock version has the feature before you implement it. Record what players observe and what the client or server sends. Use versioned protocol documentation, game assets, implementation code, or native captures as evidence. When these sources leave a behavior uncertain, test it in the native game.
