@@ -9959,6 +9959,17 @@ Retained Tag/Molang payload ownership, version-filtered Tag index membership, so
 The native index's additional version byte participates in version-value comparison; its nonzero producer behavior remains unverified.
 No new installed capture ran.
 The E-key inventory background/scale, pearl/wind-charge rollback, endless eating and missing locator reports remain unresolved.
+
+A fresh direct full-modpack control reaches the matching six-icon WildFFA kits menu with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Its actual window is 1920 by 1013, with Java GUI scale 4.
+Read-only observations verify the chat screen and exact `/kits` text before submission.
+E opens `InventoryScreen` in the lobby and WildFFA, including after closing the kits menu.
+The selector and kits command open `BedrockNativeContainerScreen` with complete backgrounds, three loaded images and no failed images.
+The locator remains active, with visible markers and 83 received native updates.
+These phases complete, but the recorder later exits with code 143 after saving its manifest and restoring the profile.
+All 14 recorded process identities have retired.
+This supplies scoped menu evidence, without a normal recorder exit or a native graphical baseline.
+The reported E-driven menu replacement and missing-background cause remain unreproduced.
 All five compatibility goal areas remain active.
 
 

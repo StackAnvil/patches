@@ -704,3 +704,20 @@ The persistent player-menu object stays the same, while opening tokens advance f
 Constructing an unused inventory screen sends no native request.
 Private screenshots show the ordinary Java screens.
 Direct joins, real reconfiguration, packet-delay recovery and physical controller delivery remain separate gates.
+
+## Reported inventory background control
+
+A direct WildMC control uses the full optimized modpack, Iris 1.11.7 and Complementary Reimagined r5.9.3.
+The actual window is 1920 by 1013, with Java GUI scale 4.
+E opens the ordinary player inventory in the lobby and WildFFA, including after closing the native kits menu.
+The lobby selector and matching six-icon `/kits` menu show complete native backgrounds.
+Read-only observations verify `ChatScreen` and exact command text before physical submission.
+Both native menus retain three loaded images and no failed images.
+The journal contains three inventory-open interactions, five container-open packets and one `/kits` request.
+Visible locator markers accompany 83 native locator updates.
+
+These menu phases complete before the recorder exits with code 143.
+Its manifest is saved, profile restoration passes, and all 14 recorded process identities have retired.
+Keep this scoped evidence separate from a normal recorder-exit pass.
+The original E-driven kits replacement and missing-background report remain unreproduced.
+This control does not establish native graphical parity or complete player inventory and controller behavior.
