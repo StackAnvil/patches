@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { constants, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -26,8 +26,8 @@ async function prepareFiles(): Promise<{ directory: string; version: string }> {
   await rm(bundleRoot, { recursive: true, force: true });
   const modsDir = join(bundleRoot, "minecraft", "mods");
   await mkdir(modsDir, { recursive: true });
-  await copyFile(baseJar, join(modsDir, basename(baseJar)));
-  await copyFile(addonJar, join(modsDir, basename(addonJar)));
+  await copyFile(baseJar, join(modsDir, basename(baseJar)), constants.COPYFILE_FICLONE);
+  await copyFile(addonJar, join(modsDir, basename(addonJar)), constants.COPYFILE_FICLONE);
   const pack = {
     components: [
       {
@@ -120,7 +120,7 @@ export async function installPrism(instanceName = prismInstance): Promise<string
   );
   for (const file of files) {
     const source = join(directory, "minecraft", "mods", file);
-    await copyFile(source, join(mods, file));
+    await copyFile(source, join(mods, file), constants.COPYFILE_FICLONE);
   }
   await copyFile(join(directory, "mmc-pack.json"), join(destination, "mmc-pack.json"));
   if (!existsSync(join(destination, "instance.cfg"))) {
