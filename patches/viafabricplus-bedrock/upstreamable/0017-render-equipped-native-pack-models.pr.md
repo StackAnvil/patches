@@ -175,14 +175,45 @@ This change does not resolve that separate shader and animation gap or establish
 Supported enchanted hand items now use native materials, secondary textures, and a fresh extraction frame.
 The nested target shield controller receives an explicit unpatterned flag.
 Visible banner data retains its existing atlas fallback.
-The current item's sampled animation follows the copied owner matrix instead of disappearing during explicit binding.
+The current item's sampled animation follows the copied owner matrix.
+The later rest-pose correction below also retains the authored local origin and rotation.
 
 The controller regression switches one item between plain and enchanted states and checks material selection and texture order.
-A separate 96-case comparison executes original native channel and hierarchy routines with a supplied stage order.
-The earlier pre-binding reset comparisons remain valid; the new control does not establish complete native frame scheduling.
+Earlier supplied-order comparisons execute original native binding kernels, but omit rest restoration after binding.
+Those primitive comparisons do not establish the final rendered frame.
 
 A real enchanted off-hand shield now submits one native surface and no observed Java shield draw.
 Blocking changes its visible pose with shaders enabled and disabled.
 All eight captures receive visual review.
 The shield remains large, and exact native size, placement, main-hand behavior, and banner composition remain unverified.
 The [coverage record](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) includes build counts, artifact identity, client evidence, and the failed attempts.
+
+
+## Complete local poses after explicit binding, October 27, 2026
+
+Explicit binding now reparents the complete current local pose to the selected owner bone.
+It retains the authored rest translation and rotation before sampled animation channels.
+The draw uses the shared local composition and no longer accepts a second animation map.
+Implicit deformation, missing-target fallback and independent child binding retain their existing paths.
+
+Official Bedrock 1.26.51.1, build 51061372, protocol 2193 supplies the pose reference.
+The vanilla shield retains rest position `(1, -8.5, 3)` before its animation channels.
+Its idle matrix has translation `(-6.5, 23.3, 8.1)`; blocking produces `(-6, 20.1, 9.6)`.
+Release restores the exact idle matrix.
+An owned server pack changes only authored rotation to `(15, 25, 35)`.
+Native idle retains rotation `(16, 201, 32.5)`, and blocking retains `(16, 201, 42.5)`.
+This control establishes that rest rotation remains after binding too.
+
+A mandatory regression compares all observed matrix elements for both geometries through idle, blocking and release.
+It fails on the earlier implementation at the missing translation.
+Hierarchy controls retain reflection, shear, singular owners, entity-relative descendants, locators, vertices and normals.
+The full add-on build passes 1,257 tests, including 133 optional skips, with no failures or errors.
+All 38 patches replay, and offline tooling, regression and metadata checks pass.
+
+The rebuilt artifact completes live idle, use, release and third-person controls with Iris enabled and disabled.
+The paired first-person shield placement agrees visually with the owned native reference.
+Third-person placement returns beside the body.
+The Java and native clients use different avatars, so these captures do not establish complete third-person avatar parity.
+This new live control uses an unenchanted shield. Earlier glint controls retain their separate scope.
+General attachables, main-hand variants, banners and the original server-authored inventory report remain separate verification work.
+Raw captures and process observations remain private.

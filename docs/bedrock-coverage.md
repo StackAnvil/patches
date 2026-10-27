@@ -11778,3 +11778,30 @@ These measurements identify a missing translation term, without proving the comp
 Earlier emulated binding controls supplied their stage order and omitted this live retained offset.
 They cannot establish the final rendered transform alone.
 Rotated custom rest poses, general attachables, cube assembly and corrected Java pixels still need comparison.
+
+
+## Complete bound local poses, October 27, 2026
+
+The equipped-model patch now retains the complete local pose after explicit binding.
+Java combines the selected owner matrix with the authored rest translation, rest rotation and current animation.
+The same composition handles entity-relative rotation without losing the translated origin.
+
+An owned native server pack changes only shield rest rotation to `(15, 25, 35)`.
+Native idle retains `(16, 201, 32.5)`, and blocking retains `(16, 201, 42.5)`.
+This extends the earlier vanilla measurements and resolves the uncertainty about retained rest rotation.
+Mandatory regressions compare actual native matrices for both geometries through idle, blocking and release.
+The earlier implementation fails at the missing rest translation.
+Supplied-order kernel snapshots no longer serve as final-frame integration expectations.
+
+All 38 add-on patches replay. The full build passes 1,257 tests, with 133 optional skips and no failures or errors.
+All 1,256 compiled main classes match the tested JAR.
+Offline tooling, regression and patch-metadata checks pass.
+A live Java control uses the full optimized modpack, the rebuilt artifact and an ordinary offhand shield against owned BDS.
+It completes idle, use, release and third-person phases with Iris enabled and disabled.
+All eight survival captures receive visual review.
+The first-person shield placement agrees visually with the native reference; third-person placement returns beside the body.
+
+These controls do not establish whole-image equality, complete avatar parity or general attachable parity.
+The native and Java clients use different avatars, and the new live control uses an unenchanted shield.
+Main-hand variants, banners, general packs and the original server-authored E-key inventory report still need separate verification.
+The full movement, inventory, screens, camera and rendering goal remains incomplete.
