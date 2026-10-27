@@ -1,5 +1,36 @@
 # Send local player prediction to core
 
+## Live motion after teleport, October 27, 2026
+
+A teleport clears physical replay history before the next client frame.
+Negotiated ticked motion replaces the ordinary Java velocity packet, but the client previously ignored that motion without an existing replay session.
+The client now creates a current connection-owned session and applies valid live velocity immediately.
+The next real physics frame starts new history without reusing retired snapshots or inventing an input frame.
+Actor identity, lifetime, world, connection and vehicle control checks still constrain admission.
+
+Four mandatory lifecycle regressions cover this gap, receipt order, stale identity rejection and controlled vehicle epochs.
+The corrected baseline fails three of these cases.
+All 38 add-on patches replay to the tested source tree.
+The full add-on build passes 1,128 tests, with 133 optional skips and no failures or errors.
+All 1,256 compiled main classes match the tested artifact.
+
+Owned BDS 1.26.51.1, build 51061372, protocol 2193 emits ordinary, same-tick and next-tick teleport impulses.
+The old client drops all three post-teleport impulses.
+The corrected client applies all three, and its first physical displacement matches the received full-float velocity.
+An ordinary impulse preserves the same first eight physical frames in both clients.
+A passive observer records actual packet receipt and client physics without modifying game state or packets.
+The corrected Java recorder and official native recorder finish normally with exit code zero.
+The baseline observer attaches after an initial path error on the same client, so its recorder exit code remains unknown.
+Saved Java profile bytes, the installed artifact and native settings are restored after the controls.
+Raw journals and captures remain private.
+
+The official native client also receives finite corrections for both same-tick teleport cases.
+Java additionally receives one correction in the next-tick case.
+Native first acknowledges a same-tick teleport at its target with unintegrated velocity.
+Java advances physics before that first acknowledgement.
+Teleport acknowledgement scheduling and complete trajectory parity remain open.
+These scripted impulses do not reproduce actual pearl or wind-charge throws, endless rollback or endless eating.
+
 ## Ticked velocity commands, October 23, 2026
 
 `SET_ENTITY_MOTION` now preserves its server tick for clients with the negotiated physical replay channel.

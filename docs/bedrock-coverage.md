@@ -11741,3 +11741,99 @@ Exact native size, placement, full frame order, main-hand equipment, Java displa
 Native GUI glint, enchanted armor, banner composition, other shader packs, and geometry or tessellation interpolation remain open.
 This checkpoint does not resolve the original E-key inventory background, locator, intermittent rollback, or endless-eating reports.
 The complete five-area goal and the broader pack, interaction, skin, and emote work remain incomplete.
+
+## Native held-item placement comparison, October 27, 2026
+
+An official Bedrock 1.26.51.1 client joins owned BDS build 51061372 through the native recorder, with protocol 2193.
+The recorder now signs its account-free HTTP offer and retains the same identity for offline game login.
+Its regression verifies the token signature, detached fingerprint proof and shared signaling/login token.
+The replay self-tests and tooling checks pass.
+
+Native controls use an ordinary diamond sword and an unenchanted offhand shield.
+The native shield rests low in first person, then moves up and right during blocking.
+Third-person controls show the shield beside the body.
+The Java add-on still places the shield too high in first person and above the body in third person.
+This comparison confirms a remaining placement error after the glint, query and current binding-channel changes.
+
+A passive Java observer samples the model selected during actual hand submission.
+It records the selected owner's left-item matrix, item animation channels and first-person root during idle and use.
+Earlier observations of unused fallback models do not describe the submitted owner.
+The current Java control completes the idle and use phases with Iris active.
+Its recording timer ends before the remaining phases, so it does not establish a complete paired render comparison.
+
+The native E-key control shows an ordinary player inventory background.
+It does not reproduce the reported server-authored inventory opened with E.
+The original inventory background/scale, locator, intermittent rollback and endless-eating reports remain open.
+Raw recordings, screenshots and process observations remain private.
+
+A second equipped native control records the first-person shield bone during idle, blocking and release.
+Its owner item matrix has translation `(6, 9, 0)` in model pixels.
+Its retained rest position is `(1, -8.5, 3)` in native coordinates.
+Idle adds animation position `(-13.5, -5.8, 5.1)` and produces local position `(-12.5, -14.3, 8.1)`.
+The final native matrix has translation `(-6.5, 23.3, 8.1)` after the native Y conversion.
+Blocking produces translation `(-6, 20.1, 9.6)`; release restores the idle position.
+Java currently omits the rest offset when it composes the explicit binding.
+
+These measurements identify a missing translation term, without proving the complete native frame order.
+Earlier emulated binding controls supplied their stage order and omitted this live retained offset.
+They cannot establish the final rendered transform alone.
+Rotated custom rest poses, general attachables, cube assembly and corrected Java pixels still need comparison.
+
+
+## Complete bound local poses, October 27, 2026
+
+The equipped-model patch now retains the complete local pose after explicit binding.
+Java combines the selected owner matrix with the authored rest translation, rest rotation and current animation.
+The same composition handles entity-relative rotation without losing the translated origin.
+
+An owned native server pack changes only shield rest rotation to `(15, 25, 35)`.
+Native idle retains `(16, 201, 32.5)`, and blocking retains `(16, 201, 42.5)`.
+This extends the earlier vanilla measurements and resolves the uncertainty about retained rest rotation.
+Mandatory regressions compare actual native matrices for both geometries through idle, blocking and release.
+The earlier implementation fails at the missing rest translation.
+Supplied-order kernel snapshots no longer serve as final-frame integration expectations.
+
+All 38 add-on patches replay for the shield-only build. Its 1,257 tests include 1,124 passes and 133 optional skips, with no failures or errors.
+All 1,256 compiled main classes match the tested JAR.
+Offline tooling, regression and patch-metadata checks pass.
+A live Java control uses the full optimized modpack, the rebuilt artifact and an ordinary offhand shield against owned BDS.
+It completes idle, use, release and third-person phases with Iris enabled and disabled.
+All eight survival captures receive visual review.
+The first-person shield placement agrees visually with the native reference; third-person placement returns beside the body.
+
+These controls do not establish whole-image equality, complete avatar parity or general attachable parity.
+The native and Java clients use different avatars, and the new live control uses an unenchanted shield.
+Main-hand variants, banners, general packs and the original server-authored E-key inventory report still need separate verification.
+The full movement, inventory, screens, camera and rendering goal remains incomplete.
+
+The physical controls pass all eight phases.
+The private proxy runner needs an explicit stop because its timer waits for a direct-recorder marker.
+That capture does not count as a normal timed-recorder pass.
+The owned client closes through the runner cleanup, and saved profile bytes are restored exactly.
+
+## Live velocity after teleport, October 27, 2026
+
+The client no longer discards negotiated motion commands between a teleport and the next physical frame.
+A valid command creates a current connection-owned replay session and immediately updates live velocity.
+New history starts with the next real frame. Retired snapshots remain unavailable.
+Actor identity, lifetime, world, connection and controlled vehicle checks remain in effect.
+
+Four mandatory lifecycle regressions cover the session gap, receipt order, stale identities and vehicle control epochs.
+Three cases fail on the corrected test baseline and pass with the fix.
+All 38 add-on patches replay to the tested source tree.
+The later motion build has 1,261 tests: 1,128 pass and 133 optional tests skip, with no failures or errors.
+All 1,256 compiled main classes match the tested artifact.
+
+Owned BDS 1.26.51.1, build 51061372, protocol 2193 supplies one ordinary impulse and three post-teleport impulses.
+The old client drops all three post-teleport commands. The corrected client applies all three with the actual wire velocity and tick.
+Its first physical displacement matches that full-float velocity.
+The ordinary control retains the same first eight physical frames in both clients.
+The corrected Java recorder and official native recorder finish normally. The baseline recorder exit code remains unknown after an observer path error.
+Private journals preserve packet receipt, commands and actual physics. The observer changes no game state or packets.
+
+The native client also receives finite corrections in both same-tick teleport cases.
+Java receives an additional correction in the next-tick case.
+Native first acknowledges a same-tick teleport at the target with unintegrated velocity, while Java advances physics before that acknowledgement.
+This timing difference remains open and prevents a complete trajectory parity claim.
+The scripted impulses do not establish actual pearl and wind-charge behavior or resolve endless rollback and endless eating.
+The original inventory and locator reports and the full five-area goal remain open.

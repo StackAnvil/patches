@@ -1,4 +1,4 @@
-From c1a6550b7ab7d65ef475e55fee8de59b155d81cf Mon Sep 17 00:00:00 2001
+From 8e19ea198a6b2de96123802fdd199ef733a89a95 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -622,6 +622,19 @@ also retain the native portal cooldown duration, independently of its
 remaining countdown. Static native side-effect evidence comes from the
 1.26.51.1/protocol 2193 snapshot writer 1402096f0 and event 144376350.
 Full native physics and live mode trajectories remain separate validation.
+
+Create a current connection-owned physical session when a valid ticked
+motion command arrives before the next physical frame. A real teleport
+clears the old replay session, but the negotiated motion channel replaces
+the ordinary Java velocity packet. Dropping commands in that gap loses
+the live impulse entirely. Apply the native live velocity immediately;
+new history begins only with the following real physics frame.
+
+Retain actor UUID, native lifetime, world, connection and vehicle-control
+admission. A new session cannot replay retired snapshots. Regressions
+cover live receipt after teleport/history clear, receipt order before the
+first frame, stale actor/world/connection rejection and controlled vehicle
+epoch admission. The previous implementation drops the valid impulses.
 ---
  build.gradle.kts                              |   2 +-
  .../bedrock/ViaFabricPlusBedrock.java         |  14 +
@@ -647,7 +660,7 @@ Full native physics and live mode trajectories remain separate validation.
  .../movement/MixinLevelPhysicsReplay.java     |  25 +
  .../features/movement/MixinLivingEntity.java  | 140 +++++
  .../movement/MixinLivingPhysicsState.java     | 145 +++++
- .../features/movement/MixinLocalPlayer.java   | 367 ++++++++++++-
+ .../features/movement/MixinLocalPlayer.java   | 367 +++++++++++-
  .../movement/MixinMobEffectPhysicsState.java  |  18 +
  .../movement/MixinParticlePhysicsReplay.java  |  24 +
  .../movement/MixinPassengerPhysicsReplay.java |  39 ++
@@ -661,7 +674,7 @@ Full native physics and live mode trajectories remain separate validation.
  .../bedrock/input/ActorMotionPayload.java     |  22 +
  .../input/BedrockInputPermissions.java        |   4 +-
  .../bedrock/input/BedrockMovementEffects.java | 161 ++++++
- .../bedrock/input/BedrockPhysicalReplay.java  | 517 ++++++++++++++++++
+ .../bedrock/input/BedrockPhysicalReplay.java  | 521 ++++++++++++++++++
  .../input/BedrockPlayerCorrections.java       |  64 +++
  .../bedrock/input/BedrockPlayerModes.java     | 176 ++++++
  .../input/BedrockVehiclePredictions.java      |  48 ++
@@ -676,7 +689,7 @@ Full native physics and live mode trajectories remain separate validation.
  .../input/VehiclePredictionSession.java       |  91 +++
  .../movement/BedrockClimbingPhysics.java      |  43 ++
  .../movement/BedrockCollisionContacts.java    | 102 ++++
- .../movement/BedrockFlightPhysics.java        |  61 +++
+ .../movement/BedrockFlightPhysics.java        |  61 ++
  .../bedrock/movement/BedrockFluidPhysics.java |  86 +++
  .../movement/BedrockGeyserPhysics.java        |  70 +++
  .../movement/BedrockPlayerPosture.java        |  63 +++
@@ -699,6 +712,7 @@ Full native physics and live mode trajectories remain separate validation.
  .../bedrock/render/BedrockActorState.java     |  39 +-
  .../viafabricplus-bedrock.accesswidener       |   5 +
  .../viafabricplus-bedrock.mixins.json         |  25 +
+ .../BedrockPhysicalMotionLifecycleTest.java   | 154 ++++++
  .../bedrock/input/BedrockPlayerModesTest.java | 168 ++++++
  .../input/BedrockVehiclePredictionsTest.java  | 155 ++++++
  .../input/VehiclePredictionPayloadTest.java   |  75 +++
@@ -722,7 +736,7 @@ Full native physics and live mode trajectories remain separate validation.
  .../replay/PhysicalWorldCollisionTest.java    | 111 ++++
  .../render/PhysicalColliderSourcesTest.java   | 151 +++++
  .../render/PhysicalReplayLifetimeTest.java    | 151 +++++
- 99 files changed, 7932 insertions(+), 74 deletions(-)
+ 100 files changed, 8090 insertions(+), 74 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAgePhysicsState.java
@@ -787,6 +801,7 @@ Full native physics and live mode trajectories remain separate validation.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayHistory.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalStateAccess.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalMotionLifecycleTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerModesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictionsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionPayloadTest.java
@@ -832,7 +847,7 @@ index 159fe40..0340595 100644
      jarInJar("org.redlance.mochafloats:runtime:6.1.0") {
          exclude(group = "io.netty")
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 2458881..e751e87 100644
+index ab2119f..39f764a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 @@ -21,6 +21,7 @@
@@ -854,7 +869,7 @@ index 2458881..e751e87 100644
  import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
  import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusSkinProvider;
  import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusBuiltinResourcePackProvider;
-@@ -142,6 +147,11 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -143,6 +148,11 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
              ClientPlayNetworking.registerReceiver(NativeActorBoundsPayload.TYPE,
                  (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
@@ -866,7 +881,7 @@ index 2458881..e751e87 100644
          PayloadTypeRegistry.clientboundPlay().register(NativeAnimationPayload.TYPE, NativeAnimationPayload.CODEC);
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
              ClientPlayNetworking.registerReceiver(NativeAnimationPayload.TYPE,
-@@ -158,6 +168,10 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -159,6 +169,10 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          ClientPlayNetworking.registerGlobalReceiver(NativeParticlePlaybackPayload.TYPE,
                  (payload, context) -> BedrockServerParticles.accept(payload.message()));
          PayloadTypeRegistry.serverboundPlay().register(RawInputPayload.TYPE, RawInputPayload.CODEC);
@@ -3521,10 +3536,10 @@ index 0000000..dfbab9f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalReplay.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalReplay.java
 new file mode 100644
-index 0000000..5f4b6d7
+index 0000000..e1cdf05
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalReplay.java
-@@ -0,0 +1,517 @@
+@@ -0,0 +1,521 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3570,14 +3585,19 @@ index 0000000..5f4b6d7
 +    private BedrockPhysicalReplay() {}
 +
 +    public static void begin(final LocalPlayer player, final long frame) {
-+        final Minecraft client = Minecraft.getInstance();
-+        if (client.getConnection() != player.connection || client.level != player.level() || !player.connection.getConnection().isConnected()) {
++        final Session current = sessionFor(Minecraft.getInstance(), player);
++        if (current != null) current.begin(frame);
++    }
++
++    private static Session sessionFor(final Minecraft client, final LocalPlayer player) {
++        if (player == null || client.player != player || client.getConnection() != player.connection
++                || client.level != player.level() || !player.connection.getConnection().isConnected()) {
 +            clear();
-+            return;
++            return null;
 +        }
 +        if (session == null || session.player != player || session.level != player.level()
 +                || session.player.connection != player.connection) session = new Session(player);
-+        session.begin(frame);
++        return session;
 +    }
 +
 +    public static void preparePhysics(final ClientLevel level) {
@@ -3608,10 +3628,9 @@ index 0000000..5f4b6d7
 +
 +    public static void motion(final ActorMotionCommand command) {
 +        final Minecraft client = Minecraft.getInstance();
-+        if (session != null && client.player == session.player && client.level == session.level
-+                && client.getConnection() == session.player.connection && session.player.connection.getConnection().isConnected()) {
-+            session.receiveMotion(command);
-+        }
++        // Teleports retire old history, but the next packet must still update live velocity.
++        final Session current = sessionFor(client, client.player);
++        if (current != null) current.receiveMotion(command);
 +    }
 +
 +    public static void mode(final PlayerModeMessage message) {
@@ -6658,10 +6677,10 @@ index f42de8f..8e8672c 100644
  
  accessible field net/minecraft/client/renderer/RenderPipelines ENTITY_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index c54c511..0eb5c53 100644
+index bb828b8..387aae7 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -147,12 +147,37 @@
+@@ -154,12 +154,37 @@
      "features.input.MixinMouseHandler",
      "features.input.MixinInputPermissionConnection",
      "features.input.MixinMinecraftInputPermissions",
@@ -6699,6 +6718,166 @@ index c54c511..0eb5c53 100644
      "features.movement.MixinPlayer",
      "features.sound.MixinBedrockChannelAccess",
      "features.sound.MixinBedrockChannel",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalMotionLifecycleTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalMotionLifecycleTest.java
+new file mode 100644
+index 0000000..75c5063
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalMotionLifecycleTest.java
+@@ -0,0 +1,154 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
++import net.minecraft.SharedConstants;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.network.Connection;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.entity.vehicle.boat.AbstractBoat;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.ActorMotionCommand;
++import net.raphimc.viabedrock.api.model.MovementCorrectionTiming;
++import net.raphimc.viabedrock.api.model.VehiclePredictionContext;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.Mockito.*;
++
++final class BedrockPhysicalMotionLifecycleTest {
++    @BeforeAll
++    static void initializeGame() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @AfterEach
++    void clearHistory() {
++        BedrockPhysicalReplay.clear();
++    }
++
++    @Test
++    void appliesLiveMotionAfterATeleportClearsHistoryBeforeTheFollowingTick() throws Exception {
++        final var f = new Fixture();
++        try (var game = mockStatic(Minecraft.class); var actors = mockStatic(BedrockActorState.class)) {
++            game.when(Minecraft::getInstance).thenReturn(f.client);
++            actors.when(() -> BedrockActorState.liveLifetime(f.uuid)).thenReturn(f.lifetime);
++            BedrockPhysicalReplay.begin(f.player, 40);
++            BedrockPhysicalReplay.motion(f.command(new Position3f(.25F, .5F, -.75F)));
++            verify(f.player).lerpMotion(new Vec3(.25, .5, -.75));
++            BedrockPhysicalReplay.clear();
++            BedrockPhysicalReplay.motion(f.command(new Position3f(-.5F, 1.25F, .125F)));
++            verify(f.player).lerpMotion(new Vec3(-.5, 1.25, .125));
++            assertFalse(BedrockPhysicalReplay.active());
++        }
++    }
++
++    @Test
++    void appliesEachLiveCommandInReceiptOrderBeforeTheFirstPhysicalFrame() throws Exception {
++        final var f = new Fixture();
++        try (var game = mockStatic(Minecraft.class); var actors = mockStatic(BedrockActorState.class)) {
++            game.when(Minecraft::getInstance).thenReturn(f.client);
++            actors.when(() -> BedrockActorState.liveLifetime(f.uuid)).thenReturn(f.lifetime);
++            BedrockPhysicalReplay.clear();
++            BedrockPhysicalReplay.motion(f.command(new Position3f(.25F, .5F, -.75F)));
++            BedrockPhysicalReplay.motion(f.command(Position3f.ZERO));
++            final var order = inOrder(f.player);
++            order.verify(f.player).lerpMotion(new Vec3(.25, .5, -.75));
++            order.verify(f.player).lerpMotion(Vec3.ZERO);
++            assertFalse(BedrockPhysicalReplay.active());
++        }
++    }
++
++    @Test
++    void rejectsStaleActorWorldAndConnectionWhenNoHistoryExists() throws Exception {
++        final var f = new Fixture();
++        try (var game = mockStatic(Minecraft.class); var actors = mockStatic(BedrockActorState.class)) {
++            game.when(Minecraft::getInstance).thenReturn(f.client);
++            actors.when(() -> BedrockActorState.liveLifetime(f.uuid)).thenReturn(UUID.randomUUID());
++            BedrockPhysicalReplay.clear();
++            BedrockPhysicalReplay.motion(f.command(Position3f.ZERO));
++            actors.when(() -> BedrockActorState.liveLifetime(f.uuid)).thenReturn(f.lifetime);
++            f.client.level = mock(ClientLevel.class);
++            BedrockPhysicalReplay.motion(f.command(Position3f.ZERO));
++            f.client.level = f.level;
++            when(f.connection.isConnected()).thenReturn(false);
++            BedrockPhysicalReplay.motion(f.command(Position3f.ZERO));
++            when(f.connection.isConnected()).thenReturn(true);
++            when(f.client.getConnection()).thenReturn(mock(ClientPacketListener.class));
++            BedrockPhysicalReplay.motion(f.command(Position3f.ZERO));
++            verify(f.player, never()).lerpMotion(any(Vec3.class));
++            assertFalse(BedrockPhysicalReplay.active());
++        }
++    }
++
++    @Test
++    void preservesControlledVehicleIdentityAdmissionWithoutAHistory() throws Exception {
++        final var f = new Fixture();
++        final var vehicle = mock(AbstractBoat.class);
++        final UUID uuid = UUID.randomUUID(), lifetime = UUID.randomUUID();
++        when(f.level.getEntity(8)).thenReturn(vehicle);
++        when(vehicle.level()).thenReturn(f.level);
++        when(vehicle.getId()).thenReturn(8);
++        when(vehicle.getUUID()).thenReturn(uuid);
++        when(vehicle.getControllingPassenger()).thenReturn(f.player);
++        when(vehicle.isLocalInstanceAuthoritative()).thenReturn(true);
++        final var identity = new VehiclePredictionContext.Identity(8, uuid, lifetime, 12, 34);
++        final var motion = new ActorMotionCommand(8, uuid, lifetime, 7,
++                new MovementCorrectionTiming(100, 105, 40, 100, -1), new Position3f(.5F, .25F, -.125F));
++        try (var game = mockStatic(Minecraft.class); var actors = mockStatic(BedrockActorState.class);
++             var vehicles = mockStatic(BedrockVehiclePredictions.class)) {
++            game.when(Minecraft::getInstance).thenReturn(f.client);
++            actors.when(() -> BedrockActorState.liveLifetime(uuid)).thenReturn(lifetime);
++            vehicles.when(() -> BedrockVehiclePredictions.context(f.player)).thenReturn(new VehiclePredictionContext(7, identity));
++            BedrockPhysicalReplay.clear();
++            BedrockPhysicalReplay.motion(motion);
++            verify(vehicle).lerpMotion(new Vec3(.5, .25, -.125));
++            vehicles.when(() -> BedrockVehiclePredictions.context(f.player)).thenReturn(new VehiclePredictionContext(8, identity));
++            BedrockPhysicalReplay.motion(motion);
++            verify(vehicle, times(1)).lerpMotion(any(Vec3.class));
++            assertFalse(BedrockPhysicalReplay.active());
++        }
++    }
++
++    private static final class Fixture {
++        private final Minecraft client = mock(Minecraft.class);
++        private final ClientLevel level = mock(ClientLevel.class);
++        private final LocalPlayer player = mock(LocalPlayer.class);
++        private final ClientPacketListener listener = mock(ClientPacketListener.class);
++        private final Connection connection = mock(Connection.class);
++        private final UUID uuid = UUID.randomUUID(), lifetime = UUID.randomUUID();
++
++        private Fixture() throws Exception {
++            this.client.player = this.player;
++            this.client.level = this.level;
++            final var field = LocalPlayer.class.getField("connection");
++            field.setAccessible(true);
++            field.set(this.player, this.listener);
++            when(this.client.getConnection()).thenReturn(this.listener);
++            when(this.listener.getConnection()).thenReturn(this.connection);
++            when(this.connection.isConnected()).thenReturn(true);
++            when(this.player.level()).thenReturn(this.level);
++            when(this.player.getId()).thenReturn(1);
++            when(this.player.getUUID()).thenReturn(this.uuid);
++        }
++
++        private ActorMotionCommand command(final Position3f motion) {
++            return new ActorMotionCommand(1, this.uuid, this.lifetime, -1,
++                    new MovementCorrectionTiming(100, 105, 40, 100, -1), motion);
++        }
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerModesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerModesTest.java
 new file mode 100644
 index 0000000..e925d06
