@@ -1,4 +1,4 @@
-From f9120d55cce24d587d168360e1edba49ce9157f9 Mon Sep 17 00:00:00 2001
+From 3eb0c1d10cd8262cf8046e34d0b5bdf0ac180d89 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -340,12 +340,30 @@ keeping every ancestor, bone transform and locator available for poses and
 bindings. Ignore empty helper bones during material partitioning because
 they own no rendered surface. Player and actor factories share this rule;
 materials do not implicitly change visibility or rerun animation scripts.
+
+Expose sampled head-slot occupancy and native vehicle-type matching to
+actor graphs and attached effects. Capture immutable values in the
+query frame, including every item that can occupy the head slot, without
+retaining a Java entity or its mutable stack. Match the native vehicle
+identifier rather than the translated Java carrier type.
+
+A missing native vehicle identity remains unavailable until its snapshot
+arrives. Refresh removes earlier cached bindings; dismount supplies a
+known false predicate. Nonliving carriers without head-slot data retain
+an unavailable head query instead of inventing equipment state.
+
+The Bedrock 1.26.51.1 player graph requests both queries in a live direct
+full-modpack capture. Microsoft documents head-slot occupancy and matching
+any designated ridden entity type. These controls do not establish full
+mount, hierarchy, equipment-transport or native visual parity.
+https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions/query_has_head_gear
+https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions/query_is_riding_any_entity_of_type
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
  .../bedrock/ViaFabricPlusBedrock.java         |   51 +
  .../appearance/BedrockActorAnimation.java     | 1087 +++++++++++++++++
- .../appearance/BedrockActorQueries.java       |   81 ++
+ .../appearance/BedrockActorQueries.java       |  101 ++
  .../bedrock/appearance/BedrockActorScale.java |   33 +
  .../appearance/BedrockActorVisibility.java    |  110 ++
  .../appearance/BedrockAnimationParticle.java  |   70 ++
@@ -469,7 +487,7 @@ materials do not implicitly change visibility or rerun animation scripts.
  .../shaders/core/bedrock_particle.fsh         |   52 +
  .../viafabricplus-bedrock.mixins.json         |   26 +-
  .../appearance/BedrockActorAnimationTest.java |  705 +++++++++++
- .../appearance/BedrockActorQueriesTest.java   |  143 +++
+ .../appearance/BedrockActorQueriesTest.java   |  222 ++++
  .../BedrockActorRenderSelectionTest.java      |  128 ++
  .../appearance/BedrockActorScaleTest.java     |   77 ++
  .../BedrockActorVisibilityTest.java           |  142 +++
@@ -544,7 +562,7 @@ materials do not implicitly change visibility or rerun animation scripts.
  .../render/BedrockPlayerModelTest.java        |  145 +++
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 203 files changed, 24480 insertions(+), 15 deletions(-)
+ 203 files changed, 24579 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -1946,10 +1964,10 @@ index 0000000..ecd9581
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
 new file mode 100644
-index 0000000..e45e61d
+index 0000000..2365a99
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,101 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1957,10 +1975,12 @@ index 0000000..e45e61d
 + */
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
 +import java.util.HashMap;
 +import java.util.Map;
 +import java.util.Set;
 +import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.EquipmentSlot;
 +import net.minecraft.world.entity.LivingEntity;
 +import net.minecraft.world.phys.Vec3;
 +import net.raphimc.viabedrock.api.model.NativeActorMessage;
@@ -1975,6 +1995,8 @@ index 0000000..e45e61d
 +                                              final Map<String, ?> rendered) {
 +        final Map<String, Object> queries = new HashMap<>(rendered);
 +        queries.remove("has_target");
++        queries.remove("has_head_gear");
++        queries.remove("is_riding_any_entity_of_type");
 +        NativeActorIntegerQueries.names().forEach(queries::remove);
 +        queries.putAll(nativeState(state));
 +        queries.put("is_alive", actor.isAlive());
@@ -1982,6 +2004,7 @@ index 0000000..e45e61d
 +        queries.put("is_in_water", actor.isInWater());
 +        queries.put("ground_speed", groundSpeed(actor.getDeltaMovement()));
 +        queries.put("is_riding", actor.isPassenger());
++        queries.putAll(equipmentAndVehicle(actor));
 +        // A native custom actor can use a non-living Java carrier. Retain its native status flags.
 +        if (actor instanceof LivingEntity living) {
 +            queries.put("is_sneaking", living.isShiftKeyDown());
@@ -1992,6 +2015,21 @@ index 0000000..e45e61d
 +        } else if (state == null) {
 +            queries.put("is_sneaking", actor.isShiftKeyDown());
 +            queries.put("is_swimming", actor.isSwimming());
++        }
++        return Map.copyOf(queries);
++    }
++
++    /** Capture equipment and native vehicle identity without retaining entities in query closures. */
++    public static Map<String, Object> equipmentAndVehicle(final Entity actor) {
++        final Map<String, Object> queries = new HashMap<>();
++        if (actor instanceof LivingEntity living)
++            queries.put("has_head_gear", !living.getItemBySlot(EquipmentSlot.HEAD).isEmpty());
++        final Entity vehicle = actor.getVehicle();
++        final var state = vehicle == null ? null : BedrockActorState.state(vehicle.getUUID());
++        if (vehicle == null || state != null && !state.identifier().isEmpty()) {
++            final String identifier = vehicle == null ? "" : state.identifier();
++            queries.put("is_riding_any_entity_of_type", (BedrockActorAnimation.Query) arguments ->
++                    !identifier.isEmpty() && arguments.stream().anyMatch(identifier::equals));
 +        }
 +        return Map.copyOf(queries);
 +    }
@@ -13180,7 +13218,7 @@ index 0000000..1f5bc09
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-index 437a11a..4f25286 100644
+index 8da79f3..ef30827 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 @@ -74,16 +74,62 @@ public final class BedrockGeometry {
@@ -15047,10 +15085,10 @@ index 0000000..f34f032
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueriesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueriesTest.java
 new file mode 100644
-index 0000000..dba9313
+index 0000000..fb941c2
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueriesTest.java
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,222 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15059,13 +15097,18 @@ index 0000000..dba9313
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.google.gson.JsonParser;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
 +import java.util.Map;
 +import java.util.Set;
 +import java.util.UUID;
 +import net.minecraft.SharedConstants;
 +import net.minecraft.server.Bootstrap;
++import net.minecraft.core.component.DataComponentMap;
 +import net.minecraft.world.entity.Entity;
 +import net.minecraft.world.entity.LivingEntity;
++import net.minecraft.world.entity.EquipmentSlot;
++import net.minecraft.world.item.ItemStack;
++import net.minecraft.world.item.Items;
 +import net.minecraft.world.phys.Vec3;
 +import net.raphimc.viabedrock.api.model.NativeActorMessage;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
@@ -15081,6 +15124,79 @@ index 0000000..dba9313
 +    static void bootstrap() {
 +        SharedConstants.tryDetectVersion();
 +        Bootstrap.bootStrap();
++        for (final var item : java.util.List.of(Items.DIAMOND_HELMET, Items.CARVED_PUMPKIN))
++            if (!item.builtInRegistryHolder().areComponentsBound())
++                item.builtInRegistryHolder().bindComponents(DataComponentMap.EMPTY);
++    }
++
++    @Test
++    void samplesHeadEquipmentWithoutRetainingStacksOrStaleCarrierValues() throws Exception {
++        final var actor = mock(LivingEntity.class);
++        when(actor.getDeltaMovement()).thenReturn(Vec3.ZERO);
++        final var environment = new BedrockMolang();
++        final var expression = BedrockMolang.Program.parse(JsonParser.parseString("\"q.has_head_gear ? 7 : 3\""), 0);
++        Map<String, Object> captured = Map.of("geometry_scale", 2F);
++        Map<String, Object> helmet = null;
++        for (final ItemStack head : java.util.List.of(ItemStack.EMPTY, new ItemStack(Items.DIAMOND_HELMET),
++                new ItemStack(Items.CARVED_PUMPKIN), ItemStack.EMPTY)) {
++            when(actor.getItemBySlot(EquipmentSlot.HEAD)).thenReturn(head);
++            captured = BedrockActorQueries.sample(actor, state(Set.of()), captured);
++            environment.resetQueries(captured);
++            assertEquals(head.isEmpty() ? 3 : 7, environment.evaluate(expression, 0));
++            assertTrue(environment.hasCompleteQueries());
++            assertEquals(2F, captured.get("geometry_scale"));
++            if (!head.isEmpty()) helmet = captured;
++        }
++        environment.resetQueries(helmet);
++        assertEquals(7, environment.evaluate(expression, 0));
++        final var carrier = mock(Entity.class);
++        when(carrier.getDeltaMovement()).thenReturn(Vec3.ZERO);
++        final var unknown = BedrockActorQueries.sample(carrier, state(Set.of()), helmet);
++        assertFalse(unknown.containsKey("has_head_gear"));
++        assertEquals(true, helmet.get("has_head_gear"));
++    }
++
++    @Test
++    void samplesNativeVehicleTypesAndClearsUnavailableOrDismountedBindings() throws Exception {
++        final var actor = mock(Entity.class);
++        when(actor.getDeltaMovement()).thenReturn(Vec3.ZERO);
++        final var vehicle = mock(Entity.class);
++        final UUID vehicleId = UUID.randomUUID();
++        when(vehicle.getUUID()).thenReturn(vehicleId);
++        final var known = new java.util.HashMap<UUID, NativeActorMessage.Snapshot>();
++        final var environment = new BedrockMolang();
++        final var expression = BedrockMolang.Program.parse(JsonParser.parseString(
++                "\"q.is_riding_any_entity_of_type('minecraft:horse','test:boat') ? 9 : 4\""), 0);
++        Map<String, Object> captured = Map.of();
++        Map<String, Object> mounted = null;
++        try (final var states = mockStatic(BedrockActorState.class)) {
++            states.when(() -> BedrockActorState.state(vehicleId)).thenAnswer(_ -> known.get(vehicleId));
++            for (final String identifier : java.util.List.of("", "minecraft:boat", "minecraft:horse", "test:boat")) {
++                when(actor.getVehicle()).thenReturn(identifier.isEmpty() ? null : vehicle);
++                final var source = state(Set.of());
++                known.put(vehicleId, new NativeActorMessage.Snapshot(vehicleId, UUID.randomUUID(), false, 1,
++                        identifier, "", 1F, Set.of(), 0, 0, null, Map.of()));
++                captured = BedrockActorQueries.sample(actor, source, captured);
++                environment.resetQueries(captured);
++                assertEquals(identifier.equals("minecraft:horse") || identifier.equals("test:boat") ? 9 : 4,
++                        environment.evaluate(expression, 0));
++                assertTrue(environment.hasCompleteQueries());
++                mounted = captured;
++            }
++            known.clear();
++            final var unavailable = BedrockActorQueries.sample(actor, state(Set.of()), captured);
++            assertFalse(unavailable.containsKey("is_riding_any_entity_of_type"));
++            environment.resetQueries(unavailable);
++            environment.evaluate(expression, 0);
++            assertFalse(environment.hasCompleteQueries());
++            when(actor.getVehicle()).thenReturn(null);
++            final var dismounted = BedrockActorQueries.sample(actor, state(Set.of()), unavailable);
++            environment.resetQueries(dismounted);
++            assertEquals(4, environment.evaluate(expression, 0));
++            assertTrue(environment.hasCompleteQueries());
++            environment.resetQueries(mounted);
++            assertEquals(9, environment.evaluate(expression, 0));
++        }
 +    }
 +
 +    @Test
@@ -15139,6 +15255,7 @@ index 0000000..dba9313
 +    void refreshesLivingStatusWithoutAnotherAnimationFrameOrSharedMutableQueries() throws Exception {
 +        final var actor = mock(LivingEntity.class);
 +        when(actor.getDeltaMovement()).thenReturn(Vec3.ZERO);
++        when(actor.getItemBySlot(EquipmentSlot.HEAD)).thenReturn(ItemStack.EMPTY);
 +        final var nativeState = state(Set.of(ActorFlags.SNEAKING, ActorFlags.RIDING, ActorFlags.SWIMMING,
 +                ActorFlags.GLIDING, ActorFlags.SLEEPING, ActorFlags.USINGITEM));
 +        final Map<String, Object> stale = Map.of("is_sneaking", false, "is_riding", false, "is_swimming", false,

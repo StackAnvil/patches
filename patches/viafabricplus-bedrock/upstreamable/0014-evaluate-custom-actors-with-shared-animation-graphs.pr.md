@@ -197,3 +197,11 @@ Bound custom-actor particles sample current common actor inputs and native metad
 Resource, actor-instance, and native lifetime guards retain their existing ownership checks.
 Locator poses and unrelated graph inputs keep their existing sampling.
 See the [shared runtime evidence](0008-share-native-actor-and-resource-runtime.pr.md#fresh-common-particle-actor-inputs) for tested queries, native boundaries, and remaining limits.
+
+
+## Shared equipment and vehicle queries, October 27, 2026
+
+Actor animation frames now receive the shared head-slot and native vehicle-type bindings.
+Unknown equipment or native vehicle metadata remains unavailable instead of receiving invented defaults.
+The [shared runtime notes](0008-share-native-actor-and-resource-runtime.pr.md#head-equipment-and-native-vehicle-queries-october-27-2026)
+record the semantics, regression controls, and verification limits.

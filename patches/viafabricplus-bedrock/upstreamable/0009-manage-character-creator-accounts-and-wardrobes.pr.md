@@ -1313,3 +1313,12 @@ Offline tooling and patch-metadata validation pass.
 These controls establish the tested channel lifecycle, without complete configuration-transfer, native camera, pose, or timing equality.
 Live remote-player visuals and emote sound or particle ownership remain unfinished.
 The full five-area goal and the original gameplay reports remain open.
+
+
+## Player equipment and vehicle query inputs, October 27, 2026
+
+Player animation graphs now receive shared head-slot occupancy and native vehicle-type predicates.
+The inputs capture values without retaining the avatar, and equipment changes refresh the next frame.
+The [shared runtime notes](0008-share-native-actor-and-resource-runtime.pr.md#head-equipment-and-native-vehicle-queries-october-27-2026)
+record query semantics, causal regressions, and remaining limits.
+This change does not establish complete first-person poses or native skin motion parity.

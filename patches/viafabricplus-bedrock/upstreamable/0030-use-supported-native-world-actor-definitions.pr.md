@@ -206,3 +206,12 @@ Normal depth disappears behind stone; Always and disabled testing remain visible
 The plain profile also passes with EntityCulling absent.
 All six final screenshots received visual review, and both temporary server installations were restored.
 The [coverage record](../../../docs/bedrock-coverage.md#actor-material-depth-and-occlusion-october-26-2026) records final test totals and remaining limits.
+
+
+## Shared equipment and vehicle queries, October 27, 2026
+
+Actor animation frames now receive the shared head-slot and native vehicle-type bindings.
+Unknown equipment or native vehicle metadata remains unavailable instead of receiving invented defaults.
+The [shared runtime notes](0008-share-native-actor-and-resource-runtime.pr.md#head-equipment-and-native-vehicle-queries-october-27-2026)
+record the semantics, regression controls, and verification limits.
+Living world actors also derive `query.is_riding` from their current passenger state.

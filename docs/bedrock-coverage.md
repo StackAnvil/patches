@@ -11426,3 +11426,39 @@ The original inventory, locator, rollback, and eating reports remain open.
 The full five-area goal stays active, and crafting stays parked.
 The [owning emote notes](../patches/viafabricplus-bedrock/upstreamable/0009-manage-character-creator-accounts-and-wardrobes.pr.md#emote-capability-renewal-october-27-2026)
 record the registry ordering and live evidence.
+
+
+## Player head equipment and native vehicle query bindings, October 27, 2026
+
+Shared animation frames now expose head-slot occupancy and native vehicle-type matching.
+These inputs serve player packs, custom actors, world actors, and attached effects.
+Vehicle matching uses the native identifier rather than the translated Java carrier type.
+Missing metadata leaves the relevant query unavailable, and frame refresh removes stale values.
+An unmounted actor supplies a known false vehicle predicate.
+The [owning runtime notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#head-equipment-and-native-vehicle-queries-october-27-2026)
+record the semantics and remaining limits.
+
+The earlier WildFFA capture reports both queries missing from the native first-person graph.
+The candidate capture reports no missing queries in the sampled first-person phases.
+Its head query matches the actual diamond helmet, and its vehicle predicate reports false while unmounted.
+Physical controls verify nine phases across HUD visibility, shield use and release, three camera modes, and a changed main-hand item.
+The capture uses the full modpack with Iris 1.11.7 and Complementary Reimagined r5.9.3 at 1920 × 1013 and GUI scale 4.
+All nine candidate screenshots received visual review.
+The candidate recorder exits successfully, retires all 49 recorded process identities, and restores its prepared profile.
+
+The large patterned shield remains in the first-person screenshots.
+It disappears with hidden hands and HUD, and it returns after restoring them.
+This query change does not fix that separate rendering issue.
+The live control does not test mounted vehicle matches, remote players, native skin motion equality, or complete emote and equipment behavior.
+The earlier recorder exits with a disconnect failure; its saved observations support only the stated missing-query finding.
+
+Removing the new bindings produces two assertion failures; the restored focused tests pass.
+All four project test suites report 2,968 passes, 315 optional skips, and no failures or errors.
+ViaProxy packaging initially fails because the filesystem is full.
+The same build and publication tasks complete with ZIP/TAR outputs on a RAM disk; both archives pass integrity checks.
+Packaged client classes, shaders, embedded dependencies, and four source snapshots match the tested outputs.
+Tooling checks, 278 tooling tests, and offline patch validation pass.
+Build and launcher artifact copies now request filesystem copy-on-write sharing to reduce duplicate storage.
+
+The original inventory, locator, rollback, and eating reports remain open.
+The five-area goal, packs, skins, emotes, and niche interactions remain active; crafting stays parked.

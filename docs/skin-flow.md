@@ -580,3 +580,12 @@ The matching official package resolves 72 aliases from a top player file with 68
 The fixture-enabled test checks the four inherited mappings and samples the real licensed graph for 120 frames.
 Synthetic layered playback checks the upper right-arm pose, retained left-arm pose, script scale, and empty-list replacement.
 These checks establish resource resolution and sampled playback, not complete item or first-person visual parity.
+
+
+## Live head and vehicle inputs
+
+Player graphs now receive head-slot occupancy and native vehicle-type predicates from the shared actor runtime.
+A direct WildFFA control verifies the equipped helmet and the unmounted predicate in the actual first-person playback context.
+The sampled graph reports no missing queries, while the earlier capture reports both inputs missing.
+The [coverage record](bedrock-coverage.md#player-head-equipment-and-native-vehicle-query-bindings-october-27-2026)
+separates this result from unfinished shield rendering, live mounted cases, remote skins, and native motion comparisons.

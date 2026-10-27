@@ -2509,3 +2509,35 @@ All three checks pass after restoration of the implementation.
 The final relevant test classes pass 34 tests with one optional NPC skip.
 
 The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.
+
+
+## Head equipment and native vehicle queries, October 27, 2026
+
+Actor frames now expose `query.has_head_gear` from head-slot occupancy.
+Every item in that slot counts, including a carved pumpkin.
+`query.is_riding_any_entity_of_type` compares each argument with the immediate vehicle's native identifier.
+It does not compare the translated Java carrier type.
+The [Molang query reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions)
+documents both predicates, and the pinned Bedrock 1.26.51.1 player graph requests them.
+
+Frames capture immutable equipment values and vehicle identifiers without retaining entities or mutable item stacks.
+Refresh removes stale bindings before sampling current inputs.
+An unmounted actor supplies a known false vehicle predicate.
+A mounted actor without native vehicle metadata leaves that predicate unavailable.
+A nonliving carrier without head-slot data leaves the head query unavailable.
+These cases preserve query admission rather than inventing native state.
+Player, custom-actor, world-actor, and attached-effect consumers share the bindings.
+
+Regressions evaluate actual Molang expressions across empty slots, helmets, pumpkins, several vehicle identifiers, missing metadata, and dismounts.
+Earlier captured frames remain stable after equipment or vehicle changes.
+The avatar snapshot regression also verifies that query closures do not retain the avatar.
+Removing the bindings produces two assertion failures; restoring them passes the focused tests.
+
+Complete native equipment transport, nested riding relationships, previews without entity context, and native graphical comparisons remain unfinished.
+
+A direct full-modpack WildFFA control now reports both bindings available and no missing first-person graph queries.
+Seven sampled first-person phases match the actual diamond helmet and unmounted state.
+Nine physical control phases cover HUD visibility, shield use and release, camera modes, and a changed main-hand item.
+All nine screenshots received visual review; the oversized patterned shield remains a separate rendering issue.
+The recorder exits successfully, retires its owned processes, and restores its prepared profile.
+The live control does not establish mounted matches or native graphical equality.
