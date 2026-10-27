@@ -742,3 +742,22 @@ Initial harness controls fail; the corrected control passes after resuming the s
 This does not establish a passing original control wrapper or native graphical equality.
 The [coverage record](../../../docs/bedrock-coverage.md#native-glint-draw-lifecycle-in-a-plain-client-october-27-2026) records the artifact, build correction, fixture boundaries, and remaining limits.
 Production frame-time, settings, scale, tile-light inputs, Iris, and enchanted equipment remain unfinished.
+
+## Captured frames and vertex-owned glint lighting, October 27, 2026
+
+Capture one immutable host clock/options snapshot before world and GUI extraction.
+Feed native clock arithmetic from that snapshot, independently of actor age or world time.
+This maps Java speed/strength settings deliberately; it does not establish native clock epoch, pause behavior, or setting defaults.
+
+The frame-glint pipeline reuses each vertex's exact GPU lightmap sample and floating color multiplier.
+Face shading and raw vertex tint do not affect this glint light.
+A CPU interpolation prototype failed fractional RGBA8 filtering controls and was removed.
+Explicit tile-light uniforms and independent fullbright GUI conversion remain available.
+
+The focused final run passes 12 tests, including both lighting paths against the 480 native fragment controls.
+It retains the 648 native vertex and 1,560 clock comparisons and adds 192 vertex-light controls.
+The normal build passes 1,110 tests, skips 142 optional tests, and reports no failures.
+A plain client exercises 1,581 prepared draws across frame-light, explicit-light, and interleaved phases without state mismatches.
+All six tracked buffers close during normal shutdown; the original profile is restored and all recorded process identities retire.
+The fixture supplies the secondary image and selects compatible actor draws; production equipment admission and Iris remain open.
+The [coverage record](../../../docs/bedrock-coverage.md#captured-glint-frames-and-gpu-tile-lighting-october-27-2026) records the candidate identity and verification boundaries.

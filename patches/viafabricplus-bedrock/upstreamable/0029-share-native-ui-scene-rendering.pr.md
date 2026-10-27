@@ -470,3 +470,8 @@ It preserves the existing portrait-coverage rule after the shared glint fragment
 This keeps GUI blending separate from native world alpha without changing the cached world pipeline.
 The shared actor owner records the native shader and clock controls.
 Production enchanted equipment and live GUI glint remain unverified; their admission is unchanged.
+
+Frame-glint world materials retain their captured state when converted to GUI materials.
+The GUI variant uses explicit neutral tile RGB with the existing independent fullbright portrait policy.
+Its cached variant does not sample a world entity's lightmap.
+The final full-stack build and focused shader controls pass; native GUI glint equality remains unverified.

@@ -11603,3 +11603,40 @@ All 13 recorded identities from the final session retire, and the prepared profi
 This validates supplied-input native draw state, shader execution, frame reset, and buffer closure.
 It does not validate native frame-time production, settings or scale selection, tile lighting, Iris, or enchanted equipment admission.
 The reported shield, visible placement, native graphical comparison, and the complete five-area goal remain unfinished.
+
+## Captured glint frames and GPU tile lighting, October 27, 2026
+
+The actor renderer now captures immutable host time and Java glint settings before world and GUI extraction.
+The monotonic clock continues through menus, resource replacement, and world-time corrections.
+Queued draws keep their captured values after later frames or disconnects.
+The native clock arithmetic consumes this host snapshot; native clock epoch, pause behavior, and setting defaults remain unverified.
+
+A separate frame-glint pipeline uses each vertex's actual GPU lightmap sample and floating color multiplier.
+It excludes directional face shading and raw vertex tint from glint lighting.
+A rejected CPU sampler differed from RGBA8 hardware filtering at fractional coordinates.
+The final implementation reuses the actor shader's sample instead of reconstructing or caching it on the CPU.
+Explicit supplied-light draws remain available, and GUI conversion retains its independent fullbright policy.
+
+The final focused run passes 12 tests without skips or failures.
+Both lighting paths match the same 480 native fragment controls, alongside 648 native vertex controls and 1,560 native clock controls.
+Another 192 vertex draws cover packed-light coordinates, normals, raw tints, and Overworld, Nether, and unlit variants.
+These GPU controls verify light-sample ownership and arithmetic, without establishing the native tile-light producer.
+The normal add-on build passes 1,110 tests, skips 142 optional tests, and reports no failures or errors.
+The 38-patch stack replays, and offline tooling and patch validation pass.
+
+The candidate JAR SHA-256 is `a5155fe3b2e26a49c2ae223467091202198a7fb69f042c30d615747090a1a489`.
+A plain Java 26.3 client on WildMC exercises the production frame hook and both glint pipelines.
+The private fixture replaces compatible actor draws and reuses their primary image as the secondary image.
+It records 527 distinct captured frames, with speed 0.5 and strength 0.75 from the active profile.
+All 1,581 selected draws retain their own uniform slice: 744 frame-light draws and 837 explicit-light draws.
+The three phases contain 480 frame draws, 573 explicit draws, and 528 interleaved draws, with no recorded mismatches.
+Storage follows 3,865 host resets, and all six tracked buffers close during normal client shutdown.
+All 39 recorded process identities retire, and the original profile and artifact are restored.
+The five screenshots received visual review at the actual 854 by 480 window size.
+Nearby players prevent a clean local-player graphical comparison; Iris is absent.
+Client logs contain no shader-compilation, missing-uniform, invalid-pipeline, or mixin failures.
+An earlier candidate-hash guard stops before client launch; its profile restoration completes before the corrected run.
+
+This establishes the host input connection and GPU light sampling in that client.
+It does not establish native clock epoch, general UV-scale selection, Iris glint support, or production enchanted-equipment admission.
+The reported shield remains unresolved, and the full five-area goal remains active.
