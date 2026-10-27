@@ -11741,3 +11741,40 @@ Exact native size, placement, full frame order, main-hand equipment, Java displa
 Native GUI glint, enchanted armor, banner composition, other shader packs, and geometry or tessellation interpolation remain open.
 This checkpoint does not resolve the original E-key inventory background, locator, intermittent rollback, or endless-eating reports.
 The complete five-area goal and the broader pack, interaction, skin, and emote work remain incomplete.
+
+## Native held-item placement comparison, October 27, 2026
+
+An official Bedrock 1.26.51.1 client joins owned BDS build 51061372 through the native recorder, with protocol 2193.
+The recorder now signs its account-free HTTP offer and retains the same identity for offline game login.
+Its regression verifies the token signature, detached fingerprint proof and shared signaling/login token.
+The replay self-tests and tooling checks pass.
+
+Native controls use an ordinary diamond sword and an unenchanted offhand shield.
+The native shield rests low in first person, then moves up and right during blocking.
+Third-person controls show the shield beside the body.
+The Java add-on still places the shield too high in first person and above the body in third person.
+This comparison confirms a remaining placement error after the glint, query and current binding-channel changes.
+
+A passive Java observer samples the model selected during actual hand submission.
+It records the selected owner's left-item matrix, item animation channels and first-person root during idle and use.
+Earlier observations of unused fallback models do not describe the submitted owner.
+The current Java control completes the idle and use phases with Iris active.
+Its recording timer ends before the remaining phases, so it does not establish a complete paired render comparison.
+
+The native E-key control shows an ordinary player inventory background.
+It does not reproduce the reported server-authored inventory opened with E.
+The original inventory background/scale, locator, intermittent rollback and endless-eating reports remain open.
+Raw recordings, screenshots and process observations remain private.
+
+A second equipped native control records the first-person shield bone during idle, blocking and release.
+Its owner item matrix has translation `(6, 9, 0)` in model pixels.
+Its retained rest position is `(1, -8.5, 3)` in native coordinates.
+Idle adds animation position `(-13.5, -5.8, 5.1)` and produces local position `(-12.5, -14.3, 8.1)`.
+The final native matrix has translation `(-6.5, 23.3, 8.1)` after the native Y conversion.
+Blocking produces translation `(-6, 20.1, 9.6)`; release restores the idle position.
+Java currently omits the rest offset when it composes the explicit binding.
+
+These measurements identify a missing translation term, without proving the complete native frame order.
+Earlier emulated binding controls supplied their stage order and omitted this live retained offset.
+They cannot establish the final rendered transform alone.
+Rotated custom rest poses, general attachables, cube assembly and corrected Java pixels still need comparison.
