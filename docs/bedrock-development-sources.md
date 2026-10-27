@@ -152,6 +152,38 @@ Player and persona controller assets do not establish the engine's new armor mas
    Experimental freezing, Frostbite, and ice features require feature-specific
    evidence; generated IDs or Java fallbacks do not establish parity.
 
+## Current implementation goal
+
+The next general compatibility PR covers these five areas.
+A checked item requires the behavior evidence listed below, implemented
+corrections where needed, and fresh validation of the affected stack.
+The 26.60 audit above supplies the starting evidence, not completion evidence.
+
+- [ ] **World resource versions:** select vanilla metadata, textures, actors, and
+  audio from one immutable world-version context. Preserve server pack priority.
+  Compare a newer-world to older-template transition against native Bedrock.
+  Check that cached definitions and sounds from the previous world do not leak.
+- [ ] **Held trapdoor placement:** establish how native Bedrock selects and holds
+  the placement direction. Suppress ordinary block interaction during the held
+  placement. Verify release, item changes, cancellation, and server correction.
+- [ ] **Bitmap fonts:** support atlas layout metadata and extended character
+  mapping. Resolve metadata from the atlas's own pack. Compare mixed-language
+  vanilla text and a legacy custom atlas with no layout metadata.
+- [ ] **Skins:** compare clothing beneath equipped armor and texture changes
+  after profile selection. Cover each affected armor slot, unequip, profile
+  replacement, and native LOD selection with matching visual fixtures.
+- [ ] **Movement and rendering:** compare falls at water/solid boundaries,
+  dragon-dependent fog, combined blindness/night vision, and block/entity
+  picking. Trace the responsible client or server path before changing it.
+  Retain a separate evidence result for each boundary.
+
+Fold corrections into their owning patches. Keep independently reviewable
+features separate, preserve historical native provenance, and replay the
+affected stacks. Local probes verify their declared contracts only.
+Record unresolved native differences explicitly instead of marking the
+whole area complete from packet decoding or Java fallbacks.
+The upstream version-update draft remains separate from this general PR.
+
 ## Establish the behavior to port
 
 Confirm that the target Bedrock version has the feature before you implement it. Record what players observe and what the client or server sends. Use versioned protocol documentation, game assets, implementation code, or native captures as evidence. When these sources leave a behavior uncertain, test it in the native game.
