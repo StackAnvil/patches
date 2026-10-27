@@ -486,3 +486,12 @@ GUI actor extraction keeps its own resources and selection scopes when world hel
 A GUI portrait does not inherit the held-item material route or assume the world item's verified UV scale.
 The pipeline guard rejects glint without explicit draw inputs.
 The [held-item checkpoint](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) leaves native GUI glint unverified.
+
+## Bitmap font resources for 26.60
+
+The licensed resource provider now retains bitmap atlases and their layout JSON beside TrueType fonts.
+The shared core converter selects each atlas with its own pack metadata.
+The add-on regression exercises this provider through resource storage and font conversion.
+It covers extended native layout, a legacy server texture override, pixel retention, and reuse of the unchanged licensed view.
+The full add-on stack passes 1,270 tests, including this provider-to-conversion regression, with no failures or errors and 142 optional skips.
+Native mixed-language and legacy-pack visual comparisons remain pending.

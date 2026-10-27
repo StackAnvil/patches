@@ -1,4 +1,4 @@
-From 19185d1d177ba14f7b1e1d1c9e1704512146a966 Mon Sep 17 00:00:00 2001
+From f003bd24ec5a09fbab9d8adab56cb57a7d8fa884 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -489,6 +489,14 @@ again. Keep world fragment outputs unchanged. Actual EGL controls compare
 3552 GUI blends at three opacity values with the existing 1184 native color
 and discard controls. The previous GUI shader fails the new coverage test;
 world controls and nested-context recovery pass after the correction.
+
+Retain bitmap atlas images and layout JSON in the licensed UI resource
+provider alongside TrueType fonts. The shared 26.60 font converter needs
+the original pack boundary to distinguish extended vanilla metadata from
+legacy server textures. Exercise provider, storage admission, conversion,
+and immutable library reuse together instead of testing only the file
+filter. Native mixed-language and legacy-pack visual comparison remains
+pending on a matching Gaming Services engine.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -557,6 +565,7 @@ world controls and nested-context recovery pass after the correction.
  .../shaders/core/bedrock_actor.fsh            |   8 +
  .../viafabricplus-bedrock.accesswidener       |   1 +
  .../viafabricplus-bedrock.mixins.json         |   9 +-
+ .../BedrockBitmapFontResourcesTest.java       |  67 ++
  .../BedrockGuiActorAppearanceTest.java        |  92 ++
  .../BedrockGuiActorContextTest.java           | 126 +++
  .../BedrockResourceLibraryTest.java           |  25 +
@@ -590,7 +599,7 @@ world controls and nested-context recovery pass after the correction.
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |  86 ++
  .../screen/ui/NativeUiViewportTest.java       |  95 ++
- 100 files changed, 11192 insertions(+), 36 deletions(-)
+ 101 files changed, 11259 insertions(+), 36 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -639,6 +648,7 @@ world controls and nested-context recovery pass after the correction.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiToggle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewport.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/settings/NativeUiScale.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBitmapFontResourcesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearanceTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorContextTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/AnimationPrograms.java
@@ -834,10 +844,10 @@ index 0000000..4a34bfb
 +                        BedrockActorAnimation.Visibility visibility, BedrockBoneAnimation.Vector scale) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-index 7f0558a..cb62ad9 100644
+index b87194a..0063c0e 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-@@ -48,6 +48,7 @@ final class BedrockResourceLibrary {
+@@ -52,6 +52,7 @@ final class BedrockResourceLibrary {
      private final Map<String, BedrockSoundEvent> sounds;
      private final net.raphimc.viabedrock.api.resourcepack.SoundTranslations translations;
      private final Map<String, BedrockLevelSounds.Configured> levelSounds;
@@ -845,12 +855,12 @@ index 7f0558a..cb62ad9 100644
  
      private BedrockResourceLibrary(final List<Pack> packs) throws IOException {
          this(packs, null);
-@@ -191,8 +192,12 @@ final class BedrockResourceLibrary {
+@@ -235,8 +236,12 @@ final class BedrockResourceLibrary {
                          || path.startsWith("materials/") && path.endsWith(".material")
                          || path.endsWith(".json") && List.of("attachables/", "models/", "animations/",
                              "animation_controllers/", "render_controllers/").stream().anyMatch(path::startsWith)
 +                        || path.startsWith("ui/") && path.endsWith(".json")
-+                        || path.startsWith("font/") && (path.endsWith(".ttf") || path.equals("font/font_metadata.json"))
++                        || path.startsWith("font/") && (path.endsWith(".ttf") || path.endsWith(".png") || path.endsWith(".json"))
                          || path.startsWith("textures/")
 -                        && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")))
 +                        && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")
@@ -859,7 +869,7 @@ index 7f0558a..cb62ad9 100644
                      content.put(path, entry.getValue());
              }
              if (content.size() == 0) continue;
-@@ -230,6 +235,44 @@ final class BedrockResourceLibrary {
+@@ -282,6 +287,44 @@ final class BedrockResourceLibrary {
          return null;
      }
  
@@ -1941,7 +1951,7 @@ index 0000000..2ed5c05
 +    private record Draw(Model<EntityRenderState> model, RenderType type) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
-index 2bf8669..465134d 100644
+index 9c823f1..4accc01 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 @@ -99,6 +99,9 @@ public final class BedrockPlayerAttachables {
@@ -7764,6 +7774,79 @@ index b85120b..e0665bf 100644
    ],
    "injectors": {
      "defaultRequire": 1
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBitmapFontResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBitmapFontResourcesTest.java
+new file mode 100644
+index 0000000..19aa549
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBitmapFontResourcesTest.java
+@@ -0,0 +1,67 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.awt.image.BufferedImage;
++import java.io.ByteArrayOutputStream;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import javax.imageio.ImageIO;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.GlyphSheetResourceRewriter;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockBitmapFontResourcesTest {
++    @Test
++    void carriesLicensedAtlasLayoutIntoConversionAndKeepsLegacyServerTextureOwnership() throws Exception {
++        final var source = new BufferedImage(128, 128, BufferedImage.TYPE_INT_ARGB);
++        source.setRGB(0, 0, 0xFF123456);
++        final var encoded = new ByteArrayOutputStream();
++        ImageIO.write(source, "png", encoded);
++        final byte[] atlas = encoded.toByteArray();
++        final byte[] metadata = "{\"ascii_extended\":true}".getBytes(StandardCharsets.UTF_8);
++        final var library = BedrockResourceLibrary.read(Map.of(
++                "library/vanilla/font/default8.png", atlas,
++                "library/vanilla/font/default8.json", metadata));
++        final var nativePacks = library.resourcePacks();
++        assertSame(atlas, nativePacks.getFirst().content().get("font/default8.png"));
++        assertSame(metadata, nativePacks.getFirst().content().get("font/default8.json"));
++        final var extended = convert(new ResourcePackStorage(List.of(), nativePacks));
++        assertEquals(12, firstProvider(extended).get("height").getAsInt());
++        assertEquals(120, extended.getImage("assets/viabedrock/textures/font/bedrock_bitmap/default8_0.png").getImage().getHeight());
++
++        final var legacyContent = new InMemoryContent();
++        legacyContent.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"legacy atlas\",\"uuid\":\""
++                + UUID.randomUUID() + "\",\"version\":[1,0,0]}}");
++        source.setRGB(0, 0, 0xFF654321);
++        legacyContent.putPngImage("font/default8.png", source);
++        final var legacy = convert(new ResourcePackStorage(List.of(new ResourcePack(legacyContent)), nativePacks));
++        assertEquals(8, firstProvider(legacy).get("height").getAsInt());
++        final var image = legacy.getImage("assets/viabedrock/textures/font/bedrock_bitmap/default8_0.png").getImage();
++        assertEquals(128, image.getHeight());
++        assertEquals(0xFF654321, image.getRGB(0, 0));
++        // Converting the upper pack must not mutate the cached licensed view.
++        assertEquals(12, firstProvider(convert(new ResourcePackStorage(List.of(), nativePacks))).get("height").getAsInt());
++    }
++
++    private static Content convert(final ResourcePackStorage storage) {
++        final List<Content> result = new ArrayList<>();
++        new GlyphSheetResourceRewriter().submitTasks(storage, supplier -> result.add(supplier.get()));
++        assertEquals(1, result.size());
++        return result.getFirst();
++    }
++
++    private static com.viaversion.viaversion.libs.gson.JsonObject firstProvider(final Content content) {
++        return content.getJson("assets/minecraft/font/default.json").getAsJsonArray("providers").get(0).getAsJsonObject();
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearanceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearanceTest.java
 new file mode 100644
 index 0000000..eb50b32
@@ -7995,10 +8078,10 @@ index 0000000..e143ac7
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
-index 685e7f4..7a15392 100644
+index f07a19a..bf983a3 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
-@@ -175,6 +175,31 @@ final class BedrockResourceLibraryTest {
+@@ -176,6 +176,31 @@ final class BedrockResourceLibraryTest {
          assertEquals("server", server.translate("fallback", "de_de"));
      }
  
@@ -8031,10 +8114,10 @@ index 685e7f4..7a15392 100644
      void resolvesServerParticlesTexturesAndLevelSoundsAcrossPackOverrides() throws Exception {
          final java.util.List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> packs = new java.util.ArrayList<>();
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
-index d47b872..f4f4f89 100644
+index 85d180b..45825b5 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
-@@ -58,12 +58,16 @@ final class ViaFabricPlusBuiltinResourcePackProviderTest {
+@@ -59,12 +59,16 @@ final class ViaFabricPlusBuiltinResourcePackProviderTest {
          files.put("library/vanilla/textures/item_texture.json", new byte[] {'{', '}'});
          files.put("library/vanilla/textures/terrain_texture.json", new byte[] {'{', '}'});
          files.put("library/vanilla/textures/unrelated.json", new byte[] {'{', '}'});

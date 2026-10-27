@@ -547,3 +547,30 @@ This extraction does not install the player availability evaluator or change scr
 The shared recipe search exposes normalized-query emptiness to its player policy consumer.
 An empty normalized query skips text production and differs from a failed output-validity check.
 The existing formatter and Unicode5.0 search algorithms remain shared.
+
+## Bitmap font layouts for 26.60
+
+The shared font importer now converts bitmap atlases and Unicode fallback pages.
+It reads `ascii_extended`, `ascii_character_height`, and `ascii_character_y_offset` from the atlas pack.
+An upper atlas without its own metadata retains legacy layout and mapping.
+A metadata-only layer does not change an atlas from another pack.
+
+The [official 26.60 changelog](https://feedback.minecraft.net/hc/en-us/articles/49852828563853-Minecraft-Bedrock-Edition-26-60-Changelog) defines these metadata fields and ownership rules.
+The matching client supplies three 128-pixel ASCII atlases and metadata for 12-pixel cells with offset -3.
+Its executable selects a 256-entry legacy map or a 449-entry extended map.
+The extended map includes Latin, Cyrillic, and Greek characters.
+The [versioned source guide](../../../docs/bedrock-development-sources.md#versioned-windows-gdk-reference) identifies the executable and package digests.
+
+The converter removes incomplete rows and preserves glyph scale for larger textures.
+Offsets that exceed Java's bitmap ascent limit use transparent cell padding.
+Unicode pages follow the ASCII providers, including the final BMP page.
+The conversion cache revision changes with this output.
+
+Six focused bitmap regressions and the existing TrueType regressions pass.
+The full core stack also builds and passes its tests and Checkstyle checks.
+These checks establish conversion behavior from matching assets and executable tables.
+Native visual comparison remains pending.
+The initial private launch stopped at a Gaming Services version mismatch: the client requests 7849, and the old engine exposes 6247.
+A verified private launcher 2.2.10 installation supplies the matching native21 engine and passes that startup check.
+The client opens a window but still exits during startup. Native scene comparisons remain pending.
+The user installation and saved client selection remain unchanged.

@@ -59,9 +59,10 @@ The changelog's collision-box JSON arrays do not require a decoder change by the
 Our block renderer consumes the server's normalized `boxes` list, rather than block-authoring JSON.
 Keep legacy authoring support separate from the network shape representation.
 
-The new bitmap atlas layout metadata is a separate rendering gap.
-The current UI font importer handles TrueType declarations, not bitmap atlas layout or extended character mapping.
-Do not claim that the protocol migration implements the changelog's font or Character Creator rendering fixes.
+Bitmap atlas conversion now reads layout metadata and the extended character map.
+Each atlas retains metadata from its own pack, including legacy behavior without metadata.
+Matching native mixed-language and custom-pack visual comparisons remain pending.
+The protocol migration alone does not establish font or Character Creator rendering parity.
 
 ## 26.60 behavior audit
 
@@ -134,11 +135,14 @@ Player and persona controller assets do not establish the engine's new armor mas
    `MixinTrapDoorBlock` changes shape only. No placement-session state implements the new rule.
    Capture direction choice, release, item changes, and interaction suppression
    before changing outgoing requests or client prediction.
-3. **Implement bitmap font layout.**
-   `UiFonts` imports TrueType metadata. The bundled pack provider skips bitmap atlases and their layout files.
+3. **Verify bitmap font layout against native Bedrock.**
+   The importer now converts bitmap atlases, layout metadata, and Unicode fallback pages.
+   The licensed provider retains atlas images and layout files.
    The new vanilla `default8.json` requests extended mapping, height 12, and offset -3.
-   Custom atlases without their own metadata must retain legacy layout.
-   Glyph mapping and same-pack metadata ownership both need implementation.
+   The matching executable selects 449 extended entries or 256 legacy entries.
+   Custom atlases without their own metadata retain legacy layout.
+   Tests cover metadata ownership, glyph pages, texture scale, offsets, and server overrides.
+   Native mixed-language and legacy-pack visual comparisons remain pending.
 4. **Verify skin masking and profile changes.**
    Persona assembly combines piece geometry into shared surfaces.
    The renderer does not explicitly preserve every clothing category for equipment masking.
