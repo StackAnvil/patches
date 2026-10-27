@@ -11810,3 +11810,30 @@ The physical controls pass all eight phases.
 The private proxy runner needs an explicit stop because its timer waits for a direct-recorder marker.
 That capture does not count as a normal timed-recorder pass.
 The owned client closes through the runner cleanup, and saved profile bytes are restored exactly.
+
+## Live velocity after teleport, October 27, 2026
+
+The client no longer discards negotiated motion commands between a teleport and the next physical frame.
+A valid command creates a current connection-owned replay session and immediately updates live velocity.
+New history starts with the next real frame. Retired snapshots remain unavailable.
+Actor identity, lifetime, world, connection and controlled vehicle checks remain in effect.
+
+Four mandatory lifecycle regressions cover the session gap, receipt order, stale identities and vehicle control epochs.
+Three cases fail on the corrected test baseline and pass with the fix.
+All 38 add-on patches replay to the tested source tree.
+The full build passes 1,128 tests, with 133 optional skips and no failures or errors.
+All 1,256 compiled main classes match the tested artifact.
+
+Owned BDS 1.26.51.1, build 51061372, protocol 2193 supplies one ordinary impulse and three post-teleport impulses.
+The old client drops all three post-teleport commands. The corrected client applies all three with the actual wire velocity and tick.
+Its first physical displacement matches that full-float velocity.
+The ordinary control retains the same first eight physical frames in both clients.
+The corrected Java recorder and official native recorder finish normally. The baseline recorder exit code remains unknown after an observer path error.
+Private journals preserve packet receipt, commands and actual physics. The observer changes no game state or packets.
+
+The native client also receives finite corrections in both same-tick teleport cases.
+Java receives an additional correction in the next-tick case.
+Native first acknowledges a same-tick teleport at the target with unintegrated velocity, while Java advances physics before that acknowledgement.
+This timing difference remains open and prevents a complete trajectory parity claim.
+The scripted impulses do not establish actual pearl and wind-charge behavior or resolve endless rollback and endless eating.
+The original inventory and locator reports and the full five-area goal remain open.
