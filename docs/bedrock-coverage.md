@@ -11526,3 +11526,46 @@ The full-stack tests do not establish standalone upstream compatibility.
 No new client build or live comparison validates this change.
 The observed WildFFA shield is enchanted and still takes the existing glint fallback.
 Native glint, complete shield animation, and visible placement remain open.
+
+## Native glint implementation and clock controls, October 27, 2026
+
+The shared actor renderer now has an explicit glint draw API, shader, and repeated secondary sampler.
+Its immutable state contains two offsets, two rotations, UV scale, glint tint, and tile-light color.
+Each prepared draw retains its own uniform-buffer slice.
+The storage follows Minecraft's frame reset and GPU-data shutdown.
+GUI conversion retains the state and the existing independent portrait-coverage rule.
+These lifecycle hooks compile, but have not run in a new client session.
+
+The production vertex shader preserves the original base UV and computes both secondary UV pairs.
+The fragment shader adds squared tinted glint after fog and computes absolute alpha without saturation.
+A surfaceless OpenGL comparison passes all 648 native vertex controls and 480 native fragment controls.
+The vertex comparison reads transform feedback from the production shader.
+The fragment comparison reads floating-point color and depth, including discarded pixels.
+Its supplied inputs cover negative tint alpha, alpha above one, two distinct texture samples, and repeated coordinates.
+This comparison does not run Iris, the native GPU, or a complete client draw.
+
+The pinned executable's complete clock wrapper at `0x141eb77e0` calls the original uniform writer at `0x141eb7a90`.
+It reads supplied frame seconds, glint strength and speed settings, and UV scale.
+The two offsets use signed millisecond remainders with periods of 1,375 and 3,750 milliseconds.
+The rotations are -20 and 80 degrees, converted to radians before shader upload.
+The tint is `(0.38, 0.19, 0.608)` multiplied by strength, with alpha one.
+Both millisecond conversions truncate to signed int32 and preserve the native overflow result.
+
+Both complete original routines execute in 1,560 private controls.
+The Java sampler's uploaded values match every result exactly.
+These controls include millisecond boundaries, negative speed, reflected UV scale, and int32 overflow.
+Their supplied boundaries cover frame time, the scale pointer, valid context ownership, other input colors, and option-tree virtual lookups.
+They do not replace the clock arithmetic or uniform writes.
+They do not execute frame-time production, option parsing or defaults, tile-light production, material selection, or rendering.
+The executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Raw native buffers, captures, and controls remain private.
+
+The complete 38-patch stack replays with the shader and draw-state changes.
+Its add-on suite passes 1,108 tests with 140 optional skips before the clock sampler is added.
+The final focused run passes nine tests, including the clock and GPU comparisons after that addition.
+The owning material prefix still has earlier dependencies on lightmap metadata and player-renderer changes; it does not compile alone.
+
+Production pack admission and the enchanted-equipment fallback remain unchanged.
+Live frame time, settings, UV-scale selection, tile lighting, and Iris integration still need verified connections to this API.
+No new distributable or live client comparison validates this implementation.
+The oversized enchanted shield remains unresolved, and the five-area goal remains active.

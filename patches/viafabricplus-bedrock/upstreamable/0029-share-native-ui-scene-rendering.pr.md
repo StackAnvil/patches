@@ -462,3 +462,11 @@ GUI actor selection retains the shared material's depth state when choosing its 
 Default, read-only equality, and disabled-depth cases keep their world-state identity without replacing GUI blending.
 Uncommon variants enter the shared runtime cache rather than expanding the default preload list.
 The shared actor owner contains comparison parsing, reversed-depth mapping, GPU controls, and emission limits.
+
+## Explicit glint draw state in GUI conversion, October 27, 2026
+
+GUI conversion retains the shared renderer's immutable glint state and secondary texture binding.
+It preserves the existing portrait-coverage rule after the shared glint fragment result.
+This keeps GUI blending separate from native world alpha without changing the cached world pipeline.
+The shared actor owner records the native shader and clock controls.
+Production enchanted equipment and live GUI glint remain unverified; their admission is unchanged.

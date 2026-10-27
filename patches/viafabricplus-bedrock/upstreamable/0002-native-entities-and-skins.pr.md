@@ -707,3 +707,24 @@ Native frame timing, glint strength, texture-scale production, sampler binding, 
 The binary's uniform defaults do not establish the values of an animated native draw.
 The oversized enchanted shield remains unfixed.
 Private reference programs, source buffers, and controls remain under `.stackanvil/research/native-glint/`.
+
+## Explicit glint renderer and native clock sampler, October 27, 2026
+
+The shared renderer now accepts explicit immutable glint state and binds a repeated secondary sampler.
+A prepared draw retains its own uniform slice, with storage reset and closure tied to host GPU data.
+The production shaders preserve the base UV, rotate two secondary pairs, add glint after fog, and retain absolute unclamped alpha.
+All 648 vertex and 480 fragment controls match through OpenGL transform feedback and floating-point color/depth reads.
+
+The native clock wrapper and uniform writer at `0x141eb77e0` and `0x141eb7a90` execute completely in another 1,560 controls.
+The Java sampler matches their uploaded values exactly, including signed modulo, both truncating conversions, speed, scale, and strength tint.
+The boundaries supply frame time, valid context ownership, scale, other input colors, and option-tree virtual lookups.
+They do not supply the glint calculation or uniform writes.
+
+The 38-patch stack replays, and the shader implementation passes the add-on suite with 1,108 passed and 140 optional skipped.
+After the clock sampler is added, the final focused run passes nine tests, including both native comparisons.
+The owning prefix still depends on earlier lightmap-metadata and player-renderer changes and does not compile alone.
+The [coverage record](../../../docs/bedrock-coverage.md#native-glint-implementation-and-clock-controls-october-27-2026) records the complete scope and limits.
+
+Existing pack admission and enchanted-equipment fallback remain unchanged.
+Frame-time production, native settings and scale selection, tile lighting, Iris integration, and live rendering remain unfinished.
+No new distributable or client run validates these lifecycle hooks.
