@@ -1,3 +1,9 @@
+## Native material bindings, October 26, 2026
+
+Third-person costumes and first-person hands now retain all images required by supported native materials. Default-body draws substitute the player's uploaded skin only for the primary image. Masked replacements keep Character Creator face and clothing surfaces with their own primaries and the selected mask. A failed replacement leaves the ordinary body and its layers available.
+
+Supported UV animation runs in the shader with each image's independent dimensions. Unsupported legacy materials keep their previous fallback. The third-person material cache replaces sampled state per controller and geometry instead of retaining every animated UV value. Complete selector coverage preserves the existing default selection behavior. The player visibility controls below provide fresh masked costume and declared persona coverage on direct and Iris-enabled ViaProxy connections.
+
 Render server minecraft:player overrides against native actor properties, including costume geometry, materials, UV animation and controller playback. CubeCraft uses these definitions for hats, gloves, shoes and back accessories.
 
 Validation: controller and supplied skin geometry regressions pass, together with the full addon test suite. Private recorded scene replay exercises the actual client renderer without another public connection. Active unresolved assets remain visible as failures.
@@ -144,3 +150,81 @@ Player animation graphs and skin animation aliases now use that library directly
 This preserves particle definitions, child effects, texture overlays and sound resources that the geometry filter omits.
 The shared library avoids copying all effect files into every actor's storage.
 The targeted regression delivers an animation cue through this boundary and resolves its parent, child and upper-pack texture.
+
+
+## Independent player controller draws, October 26, 2026
+
+Each third-person costume draw now retains its selected controller visibility through deferred model submission.
+Controllers that share geometry no longer paint each other's body parts with the combined visibility selection.
+The draw stores the sampled visibility beside the avatar state, without changing that shared state or evaluating the graph again.
+Base skins and persona surfaces use the same controller selection.
+First-person costumes reuse the visibility conversion and retain their existing draw path.
+
+The regression replays left, right, and left draws through one shared geometry model and avatar state.
+It covers empty and nonempty bone poses, selected arm cubes, body transforms, and unchanged shared state.
+Both cases fail when the wrapper uses combined visibility and pass after restoration.
+All ten focused model, visibility, and equipment-owner tests pass without skips.
+
+A private BDS 1.26.51.1 pack selects blue left-arm, red right-arm, and head-only masked controllers on the same skin geometry.
+World bone poses remain empty.
+The production skin-change API submits a declared checkerboard persona with a yellow face image, and the native server confirms it.
+The earlier artifact draws a complete red body and no blue arm.
+The corrected artifact draws separate blue and red arms, hides torso and legs, and retains the persona face.
+Physical sneaking changes only the selected right-arm mask while the left arm and face remain visible.
+
+Fresh direct and ViaProxy sessions each provide six reviewed captures: both third-person views, sneak transitions, first-person hands, and the creative survival-tab avatar preview.
+The proxy session uses Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Both routes use the same final persona declaration and packaged add-on.
+First-person pixels retain the red hand and its checkerboard mask change.
+Read-only observations retain one persona layer, stable body identity, empty world poses, and hidden torso and leg cubes.
+The observer does not sample the ephemeral first-person frame, and its player-frame counter stays zero.
+Those fields do not serve as evidence of rendering.
+
+The final face geometry has a declared outward shell to avoid coincident body and face surfaces.
+The earlier baseline uses the previous shell, so the face result does not establish native ordering for coincident surfaces.
+No native graphical baseline is available for this scene.
+Remote players, arbitrary persona layers, native animation timing, and complete skin parity remain open.
+The creative avatar preview does not reproduce the original reported E-key inventory screen.
+
+The full four-project build passes 3,083 tests, skips 152 optional tests, and reports no failures or errors.
+All 38 add-on patches replay, and both core Checkstyle tasks pass.
+All 1,227 compiled client classes match the packaged add-on.
+Both consumers embed matching copies of 1,559 core classes, 200 assets, and 39 converter classes.
+Installed add-on and proxy hashes match their built artifacts.
+
+
+## Per-bone costume and hand materials, October 26, 2026
+
+Player costumes and first-person surfaces now partition each controller's geometry by its evaluated bone materials.
+Each model contains only its assigned cubes and meshes, with the full skeleton available for poses and equipment ownership.
+Deferred draws retain their controller visibility independently of material selection.
+Model keys include the selected bones, preventing one material group from reusing another group's surfaces.
+
+Native body replacements validate all required groups before replacing the ordinary skin.
+Persona geometries receive their own partitions from the same material rules and retain their independent primary images.
+Uniform ordinary skin draws retain their existing renderer.
+First-person caches retain the current material subsets, and costume caches retire historical subsets after selection.
+Unsupported materials and missing required images retain fallback rather than a partial native body replacement.
+
+The direct and Iris-enabled ViaProxy fixtures show a blue body and a separate yellow surface only during physical sneaking.
+The selected model groups change from two to one and back without losing bone transforms.
+The fixture's creative inventory avatar preview is empty.
+That preview does not establish inventory material parity or resolve the original E-key report.
+Fresh per-bone persona and masked-hand visual comparisons remain unverified.
+
+The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.
+
+## Emote-dependent controller selection, October 26, 2026
+
+Player render controllers now receive current `query.is_emoting` from the shared emote adapter.
+The world selection cache includes this status alongside render age and the native actor snapshot.
+Playback changes can therefore replace authored textures and materials without waiting for another metadata update.
+GUI controller selection retains its independent frame scope.
+
+Fresh direct and Iris-enabled ViaProxy controls select a blue idle texture and red emote texture through physical wheel input.
+Movement cancellation restores the idle texture while the server's emote metadata still remains true.
+Natural completion restores it again after replay.
+The same existing parent and bound child particles follow these transitions without replacement.
+
+The final four-project build passes 3,095 tests, skips 152 optional tests, and reports no failures or errors.
+The [coverage record](../../../docs/bedrock-coverage.md#emote-status-in-pack-queries-october-26-2026) records the authored fixture and remaining native, remote, and effect limits.

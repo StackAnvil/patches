@@ -1,4 +1,4 @@
-From 505f12e3d31121f3fa462efa276c588287f7c6b6 Mon Sep 17 00:00:00 2001
+From d8e61ac25704dbfa0375c5edad1eabd303731611 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 07:35:46 +0100
 Subject: [PATCH] fix(abilities): honor native ability layer priority
@@ -34,42 +34,73 @@ an explicit void actor-change notification boundary; actor/Level lifetime,
 real game mode delivery and physical flight remain separate verification.
 The inventory predicate is Instabuild, independently of creative mode;
 full player recipe evaluator and authored-screen integration remain open.
+
+Apply game-mode changes to their native Base and Spectator layers instead
+of the lowest-priority CustomCache. Clear the Spectator declarations on
+every mode change, preserve Base Flying on entry to Creative, and keep
+higher policy layers authoritative. Undefined does not inherit the world
+mode for these native writes, independently of Java profile fallback.
+
+The complete native mode writer at 1402096f0 in Bedrock 1.26.51.1,
+protocol 2193, supplies 3,456 writes across 1,728 two-mode sequences.
+Compare all six layers' declarations, declared boolean values and declared
+float bits. Native spectator MayFly is false while Flying is true; retain
+that distinction instead of applying Java's spectator defaults.
 ---
- .../api/model/entity/ClientPlayerEntity.java  |   3 +-
- .../protocol/model/PlayerAbilities.java       |  47 ++--
+ .../api/model/entity/ClientPlayerEntity.java  |  24 +-
+ .../protocol/model/PlayerAbilities.java       |  81 ++++--
  .../protocol/packet/ClientPlayerPackets.java  |   3 +-
  .../types/model/PlayerAbilitiesType.java      |   6 +-
+ .../protocol/model/GameTypeAbilitiesTest.java | 159 ++++++++++++
  .../protocol/model/PlayerAbilitiesTest.java   | 237 ++++++++++++++++++
- 5 files changed, 271 insertions(+), 25 deletions(-)
+ 6 files changed, 464 insertions(+), 46 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/GameTypeAbilitiesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/PlayerAbilitiesTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-index dcae62809..532186d8c 100644
+index 87d9af64c..de996791b 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-@@ -35,6 +35,7 @@ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
- import net.raphimc.viabedrock.protocol.data.enums.Direction;
- import net.raphimc.viabedrock.protocol.data.enums.bedrock.AbilitiesIndex;
- import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
-+import net.raphimc.viabedrock.protocol.data.enums.bedrock.SerializedAbilitiesData_SerializedAbilitiesLayer;
- import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
- import net.raphimc.viabedrock.protocol.data.enums.java.*;
- import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
-@@ -607,7 +608,7 @@ public class ClientPlayerEntity extends PlayerEntity {
+@@ -618,29 +618,7 @@ public class ClientPlayerEntity extends PlayerEntity {
              vehicles.invalidate(this);
          }
  
 -        final PlayerAbilities.AbilitiesLayer abilitiesLayer = this.abilities.getOrCreateCacheLayer();
-+        final PlayerAbilities.AbilitiesLayer abilitiesLayer = this.abilities.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.CustomCache);
-         switch (this.javaGameMode) {
-             case CREATIVE -> {
-                 abilitiesLayer.setAbility(AbilitiesIndex.Invulnerable, true);
+-        switch (this.javaGameMode) {
+-            case CREATIVE -> {
+-                abilitiesLayer.setAbility(AbilitiesIndex.Invulnerable, true);
+-                abilitiesLayer.setAbility(AbilitiesIndex.MayFly, true);
+-                abilitiesLayer.setAbility(AbilitiesIndex.Instabuild, true);
+-                abilitiesLayer.setAbility(AbilitiesIndex.NoClip, false);
+-            }
+-            case SPECTATOR -> {
+-                abilitiesLayer.setAbility(AbilitiesIndex.Invulnerable, true);
+-                abilitiesLayer.setAbility(AbilitiesIndex.Flying, true);
+-                abilitiesLayer.setAbility(AbilitiesIndex.MayFly, true);
+-                abilitiesLayer.setAbility(AbilitiesIndex.Instabuild, false);
+-                abilitiesLayer.setAbility(AbilitiesIndex.NoClip, true);
+-            }
+-            default -> {
+-                abilitiesLayer.setAbility(AbilitiesIndex.Invulnerable, false);
+-                abilitiesLayer.setAbility(AbilitiesIndex.Flying, false);
+-                abilitiesLayer.setAbility(AbilitiesIndex.MayFly, false);
+-                abilitiesLayer.setAbility(AbilitiesIndex.Instabuild, false);
+-                abilitiesLayer.setAbility(AbilitiesIndex.NoClip, false);
+-            }
+-        }
++        this.abilities.applyGameType(this.gameType, this.gameSession.getLevelGameType());
+         this.sendFlightMovementSnapshot(false);
+     }
+ 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/PlayerAbilities.java b/src/main/java/net/raphimc/viabedrock/protocol/model/PlayerAbilities.java
-index 7cbb2afe8..2b63b6b70 100644
+index 7cbb2afe8..fff74716a 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/PlayerAbilities.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/PlayerAbilities.java
-@@ -20,13 +20,19 @@ package net.raphimc.viabedrock.protocol.model;
+@@ -18,15 +18,22 @@
+ package net.raphimc.viabedrock.protocol.model;
+ 
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.AbilitiesIndex;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GameType;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.SerializedAbilitiesData_SerializedAbilitiesLayer;
  
 +import java.util.Arrays;
@@ -88,7 +119,7 @@ index 7cbb2afe8..2b63b6b70 100644
      public PlayerAbilities(final long entityUniqueId, final byte playerPermission, final byte commandPermission) {
          this(entityUniqueId, playerPermission, commandPermission, new EnumMap<>(SerializedAbilitiesData_SerializedAbilitiesLayer.class));
  
-@@ -40,32 +46,35 @@ public record PlayerAbilities(long entityUniqueId, byte playerPermission, byte c
+@@ -40,32 +47,70 @@ public record PlayerAbilities(long entityUniqueId, byte playerPermission, byte c
      }
  
      public boolean getBooleanValue(final AbilitiesIndex ability) {
@@ -96,23 +127,11 @@ index 7cbb2afe8..2b63b6b70 100644
 -            final AbilitiesLayer abilitiesLayer = this.abilityLayers.get(layer);
 -            if (abilitiesLayer != null && abilitiesLayer.abilitiesSet().contains(ability)) {
 -                return abilitiesLayer.abilityValues().contains(ability);
--            }
--        }
--        return false;
 +        final AbilitiesLayer layer = this.layer(ability);
 +        return layer != null && layer.abilityValues().contains(ability);
-     }
- 
-     public float getFloatValue(final AbilitiesIndex ability) {
--        for (SerializedAbilitiesData_SerializedAbilitiesLayer layer : SerializedAbilitiesData_SerializedAbilitiesLayer.values()) {
--            final AbilitiesLayer abilitiesLayer = this.abilityLayers.get(layer);
--            if (abilitiesLayer != null && abilitiesLayer.abilitiesSet().contains(ability)) {
--                return switch (ability) {
--                    case WalkSpeed -> abilitiesLayer.walkSpeed();
--                    case FlySpeed -> abilitiesLayer.flySpeed();
--                    case VerticalFlySpeed -> abilitiesLayer.verticalFlySpeed();
--                    default -> throw new IllegalArgumentException("Ability " + ability + " is not a float value");
--                };
++    }
++
++    public float getFloatValue(final AbilitiesIndex ability) {
 +        final AbilitiesLayer layer = this.layer(ability);
 +        if (layer == null) {
 +            return 0F;
@@ -132,8 +151,54 @@ index 7cbb2afe8..2b63b6b70 100644
 +                return layer;
              }
          }
--        return 0F;
+-        return false;
 +        return null;
+     }
+ 
+-    public float getFloatValue(final AbilitiesIndex ability) {
+-        for (SerializedAbilitiesData_SerializedAbilitiesLayer layer : SerializedAbilitiesData_SerializedAbilitiesLayer.values()) {
+-            final AbilitiesLayer abilitiesLayer = this.abilityLayers.get(layer);
+-            if (abilitiesLayer != null && abilitiesLayer.abilitiesSet().contains(ability)) {
+-                return switch (ability) {
+-                    case WalkSpeed -> abilitiesLayer.walkSpeed();
+-                    case FlySpeed -> abilitiesLayer.flySpeed();
+-                    case VerticalFlySpeed -> abilitiesLayer.verticalFlySpeed();
+-                    default -> throw new IllegalArgumentException("Ability " + ability + " is not a float value");
+-                };
++    /** Native mode changes clear Spectator, update Base, and leave higher policy layers intact. */
++    public void applyGameType(final GameType playerGameType, final GameType levelGameType) {
++        this.abilityLayers.remove(SerializedAbilitiesData_SerializedAbilitiesLayer.Spectator);
++        final GameType effective = playerGameType == GameType.Default ? levelGameType : playerGameType;
++        switch (effective) {
++            case Survival, Adventure, WorldDefault -> {
++                final AbilitiesLayer base = this.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.Base);
++                base.setAbility(AbilitiesIndex.Flying, false);
++                base.setAbility(AbilitiesIndex.MayFly, false);
++                base.setAbility(AbilitiesIndex.Instabuild, false);
++                base.setAbility(AbilitiesIndex.Invulnerable, false);
++                base.setAbility(AbilitiesIndex.NoClip, false);
++            }
++            case Creative -> {
++                final AbilitiesLayer base = this.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.Base);
++                base.setAbility(AbilitiesIndex.MayFly, true);
++                base.setAbility(AbilitiesIndex.Instabuild, true);
++                base.setAbility(AbilitiesIndex.Invulnerable, true);
++                base.setAbility(AbilitiesIndex.NoClip, false);
++            }
++            case Spectator -> {
++                final AbilitiesLayer spectator = this.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.Spectator);
++                for (final var ability : List.of(AbilitiesIndex.Build, AbilitiesIndex.Mine, AbilitiesIndex.DoorsAndSwitches,
++                        AbilitiesIndex.OpenContainers, AbilitiesIndex.AttackPlayers, AbilitiesIndex.AttackMobs,
++                        AbilitiesIndex.MayFly, AbilitiesIndex.Instabuild)) {
++                    spectator.setAbility(ability, false);
++                }
++                spectator.setAbility(AbilitiesIndex.Flying, true);
++                spectator.setAbility(AbilitiesIndex.Invulnerable, true);
++                spectator.setAbility(AbilitiesIndex.NoClip, true);
+             }
++            default -> { }
+         }
+-        return 0F;
      }
  
 -    public AbilitiesLayer getOrCreateCacheLayer() {
@@ -144,7 +209,7 @@ index 7cbb2afe8..2b63b6b70 100644
  
      public record AbilitiesLayer(Set<AbilitiesIndex> abilitiesSet, Set<AbilitiesIndex> abilityValues, float walkSpeed, float flySpeed, float verticalFlySpeed) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index abe574edb..2b7629f4d 100644
+index 5aec0ac27..6b008d409 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -53,6 +53,7 @@ import net.raphimc.viabedrock.protocol.data.enums.Direction;
@@ -155,7 +220,7 @@ index abe574edb..2b7629f4d 100644
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
  import net.raphimc.viabedrock.protocol.data.enums.java.*;
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.*;
-@@ -828,7 +829,7 @@ public final class ClientPlayerPackets {
+@@ -853,7 +854,7 @@ public final class ClientPlayerPackets {
              final byte flags = wrapper.read(Types.BYTE); // flags
              final boolean flying = (flags & AbilitiesFlag.FLYING.getBit()) != 0;
              if (flying != clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Flying)) {
@@ -186,6 +251,171 @@ index 218679ba9..639ef4eb4 100644
          }
  
          return new PlayerAbilities(entityUniqueId, playerPermission, commandPermission, abilityLayers);
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/GameTypeAbilitiesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/GameTypeAbilitiesTest.java
+new file mode 100644
+index 000000000..3ea709367
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/GameTypeAbilitiesTest.java
+@@ -0,0 +1,159 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.api.util.EnumUtil;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.AbilitiesIndex;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.SerializedAbilitiesData_SerializedAbilitiesLayer;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GameType;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import org.junit.jupiter.api.Test;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.EnumMap;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++import static org.mockito.Mockito.*;
++
++final class GameTypeAbilitiesTest {
++
++    @Test
++    void modeChangesUseBaseAndSpectatorWithoutOverwritingPolicyLayers() {
++        final var abilities = new PlayerAbilities(1, (byte) 0, (byte) 0);
++        final var commands = abilities.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.Commands);
++        commands.setAbility(AbilitiesIndex.Build, true);
++        commands.setAbility(AbilitiesIndex.MayFly, false);
++        final var cache = abilities.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.CustomCache);
++        cache.setAbility(AbilitiesIndex.Flying, true);
++
++        abilities.applyGameType(GameType.Spectator, GameType.Survival);
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Flying));
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Build));
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.OpenContainers));
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.MayFly));
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.NoClip));
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Invulnerable));
++
++        abilities.applyGameType(GameType.Creative, GameType.Survival);
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.Flying));
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.MayFly));
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.OpenContainers));
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.NoClip));
++        assertSame(commands, abilities.abilityLayers().get(SerializedAbilitiesData_SerializedAbilitiesLayer.Commands));
++        assertSame(cache, abilities.abilityLayers().get(SerializedAbilitiesData_SerializedAbilitiesLayer.CustomCache));
++
++        abilities.applyGameType(GameType.Adventure, GameType.Survival);
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.Invulnerable));
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++    }
++
++    @Test
++    void creativePreservesBaseFlightAndUndefinedDoesNotInheritTheWorldMode() {
++        final var abilities = new PlayerAbilities(1, (byte) 0, (byte) 0);
++        final var base = abilities.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.Base);
++        base.setAbility(AbilitiesIndex.Flying, true);
++        abilities.applyGameType(GameType.Creative, GameType.Survival);
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Flying));
++        abilities.applyGameType(GameType.Spectator, GameType.Survival);
++        abilities.applyGameType(GameType.Undefined, GameType.Survival);
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Flying));
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.NoClip));
++        abilities.applyGameType(GameType.Default, GameType.Survival);
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.Flying));
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++        abilities.applyGameType(GameType.Default, GameType.Creative);
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++        abilities.applyGameType(GameType.Default, GameType.Default);
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++        abilities.applyGameType(GameType.WorldDefault, GameType.Creative);
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++    }
++
++    @Test
++    void actualLocalModeProducerUpdatesTheNativeLayers() {
++        final var user = mock(UserConnection.class);
++        final var session = mock(GameSessionStorage.class);
++        final var info = mock(ProtocolInfo.class);
++        when(user.get(GameSessionStorage.class)).thenReturn(session);
++        when(user.getProtocolInfo()).thenReturn(info);
++        when(info.getServerState()).thenReturn(State.CONFIGURATION);
++        when(session.getLevelGameType()).thenReturn(GameType.Survival);
++        final var abilities = new PlayerAbilities(1, (byte) 0, (byte) 0);
++        final var player = new ClientPlayerEntity(user, 2, UUID.randomUUID(), abilities);
++        player.setGameType(GameType.Spectator);
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.OpenContainers));
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.NoClip));
++        player.setGameType(GameType.Creative);
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Instabuild));
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.Flying));
++        assertFalse(abilities.abilityLayers().containsKey(SerializedAbilitiesData_SerializedAbilitiesLayer.CustomCache));
++        when(session.getLevelGameType()).thenReturn(GameType.Spectator);
++        player.setGameType(GameType.Default);
++        assertFalse(abilities.getBooleanValue(AbilitiesIndex.MayFly));
++        assertTrue(abilities.getBooleanValue(AbilitiesIndex.Flying));
++    }
++
++    @Test
++    void transitionsMatchThePinnedNativeLayerWrites() throws Exception {
++        final String fixture = System.getenv("STACKANVIL_NATIVE_GAME_MODE_ABILITIES");
++        assumeTrue(fixture != null);
++        final var reference = JsonParser.parseString(Files.readString(Path.of(fixture))).getAsJsonObject();
++        for (final var element : reference.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            final var abilities = fromLayers(row.getAsJsonArray("initial"));
++            for (final var step : row.getAsJsonArray("steps")) {
++                final var value = step.getAsJsonObject();
++                abilities.applyGameType(GameType.getByValue(value.get("mode").getAsInt()),
++                        GameType.getByValue(value.get("world").getAsInt()));
++                assertLayers(value.getAsJsonArray("layers"), abilities, row);
++            }
++        }
++    }
++
++    private static PlayerAbilities fromLayers(final JsonArray initial) {
++        final var layers = new EnumMap<SerializedAbilitiesData_SerializedAbilitiesLayer, PlayerAbilities.AbilitiesLayer>(SerializedAbilitiesData_SerializedAbilitiesLayer.class);
++        for (final var element : initial) {
++            final var layer = element.getAsJsonObject();
++            final var speeds = layer.getAsJsonArray("speeds");
++            layers.put(SerializedAbilitiesData_SerializedAbilitiesLayer.getByValue(layer.get("id").getAsInt()),
++                    new PlayerAbilities.AbilitiesLayer(EnumUtil.getEnumSetFromBitmask(AbilitiesIndex.class, layer.get("supported").getAsInt(), AbilitiesIndex::getValue),
++                            EnumUtil.getEnumSetFromBitmask(AbilitiesIndex.class, layer.get("on").getAsInt(), AbilitiesIndex::getValue),
++                            Float.intBitsToFloat(speeds.get(0).getAsInt()), Float.intBitsToFloat(speeds.get(1).getAsInt()), Float.intBitsToFloat(speeds.get(2).getAsInt())));
++        }
++        return new PlayerAbilities(1, (byte) 0, (byte) 0, layers);
++    }
++
++    private static void assertLayers(final JsonArray expected, final PlayerAbilities abilities, final JsonObject context) {
++        for (final var element : expected) {
++            final var value = element.getAsJsonObject();
++            final var layer = abilities.abilityLayers().get(SerializedAbilitiesData_SerializedAbilitiesLayer.getByValue(value.get("id").getAsInt()));
++            final int supported = layer == null ? 0 : EnumUtil.getIntBitmaskFromEnumSet(layer.abilitiesSet(), AbilitiesIndex::getValue);
++            final int on = layer == null ? 0 : EnumUtil.getIntBitmaskFromEnumSet(layer.abilityValues(), AbilitiesIndex::getValue) & supported;
++            assertEquals(value.get("supported").getAsInt(), supported, context::toString);
++            assertEquals(value.get("on").getAsInt(), on, context::toString);
++            final var speeds = value.getAsJsonArray("speeds");
++            final var fields = new AbilitiesIndex[]{AbilitiesIndex.WalkSpeed, AbilitiesIndex.FlySpeed, AbilitiesIndex.VerticalFlySpeed};
++            final float[] actual = layer == null ? new float[3] : new float[]{layer.walkSpeed(), layer.flySpeed(), layer.verticalFlySpeed()};
++            for (int i = 0; i < fields.length; i++) {
++                assertEquals(speeds.get(i).getAsInt(), (supported & 1 << fields[i].getValue()) == 0 ? 0 : Float.floatToRawIntBits(actual[i]), context::toString);
++            }
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/PlayerAbilitiesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/PlayerAbilitiesTest.java
 new file mode 100644
 index 000000000..62663aaa4

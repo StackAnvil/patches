@@ -1,5 +1,32 @@
 Actor properties and native state transport use the preceding [shared float runtime](0064-share-native-float-molang-runtime.pr.md). Interpreter, parser and math ownership is separate from actor integration.
 
+## Typed appearance queries, October 26, 2026
+
+Actor-state v5 carries an immutable map of typed INT metadata.
+Revisions 2 through 4 retain their existing bytes and leave this map unavailable.
+A known empty map supplies native zero defaults; an unavailable map supplies no integer queries.
+Shared channel selection covers state replay, identity consumers, animation commands, and picking.
+
+Core controllers and frontend actor scopes share `skin_id` and `trade_tier` conversion.
+The pinned Bedrock 1.26.51.1 callbacks read slots 104 and 101, respectively.
+They require native INT entries and convert signed int32 directly to float.
+Absent entries, short vectors, and wrong types return zero.
+Java profession, variant, and trading levels do not supply these inputs.
+
+Original callbacks `1422134f0` and `142213ca0` pass 640 bounded executions.
+Controls cover missing actors, vector bounds, absent entries, five metadata types, and eight signed or rounding boundaries.
+The harness supplies backing memory and virtual type dispatch; the original callback instructions execute unchanged.
+The executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Raw binaries, disassembly, captures, and execution fixtures remain private.
+
+Semantic tests cover codec bounds, truncation, immutable ownership, sparse updates, strict metadata types, controller selection, and capability downgrade.
+These controls establish query semantics and transport boundaries, not complete native actor or trading parity.
+
+Fresh direct and ViaProxy BDS journals confirm native INT skin values 1, 2, and 1, with explicit trading tier 0.
+The [frontend notes](../../viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#integer-metadata-in-actor-scopes-october-26-2026) record visible texture, geometry, particle, and capability controls.
+Higher trading tiers have native callback and semantic coverage only.
+The full replayed build passes 3,065 tests with 152 optional skips and no failures.
+
 ## Negotiated custom actor state
 
 Core publishes complete evaluated controller snapshots through `viabedrock:custom_entity`.
@@ -30,10 +57,39 @@ Raw packets, assets, account data, and screenshots remain private.
 
 ## Native actor inputs through ViaProxy
 
-Core publishes immutable actor inputs through `viabedrock:actor_state_v2` after capability registration and Java world initialization.
+Core publishes immutable actor inputs after capability registration and Java world initialization. Legacy formats use `viabedrock:actor_state_v2` and the identity-aware `viabedrock:actor_state_v3`.
 Snapshots retain native flags, named properties, scale, variants, typed spell color, runtime identity, and an actor lifetime token.
 The local-player flag lets the frontend resolve its actual Java profile identity on either route.
 Removal checks the lifetime token before releasing state.
+
+### Native target-query metadata, October 26, 2026
+
+The negotiated `viabedrock:actor_state_v4` format also carries target metadata as a signed Long.
+Core prefers this format and preserves both earlier wire formats without changes.
+Registration and withdrawal replay the appropriate snapshot, including when actor values remain unchanged.
+Animation commands, picking, and vehicle prediction also accept the identity fields in the new format.
+
+Bedrock 1.26.51.1 registers `query.has_target` at `1421e8107`; callback `1422130b0` reads metadata slot 6.
+It requires a present Long entry and returns true for any nonzero value, including negative values.
+It does not resolve the target actor. The separate AI filter uses different logic.
+Core retains the typed value across sparse updates and supplies zero for absent or differently typed metadata.
+Earlier wire formats leave the query unavailable in the frontend instead of supplying a false value.
+Core render-controller evaluation and client animation and particle contexts use the same predicate.
+
+Eighty bounded executions of the original callback verify actor presence, vector bounds, entry presence, type, zero, and signed extremes.
+The fixture supplies backing storage and the entry's virtual type getter, including its guarded dispatch.
+Native instructions perform the remaining reads, checks, and result selection.
+Tests cover signed round trips, both legacy representations, truncation, sparse replacement, and immutable captured state.
+
+Fresh direct and ViaProxy guardian controls receive a negative target ID when a real squid spawns, then zero when it dies.
+Journal decoding verifies the Long type and matches the target to the squid's native spawn identity.
+The authored model changes width, and its parent and child particles change red-green-red.
+Actual Fabric receiver withdrawal selects the older format; restoration returns the native draw with the same playback instance.
+The observer reads production state without supplying query values or creating effects.
+Runtime artifact hashes match the build, and screenshots show the model, particles, fallback, restoration, and removal.
+These controls verify the authored pack and transport path, without a native graphical baseline or complete guardian parity claim.
+
+Source: [Molang query reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions).
 Dimension changes publish retained inputs after the Java respawn packet.
 
 The codec preserves scalar types and rejects duplicate names, invalid kinds, unsupported versions, trailing bytes, and excessive counts.
@@ -227,3 +283,60 @@ Actual Social actor metadata delivery, unsupported actor classes and native GPU 
 ## Upstream prerequisites
 
 - [viabedrock patch](../../viabedrock/upstreamable/0064-share-native-float-molang-runtime.pr.md): Land the bounded float runtime before actor property evaluation.
+
+
+## Complete controller sampler transport, October 26, 2026
+
+Each evaluated render controller now retains one model with an ordered immutable list of texture bindings.
+Secondary-only changes replace its snapshot and refresh the draw cache on the following render.
+The negotiated `viabedrock:custom_entity_v2` channel carries those lists through direct connections and ViaProxy.
+The original channel retains its version-one layout and sends the primary texture to older clients.
+The 128-slot bound limits transport allocation; it does not describe native shader capacity.
+
+Shared player, equipped-item, world, and portrait selections retain all sampler slots.
+Current single-sampler material consumers explicitly use slot zero.
+Unsupported masked materials still select their existing fallback; this transport does not implement their blending.
+
+All 17 focused codec, model-state, store, and controller checks pass without skips.
+They cover ordered bindings, immutable snapshots, secondary-only changes, version isolation, legacy encoding, malformed counts, and truncated data.
+The full replayed build passes 3,077 tests, skips 152 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass, and packaged classes and embedded dependencies match their compiled outputs.
+
+Fresh direct and Iris-enabled ViaProxy BDS controls change only the secondary texture, then restore it and remove the actor.
+Both bindings reach the client, snapshots and draw caches change, and the native actor lifetime remains stable.
+The renderer retains one red model from slot zero throughout; the blue and green secondary images never become extra geometry draws.
+Read-only observations, replay audit bindings, server component transitions, and eight reviewed screenshots support these checks.
+These authored fixtures use ordinary single-sampler materials and do not establish masked blending or native graphical parity.
+
+
+## Evaluate every material assignment, October 26, 2026
+
+Custom actors now evaluate every ordered material assignment before constructing their immutable pattern map.
+Repeated patterns take their final declaration's position as well as its value.
+Earlier expressions still update the actor scope even when a later assignment replaces their selected material.
+The existing wire representation keeps unique patterns after evaluation, without a protocol change.
+
+The converter prerequisite supplies complete ordered declarations.
+The [Molang reference](https://mojang.github.io/bedrock-samples/Molang.html) specifies expression order, and the [animation reference](https://mojang.github.io/bedrock-samples/Animations.html) specifies later overrides.
+The target Bedrock 1.26.51.1 library includes multiple material rules for supported native actors.
+Authored repeated-pattern controls do not execute the native client.
+
+A regression uses wildcard, arm, and repeated wildcard scripts to accumulate an ordered value of 123.
+The earlier implementation produces 32 because it removes the first expression and evaluates the final wildcard before the arm rule.
+The corrected implementation produces 123 and retains the final pattern order as arm, then wildcard.
+The resulting map remains immutable.
+
+
+### Live material override controls
+
+A private BDS pack supplies two actor bones, one zero-alpha red texture, and three material assignments.
+The final wildcard overrides an earlier arm-specific cutout rule.
+Both actor parts therefore remain visible with the opaque material.
+A native baby-state event selects cutout for both parts, and the adult-state event restores both.
+Ordered script effects also select the red image instead of a blue negative-control image.
+
+Fresh direct and Iris-enabled ViaProxy captures show both red parts, their disappearance, their restoration, and actor removal.
+Received snapshots retain arm then wildcard order and the expected texture and materials.
+The actor lifetime remains stable while snapshots and resolved draw caches change.
+The downloaded pack matches every declared fixture file on both routes.
+These controls establish authored behavior through real BDS state changes, without a native graphical baseline.

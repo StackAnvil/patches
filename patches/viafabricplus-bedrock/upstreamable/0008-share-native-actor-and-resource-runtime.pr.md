@@ -1,5 +1,66 @@
 The shared runtime owns actor graphs, float evaluation, accepted resource decoding, sound and particles. Account selection and purchases remain in the following [appearance patch](0009-manage-character-creator-accounts-and-wardrobes.pr.md). The following research supports these APIs; historical suite counts do not replace a fresh build.
 
+## Integer metadata in actor scopes, October 26, 2026
+
+The frontend negotiates actor-state v5 and shares `skin_id` and `trade_tier` bindings with core controller evaluation.
+Animation graphs and attached effects use the same immutable native values.
+Legacy snapshots remove cached values for these queries instead of retaining stale state or inventing a native zero.
+Known v5 metadata supplies native zero defaults for absent or wrongly typed entries.
+The [core notes](../../viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#typed-appearance-queries-october-26-2026) record the target callbacks and bounded execution evidence.
+
+Semantic tests evaluate Molang expressions across metadata changes, known defaults, legacy fallback, retirement, and immutable earlier samples.
+They retain unrelated render inputs through each transition.
+This change does not establish complete skin, emote, or native actor parity.
+
+Fresh direct and ViaProxy sessions load an authored villager pack on BDS 1.26.51.1.
+Native journals contain typed INT skin changes from 1 to 2 and back to 1, plus trading tier 0.
+Texture selection, body width, and parent/child particle colors follow these changes without replacing actor playback.
+Real Fabric receiver withdrawal selects Java fallback; restoration recovers the native body with the same playback.
+Withdrawal retires the one-shot effects, and restoration does not replay their consumed animation event.
+After actor removal, no actor state or attached effects remain.
+All 12 screenshots receive visual review, and runtime artifact hashes match the build.
+
+The full four-project replay and build pass 3,065 tests, skip 152 optional tests, and report no failures.
+Compiled client classes and embedded core classes match the distributed artifacts.
+These authored controls do not establish a native graphical baseline or live behavior for higher trading tiers.
+Complete player skins, emotes, and other native actor features remain separate requirements.
+
+## Target queries and recoverable frame admission, October 26, 2026
+
+The frontend negotiates actor-state v4 and binds `has_target` from its typed native metadata.
+The query tests the signed Long against zero, without requiring a tracked target entity.
+Older snapshots leave this query unavailable and remove any cached value from attached effect scopes.
+The [core transport notes](../../viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#native-target-query-metadata-october-26-2026) record the target-version evidence and codec boundaries.
+
+Each actor frame starts a fresh set of unsupported-query errors.
+Variables, playback clocks, nested query reporting, and consumed effect cursors remain intact.
+Tests restore a missing bone query in the same playback and verify its unchanged animation phase.
+The world adapter retries a rejected draw when its native snapshot changes, while retaining the same playback.
+This permits native rendering after a capability downgrade and restoration.
+It does not add unsupported queries or remove mounted, sleeping, or equipment fallbacks.
+
+Fresh direct and ViaProxy guardian controls verify native target acquisition and clearing against actual BDS 1.26.51.1 packets.
+The authored body changes width, and its parent and child particles change red-green-red.
+Real Fabric receiver withdrawal selects Java fallback; restoration returns the native draw with the same playback instance.
+Removing the actor clears its attached effects.
+Screenshots show these transitions, and the actual runtime artifact hashes match the build.
+The four-project build passes 3,046 tests, skips 152 optional tests, and reports no failures.
+These controls do not establish native graphical or complete guardian/emote parity.
+
+## Live actor state for attached effects, October 26, 2026
+
+Animation frames and attached effects share immutable actor queries. Each attachment sample refreshes native flags, properties, variants, spell color, and current Java movement and living status. A custom actor with a non-living Java carrier retains its native status flags. Retired metadata clears those inputs instead of retaining an earlier frame's values. Particle clocks and counts remain specific to each effect.
+
+The shared adapter serves players, custom actors, supported world actors, and server particles. The custom animation frame also receives swimming, gliding, sleeping, item-use, and crawling flags. Existing mounted, sleeping, and equipped world-model fallbacks remain. This change does not supply missing target-selection queries or native poses.
+
+Tests evaluate all 64 combinations of six living states against stale render inputs. They also cover native carrier flags, metadata replacement, retirement, and immutable captured samples. The matching 1.26.51.1 asset library contains the status queries. Existing target protocol enums supply their flags.
+
+Fresh direct and ViaProxy sessions load a real server pack on BDS 1.26.51.1. Its animation creates a parent particle and a bound child. Both scopes follow native baby/adult changes, display red-green-red transitions, and clear after actor removal. The custom graph also evaluates the five additional status queries. The observer records state without creating effects or evaluating queries. Runtime artifact hashes and the packaged query-class origin match the build. Screenshots show both transitions and cleanup.
+
+These near-actor controls continue body rendering and do not reproduce a frozen render cache. First-person and hidden-HUD controls also continue sampling. The distant-actor control stops tracking the actor, so it cannot establish a stale-render regression. No native graphical baseline or general emote-effect parity is claimed. The replayed four-project build passes 3,042 tests, skips 152 optional tests, and reports no failures.
+
+Sources: [Molang queries](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions), [actor-bound effects](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/actor_animation.v1.8.0?view=minecraft-bedrock-stable), and [the baby component](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/entitycomponents/minecraftcomponent_is_baby?view=minecraft-bedrock-stable).
+
 ## Classic actor graph
 
 Compile reachable player animations and nested controllers from the matching licensed package. Apply classic aliases over the player defaults, including empty overrides. Preserve ordered weighted references, initialization, per-frame scripts, entry and exit scripts, state transitions, temporary remapped variables, and independent playback clocks.
@@ -2320,3 +2381,173 @@ All 1,411 core classes match the embedded add-on and proxy copies.
 All 1,139 production client classes match the packaged add-on byte for byte.
 The full 38-patch add-on stack and 104-patch core stack replay successfully.
 The combined build includes the newer native spawn-angle cache change.
+
+
+## Controller texture slots, October 26, 2026
+
+Controller texture arrays bind sampler slots in one model draw.
+The supported native ENTITY shader families sample slot zero.
+The selector previously emitted the geometry once for each texture entry.
+It now emits one supported surface per controller and uses the first texture for native body visibility.
+Every texture expression still runs in order, preserving variable changes used by later controllers.
+Separate controllers remain separate draws, and unsupported multi-sampler materials retain fallback.
+
+The reference is Bedrock 1.26.51.1, protocol 2193.
+Its bundled villager controller binds biome and profession textures in slots zero and one.
+The target Entity material SHA-256 is `403efcc7777c9712176f6715f861c873e31d8e45d0b73b8e320bd29754789058`.
+All 112 controls execute original sampled fragment IR from BaseColor, AlphaTest, Emissive, and AlphaTestEmissive.
+Only slot zero is sampled; changing slot one leaves color and discard results unchanged.
+Resource handles, texture values, interpolated lighting, constant buffers, and output sinks are supplied boundaries.
+Native pass selection, controller expression evaluation, rasterization, and complete graphical parity remain outside these controls.
+
+Both selector regressions fail against the old implementation and pass with the corrected binding.
+They cover independent perspectives, duplicate draws, secondary body textures, and ordered expression effects across separate controllers.
+The bundled villager regression now expects three controller draws instead of the erroneous fourth texture draw.
+Masked profession blending remains unsupported.
+
+The full replayed build passes 3,073 tests, skips 152 optional tests, and reports no failures or errors.
+All 18 focused controller, world-graph, and native fragment GPU tests pass without skips.
+Compiled client classes and embedded dependencies match the packaged artifacts.
+Fresh direct and ViaProxy sessions verify three controller draws across biome and age transitions, fallback, recovery, and removal.
+The ViaProxy control uses Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Native packets confirm the metadata changes, and both controls retain their playback identity and native actor lifetime.
+All 14 screenshots receive visual review, and installed artifacts match the build.
+These authored behavior controls do not establish native graphical parity, natural aging, collision, or complete interactions.
+
+
+## Complete controller sampler transport, October 26, 2026
+
+Each evaluated render controller now retains one model with an ordered immutable list of texture bindings.
+Secondary-only changes replace its snapshot and refresh the draw cache on the following render.
+The negotiated `viabedrock:custom_entity_v2` channel carries those lists through direct connections and ViaProxy.
+The original channel retains its version-one layout and sends the primary texture to older clients.
+The 128-slot bound limits transport allocation; it does not describe native shader capacity.
+
+Shared player, equipped-item, world, and portrait selections retain all sampler slots.
+Current single-sampler material consumers explicitly use slot zero.
+Unsupported masked materials still select their existing fallback; this transport does not implement their blending.
+
+All 17 focused codec, model-state, store, and controller checks pass without skips.
+They cover ordered bindings, immutable snapshots, secondary-only changes, version isolation, legacy encoding, malformed counts, and truncated data.
+The full replayed build passes 3,077 tests, skips 152 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass, and packaged classes and embedded dependencies match their compiled outputs.
+
+Fresh direct and Iris-enabled ViaProxy BDS controls change only the secondary texture, then restore it and remove the actor.
+Both bindings reach the client, snapshots and draw caches change, and the native actor lifetime remains stable.
+The renderer retains one red model from slot zero throughout; the blue and green secondary images never become extra geometry draws.
+Read-only observations, replay audit bindings, server component transitions, and eight reviewed screenshots support these checks.
+These authored fixtures use ordinary single-sampler materials and do not establish masked blending or native graphical parity.
+
+
+## Static player visibility, October 26, 2026
+
+Native player models now apply specified visibility even when their bone pose is empty.
+Previously, the early return restored the Java hierarchy and ignored visibility-only controllers.
+An empty pose without specified visibility still restores the ordinary Java model.
+Hidden parent surfaces do not hide separately controlled child surfaces.
+
+The target is Bedrock 1.26.51.1, protocol 2193.
+Its bundled player controllers declare independent part visibility for first-person, third-person, spectator, and map views.
+The archived `vanilla_1.21.30/render_controllers/player.render_controllers.json` has SHA-256 `a8dc82bf865ddde43a407a476632263f6aefad89166779a4ff7977248acd554d`.
+The [Creator reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/render_controller.v1.8.0?view=minecraft-bedrock-stable) describes visibility as a controller selection.
+
+The regression fails against the previous early return and passes with the correction.
+It covers empty poses, hidden parent surfaces, independently visible children, and restoration of the ordinary hierarchy.
+The [costume controls](0016-render-server-player-costumes.pr.md#independent-player-controller-draws-october-26-2026) exercise the installed implementation on both routes.
+
+
+## Ordered controller material expressions, October 26, 2026
+
+The shared client selector now evaluates every material declaration in the sampled actor scope.
+It no longer evaluates only the last wildcard expression.
+This preserves earlier script effects for later material, UV, visibility, lighting, texture, and controller expressions.
+The existing global material selection uses the last wildcard result.
+This correction does not add per-bone material drawing to player, equipped, world-graph, or portrait consumers.
+
+The converter supplies immutable ordered assignments, including repeated patterns.
+A regression accumulates 123 through three assignments before sampling the light multiplier.
+The previous selector produces 3, while the corrected selector produces 123 and retains the expected global material.
+The full add-on suite passes this regression and the existing selection tests.
+
+Equipment and world-graph admission now inspect the complete declaration list.
+They retain the existing requirement for at least one assignment and only wildcard material patterns.
+Repeated wildcard assignments remain supported, while part-specific materials retain their existing fallback.
+Constructor adaptations stay in their owning costume and equipment patches.
+
+
+A declared player controller accumulates 123 through three wildcard material assignments and selects a blue texture only for that result.
+Physical perspective changes exercise the production costume renderer on direct and Iris-enabled ViaProxy connections.
+Both retain the selected texture and light multiplier 123 in the actual cached selection.
+The plain capture shows a blue head.
+The Iris capture shows a saturated white head with blue bloom under that declared multiplier.
+The white pixels do not independently establish texture identity.
+This authored control does not establish native lighting equality, emote effects, or complete player materials.
+
+
+## Material-specific surfaces with complete skeletons, October 26, 2026
+
+The shared selector now retains each controller's complete evaluated material map.
+Repeated patterns retain their final override positions, and the map remains immutable.
+Consumers partition rendered bones by those materials after expression evaluation.
+This broadens the earlier global-material limit without evaluating scripts or animation again for each material.
+
+Model factories filter cubes and meshes while retaining every bone and ancestor.
+Empty transform helpers do not require material assignments.
+Mesh-only bones do require their selected material.
+Player factories apply the same surface filter to their ordinary and native hierarchies.
+Animation, locators, owner transforms, and child bindings retain the complete skeleton.
+
+The [Molang reference](https://mojang.github.io/bedrock-samples/Molang.html) assigns materials to whole bones through ordered rules.
+The [animation reference](https://mojang.github.io/bedrock-samples/Animations.html) specifies later overrides.
+Bedrock 1.26.51.1 bundled controllers use separate materials for axolotl limbs and chicken legs.
+The target asset evidence remains separate from authored Java controls and native graphical comparisons.
+
+New geometry regressions cover filtered cubes, mesh-only bones, empty ancestors, child matrices, and both player hierarchies.
+Restoring unfiltered factories fails both geometry checks.
+Restoring blanket world rejection also fails the new world-actor regression.
+All three checks pass after restoration of the implementation.
+The final relevant test classes pass 34 tests with one optional NPC skip.
+
+The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.
+
+
+## Head equipment and native vehicle queries, October 27, 2026
+
+Actor frames now expose `query.has_head_gear` from head-slot occupancy.
+Every item in that slot counts, including a carved pumpkin.
+`query.is_riding_any_entity_of_type` compares each argument with the immediate vehicle's native identifier.
+It does not compare the translated Java carrier type.
+The [Molang query reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions)
+documents both predicates, and the pinned Bedrock 1.26.51.1 player graph requests them.
+
+Frames capture immutable equipment values and vehicle identifiers without retaining entities or mutable item stacks.
+Refresh removes stale bindings before sampling current inputs.
+An unmounted actor supplies a known false vehicle predicate.
+A mounted actor without native vehicle metadata leaves that predicate unavailable.
+A nonliving carrier without head-slot data leaves the head query unavailable.
+These cases preserve query admission rather than inventing native state.
+Player, custom-actor, world-actor, and attached-effect consumers share the bindings.
+
+Regressions evaluate actual Molang expressions across empty slots, helmets, pumpkins, several vehicle identifiers, missing metadata, and dismounts.
+Earlier captured frames remain stable after equipment or vehicle changes.
+The avatar snapshot regression also verifies that query closures do not retain the avatar.
+Removing the bindings produces two assertion failures; restoring them passes the focused tests.
+
+Complete native equipment transport, nested riding relationships, previews without entity context, and native graphical comparisons remain unfinished.
+
+A direct full-modpack WildFFA control now reports both bindings available and no missing first-person graph queries.
+Seven sampled first-person phases match the actual diamond helmet and unmounted state.
+Nine physical control phases cover HUD visibility, shield use and release, camera modes, and a changed main-hand item.
+All nine screenshots received visual review; the oversized shield remains a separate rendering issue.
+The recorder exits successfully, retires its owned processes, and restores its prepared profile.
+The live control does not establish mounted matches or native graphical equality.
+
+
+## Namespaced equipment matching, October 27, 2026
+
+The equipment snapshot now retains full identifiers for `query.is_item_name_any`.
+It supports multiple candidate names, explicit empty slots, and the captured single-item equipment slots.
+The deprecated equipped-name query still returns the path.
+The target shield uses namespaced matching during blocking; the missing query previously rejected its native binding evaluation.
+The [equipped check](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) records that failure and the final client observations.
+Hotbar and inventory lookup require their own native inventory owner and remain outside this adapter.

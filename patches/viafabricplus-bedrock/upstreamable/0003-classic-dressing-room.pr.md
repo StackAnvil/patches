@@ -87,3 +87,17 @@ The replayed full stack builds and bundles successfully. The full add-on suite p
 Legacy child `reset` clears inherited cubes before adding local cubes. Nonzero child inflation replaces inherited cube inflation; zero keeps the inherited values. The matching 1.26.51.1 loader executes these operations at `1460ff5f0` through `1460ff610` and `1460ff929` through `1460ff963`.
 
 A private instruction execution probe passes 32 reset, cube-count and inflation cases. JSON parsing and allocation are outside that probe. Unit tests cover reset with local cubes, nonzero replacement and the zero boundary. This corrects the earlier note about freezing inherited cube inflation.
+
+## Classic presets without a local translator
+
+Read Steve and Alex PNGs from the native `vanilla.mcpack` resource embedded in ViaBedrock.
+The shared pack reader returns fresh images and geometry definitions.
+It preserves the native pixels and models without initializing protocol mappings.
+The default appearance regression first failed with a null-pointer exception; it now loads both presets with mappings still unloaded.
+
+Validation: all 14 focused appearance checks pass without skips.
+The replayed full build passes 3,070 tests, with 152 optional skips and no failures or errors.
+A controlled ViaProxy peer supplies a native Steve texture without geometry; the renderer builds its native model and samples four bundled emotes.
+Local mappings are loaded in that installed profile; the isolated regression verifies the unloaded case.
+The scene's full rendering gate retains the separate missing camera-texture failure.
+Native graphical parity and shader comparisons remain open.

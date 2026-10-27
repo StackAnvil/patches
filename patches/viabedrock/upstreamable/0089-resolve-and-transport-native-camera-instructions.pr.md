@@ -852,3 +852,37 @@ The combined four-project build passes 2,604 tests, with 167 optional skips and 
 Native camera, particle, attachable, and Iris GPU comparisons run without skips.
 All 1,413 core classes match both packaged copies, and all 1,139 production client classes match the add-on.
 The core and add-on stacks replay successfully.
+
+## Native actor targeting requirements, October 26, 2026
+
+Fresh Bedrock 1.26.51.1 execution controls establish the entity filter required by live aim selection.
+They execute the original exclusion kernel and following candidate geometry across 1,536 component, cache, reset, and priority combinations.
+Another 400 controls cover signed priority keys and absent or incorrectly typed actor-ID metadata.
+Thirty-two controls verify that exclusion updates still execute after candidate capacity prevents another geometry entry.
+
+The collector requires a native mob, boat, or minecart component before the player-specific test.
+Its enclosing ECS view excludes removed actors and the local player.
+The exclusion kernel retains an existing cached decision unless its caller requests a recheck.
+Exclusion lookup uses the signed triple `(local preset ID, 0, target actor ID)`.
+Only the value `-2` marks an exclusion in this lookup.
+Missing or incorrectly typed actor-ID metadata supplies zero.
+The separate ranking priority remains a different lookup.
+
+Another 990 controls execute the complete player predicate and its native game-type component lookup.
+Native Spectator state rejects a player.
+Native Default inherits the level's Spectator state, while Undefined does not.
+An optional editor service can also reject the player when its mode value is one.
+The executable's registered type hash identifies `Editor::Services::ModeServiceProvider`.
+This condition does not mean that creative players are excluded.
+
+The controls supply typed sparse storage, valid cache slots, ordered priority-map nodes, and a previously captured native frustum.
+They also supply the editor-service resolution and mode, level game type, and typed metadata virtual results.
+Initial cache allocation, component production, ECS ordering, world obstruction, final hits, and visible behavior remain outside these controls.
+No target-selection implementation or live parity result follows from these kernel comparisons alone.
+
+The current bridge retains actor priority IDs and lifetimes but omits native actor-class and game-type inputs.
+Remote player spawn decoding also discards its raw game type after Java conversion.
+Live wiring must retain those inputs before applying the verified filter.
+The existing native block mirror preserves both layers and properties, but a complete native selection-shape provider remains unfinished.
+The current camera adapter's Java collision envelopes do not establish native aim obstruction geometry.
+Live target execution, reticles, and interaction rotation remain unfinished.

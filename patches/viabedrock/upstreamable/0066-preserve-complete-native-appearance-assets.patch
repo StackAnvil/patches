@@ -1,4 +1,4 @@
-From b79cc761a4d572f97bf954dd9631bff4aa42c8ed Mon Sep 17 00:00:00 2001
+From 3e30c647180d34e934f18a6e794d1f56f0461fe4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] fix(models): export complete asset pairs and empty item
@@ -82,21 +82,39 @@ model parsing benchmark with two warm-ups, median parsing falls from
 rather than claiming complete reload or joining improvements.
 
 Use native inventory atlas icons in GUI, ground, fixed and shelf contexts while retaining held attachable geometry. Target item schemas and model tests cover the native spear icon and complete display-context routing.
+
+Apply complete-asset export rules to item atlas icons as well. The pinned
+Bedrock 1.26.51.1 vanilla atlas declares textures/items/camera but its
+15,586 indexed texture entries contain no matching item image; native
+camera definitions and the existing item mapping do not select that atlas
+entry. Eagerly exporting every declaration bakes a dangling Java sprite
+on otherwise unrelated joins.
+
+Retain each omitted icon variant's reason in the existing cached converter
+metadata. Preserve sparse selector indices and native pack image priority,
+clear recovered variants on conversion, and warn when an unresolved icon
+is actually selected. The rendering gate recognizes that warning, so an
+actively missing custom icon remains a failed rendering control. Use the
+existing empty-definition schema when no variant resolves; no substitute
+camera pixels or camera-specific exclusion is introduced.
 ---
  .../api/model/entity/CustomEntity.java        |   9 +
  .../definition/AttachableDefinitions.java     |  41 ++-
- .../protocol/rewriter/ItemRewriter.java       |   6 +-
+ .../protocol/rewriter/ItemRewriter.java       |   8 +-
  .../CustomAttachableResourceRewriter.java     |  77 +++--
  .../CustomEntityResourceRewriter.java         |  37 +--
+ .../CustomItemTextureResourceRewriter.java    |  20 +-
  .../ItemModelResourceRewriter.java            | 127 +++++++-
+ ...CustomItemTextureResourceRewriterTest.java | 112 +++++++
  .../ItemModelResourceRewriterTest.java        | 123 ++++++++
  .../resourcepack/ModelResourceAssetsTest.java | 290 ++++++++++++++++++
- 8 files changed, 651 insertions(+), 59 deletions(-)
+ 10 files changed, 776 insertions(+), 68 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
-index 1431bc51d..57e1a7138 100644
+index 04ea30913..fa9e3dd35 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 @@ -43,6 +43,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
@@ -107,7 +125,7 @@ index 1431bc51d..57e1a7138 100644
  import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
  import net.raphimc.viabedrock.protocol.storage.EntityTracker;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
-@@ -341,6 +342,14 @@ public class CustomEntity extends Entity {
+@@ -344,6 +345,14 @@ public class CustomEntity extends Entity {
              }
          }
  
@@ -195,10 +213,10 @@ index 2989d7b33..9f4d7b708 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index de4633e5a..a0c902311 100644
+index de4633e5a..b78f8e516 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-@@ -197,10 +197,7 @@ public class ItemRewriter extends StoredObject {
+@@ -197,11 +197,8 @@ public class ItemRewriter extends StoredObject {
                      data.set(StructuredDataKey.ITEM_NAME, TextUtil.stringToNbt(resourcePackStorage.getTexts().get("item." + Key.stripMinecraftNamespace(identifier) + ".name")));
                  }
  
@@ -206,10 +224,12 @@ index de4633e5a..a0c902311 100644
 -                    data.set(StructuredDataKey.ITEM_MODEL, CustomAttachableResourceRewriter.getItemModel(identifier));
 -                    data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomAttachableResourceRewriter.getCustomModelData("default"));
 -                } else if (itemDefinition.iconComponent() != null && resourcePackStorage.isLoadedOnJavaClient()) {
+-                    data.set(StructuredDataKey.ITEM_MODEL, CustomItemTextureResourceRewriter.getItemModel(itemDefinition.iconComponent()));
 +                if (itemDefinition.iconComponent() != null && resourcePackStorage.isLoadedOnJavaClient()) {
-                     data.set(StructuredDataKey.ITEM_MODEL, CustomItemTextureResourceRewriter.getItemModel(itemDefinition.iconComponent()));
++                    data.set(StructuredDataKey.ITEM_MODEL, CustomItemTextureResourceRewriter.getItemModel(resourcePackStorage, itemDefinition.iconComponent()));
                      data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomItemTextureResourceRewriter.getCustomModelData("0"));
                  } else {
+                     data.set(StructuredDataKey.LORE, new Tag[]{TextUtil.stringToNbt("§7[ViaBedrock] Custom item: " + identifier)});
 @@ -232,6 +229,7 @@ public class ItemRewriter extends StoredObject {
              ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
          }
@@ -422,6 +442,53 @@ index 600703503..e68258a94 100644
              }
          }
          javaContent.generateItemDefinition();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriter.java
+index a1e27de2e..474640e6d 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriter.java
+@@ -20,7 +20,7 @@ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
+ import com.viaversion.viaversion.api.minecraft.item.data.ItemModel;
+ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import com.viaversion.viaversion.util.Key;
+-import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.resourcepack.content.Content;
+ import net.raphimc.viabedrock.api.resourcepack.definition.TextureDefinitions;
+ import net.raphimc.viabedrock.api.util.StringUtil;
+@@ -35,7 +35,11 @@ public class CustomItemTextureResourceRewriter extends ItemModelResourceRewriter
+ 
+     private static final String SUB_FOLDER = "item_textures";
+ 
+-    public static ItemModel getItemModel(final String itemTextureName) {
++    public static ItemModel getItemModel(final ResourcePackStorage storage, final String itemTextureName) {
++        final String failure = unresolvedModelAssets(storage, SUB_FOLDER, itemTextureName, "0");
++        if (failure != null) {
++            ViaBedrock.getPlatform().getLogger().warning("Selected unresolved custom item icon " + itemTextureName + "/0: " + failure);
++        }
+         return new ItemModel(Key.of("viabedrock", SUB_FOLDER + '/' + StringUtil.makeIdentifierValueSafe(itemTextureName)));
+     }
+ 
+@@ -52,14 +56,14 @@ public class CustomItemTextureResourceRewriter extends ItemModelResourceRewriter
+ 
+     private Content handleItemTextureDefinitions(final ResourcePackStorage resourcePackStorage, final String name, final List<TextureDefinitions.ItemTextureDefinition> itemTextureDefinitions) {
+         final ItemModelContent javaContent = new ItemModelContent(name);
++        final var textures = this.copyTextures(resourcePackStorage,
++                itemTextureDefinitions.stream().map(TextureDefinitions.ItemTextureDefinition::texturePath).toList(), javaContent);
+         for (int i = 0; i < itemTextureDefinitions.size(); i++) {
+             final TextureDefinitions.ItemTextureDefinition itemTextureDefinition = itemTextureDefinitions.get(i);
+-            for (ResourcePack pack : resourcePackStorage.getPackStackTopToBottom()) {
+-                final Content.LazyImage texture = pack.content().getShortnameImage(itemTextureDefinition.texturePath());
+-                if (texture != null) {
+-                    javaContent.putPngImage("assets/viabedrock/textures/" + this.getJavaTexturePath(itemTextureDefinition.texturePath()) + ".png", texture);
+-                    break;
+-                }
++            final boolean hasTexture = textures.contains(itemTextureDefinition.texturePath());
++            this.recordMissingAssets(resourcePackStorage, name, String.valueOf(i), "", itemTextureDefinition.texturePath(), true, hasTexture);
++            if (!hasTexture) {
++                continue;
+             }
+             final JsonObject itemModel = new JsonObject();
+             itemModel.addProperty("parent", "minecraft:item/generated");
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
 index 799413e57..4deef2b98 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
@@ -594,6 +661,124 @@ index 799413e57..4deef2b98 100644
              this.putJson("assets/viabedrock/items/" + this.itemPath + ".json", itemDefinitionObj);
          }
  
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriterTest.java
+new file mode 100644
+index 000000000..a488f7d48
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriterTest.java
+@@ -0,0 +1,112 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.awt.image.BufferedImage;
++import java.util.List;
++import java.util.Set;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class CustomItemTextureResourceRewriterTest {
++
++    private static final String ICON = "example:icon";
++    private static final String ROOT = "assets/viabedrock/models/item_textures/example/icon/";
++
++    @Test
++    void retainsSparseVariantIndicesAndReportsUnresolvedDependencies() {
++        final var pack = pack("textures/missing", "textures/present", "textures/missing", "textures/other");
++        image(pack, "textures/present.png", 0xFF123456);
++        image(pack, "textures/other.png", 0xFFABCDEF);
++        final var storage = new ResourcePackStorage(List.of(pack));
++        final var converted = convert(storage);
++        assertNull(converted.getJson(ROOT + "0.json"));
++        assertNull(converted.getJson(ROOT + "2.json"));
++        final var model = converted.getJson("assets/viabedrock/items/item_textures/example/icon.json").getAsJsonObject("model");
++        final var cases = model.getAsJsonArray("cases");
++        assertEquals(2, cases.size());
++        assertEquals(Set.of("1", "3"), java.util.stream.StreamSupport.stream(cases.spliterator(), false)
++                .map(value -> value.getAsJsonObject().get("when").getAsString()).collect(java.util.stream.Collectors.toSet()));
++        for (final String index : List.of("0", "2")) {
++            assertNotNull(ItemModelResourceRewriter.unresolvedModelAssets(storage, "item_textures", ICON, index));
++            assertThrows(IllegalStateException.class, () -> ItemModelResourceRewriter.requireModelAssets(storage, "item_textures", ICON, index));
++        }
++        assertNull(ItemModelResourceRewriter.unresolvedModelAssets(storage, "item_textures", ICON, "1"));
++        assertPixel(converted, "1", 0xFF123456);
++        assertPixel(converted, "3", 0xFFABCDEF);
++    }
++
++    @Test
++    void reportsAnActivelySelectedMissingIconAndClearsItAfterResolution() {
++        final var pack = pack("textures/recovered");
++        final var storage = new ResourcePackStorage(List.of(pack));
++        final var absent = convert(storage);
++        assertTrue(absent.getFilesDeep(ROOT, ".json").isEmpty());
++        assertFalse(absent.getJson("assets/viabedrock/items/item_textures/example/icon.json")
++                .getAsJsonObject("model").has("cases"));
++        final var logger = org.mockito.Mockito.mock(java.util.logging.Logger.class);
++        final var platform = org.mockito.Mockito.mock(net.raphimc.viabedrock.platform.ViaBedrockPlatform.class);
++        org.mockito.Mockito.when(platform.getLogger()).thenReturn(logger);
++        try (var via = org.mockito.Mockito.mockStatic(net.raphimc.viabedrock.ViaBedrock.class)) {
++            via.when(net.raphimc.viabedrock.ViaBedrock::getPlatform).thenReturn(platform);
++            assertNotNull(CustomItemTextureResourceRewriter.getItemModel(storage, ICON));
++            org.mockito.Mockito.verify(logger).warning(org.mockito.ArgumentMatchers.anyString());
++            org.mockito.Mockito.clearInvocations(logger);
++            image(pack, "textures/recovered.png", 0xFFAB12EF);
++            final var resolved = convert(storage);
++            assertPixel(resolved, "0", 0xFFAB12EF);
++            assertNull(ItemModelResourceRewriter.unresolvedModelAssets(storage, "item_textures", ICON, "0"));
++            assertNotNull(CustomItemTextureResourceRewriter.getItemModel(storage, ICON));
++            org.mockito.Mockito.verifyNoInteractions(logger);
++        }
++    }
++
++    private static void assertPixel(final Content converted, final String index, final int expected) {
++        final var textures = converted.getJson(ROOT + index + ".json").getAsJsonObject("textures");
++        final String sprite = textures.get("layer0").getAsString();
++        assertEquals("#layer0", textures.get("particle").getAsString());
++        assertEquals(expected, converted.getImage("assets/viabedrock/textures/" + sprite.substring("viabedrock:".length()) + ".png").getImage().getRGB(0, 0));
++    }
++
++    private static ResourcePack pack(final String... paths) {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
++        final var textures = new JsonArray();
++        for (final var path : paths) {
++            textures.add(path);
++        }
++        final var icon = new JsonObject();
++        icon.add("textures", textures);
++        final var data = new JsonObject();
++        data.add(ICON, icon);
++        final var atlas = new JsonObject();
++        atlas.add("texture_data", data);
++        content.putJson("textures/item_texture.json", atlas);
++        return new ResourcePack(content);
++    }
++
++    private static void image(final ResourcePack pack, final String path, final int pixel) {
++        final var image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, pixel);
++        pack.content().putPngImage(path, image);
++    }
++
++    private static Content convert(final ResourcePackStorage storage) {
++        final var result = new InMemoryContent();
++        new CustomItemTextureResourceRewriter().submitTasks(storage, task -> result.putAll(task.get()));
++        return result;
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
 new file mode 100644
 index 000000000..84c8e7df5

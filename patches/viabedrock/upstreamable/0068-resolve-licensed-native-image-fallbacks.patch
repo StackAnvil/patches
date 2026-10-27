@@ -1,4 +1,4 @@
-From d6af2de744d9f6d6e9893143dff7b028fcf54071 Mon Sep 17 00:00:00 2001
+From 6afb49bf48361a257bad31c3acecff0de547a19d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(resource-packs): resolve licensed native image fallbacks
@@ -15,19 +15,68 @@ terrain atlas paths needed for native icon selection. The synthetic shield
 regression covers dependencies, server precedence and provenance.
 
 Permit the exact native textures/item_texture.json and textures/terrain_texture.json atlases alongside licensed images. Its definitions are necessary to select built-in item sprites without server overrides.
----
- .../viabedrock/protocol/BedrockProtocol.java  |  2 +
- .../protocol/packet/ResourcePackPackets.java  |  2 +-
- .../provider/BuiltinResourcePackProvider.java | 26 +++++++
- .../storage/ResourcePackLoadStateTracker.java | 19 ++++-
- .../protocol/storage/ResourcePackStorage.java | 27 ++++++-
- .../BuiltinActorResourcesTest.java            | 51 ++++++++++++
- .../http/ConvertedResourcePackCacheTest.java  | 22 ++++++
- .../resourcepack/ModelResourceAssetsTest.java | 78 +++++++++++++++++++
- 8 files changed, 220 insertions(+), 7 deletions(-)
- create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
- create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/BuiltinActorResourcesTest.java
 
+Load an optional verified native-image bundle from the core classpath when
+a platform does not supply its own image library. ViaProxy otherwise
+converts accepted attachables without their inherited native inventory
+images and falls back to held geometry in GUI contexts. The same authored
+BDS pack shows blank proxy icons while the direct route has an image
+provider. Preserve server priority, atlas aliases, path casing and numeric
+vanilla overlay order rather than changing item identity or held models.
+
+The build derives only images and the two native atlases from the existing
+checksum-verified Bedrock 1.26.51.1 source archives. Validate the packaged
+manifest, target protocol, per-file hashes, bounds, and layer order before
+constructing lower-priority packs. A missing optional bundle preserves the
+existing empty provider; a malformed present bundle fails explicitly.
+The source images and generated bundle stay outside Git.
+
+Regression coverage includes default item icon conversion with retained
+held selectors, server image and atlas overrides, original bytes and path
+case, numeric/base overlay order, invalid manifests and immutable lists.
+The StackAnvil build verifies the exact bundle in core and both consumers.
+This supplies the same native image fallback on proxy and direct routes;
+it does not establish complete native visuals or other actor semantics.
+---
+ build.gradle                                  |  11 ++
+ .../viabedrock/protocol/BedrockProtocol.java  |   2 +
+ .../protocol/packet/ResourcePackPackets.java  |   2 +-
+ .../provider/BuiltinResourcePackProvider.java |  26 +++
+ .../protocol/provider/BundledImagePacks.java  | 169 ++++++++++++++++++
+ .../storage/ResourcePackLoadStateTracker.java |  19 +-
+ .../protocol/storage/ResourcePackStorage.java |  27 ++-
+ .../BuiltinActorResourcesTest.java            |  51 ++++++
+ .../http/ConvertedResourcePackCacheTest.java  |  22 +++
+ .../provider/BundledImagePacksTest.java       | 163 +++++++++++++++++
+ .../resourcepack/ModelResourceAssetsTest.java |  78 ++++++++
+ 11 files changed, 563 insertions(+), 7 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacks.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/BuiltinActorResourcesTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacksTest.java
+
+diff --git a/build.gradle b/build.gradle
+index 9f006788f..22579d236 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -12,6 +12,17 @@ tasks.withType(Jar).configureEach {
+     manifest.attributes("Implementation-Vendor": "StackAnvil")
+ }
+ 
++// Optional licensed native images are shared with platforms without a frontend asset provider.
++def builtinImages = providers.gradleProperty("bedrockBuiltinImages")
++if (builtinImages.present) {
++    processResources {
++        from(builtinImages.get()) {
++            into "assets/viabedrock"
++            rename { "builtin_images.zip" }
++        }
++    }
++}
++
+ checkstyleMain {
+     exclude("**/generated/**")
+ }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index aa4cef92d..163a5c3a9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -63,7 +112,7 @@ index 1a6e4d3f1..64aac34a6 100644
      private static void sendStackFinished(final UserConnection user) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
 new file mode 100644
-index 000000000..3e2a05127
+index 000000000..74b16bfb3
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
 @@ -0,0 +1,26 @@
@@ -89,7 +138,182 @@ index 000000000..3e2a05127
 +     * The packs supply lower-priority resources and are never advertised to the server.
 +     */
 +    public List<ResourcePack> load(final UserConnection user) throws Exception {
-+        return List.of();
++        return BundledImagePacks.load();
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacks.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacks.java
+new file mode 100644
+index 000000000..bd18f82ce
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacks.java
+@@ -0,0 +1,169 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.provider;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++import java.io.IOException;
++import java.io.InputStream;
++import java.nio.charset.StandardCharsets;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.ArrayList;
++import java.util.HexFormat;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import java.util.zip.ZipInputStream;
++
++/** Optional versioned images retain native paths and lower-priority overlay order. */
++final class BundledImagePacks {
++
++    private static List<ResourcePack> bundled;
++
++    private BundledImagePacks() {
++    }
++
++    static synchronized List<ResourcePack> load() throws IOException {
++        if (bundled == null) {
++            try (InputStream input = BundledImagePacks.class.getResourceAsStream("/assets/viabedrock/builtin_images.zip")) {
++                bundled = input == null ? List.of() : read(input, ProtocolConstants.BEDROCK_VERSION_NAME);
++            }
++        }
++        return bundled;
++    }
++
++    static List<ResourcePack> read(final InputStream input, final String protocolVersion) throws IOException {
++        try {
++            final Map<String, byte[]> files = new LinkedHashMap<>();
++            long total = 0;
++            try (var zip = new ZipInputStream(input)) {
++                for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
++                    final String path = entry.getName();
++                    if (entry.isDirectory() || files.size() >= 32769 || !safePath(path)) {
++                        throw new IOException("Invalid bundled image entry");
++                    }
++                    final byte[] bytes = zip.readNBytes(32 * 1024 * 1024 + 1);
++                    total += bytes.length;
++                    if (bytes.length == 0 || bytes.length > 32 * 1024 * 1024 || total > 256L * 1024 * 1024
++                            || files.putIfAbsent(path, bytes) != null) {
++                        throw new IOException("Invalid bundled image size or duplicate entry");
++                    }
++                }
++            }
++            final byte[] metadata = files.remove("manifest.json");
++            if (metadata == null) {
++                throw new IOException("Missing bundled image manifest");
++            }
++            final JsonObject manifest = JsonParser.parseString(new String(metadata, StandardCharsets.UTF_8)).getAsJsonObject();
++            final String version = manifest.get("version").getAsString();
++            if (manifest.get("format").getAsInt() != 1 || !version.matches("[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+")
++                    || !version.startsWith(protocolVersion + '.')) {
++                throw new IOException("Bundled images do not match the target version");
++            }
++            final Map<String, InMemoryContent> packs = new LinkedHashMap<>();
++            String previous = null;
++            for (final var value : manifest.getAsJsonArray("packs")) {
++                final String name = value.getAsString();
++                if (!name.matches("vanilla(?:_base|_[0-9]+\\.[0-9]+(?:\\.[0-9]+)?)?")
++                        || previous != null && compare(previous, name) >= 0 || compare(name, "vanilla_" + protocolVersion) > 0
++                        || packs.putIfAbsent(name, new InMemoryContent()) != null) {
++                    throw new IOException("Invalid bundled image overlay order");
++                }
++                previous = name;
++            }
++            if (packs.isEmpty() || packs.size() > 256) {
++                throw new IOException("Invalid bundled image layers");
++            }
++            for (final var value : manifest.getAsJsonArray("files")) {
++                final var record = value.getAsJsonObject();
++                final String path = record.get("path").getAsString();
++                final byte[] bytes = files.remove(path);
++                if (bytes == null || !hash(bytes).equals(record.get("sha256").getAsString()) || !path.startsWith("library/")) {
++                    throw new IOException("Bundled image identity mismatch");
++                }
++                final int separator = path.indexOf('/', "library/".length());
++                if (separator < 0) {
++                    throw new IOException("Invalid bundled image layer path");
++                }
++                final var pack = packs.get(path.substring("library/".length(), separator));
++                final String resource = path.substring(separator + 1);
++                if (pack == null || !resource.startsWith("textures/") || !(resource.endsWith(".png") || resource.endsWith(".jpg")
++                        || resource.endsWith(".tga") || resource.equals("textures/item_texture.json") || resource.equals("textures/terrain_texture.json"))) {
++                    throw new IOException("Unsupported bundled image resource");
++                }
++                pack.put(resource, bytes);
++            }
++            if (!files.isEmpty()) {
++                throw new IOException("Unindexed bundled images");
++            }
++            final List<ResourcePack> result = new ArrayList<>();
++            for (final var entry : packs.entrySet()) {
++                if (entry.getValue().size() == 0) {
++                    throw new IOException("Empty bundled image layer");
++                }
++                final JsonObject pack = new JsonObject();
++                final JsonObject header = new JsonObject();
++                pack.addProperty("format_version", 2);
++                header.addProperty("name", "Licensed native images: " + entry.getKey());
++                header.addProperty("uuid", UUID.nameUUIDFromBytes(("viabedrock/builtin-images/" + version + '/' + entry.getKey())
++                        .getBytes(StandardCharsets.UTF_8)).toString());
++                final JsonArray revision = new JsonArray();
++                revision.add(1);
++                revision.add(0);
++                revision.add(0);
++                header.add("version", revision);
++                pack.add("header", header);
++                entry.getValue().putJson("manifest.json", pack);
++                result.add(new ResourcePack(entry.getValue()));
++            }
++            return List.copyOf(result);
++        } catch (final RuntimeException invalid) {
++            throw new IOException("Invalid bundled image manifest", invalid);
++        }
++    }
++
++    private static int compare(final String left, final String right) {
++        final int leftRank = left.equals("vanilla") ? 0 : left.equals("vanilla_base") ? 1 : 2;
++        final int rightRank = right.equals("vanilla") ? 0 : right.equals("vanilla_base") ? 1 : 2;
++        if (leftRank != rightRank) {
++            return Integer.compare(leftRank, rightRank);
++        }
++        if (leftRank < 2) {
++            return 0;
++        }
++        final String[] a = left.substring(8).split("\\.");
++        final String[] b = right.substring(8).split("\\.");
++        for (int index = 0; index < 3; index++) {
++            final int difference = Integer.compare(index < a.length ? Integer.parseInt(a[index]) : 0,
++                    index < b.length ? Integer.parseInt(b[index]) : 0);
++            if (difference != 0) {
++                return difference;
++            }
++        }
++        return 0;
++    }
++
++    private static boolean safePath(final String path) {
++        return !path.isEmpty() && !path.startsWith("/") && !path.contains("\\") && !path.contains(":") && !path.contains("\0")
++                && java.util.Arrays.stream(path.split("/", -1)).noneMatch(part -> part.isEmpty() || part.equals(".") || part.equals(".."));
++    }
++
++    private static String hash(final byte[] bytes) {
++        try {
++            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
++        } catch (final NoSuchAlgorithmException impossible) {
++            throw new IllegalStateException(impossible);
++        }
 +    }
 +
 +}
@@ -304,6 +528,175 @@ index bc3d4f4a3..6bd107273 100644
      @Test
      void selectedSubpackChangesCacheIdentity() {
          final InMemoryContent content = new InMemoryContent();
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacksTest.java b/src/test/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacksTest.java
+new file mode 100644
+index 000000000..41b1f79a0
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacksTest.java
+@@ -0,0 +1,163 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.provider;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
++import org.junit.jupiter.api.Test;
++
++import java.awt.image.BufferedImage;
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.security.MessageDigest;
++import java.util.HexFormat;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import java.util.function.Consumer;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipOutputStream;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++final class BundledImagePacksTest {
++
++    @Test
++    void retainsNativeLayerOrderWhileServerImagesAndAtlasAliasesKeepPriority() throws Exception {
++        final var files = new LinkedHashMap<String, byte[]>();
++        files.put("library/vanilla/textures/items/Test.png", image(0xFFFF0000));
++        files.put("library/vanilla/textures/item_texture.json", "{\"texture_data\":{\"probe\":{\"textures\":\"textures/items/Test\"}}}".getBytes(StandardCharsets.UTF_8));
++        files.put("library/vanilla_1.16/textures/items/Test.png", image(0xFF00FF00));
++        files.put("library/vanilla_1.16.100/textures/items/Test.png", image(0xFF0000FF));
++        final var layers = BundledImagePacks.read(new ByteArrayInputStream(bundle(files, List.of("vanilla", "vanilla_1.16", "vanilla_1.16.100"), _ -> { })), "1.26.51");
++        final var nativeOnly = new ResourcePackStorage(List.of(), layers);
++        assertEquals(0xFF0000FF, nativeOnly.getPackStackTopToBottom().stream().map(pack -> pack.content().getShortnameImage("textures/items/Test")).filter(java.util.Objects::nonNull).findFirst().orElseThrow().getImage().getRGB(0, 0));
++        final var server = new InMemoryContent();
++        server.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
++        server.put("textures/items/Server.png", image(0xFFFFFF00));
++        server.putString("textures/item_texture.json", "{\"texture_data\":{\"probe\":{\"textures\":\"textures/items/Server\"}}}");
++        final var pack = new ResourcePack(server);
++        final var accepted = new ResourcePackStorage(List.of(pack), layers);
++        assertEquals("textures/items/Server", accepted.getTextures().itemTextures().get("probe").getFirst().texturePath());
++        assertSame(pack, accepted.getPackStackTopToBottom().iterator().next());
++        assertTrue(accepted.isServerPack(pack));
++        layers.forEach(layer -> assertFalse(accepted.isServerPack(layer)));
++        assertThrows(UnsupportedOperationException.class, () -> layers.clear());
++    }
++
++    @Test
++    void rejectsCorruptUnindexedWrongVersionAndReorderedBundles() throws Exception {
++        final var files = Map.of("library/vanilla/textures/items/test.png", image(0xFF123456));
++        for (final Consumer<JsonObject> mutation : List.<Consumer<JsonObject>>of(
++                m -> m.addProperty("version", "1.26.60.1"),
++                m -> m.getAsJsonArray("files").get(0).getAsJsonObject().addProperty("sha256", "wrong"),
++                m -> m.add("files", new JsonArray()),
++                m -> {
++                    final JsonArray packs = new JsonArray();
++                    packs.add("vanilla_1.16.100");
++                    packs.add("vanilla_1.16");
++                    m.add("packs", packs);
++                })) {
++            assertThrows(IOException.class, () -> BundledImagePacks.read(new ByteArrayInputStream(bundle(files, List.of("vanilla"), mutation)), "1.26.51"));
++        }
++        assertThrows(IOException.class, () -> BundledImagePacks.read(new ByteArrayInputStream(bundle(
++                Map.of("library/vanilla/models/actor.json", new byte[]{1}), List.of("vanilla"), _ -> { })), "1.26.51"));
++    }
++
++    @Test
++    void validatesBaseLayerAndNumericOverlayOrderRatherThanLexicalOrder() throws Exception {
++        final var files = new LinkedHashMap<String, byte[]>();
++        for (final String layer : List.of("vanilla", "vanilla_base", "vanilla_1.21.20", "vanilla_1.21.100")) {
++            files.put("library/" + layer + "/textures/items/test.png", image(0xFF112200 | files.size()));
++        }
++        final var packs = BundledImagePacks.read(new ByteArrayInputStream(bundle(files,
++                List.of("vanilla", "vanilla_base", "vanilla_1.21.20", "vanilla_1.21.100"), _ -> { })), "1.26.51");
++        assertEquals(4, packs.size());
++        for (int index = 0; index < packs.size(); index++) {
++            assertEquals(0xFF112200 | index, packs.get(index).content().getShortnameImage("textures/items/test").getImage().getRGB(0, 0));
++        }
++    }
++
++    @Test
++    void suppliesRealBundledItemImagesThroughTheDefaultProvider() throws Exception {
++        assumeTrue(BundledImagePacks.class.getResource("/assets/viabedrock/builtin_images.zip") != null);
++        final var layers = new BuiltinResourcePackProvider().load(null);
++        final var server = new InMemoryContent();
++        server.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"fixture\"}}");
++        server.put("textures/probe.png", image(0xFFFF0000));
++        server.putString("models/entity/probe.json", "{\"format_version\":\"1.12.0\",\"minecraft:geometry\":[{\"description\":{\"identifier\":\"geometry.probe\",\"texture_width\":16,\"texture_height\":16},\"bones\":[{\"name\":\"root\",\"pivot\":[4,20,12],\"cubes\":[{\"origin\":[4,20,12],\"size\":[3,3,3],\"uv\":[0,0]}]}]}]}");
++        for (final String icon : List.of("stick", "blaze_rod", "bone", "feather", "paper")) {
++            server.putString("attachables/" + icon + ".json", "{\"format_version\":\"1.10.0\",\"minecraft:attachable\":{\"description\":{\"identifier\":\"minecraft:" + icon
++                    + "\",\"geometry\":{\"default\":\"geometry.probe\"},\"textures\":{\"default\":\"textures/probe\"}}}}");
++        }
++        final var storage = new ResourcePackStorage(List.of(new ResourcePack(server)), layers);
++        final var output = new InMemoryContent();
++        new CustomAttachableResourceRewriter()
++                .submitTasks(storage, task -> output.putAll(task.get()));
++        new CustomItemTextureResourceRewriter()
++                .submitTasks(storage, task -> output.putAll(task.get()));
++        for (final String icon : List.of("stick", "blaze_rod", "bone", "feather", "paper")) {
++            final String path = storage.getTextures().itemTextures().get(icon).getFirst().texturePath();
++            assertTrue(storage.getPackStackTopToBottom().stream().anyMatch(pack -> pack.content().getShortnameImage(path) != null));
++            final var selection = output.getJson("assets/viabedrock/items/attachables/minecraft/" + icon + ".json").getAsJsonObject("model");
++            assertEquals("minecraft:display_context", selection.get("property").getAsString());
++            assertFalse(selection.getAsJsonObject("fallback").getAsJsonArray("cases").isEmpty());
++            final String model = selection.getAsJsonArray("cases").get(0).getAsJsonObject().getAsJsonObject("model").get("model").getAsString();
++            final var converted = output.getJson("assets/viabedrock/models/" + model.substring("viabedrock:".length()) + ".json");
++            final String texture = converted.getAsJsonObject("textures").get("layer0").getAsString();
++            assertNotNull(output.getImage("assets/viabedrock/textures/" + texture.substring("viabedrock:".length()) + ".png"));
++        }
++    }
++
++    private static byte[] image(final int color) {
++        final var content = new InMemoryContent();
++        final var image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, color);
++        content.putPngImage("image.png", image);
++        return content.get("image.png");
++    }
++
++    private static byte[] bundle(final Map<String, byte[]> files, final List<String> layers,
++                                 final Consumer<JsonObject> mutation) throws Exception {
++        final JsonObject manifest = new JsonObject();
++        manifest.addProperty("format", 1);
++        manifest.addProperty("version", "1.26.51.1");
++        final JsonArray packs = new JsonArray();
++        final JsonArray records = new JsonArray();
++        layers.forEach(packs::add);
++        for (final var file : files.entrySet()) {
++            final JsonObject record = new JsonObject();
++            record.addProperty("path", file.getKey());
++            record.addProperty("sha256", HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(file.getValue())));
++            records.add(record);
++        }
++        manifest.add("packs", packs);
++        manifest.add("files", records);
++        mutation.accept(manifest);
++        final var bytes = new ByteArrayOutputStream();
++        try (var zip = new ZipOutputStream(bytes)) {
++            for (final var file : files.entrySet()) {
++                zip.putNextEntry(new ZipEntry(file.getKey()));
++                zip.write(file.getValue());
++                zip.closeEntry();
++            }
++            zip.putNextEntry(new ZipEntry("manifest.json"));
++            zip.write(manifest.toString().getBytes(StandardCharsets.UTF_8));
++            zip.closeEntry();
++        }
++        return bytes.toByteArray();
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 index 5d513b681..0e7bbc30f 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java

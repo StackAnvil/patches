@@ -799,6 +799,22 @@ export async function driveGameplay(
   capture?: (phase: string) => Promise<void>,
 ): Promise<void> {
   switch (id) {
+    case "pearl-wind-charge":
+      await uiMouse(ui, "right", 60);
+      await ui(["ui", "key-hold", "2", "50", "--client", "java"]);
+      await uiMouse(ui, "right", 60);
+      await Bun.sleep(5000);
+      return;
+    case "eat-moving-repeat":
+    case "eat-moving-last": {
+      const duration = id === "eat-moving-last" ? 3500 : 8000;
+      await Promise.all([
+        uiMouse(ui, "right", duration),
+        ui(["ui", "key-hold", "w", String(duration), "--client", "java"]),
+      ]);
+      await Bun.sleep(1000);
+      return;
+    }
     case "fishing-early-reel":
     case "fishing-entity-reel":
       await uiMouse(ui, "right", 120);

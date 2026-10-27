@@ -1101,3 +1101,224 @@ The existing locator pose and unrelated graph inputs remain available.
 A changed native lifetime retires the binding before metadata can come from another owner.
 Actor removal with the same retained registry owner keeps its existing path.
 See the [shared runtime evidence](0008-share-native-actor-and-resource-runtime.pr.md#fresh-common-particle-actor-inputs) for tested queries, native boundaries, and remaining limits.
+
+## Incoming emotes through ViaProxy
+
+The core already publishes a versioned emote channel, but the add-on did not register a receiver.
+The add-on now registers playback and available-emote messages on the actual Fabric play listener.
+Both routes use the existing emote asset, animation, sound and particle runtime.
+Network ownership remains separate from the optional local ViaBedrock connection.
+Delayed requests from retired connections cannot start playback in a later session.
+Proxy announcements resolve names through the Java player list and preserve the world mute flag.
+
+The decoder bounds available lists before allocation and rejects unknown versions, message kinds and invalid unsigned durations.
+Tests cover the existing core wire format, immutable lists, bounds and flags.
+All 104 core patches and 38 add-on patches replay.
+The four-project build passes 3,023 tests with 152 optional skips and no failures.
+Both core Checkstyle tasks pass.
+
+A controlled proxy replay combines a recorded protocol-2193 bootstrap with one declared peer and four bundled emotes.
+It copies the recorded skin and supplies declared emote durations.
+A read-only observer records all four emotes during installed world-render sampling.
+A screenshot also shows a wave.
+Three complete skin records load without rejection, and the remote-player renderer runs.
+This control has no native graphical baseline and does not establish full emote fidelity.
+Live skin changes through ViaProxy remain unfinished. The local control milestone follows.
+
+The direct-route regression also samples all four emotes and installs all three skin records without rejection.
+Its overall scene gate still fails on a missing camera-item texture model.
+The proxy scene gate passes.
+This mapping failure remains open and is not treated as an emote playback failure or a passing rendering result.
+
+
+## Local emote controls on direct and proxy connections
+
+The wheel now uses the same negotiated core actions on both routes.
+It waits for the current connection's world chat policy before it becomes available.
+Core supplies the native actor and account identity, so proxy clients need no local Bedrock tracker.
+The client retains immediate local animation and existing privacy checks.
+Movement, interaction, natural completion and account replacement send a stop for local Emoting state.
+Connection replacement clears pending local controls and policy.
+Live skin changes through ViaProxy remain separate work.
+
+
+Native announcement names travel with the world policy on the new context channel.
+Core resolves the local player by native unique ID because Java and native UUIDs can differ.
+It uses the connected account name until the native player-list entry arrives.
+Remote announcements use the retained native player-list name.
+The client clears these names with the connection.
+This preserves the existing playback wire format and avoids synthetic or empty Java profile names.
+
+
+## Local control verification
+
+The full four-project build passes 3,029 tests with 152 optional skips.
+Both core Checkstyle tasks pass, and all 104 core and 38 add-on patches replay.
+Seven focused tests pass against the distributable core JAR with verified implementation origins.
+Embedded core classes and resources match both consumers.
+
+Fresh direct and ViaProxy sessions use physical B-key and slot-key input against an isolated Bedrock 1.26.51.1 server.
+A declared fixture installs four bundled wheel choices without sending packets or starting animations.
+Both routes produce native server receipts, local world-render samples and correctly named announcements.
+Native input carries Emoting during playback and clears it after movement or natural completion.
+Outgoing packets use the connected actor ID and zero flags.
+The runtime JAR checksums match the verified build.
+
+These controls use a private display and silent software rendering.
+Account wardrobe assignment, purchases, full effect timing and native graphical comparisons remain outside these controls.
+The existing direct camera-item rendering gate remains failed and separate from these transport-only gameplay controls.
+
+
+The incoming proxy regression passes its full rendering gate with the same controlled peer fixture.
+All four bundled emotes reach world-render sampling across 73 observations.
+The remote announcement also uses the declared native player-list name.
+Peer placement and durations remain fixture inputs, and the peer remains partly submerged.
+This control does not establish native placement, pose or complete graphical parity.
+
+## Classic emote models on ViaProxy
+
+Build standard wide and slim animation models from the shared native skin pack.
+The previous fallback read the local protocol mapping table, which can be unloaded behind ViaProxy.
+The regression checks native arm widths of four and three pixels before mappings initialize.
+Per-appearance geometry and existing authored custom models retain their ownership.
+
+Validation: all 14 focused appearance checks pass without skips.
+The replayed full build passes 3,070 tests, with 152 optional skips and no failures or errors.
+A controlled ViaProxy peer supplies a native Steve texture without geometry; the renderer builds its native model and samples four bundled emotes.
+Local mappings are loaded in that installed profile; the isolated regression verifies the unloaded case.
+The scene's full rendering gate retains the separate missing camera-texture failure.
+Native graphical parity and shader comparisons remain open.
+
+## Emote status for authored pack queries, October 26, 2026
+
+Expose `query.is_emoting` through the shared actor sampler and player animation inputs.
+The bundled 1.26.51.1 root and HUD controllers use this query to suppress look-at behavior.
+[Mojang's reference](https://mojang.github.io/bedrock-samples/Molang.html) defines it as the current emote status.
+
+Remote actors combine native metadata with accepted playback.
+Local queries follow active playback because server metadata can remain true after movement cancels the emote.
+The live baseline retains the old status for about 1.6 seconds after cancellation.
+Expired playback entries also stop contributing status before the next cleanup tick.
+Existing attached emitters refresh the query without another actor animation frame or a new particle instance.
+
+Three regressions cover native metadata removal, independent players, movement cancellation, and delayed local metadata.
+The missing-query controls fail on the preceding implementation.
+The local precedence control fails separately on the initial combined query.
+All three pass in the final four-project build, with 3,095 passing tests and 152 optional skips overall.
+
+Fresh direct and Iris-enabled ViaProxy controls change a player texture and existing parent/child particle tints through two physical emote selections.
+Movement cancellation resets all three while the native metadata flag remains true.
+Natural completion also restores their idle state, and particle identities remain stable throughout.
+The declared wheel fixture only installs bundled assets and labels before physical B-key and slot input.
+It does not start playback, send packets, or write account state.
+
+These controls verify authored responses to emote status.
+The four bundled emote animations contain no sound or particle declarations, so native emote effect ownership remains unverified.
+Remote metadata precedence, remote skin visuals, and native graphical equality remain open.
+The [coverage record](../../../docs/bedrock-coverage.md#emote-status-in-pack-queries-october-26-2026) records the checks and limits.
+
+## Bundled default emote wheel, October 26, 2026
+
+The world wheel now starts with the bundled Follow Me, Over There, Clapping, and Wave emotes.
+A separate appearance-account lookup is no longer necessary for these free assets.
+When no character is active, account loadout resolution uses the same default positions.
+Saved account positions and explicit empty slots retain precedence.
+The client prepares asset futures after native emote actions are negotiated, then advertises ready choices through the existing channel.
+
+Default positions come from the shared starter recipes for Bedrock 1.26.51.1.
+All nine starter recipes contain the same four emote positions.
+The target bundle supplies each pack, animation, and localized `persona.offer.title`.
+[Mojang's emote update](https://www.minecraft.net/en-us/article/new-emote-features-bedrock-edition) documents the four default free emotes.
+Labels use pack translations with an English fallback per key.
+Explicit empty translations remain empty, and titles bypass announcement marker formatting.
+
+The previous accountless ViaProxy control has an enabled emote connection but four disabled, unassigned slots.
+A physical selection sends no native emote.
+The observer initially attached before client initialization; a successful retry continues in the same client process.
+Its resumed observations and screenshot establish the empty-wheel baseline.
+The recorder and private server then close normally.
+
+Fresh plain and full-modpack controls use the same final development add-on.
+Its SHA-256 is `ceb35261dfb8ecec0e41b13e1c9c2d78723be2ba1b59015b1005eeb86f8d8d96`.
+The full modpack includes Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Both clients have no appearance account, and their observer never installs wheel choices or assets.
+Physical B and 1-4 controls produce four matching `playerEmote` receipts from BDS 1.26.51.1 in each run.
+Packet journals verify all four pack IDs, advertisement before playback, the local runtime actor, zero flags, and the current duration calculation.
+Each run contains four separate playback intervals with world renderer sampling.
+Input flags demonstrate early movement cancellation and natural completion, then return to the inactive state.
+
+All twelve final screenshots received visual review, including the loading and ready wheel states.
+The plain client uses an actual 854-by-480 window; the full modpack uses 1920 by 1013.
+Manual F5 controls select third person for observation.
+These captures establish availability and playback integration, without native camera, pose, or exact timing equality.
+Both final recorders and servers exit successfully, retire their owned processes, and restore the prepared profiles.
+
+Regression coverage exercises all nine starter recipes, no active character, reordered selections, explicitly cleared wheels, and localized title fallback.
+Empty-default, overwritten-selection, and missing-title variants each fail assertions; the restored implementation passes.
+All 38 add-on patches replay, with the change retained in this owning patch.
+The complete four-project build passes 2,962 tests, skips 315 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass.
+Source snapshots, compiled client classes, embedded dependencies, and shader resources match the tested outputs.
+Offline tooling and patch-metadata validation pass.
+
+Live controls cover the accountless path; saved account selection preservation has unit coverage in this change.
+Native quick-wheel behavior, controller navigation, automatic perspective, broader skin composition, and emote effects remain unfinished.
+The four free animations contain no sound or particle declarations, so they provide no new effect-ownership proof.
+The original five-area goal and the reported gameplay problems remain open.
+
+## Emote capability renewal, October 27, 2026
+
+Emote controls now handle withdrawal and renewal on an existing Java connection.
+Withdrawal retires local playback and invalidates the advertised-wheel cache.
+Registration sends the ready wheel through the existing advertisement path again.
+The current packet listener owns these changes; stale listeners and unrelated channels have no effect.
+Remote playback and loaded assets remain available.
+
+ViaBedrock correctly creates fresh emote storage after withdrawal.
+The previous client retained its advertisement cache, so a later selection animated locally but failed the server's availability check.
+A rapid renewal also retained the previous local emote because no disabled client tick occurred between notifications.
+The live baseline reproduces both failures with both notifications in one measured client tick.
+Its second selection enters local world sampling but produces no second native BDS receipt or advertisement.
+
+Fabric networking 6.3.8 updates its channel registry before scheduling the main-thread notification.
+A queued withdrawal can therefore run after support and policy are current again.
+The handler always retires old local playback, but clears policy only while the actual channel remains unavailable.
+This preserves current policy during rapid renewal and retires it during held withdrawal.
+The first candidate exposed this ordering requirement by leaving controls disabled after rapid renewal.
+That candidate is excluded from the passing evidence.
+
+Fresh plain and full-modpack ViaProxy controls use the final development artifact with a private BDS 1.26.51.1 server.
+The add-on SHA-256 is `38497e22c74cc93c8b89dd4981e68537dbf9ad1bd999f9c213fb8925dc123faa`.
+The full modpack loads Iris 1.11.7 and Complementary Reimagined r5.9.3.
+A declared fixture sends ordinary registration packets only; it never changes the wheel, assets, playback, or core storage.
+Physical B and slot controls start the emotes.
+
+Each final run records rapid withdrawal and registration in the same measured client tick.
+The old local playback retires, and a subsequent selection reaches BDS.
+A second control holds support disabled, observes retired policy and playback, then restores support and native playback.
+Each packet journal contains four native emotes and three matching four-ID advertisements, including a fresh advertisement after each renewal.
+Actor ownership, flags, inactive final input, one Java connection, and unchanged asset-future identities pass.
+Both final recorders and servers exit successfully, restore their prepared profiles, and retire all owned processes.
+All six final screenshots received visual review.
+An earlier full-modpack attempt ended with a read timeout before the control; the fresh run passes with the same artifact.
+
+The API regression covers current and stale listeners, unrelated channels, rapid renewal, repeated registration, and independent remote playback.
+Removing local retirement or listener ownership causes an assertion failure; the restored test passes.
+All 38 patches replay, and only the owning wardrobe patch changes.
+The full four-project build passes 2,963 tests, skips 315 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass.
+Compiled client classes, embedded dependencies, shaders, and four source snapshots match the tested outputs.
+Offline tooling and patch-metadata validation pass.
+
+These controls establish the tested channel lifecycle, without complete configuration-transfer, native camera, pose, or timing equality.
+Live remote-player visuals and emote sound or particle ownership remain unfinished.
+The full five-area goal and the original gameplay reports remain open.
+
+
+## Player equipment and vehicle query inputs, October 27, 2026
+
+Player animation graphs now receive shared head-slot occupancy and native vehicle-type predicates.
+The inputs capture values without retaining the avatar, and equipment changes refresh the next frame.
+The [shared runtime notes](0008-share-native-actor-and-resource-runtime.pr.md#head-equipment-and-native-vehicle-queries-october-27-2026)
+record query semantics, causal regressions, and remaining limits.
+This change does not establish complete first-person poses or native skin motion parity.

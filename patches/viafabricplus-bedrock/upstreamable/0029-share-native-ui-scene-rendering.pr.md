@@ -377,3 +377,112 @@ The reference covers 768 activation combinations and 36 press/release sequences 
 Repeated notifications still run the lifecycle when the mode value remains unchanged.
 The native controller receives the kind-7 event with its original mode payload.
 These are native reference captures. The production mode-notification route remains unimplemented.
+
+
+## Native desktop scale preference
+
+The Bedrock settings tab now exposes `Bedrock UI scale offset` through the existing persisted VFP enum setting.
+The default offset remains zero.
+Offsets from -1 through -4 reduce supported native presentations independently of Java GUI scale.
+The viewport clamps the displayed scale to its current native limits and retains the selected preference across window sizes.
+Native screens, supported HUD layouts, portraits, extraction, and pointer coordinates use the same viewport.
+
+The existing Bedrock 1.26.51.1 `GuiData` controls establish the desktop scale and offset bounds at `141566fd0`.
+Previously, runtime always supplied offset zero to that verified calculation.
+The new wiring regression covers three resolutions, five Java GUI scales, and all five preference values.
+All four viewport tests pass without skips.
+The full build passes 3,054 tests with 152 optional skips and no failures or errors.
+All 1,206 compiled client classes match the distributable add-on.
+The core and both consumers retain matching 1,558 core classes, 200 assets, and 39 converter classes.
+
+The reported missing inventory background remains unconfirmed.
+This preference does not establish complete player-inventory/controller behavior, pocket layouts, or native pixel parity.
+
+Fresh direct and ViaProxy BDS 1.26.51.1 sessions each verify 12 physical inventory actions at 1920 by 1013 pixels.
+The native/Java scale pairs are 4/2, 3/3, 2/2, and 4/4.
+At each pair, actual clicks pick up three diamonds, place one, and restore the stack.
+Independent BDS chest counts confirm every transfer, and the production hovered slot remains aligned with the visible cell.
+The real VFP setting passes four serialization round trips per route.
+A physical click on its published settings row selects -1, and the private client configuration saves that preference.
+All 20 screenshots receive visual review, including backgrounds, slot layouts, and the settings row.
+Runtime hashes match the final distributables.
+These controls cover a real chest and desktop settings; they do not reproduce the reported E-key player inventory or compare native pixels.
+
+
+## Per-bone portrait material extraction, October 26, 2026
+
+Portrait extraction now partitions each controller's actual rendered bones by material.
+Each group intersects its surface selection with that controller's visibility rules.
+Model keys retain the selected bones while the model keeps the complete animation hierarchy.
+The current portrait cache releases historical surface subsets.
+
+The shared geometry regressions cover surface filtering and preserved ancestor transforms.
+Existing portrait appearance tests consume the complete material map and retain their independent context behavior.
+Fresh installed portrait rendering with several bone materials remains unverified.
+The separate creative inventory avatar preview is empty in the zero-alpha player fixture and does not verify this renderer.
+
+The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.
+
+
+## Texture-backed avatar coverage, October 26, 2026
+
+Native opaque costumes can retain zero source alpha while remaining visible in the world.
+Minecraft 26.3 blits inventory avatars through a shader that discards zero alpha.
+The previous intermediate texture therefore loses those surfaces before the final GUI draw.
+This explains the earlier empty avatar in the zero-alpha fixture.
+
+Picture-in-picture model submission now selects a lazy GUI variant for each native material.
+The variant retains images, lighting, multiplier, and UV transforms while leaving the cached world material intact.
+Ordinary Java materials retain their current rendering path.
+The submission scope restores nesting and failures independently of native camera and animation contexts.
+GUI emission stays in the native GUI shader and does not acquire world Iris additive passes.
+
+After native cutout and emission calculations, surviving GUI fragments use control opacity as coverage.
+Source alpha retains its earlier cutout and emission roles without multiplying opacity again.
+World fragment output remains unchanged.
+
+The old GUI shader fails the new EGL coverage regression with expected coverage 0.0925 and actual coverage zero.
+The corrected shader passes 3,552 GUI blends and all 1,184 existing native color, discard, and depth controls.
+All 15 focused tests pass without skips, including recovery after nested submission failures.
+These opacity controls describe Java compositor integration, not a native GUI graphical baseline.
+
+Fresh direct and Iris-enabled ViaProxy runs show the blue body on both inventory openings.
+They retain cutout rejection, equipment, and the world appearance after closing the inventory.
+Actual GUI variants remain distinct and stable across reopening while world pipeline flags remain unchanged.
+All 26 main captures and a separate 15-capture Iris sneak probe receive review and pass their strict checks.
+Downloaded pack files, installed artifacts, binding matrices, cache retirement, and owned process retirement also pass.
+
+This supersedes the earlier empty-avatar observation for the authored fixture.
+The [coverage record](../../../docs/bedrock-coverage.md#inventory-avatar-coverage-october-26-2026) records the full build and remaining limits.
+The original E-key background/scale report, generic native portraits, remote skins, persona composition, and emote effects remain separate work.
+
+## Native actor depth in GUI consumers, October 26, 2026
+
+GUI actor selection retains the shared material's depth state when choosing its own blending pipeline.
+Default, read-only equality, and disabled-depth cases keep their world-state identity without replacing GUI blending.
+Uncommon variants enter the shared runtime cache rather than expanding the default preload list.
+The shared actor owner contains comparison parsing, reversed-depth mapping, GPU controls, and emission limits.
+
+## Explicit glint draw state in GUI conversion, October 27, 2026
+
+GUI conversion retains the shared renderer's immutable glint state and secondary texture binding.
+It preserves the existing portrait-coverage rule after the shared glint fragment result.
+This keeps GUI blending separate from native world alpha without changing the cached world pipeline.
+The shared actor owner records the native shader and clock controls.
+Production enchanted equipment and live GUI glint remain unverified; their admission is unchanged.
+
+Frame-glint world materials retain their captured state when converted to GUI materials.
+The GUI variant uses explicit neutral tile RGB with the existing independent fullbright portrait policy.
+Its cached variant does not sample a world entity's lightmap.
+The final full-stack build and focused shader controls pass; native GUI glint equality remains unverified.
+
+The replay retains the shared Iris glint mapping instead of restoring the earlier exclusion.
+The new client check covers world actor draws and shader toggles; native GUI glint remains unverified.
+
+
+## Held glint remains separate from GUI admission, October 27, 2026
+
+GUI actor extraction keeps its own resources and selection scopes when world held items gain native GLINT admission.
+A GUI portrait does not inherit the held-item material route or assume the world item's verified UV scale.
+The pipeline guard rejects glint without explicit draw inputs.
+The [held-item checkpoint](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) leaves native GUI glint unverified.

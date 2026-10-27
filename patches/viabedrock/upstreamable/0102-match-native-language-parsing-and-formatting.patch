@@ -1,4 +1,4 @@
-From 51139012996f76e013072baad04d1b96dfee6277 Mon Sep 17 00:00:00 2001
+From f99a081b5be35fc6f6d40a79d3bb1b617a960daa Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 10:11:46 +0200
 Subject: [PATCH] fix(text): match native language parsing and formatting
@@ -27,27 +27,39 @@ the old parser and three deliberate regressions fail behavioral assertions.
 The probes declare their controlled raw inputs, language tables, argument
 vectors, allocator/CRT and single-thread lock boundaries. They do not
 establish full locale, asset-provider, client ownership or visible parity.
+
+Keep shulker remainder lookup separate from language token expansion. The
+native typed integer printf preserves embedded NUL and malformed bytes,
+retains zero at precision zero, and honors sign flags on unsigned values.
+Match the original formatter across 810 ordinary, boundary and precision
+controls; keep unsupported Microsoft length extensions outside the grammar.
 ---
  .../api/resourcepack/content/Content.java     |  16 +-
- .../resourcepack/definition/LanguageFile.java | 117 +++++++++++++++
- .../definition/LanguageLookup.java            |  53 +++++++
- .../definition/LanguageTranslations.java      | 140 ++++++++++++++++++
- .../definition/TextDefinitions.java           |  34 ++++-
+ .../resourcepack/definition/LanguageFile.java | 117 +++++++++++
+ .../definition/LanguageIntegerFormat.java     |  87 +++++++++
+ .../definition/LanguageLookup.java            |  53 +++++
+ .../definition/LanguageTranslations.java      | 140 ++++++++++++++
+ .../definition/TextDefinitions.java           |  39 +++-
  .../protocol/packet/JoinPackets.java          |   4 +-
  .../protocol/packet/MultiStatePackets.java    |  10 +-
  .../content/ContentLanguageCacheTest.java     |   7 +-
- .../definition/LanguageFileTest.java          | 126 ++++++++++++++++
- .../definition/LanguageLookupTest.java        |  82 ++++++++++
- .../definition/LanguageTranslationsTest.java  | 127 ++++++++++++++++
- .../definition/TextDefinitionsTest.java       |  76 ++++++++++
- 12 files changed, 764 insertions(+), 28 deletions(-)
+ .../definition/LanguageFileTest.java          | 126 ++++++++++++
+ .../definition/LanguageIntegerFormatTest.java |  20 ++
+ .../definition/LanguageLookupTest.java        |  82 ++++++++
+ .../definition/LanguageTranslationsTest.java  | 127 ++++++++++++
+ .../definition/TextDefinitionsTest.java       |  76 ++++++++
+ .../protocol/model/ItemPrimaryNameTest.java   | 181 ++++++++++++++++++
+ 15 files changed, 1057 insertions(+), 28 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFile.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormat.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookup.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslations.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFileTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormatTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookupTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslationsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitionsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemPrimaryNameTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 index 642bbdbd2..ad30a6607 100644
@@ -225,6 +237,99 @@ index 000000000..c6e0b7990
 +    public record MissingSeparator(int line, boolean newline) { }
 +
 +    public record Result(Map<String, String> translations, boolean special, List<MissingSeparator> missingSeparators) { }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormat.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormat.java
+new file mode 100644
+index 000000000..f112da886
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormat.java
+@@ -0,0 +1,87 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import net.raphimc.viabedrock.api.io.NbtUtf8;
++
++import java.util.Locale;
++import java.util.regex.Pattern;
++
++/** The native shulker label passes one typed integer to a length-aware printf formatter. */
++public final class LanguageIntegerFormat {
++
++    private static final Pattern CONVERSION = Pattern.compile("%(?:(1)\\$)?([-+ #0]*)([0-9]*)(?:\\.([0-9]*))?(hh|ll|[hljzt])?([diuoxXc%])");
++
++    private LanguageIntegerFormat() { }
++
++    public static String format(final String format, final int value) {
++        final StringBuilder output = new StringBuilder();
++        final var matcher = CONVERSION.matcher(format);
++        int cursor = 0;
++        boolean consumed = false;
++        while (cursor < format.length()) {
++            final int start = format.indexOf('%', cursor);
++            if (start < 0) {
++                output.append(format, cursor, format.length());
++                break;
++            }
++            output.append(format, cursor, start);
++            matcher.region(start, format.length());
++            if (!matcher.lookingAt()) {
++                throw new IllegalArgumentException("Invalid integer label format");
++            }
++            final char conversion = matcher.group(6).charAt(0);
++            if (conversion == '%') {
++                output.append('%');
++            } else {
++                if (matcher.group(1) == null) {
++                    if (consumed) {
++                        throw new IllegalArgumentException("Integer label format requires another argument");
++                    }
++                    consumed = true;
++                }
++                final String flags = matcher.group(2);
++                final int width = matcher.group(3).isEmpty() ? 0 : Integer.parseInt(matcher.group(3));
++                final int precision = matcher.group(4) == null ? -1 : matcher.group(4).isEmpty() ? 0 : Integer.parseInt(matcher.group(4));
++                output.append(integer(value, conversion, flags, width, precision, matcher.group(5)));
++            }
++            cursor = matcher.end();
++        }
++        return output.toString();
++    }
++
++    private static String integer(final int value, final char conversion, final String flags, final int width,
++                                  final int precision, final String length) {
++        if (conversion == 'c') {
++            return pad(NbtUtf8.decode(new byte[]{(byte) value}), width, flags.indexOf('-') >= 0);
++        }
++        final boolean signed = conversion == 'd' || conversion == 'i';
++        final int narrowed = "hh".equals(length) ? (byte) value : "h".equals(length) ? (short) value : value;
++        final long number = signed ? narrowed : "hh".equals(length) ? Byte.toUnsignedInt((byte) value)
++                : "h".equals(length) ? Short.toUnsignedInt((short) value) : Integer.toUnsignedLong(value);
++        final int radix = conversion == 'o' ? 8 : conversion == 'x' || conversion == 'X' ? 16 : 10;
++        // Typed native printf retains zero at precision zero and honors unsigned sign flags.
++        String digits = Long.toString(Math.abs(number), radix);
++        if (conversion == 'X') {
++            digits = digits.toUpperCase(Locale.ROOT);
++        }
++        digits = "0".repeat(Math.max(0, precision - digits.length())) + digits;
++        final String sign = number < 0 ? "-" : flags.indexOf('+') >= 0 ? "+" : flags.indexOf(' ') >= 0 ? " " : "";
++        final String prefix = flags.indexOf('#') < 0 ? "" : conversion == 'o' ? digits.startsWith("0") ? "" : "0"
++                : number != 0 && conversion == 'x' ? "0x" : number != 0 && conversion == 'X' ? "0X" : "";
++        final boolean left = flags.indexOf('-') >= 0;
++        if (!left && flags.indexOf('0') >= 0 && precision < 0) {
++            return sign + prefix + "0".repeat(Math.max(0, width - sign.length() - prefix.length() - digits.length())) + digits;
++        }
++        return pad(sign + prefix + digits, width, left);
++    }
++
++    private static String pad(final String text, final int width, final boolean left) {
++        final String padding = " ".repeat(Math.max(0, width - NbtUtf8.encode(text).length));
++        return left ? text + padding : padding + text;
++    }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookup.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookup.java
@@ -433,10 +538,10 @@ index 000000000..da03a231a
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitions.java
-index 95d2d5b3d..58ec94669 100644
+index 95d2d5b3d..fc7688fbc 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitions.java
-@@ -17,34 +17,52 @@
+@@ -17,38 +17,61 @@
   */
  package net.raphimc.viabedrock.api.resourcepack.definition;
  
@@ -497,8 +602,17 @@ index 95d2d5b3d..58ec94669 100644
      }
  
      public Function<String, String> lookup() {
+         return this::get;
+     }
+ 
++    /** Integer labels use raw lookup followed by printf, independently of language token expansion. */
++    public String formatInteger(final String key, final int value) {
++        return LanguageIntegerFormat.format(this.get(key), value);
++    }
++
+ }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 5fe21e385..06078bae2 100644
+index 26ee61950..452ebf0a5 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -39,6 +39,7 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
@@ -520,7 +634,7 @@ index 5fe21e385..06078bae2 100644
          switch (status) {
              case LoginFailed_ClientOld -> PacketFactory.writeJavaDisconnect(wrapper, translations.get("disconnectionScreen.outdatedClient"));
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index c5177d0ca..4e73e7bf0 100644
+index a7544a423..51ed54257 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 @@ -36,7 +36,6 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundConfigu
@@ -531,7 +645,7 @@ index c5177d0ca..4e73e7bf0 100644
  import net.raphimc.viabedrock.api.model.CameraAimAssistActivation;
  import net.raphimc.viabedrock.ViaBedrock;
  import net.raphimc.viabedrock.api.model.CommandBlockEdit;
-@@ -71,6 +70,7 @@ import net.raphimc.viabedrock.protocol.storage.PlayerWaypointTracker;
+@@ -76,6 +75,7 @@ import net.raphimc.viabedrock.protocol.storage.PlayerWaypointTracker;
  import net.raphimc.viabedrock.protocol.storage.EntityTracker;
  import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
  import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
@@ -539,7 +653,7 @@ index c5177d0ca..4e73e7bf0 100644
  import net.raphimc.viabedrock.protocol.storage.ChunkRadiusNegotiation;
  import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
  import net.raphimc.viabedrock.protocol.storage.PlayerInputStorage;
-@@ -83,8 +83,6 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+@@ -88,8 +88,6 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  import java.nio.charset.StandardCharsets;
  import java.util.Arrays;
  import java.util.List;
@@ -548,7 +662,7 @@ index c5177d0ca..4e73e7bf0 100644
  import java.util.logging.Level;
  
  public final class MultiStatePackets {
-@@ -93,11 +91,11 @@ public final class MultiStatePackets {
+@@ -98,11 +96,11 @@ public final class MultiStatePackets {
          final DisconnectFailReason disconnectReason = DisconnectFailReason.getByValue(wrapper.read(BedrockTypes.VAR_INT), DisconnectFailReason.Unknown); // reason
          final boolean hasMessage = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT) == 0; // has message
          if (hasMessage) {
@@ -726,6 +840,32 @@ index 000000000..4e26c27dd
 +        content.put("texts/en_US.lang", raw);
 +        content.putString("texts/languages.json", "[\"en_US\"]");
 +        return content;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormatTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormatTest.java
+new file mode 100644
+index 000000000..b5ef11da8
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormatTest.java
+@@ -0,0 +1,20 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class LanguageIntegerFormatTest {
++
++    @Test
++    void preservesNativePrecisionAndUnsignedSignFlags() {
++        assertEquals("+0", LanguageIntegerFormat.format("%+.0d", 0));
++        assertEquals("  +001", LanguageIntegerFormat.format("%+06.3u", 1));
 +    }
 +
 +}
@@ -1030,6 +1170,193 @@ index 000000000..4e8d5804e
 +        content.put("texts/en_US.lang", raw);
 +        return new ResourcePack(content);
 +    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemPrimaryNameTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemPrimaryNameTest.java
+new file mode 100644
+index 000000000..83cd53621
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemPrimaryNameTest.java
+@@ -0,0 +1,181 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.*;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.io.NbtUtf8;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.definition.TextDefinitions;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.io.InputStreamReader;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.HashMap;
++import java.util.HexFormat;
++import java.util.List;
++import java.util.Map;
++import java.util.zip.GZIPInputStream;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class ItemPrimaryNameTest {
++
++    @Test
++    void retainsSelectedDefinitionAndSkipsSourcesForCustomOrAbsentNames() throws Exception {
++        final var first = registry("book", null);
++        final var owner = first.definition("minecraft:written_book");
++        final var selected = new BedrockItem(owner, (short) 0, (byte) 1);
++        final var data = new CompoundTag();
++        final String title = "Title\0" + (char) 0xDCFF;
++        data.putString("title", title);
++        data.putString("filteredTitle", "Filtered");
++        selected.setTag(data);
++        selected.setAmount(0);
++        final var context = context(registry("ordinary", null), Map.of("item.probe.name", "Probe"));
++        clearInvocations(context.user());
++        assertArrayEquals(NbtUtf8.encode(title), NbtUtf8.encode(context.items().itemPrimaryName(selected)));
++        verify(context.user(), never()).get(ResourcePackStorage.class);
++        final var raw = new BedrockItem(30001);
++        raw.setTag(data);
++        assertArrayEquals(NbtUtf8.encode("Probe"), NbtUtf8.encode(context.items().itemPrimaryName(raw)));
++        final var display = new CompoundTag();
++        display.putInt("Name", 7);
++        data.put("display", display);
++        clearInvocations(context.user());
++        assertArrayEquals(new byte[0], NbtUtf8.encode(context.items().itemPrimaryName(raw)));
++        assertArrayEquals(NbtUtf8.encode(title), NbtUtf8.encode(context.items().itemPrimaryName(selected)));
++        assertArrayEquals(new byte[0], NbtUtf8.encode(context.items().itemPrimaryName(new BedrockItem(32767))));
++        verify(context.user(), never()).get(ResourcePackStorage.class);
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_PRIMARY_SEARCH_TEXT", matches = ".+")
++    void matchesOriginalDefinitionOwnedPrimaryBytes() throws Exception {
++        try (var input = new InputStreamReader(new GZIPInputStream(Files.newInputStream(
++                Path.of(System.getenv("STACKANVIL_NATIVE_PRIMARY_SEARCH_TEXT")))), StandardCharsets.UTF_8)) {
++            verifyPrimary(JsonParser.parseReader(input).getAsJsonObject());
++        }
++    }
++
++    static int verifyPrimary(final JsonObject fixture) throws Exception {
++        final var contexts = new HashMap<String, Context>();
++        final var translations = translations(fixture);
++        int count = 0;
++        for (final var value : fixture.getAsJsonArray("rows")) {
++            final var row = value.getAsJsonObject();
++            final String kind = row.get("kind").getAsString();
++            final String description = row.get("description").isJsonNull() ? null : row.get("description").getAsString();
++            final String identity = kind + ':' + description;
++            Context context = contexts.get(identity);
++            if (context == null) {
++                context = context(registry(kind, description), translations);
++                contexts.put(identity, context);
++            }
++            final var item = item(row);
++            assertArrayEquals(HexFormat.of().parseHex(row.get("primary").getAsString()), NbtUtf8.encode(context.items().itemPrimaryName(item)), row::toString);
++            clearInvocations(context.user());
++            count++;
++        }
++        assertTrue(count > 0);
++        return count;
++    }
++
++    static ItemRegistry registry(final String kind, final String description) {
++        final var component = new CompoundTag();
++        if (description != null) {
++            final var name = new CompoundTag();
++            name.putString("value", NbtUtf8.decode(HexFormat.of().parseHex(description)));
++            final var components = new CompoundTag();
++            components.put("minecraft:display_name", name);
++            component.put("components", components);
++        }
++        return new ItemRegistry(new ItemEntry[]{
++            new ItemEntry(kind.equals("book") ? "minecraft:written_book" : "minecraft:probe", 30001, kind.equals("component"),
++                    kind.equals("book") ? ItemVersion.None : kind.equals("component") ? ItemVersion.DataDriven : ItemVersion.Legacy, component),
++            new ItemEntry("minecraft:probe_input", 30002, false, ItemVersion.Legacy, null)
++        });
++    }
++
++    static Context context(final ItemRegistry registry, final Map<String, String> translations) throws Exception {
++        final var user = mock(UserConnection.class);
++        final var items = mock(ItemRewriter.class, CALLS_REAL_METHODS);
++        doReturn(user).when(items).user();
++        configure(items, user, registry, translations);
++        return new Context(user, items);
++    }
++
++    static void configure(final ItemRewriter items, final UserConnection user, final ItemRegistry registry,
++                          final Map<String, String> translations) throws Exception {
++        final var field = ItemRewriter.class.getDeclaredField("registry");
++        field.setAccessible(true);
++        field.set(items, registry);
++        final var content = mock(Content.class);
++        when(content.contains("texts/en_US.lang")).thenReturn(true);
++        when(content.getLang("texts/en_US.lang")).thenReturn(translations);
++        final var pack = mock(ResourcePack.class);
++        when(pack.content()).thenReturn(content);
++        final var resources = mock(ResourcePackStorage.class);
++        when(resources.getPackStackBottomToTop()).thenReturn(List.of(pack));
++        final var texts = new TextDefinitions(resources);
++        when(resources.getTexts()).thenReturn(texts);
++        when(user.get(ResourcePackStorage.class)).thenReturn(resources);
++        when(user.get(ItemRewriter.class)).thenReturn(items);
++        final var blocks = mock(BlockStateRewriter.class);
++        when(user.get(BlockStateRewriter.class)).thenReturn(blocks);
++        final var session = mock(GameSessionStorage.class);
++        when(session.getBedrockBaseGameVersion()).thenReturn(BaseGameVersion.INVALID);
++        when(user.get(GameSessionStorage.class)).thenReturn(session);
++    }
++
++    static BedrockItem item(final JsonObject row) {
++        final var item = new BedrockItem(30001);
++        item.setTag(row.get("root").isJsonNull() ? null : compound(row.getAsJsonObject("root")));
++        if (row.get("retainedZero").getAsBoolean()) {
++            item.setAmount(0);
++        }
++        return item;
++    }
++
++    static Map<String, String> translations(final JsonObject fixture) {
++        final var translations = new HashMap<String, String>();
++        fixture.getAsJsonObject("translations").entrySet().forEach(entry -> translations.put(
++                NbtUtf8.decode(HexFormat.of().parseHex(entry.getKey())), NbtUtf8.decode(HexFormat.of().parseHex(entry.getValue().getAsString()))));
++        return translations;
++    }
++
++    private static CompoundTag compound(final JsonObject value) {
++        final var data = new CompoundTag();
++        for (final var entry : value.entrySet()) {
++            final var field = entry.getValue().getAsJsonArray();
++            final JsonElement raw = field.get(1);
++            data.put(entry.getKey(), switch (field.get(0).getAsInt()) {
++                case 1 -> new ByteTag((byte) raw.getAsInt());
++                case 3 -> new IntTag(raw.getAsInt());
++                case 8 -> new StringTag(NbtUtf8.decode(HexFormat.of().parseHex(raw.getAsString())));
++                case 10 -> compound(raw.getAsJsonObject());
++                default -> throw new IllegalArgumentException("Unsupported primary-name fixture tag");
++            });
++        }
++        return data;
++    }
++
++    record Context(UserConnection user, ItemRewriter items) { }
 +
 +}
 -- 

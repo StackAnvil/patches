@@ -18,6 +18,7 @@ import net.raphimc.viabedrock.netty.*;
 import net.raphimc.viabedrock.netty.raknet.*;
 import net.raphimc.viabedrock.netty.nethernet.BedrockHttpSignaling;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+import net.raphimc.viabedrock.protocol.storage.AuthData;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketCompressionAlgorithm;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
@@ -32,14 +33,22 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.security.*;
-import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Raw native-client relay. Gameplay never enters ViaBedrock's translation protocol. */
 public final class NativeCaptureProxy {
-    record Identity(KeyPair keys, String token, boolean online) { }
+    record Identity(KeyPair keys, String token, boolean online) {
+        static Identity selfSigned() {
+            AuthData auth = AuthData.createSelfSigned("NativeCapture");
+            return new Identity(auth.getSessionKeyPair(), auth.getMultiplayerToken(), false);
+        }
+
+        OperatorIdentity signaling() {
+            return OperatorIdentity.fromToken(keys, token, "https://authorization.franchise.minecraft-services.net/");
+        }
+    }
     private record LoginIdentity(Identity identity, PublicKey clientKey) { }
     private final Path directory;
     private final InetSocketAddress target;
@@ -151,18 +160,10 @@ public final class NativeCaptureProxy {
     }
 
     private Identity identity() throws Exception {
-        KeyPair keys = CryptUtil.generateEcdsa384KeyPair();
         if (account.equals("offline")) {
-            String publicKey = Base64.getEncoder().encodeToString(keys.getPublic().getEncoded());
-            String token = Jwts.builder().header().add("x5u", publicKey).and()
-                    .claim("aud", "api://auth-minecraft-services/multiplayer").claim("iss", "self")
-                    .claim("xname", "NativeCapture").claim("xid", "0")
-                    .claim("leguuid", UUID.nameUUIDFromBytes("pocket-auth-1-xuid:0".getBytes(StandardCharsets.UTF_8)))
-                    .claim("mid", "0").claim("nid", "").claim("nname", "").claim("pid", "").claim("pname", "")
-                    .claim("cpk", publicKey).issuedAt(Date.from(Instant.now())).expiration(Date.from(Instant.now().plusSeconds(600)))
-                    .signWith(keys.getPrivate(), Jwts.SIG.ES384).compact();
-            return new Identity(keys, token, false);
+            return Identity.selfSigned();
         }
+        KeyPair keys = CryptUtil.generateEcdsa384KeyPair();
         JsonObject saved = JsonParser.parseString(Files.readString(Path.of(account))).getAsJsonObject();
         BedrockAuthManager previous = BedrockAuthManager.fromJson(MinecraftAuth.createHttpClient(), ProtocolConstants.BEDROCK_VERSION_NAME, saved);
         BedrockAuthManager fresh = BedrockAuthManager.create(MinecraftAuth.createHttpClient(), ProtocolConstants.BEDROCK_VERSION_NAME)
@@ -242,12 +243,10 @@ public final class NativeCaptureProxy {
         private void connect(Identity identity, String clientJwt) {
             Bootstrap bootstrap = new Bootstrap().group(loops);
             if (netherNet) {
-                OperatorIdentity operator = identity.online() ? OperatorIdentity.fromToken(identity.keys(), identity.token(),
-                        "https://authorization.franchise.minecraft-services.net/") : null;
                 bootstrap.channelFactory(NetherNetChannelFactory.client(new BedrockHttpSignaling()))
                         .option(NetherChannelOption.NETHER_CLIENT_HANDSHAKE_TIMEOUT_MS, 10000)
                         .option(NetherChannelOption.NETHER_CLIENT_MAX_HANDSHAKE_ATTEMPTS, 1)
-                        .option(NetherChannelOption.NETHER_CLIENT_IDENTITY, operator);
+                        .option(NetherChannelOption.NETHER_CLIENT_IDENTITY, identity.signaling());
             } else {
                 bootstrap.channelFactory(RakChannelFactory.client(NioDatagramChannel.class))
                         .option(RakChannelOption.RAK_PROTOCOL_VERSION, ProtocolConstants.BEDROCK_RAKNET_PROTOCOL_VERSION)

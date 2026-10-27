@@ -30,3 +30,20 @@ Build outputs match the relevant packaged classes after standard build-token rep
 The ordinary BDS 1.26.51.1 route passes all three cooking families and same-world reconnect.
 All final cooking counts match. The active integration copies use the current add-on, and normal cleanup stops the private display.
 This route does not establish native authored-screen acceptance or pixels.
+
+The primary-name integration test compares the selected-definition producer through current text resources with 1,182 original native cases.
+Ordinary, component and written-book methods cover custom-name types, append data, malformed UTF-8 and defined zero-count stacks.
+A simplified formatter in the first control disagreed on missing arguments. The control now composes the original native language formatter.
+The Java producer passes with the existing language implementation.
+A second test verifies retained definitions and lazy source acquisition.
+Native receiver fields and locale lookup remain supplied. Full locale and registry lifetime are not established.
+
+## Integer description formats
+
+Shulker remainder text uses raw language lookup followed by a length-aware integer printf operation.
+It preserves NUL and invalid UTF-8 bytes and handles integer signs, radix, width, precision, padding, positional arguments and native integer length modifiers.
+It does not use language-token substitution for printf text.
+Native precision zero retains a zero digit, and unsigned conversions honor sign flags.
+The Java formatter matches 810 original integer-format controls and the 18 remainder-format overrides in the shulker matrix.
+The native formatter's Microsoft-specific `I32` diagnostic reaches an unresolved native/CRT path; it does not provide a verified result.
+That extension is outside the implemented format grammar.

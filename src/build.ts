@@ -1,7 +1,7 @@
 import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { Effect } from "effect";
 import { buildOrder } from "./dependencies.ts";
@@ -15,6 +15,8 @@ import {
   verifyEmbeddedBuiltinAssets,
   builtinAssetsResource,
 } from "./bedrock-assets.ts";
+
+import { prepareBuiltinImages, verifyEmbeddedBuiltinImages } from "./bedrock-images.ts";
 
 interface Coordinates {
   group: string;
@@ -36,7 +38,12 @@ export async function builtinAssetArguments(id: string, repository = root): Prom
     const bundle = join(directory, "assets", "viabedrock", "builtin_ui.zip");
     if (!existsSync(bundle)) throw new Error(`Bundled Bedrock UI is missing for ${version}`);
     const path = await verifyBuiltinUi(bundle, version);
-    return [`-PbedrockBuiltinUi=${path}`];
+    const images = await prepareBuiltinImages(
+      join(directory, builtinAssetsResource),
+      version,
+      join(repository, ".stackanvil", "builtin-images", version, "builtin_images.zip"),
+    );
+    return [`-PbedrockBuiltinUi=${path}`, `-PbedrockBuiltinImages=${images}`];
   }
   await verifyBuiltinAssets(join(directory, builtinAssetsResource), version);
   return [`-PbedrockBuiltinAssets=${directory}`];
@@ -87,7 +94,7 @@ async function publishLocal(artifact: string, pom: string, coordinate: Coordinat
   );
   await mkdir(directory, { recursive: true });
   const stem = `${coordinate.artifact}-${coordinate.version}`;
-  await copyFile(artifact, join(directory, `${stem}.jar`));
+  await copyFile(artifact, join(directory, `${stem}.jar`), constants.COPYFILE_FICLONE);
   await writeFile(join(directory, `${stem}.pom`), pom);
 }
 
@@ -137,6 +144,13 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
         version,
       ),
     );
+    yield* Effect.promise(() =>
+      verifyEmbeddedBuiltinImages(
+        artifact,
+        id,
+        join(root, ".stackanvil", "builtin-images", version, "builtin_images.zip"),
+      ),
+    );
     if (id === "viafabricplus-bedrock") {
       yield* Effect.promise(() =>
         verifyEmbeddedBuiltinAssets(
@@ -170,7 +184,7 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
   const output = join(root, "dist", id);
   yield* Effect.promise(() => rm(output, { recursive: true, force: true }));
   yield* Effect.promise(() => mkdir(output, { recursive: true }));
-  yield* Effect.promise(() => copyFile(artifact, join(output, name)));
+  yield* Effect.promise(() => copyFile(artifact, join(output, name), constants.COPYFILE_FICLONE));
   yield* Effect.promise(() => writeFile(join(output, "pom.xml"), pom));
   yield* Effect.promise(() => publishLocal(artifact, pom, coordinate));
   const bytes = yield* Effect.promise(() => Bun.file(artifact).arrayBuffer());
@@ -239,7 +253,9 @@ export const buildPr = Effect.fn("buildPr")(function* (id: string, patchFile?: s
   yield* Effect.promise(() => rm(output, { recursive: true, force: true }));
   yield* Effect.promise(() => mkdir(output, { recursive: true }));
   for (const artifact of artifacts)
-    yield* Effect.promise(() => copyFile(artifact, join(output, basename(artifact))));
+    yield* Effect.promise(() =>
+      copyFile(artifact, join(output, basename(artifact)), constants.COPYFILE_FICLONE),
+    );
   const commit = yield* command("git", ["rev-parse", "HEAD"], dir);
   yield* Effect.promise(() =>
     writeFile(

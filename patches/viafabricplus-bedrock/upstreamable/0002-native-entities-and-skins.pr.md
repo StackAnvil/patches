@@ -1,4 +1,70 @@
+## Sampled masked materials, October 26, 2026
+
+Support the target's nonemissive alpha-test `MASKED_MULTITEXTURE` family with two GPU images in one geometry draw. Preserve independent image dimensions and normalized UV sampling. Keep the mask separate from Minecraft's overlay sampler. Missing bindings retain the legacy custom-actor fallback, including older version-one snapshots.
+
+Preserve authored per-face texture rotation in actor and skin models.
+The [target-compatible geometry reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/geometry.v1.26.40?view=minecraft-bedrock-stable)
+specifies clockwise quarter turns before applying each UV rectangle.
+CubeConverter preserves these angles in the shared geometry model.
+The renderer rotates UV corners before cube mirroring and preserves vertices, normals and absent faces.
+Java head icons receive the same rotation when projecting a custom skin atlas.
+Ordinary faces avoid the extra corner rotation.
+
+Two regressions fail against the previous consumers and pass with the change.
+They cover all six faces, all four angles, mirrored cubes, signed UV rectangles and exact projected head pixels.
+Existing head atlas tests also pass.
+These are coordinate and image checks, without a new matched native graphical session.
+
+The production shader passes all 512 original sampled masked fragment controls and the existing 672 ordinary controls at tolerance 1e-6. These compare color, discard, and depth with supplied sampling and buffer boundaries. A deliberate floor substitution fails; restoring native upward rounding passes. Native material selection, other constant/shared-input variants, sampler filtering, and graphical parity remain outside these controls.
+
+The Iris bridge composes normalized primary-image reads before pack shading and tests native coverage at the original UV. It forwards sampler identity through helper parameters, prototypes, and overloads, while preserving unrelated images. A separate reserved texture unit retains overlay and lightmap bindings. A configuration plugin gates Iris hooks by the installed mod while keeping strict injection checks for that integration. GPU regressions cover ordinary, LOD, and gradient reads, mask overwrite/keep/discard, and reuse of shared native/Java programs. Geometry/tessellation transport and other sampling operations remain incomplete or unverified.
+
+The full replayed four-project build passes 3,080 tests with 152 optional skips and no failures or errors. Packaged classes, shader assets, and embedded dependencies match the compiled inputs.
+
+Fresh direct and Iris-enabled ViaProxy sessions change only the secondary image. Both show blue overwrite, red base retention, restoration and removal with one model and a stable native actor lifetime. The 16 × 16 primary and 13 × 9 / 7 × 11 secondary images keep independent dimensions. Native component events, received bindings, refreshed draw caches and eight reviewed screenshots support the checks. Runtime artifact hashes match the final build. These authored controls do not establish native graphical parity or fresh player-costume visual coverage.
+
+The owning equipment, costume, hand, world, and portrait patches consume the ordered bindings. The bundled villager profession now resolves its masked pair. These changes do not establish complete pack, skin, or emote parity. Raw native assets, shader IR, controls, and screenshots remain private.
+
 Install supplied player skin geometry even when its identifier uses the standard humanoid alias. Queue skin updates for their exact source connection while Java is still configuring, then install them in arrival order when the play listener becomes available. Disconnected sources cannot leak updates into another connection.
+
+## Explicit default depth declarations, October 26, 2026
+
+The target villager material declares `depthFunc: LessEqual`.
+Material validation previously rejected this field even though the actor pipeline already implements that comparison.
+The Java projection uses reversed depth, and the existing actor pipelines select `GREATER_THAN_OR_EQUAL` with depth writes enabled.
+[Microsoft documents the depth comparison operators](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ne-d3d12-d3d12_comparison_func).
+
+The resolver now retains the inherited depth function and validates its effective value.
+An explicit or inherited `LessEqual` selects the existing material pipeline.
+Other comparisons retain fallback, and a child can restore the supported comparison without losing inherited shader settings.
+String fields reject numeric, boolean, null, object, and array coercion.
+This change does not add a new depth mode or change shader arithmetic.
+
+The bundled target `entity.material` has SHA-256 `a3966c3ad0e0f2f134bbc1b2145df652fe96030b890a9725e10ef671a482f7b4`.
+It contains explicit `LessEqual` declarations for villager, zombie villager, and iron golem families.
+This hash identifies the bundled normalized source; raw licensed assets remain private.
+
+All 27 focused material, pipeline, and world graph tests pass without skips.
+The bundled villager regression samples adult and baby geometry across all seven biomes with supplied stationary movement.
+It resolves four surfaces and their native script scales, then checks masked profession fallback and supported-state recovery.
+The full four-project build passes 3,067 tests, skips 152 optional tests, and reports no failures.
+
+
+Fresh direct and ViaProxy sessions load the bundled villager client graph on BDS 1.26.51.1.
+An additional ViaProxy session verifies the same transitions with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Authored server component events change biome, age, and profession metadata; they do not replace the client graph.
+Native packet journals confirm each typed biome, age, and profession transition.
+Read-only observations verify four resolved surfaces, biome textures, adult/baby geometry, and native script scales.
+Masked professions select Java fallback, and resetting the profession recovers the same actor playback and lifetime.
+Removal retires the native snapshot on all three runs.
+All 21 final screenshots receive visual review, and runtime artifacts match the build.
+
+The white bar in these early shader captures is the configured RRLS reload indicator.
+[Lifecycle controls](../../../docs/bedrock-coverage.md#shader-profile-reload-indicator-october-26-2026) show that it clears automatically after loading completes.
+Complete Iris and native visual parity remain unverified.
+
+Masked multitexture professions and other depth comparisons remain unsupported.
+These checks do not establish full native appearance, aging, collision, or interaction parity.
 
 Native actor rendering reports active missing geometry and textures. Inactive server variants do not produce rendering failures. Visibility uses the distance between the actor and the camera. Minecraft 26.3 supplies absolute camera coordinates, so the previous check hid nearby custom actors in lobbies far from the world origin.
 
@@ -404,3 +470,323 @@ These results do not establish complete native image parity.
 Geometry and tessellation programs retain the earlier reference bridge until their UV transport is implemented and verified.
 Emissive material integration and arbitrary shader-pack output behavior remain separate work.
 Raw recordings, shader diagnostics, observer code, and pixel-control logs remain private.
+
+
+## Opaque actor materials
+
+Native actor materials now retain their opaque or alpha-tested coverage through every supported appearance consumer.
+The same material value reaches custom actors, skins, persona layers, server costumes, equipped items, and native portraits.
+Opaque world draws write color and depth even when a source texel has zero alpha.
+Ordinary cutouts keep their strict alpha cutoff, while emissive cutouts discard only empty RGBA texels.
+Iris receives a solid lit pass for opaque emissive materials and a cutout lit pass for alpha-tested emissive materials.
+Unknown shader effects and unsupported material states keep the existing fallback.
+
+The pinned Bedrock 1.26.51.1 container contains `BaseColor`, `AlphaTest`, `Emissive`, and `AlphaTestEmissive` passes.
+Its SHA-256 is `403efcc7777c9712176f6715f861c873e31d8e45d0b73b8e320bd29754789058`.
+Unmodified Lazurite 0.10 reads the complete version-26 container through its closing magic and end of file.
+All four sampled vertex shaders are byte-identical.
+The opaque fragments retain the same lighting, overlay, inverse-alpha emission, and fog arithmetic without either discard operation.
+
+A private control executes the original fragment IR with supplied texture, interpolation, constant-buffer, and output boundaries.
+The actual production fragment shader matches all 672 controls through Mesa EGL at tolerance `1e-6`.
+The comparison includes RGBA output, discard behavior, and retained depth for zero-alpha opaque texels.
+It does not establish native vertex production, pass selection, GPU state, or complete rasterization parity.
+
+The full build passes 3,056 tests with 152 optional skips and no failures or errors.
+All 19 focused material, pipeline, bundled-definition, and GPU tests pass without skips.
+The distributable add-on matches all 1,207 compiled client classes.
+Both consumers retain matching core and converter classes and assets.
+
+Fresh BDS 1.26.51.1 controls exercise six material selections on both routes, with and without Iris.
+Both views retain the selected native graphs, textures, coverage flags, depth writes, and derived Iris passes.
+Real server removal retires the six observed UUID snapshots in each session.
+All eight final screenshots receive visual review and show the expected material surfaces and cutout holes.
+The plain and shader scenes use different actor carriers to isolate material behavior from entity-specific pack effects.
+Installed add-on and proxy hashes match the final build.
+These checks do not establish complete renderer-cache cleanup or native graphical parity.
+
+Complete Iris emissive overlay order and framebuffer alpha remain unverified.
+An initial chicken-carrier control appeared black on both routes with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Generated shader output retains a chicken depth offset in the body program and omits it from the eye program.
+The paired-stage change below addresses this captured case.
+Other shader-pack transforms and complete emission parity remain separate requirements.
+Native graphical comparison remains unavailable because the installed native launcher cannot decode its licensing response.
+The original inventory, locator, intermittent item-use, emote, skin, interaction, and other gameplay requirements remain open.
+
+
+### Shared geometry stages for Iris emission
+
+Native emission now uses the complete geometry-producing stages of its depth-writing body.
+The selected Iris body supplies vertex, geometry, tessellation-control, and tessellation-evaluation sources and attribute decisions.
+The selected emission program supplies the fragment source and framebuffer directives.
+Both selections remain part of the cache key, including Iris context variants.
+Body lightmap and overlay bindings remain available to the paired program.
+
+Previously, the two passes selected separate entity and eye vertex programs.
+Complementary Reimagined r5.9.3 offsets chicken clip depth only in its entity program.
+The lit surface therefore covered its own additive emission.
+Generated Iris 1.11.7 programs retain that difference.
+With paired geometry stages, the same native chicken control emits in both captured views.
+Prototype exports are byte-identical. Final exports can differ in formatting and unused helper functions.
+GPU controls compare their resulting clip positions with explicit supplied inputs.
+
+Compilation context restores the previous pipeline after nested lookups and exceptions.
+Each Iris world pipeline owns its paired program cache and registers those programs with its normal shader lifetime.
+Missing program sources retain the existing eye path.
+Incompatible stage interfaces produce one diagnostic per selection and retain that path.
+No shader-pack name, entity identifier, fixed depth offset, or forced depth comparison selects this behavior.
+
+The twelve native body/emission mappings and nested compilation recovery have targeted tests.
+Ordinary program lookups, GUI portraits, and shadow selection keep their existing paths.
+Complete hand behavior, stage interfaces in other packs, emissive overlay order, and framebuffer alpha remain unverified.
+Native graphical comparison still depends on the unavailable launcher licensing response.
+
+
+**Verification:** Current reports cover 3,210 tests, with 3,058 passes, 152 optional skips, and no failures or errors.
+All 21 focused material, pipeline, bundled-definition, and fragment GPU tests pass without skips.
+The full prototype build passes for all four projects. The final cache refinement also passes a direct prepared-source Gradle build.
+All 1,212 compiled client classes match the distributable add-on.
+Core and converter classes and assets match both embedded consumers.
+All 38 add-on patches replay, with all 988 source and resource file hashes unchanged after the final export cleanup.
+
+Fresh direct and ViaProxy BDS sessions render the original chicken material correctly in both views and after a real Iris reload.
+Actual Iris overrides retain the paired GL program objects and their exact native body-pipeline associations.
+Each reload deletes two owned GL programs before the new world pipeline rebuilds its cache.
+Server removal retires the six observed actor UUID snapshots on each route.
+A separate ViaProxy session without the Iris mod preserves all six material controls and retires their snapshots.
+All eight final screenshots receive visual review, and installed artifacts match the final build.
+
+Mesa transform feedback executes 108 controls from actual generated shaders and links the paired vertex and fragment stages.
+Twelve baseline controls include six expected chicken depth mismatches of `0.000075` in clip Z.
+The other 96 controls match body and emission clip positions at tolerance `1e-7` across both routes and reload phases.
+Inputs supply matrices, vertex attributes, entity identifiers, color alpha, and the overlay texture.
+These controls establish the tested geometry correction, not complete native rasterization or arbitrary shader-pack parity.
+
+
+## Complete custom-actor sampler snapshots, October 26, 2026
+
+The client accepts ordered texture bindings on the negotiated version-two custom-actor channel.
+Its existing receiver still accepts version-one snapshots from older core versions.
+Connection ownership and disconnect cleanup continue to use the shared render store.
+Secondary-only texture changes replace the received snapshot and its next rendered cache entry.
+Ordinary materials use slot zero in one geometry draw.
+
+The [shared runtime notes](0008-share-native-actor-and-resource-runtime.pr.md#complete-controller-sampler-transport-october-26-2026) record codec tests, both live routes, build identity, and remaining limits.
+Masked material blending remains a separate renderer integration.
+
+
+## Opaque input for shader-pack hand branches, October 26, 2026
+
+Native opaque materials now supply coverage alpha one to primary texture reads before shader-pack shading.
+The per-bind uniform resets for cutout and ordinary Java draws, including shared programs.
+The transform follows supported sampler helpers while unrelated images retain their original alpha.
+Raw primary sampling and composed material alpha remain available for native coverage tests.
+Emission preprocessing retains its original source-alpha weighting.
+
+The initial Complementary Reimagined r5.9.3 capture shows an invisible first-person item with correct models and bindings.
+Its hand program checks sampled alpha independently of the engine alpha test.
+This fix uses the native opaque material, without shader-pack names or program-specific source replacement.
+A real-driver regression reproduces the previous failure through a forwarded sampler and an authored alpha branch.
+Both transformed and fallback programs pass after the fix, across opaque, cutout, and Java binds.
+
+Fresh installed results and build totals appear in the [coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026).
+Other shader-pack branches, native graphical parity, and inventory avatars remain separate verification work.
+
+## Actor material depth state, October 26, 2026
+
+Actor materials now retain inherited depth comparison, test, and write controls.
+The previous reader rejected every comparison except `LessEqual` and rejected both depth-control states.
+That rejection could retire the complete native actor presentation and restore a vanilla model.
+
+Ordered comparisons reverse for Java's reversed depth buffer.
+Equality, inequality, and always-pass comparisons retain their meaning.
+An always-passing test can write depth; disabled testing cannot.
+Removing an inherited disable state restores the declared comparison and write behavior.
+Material identity retains these values across bone grouping, caches, world draws, and GUI consumers.
+Uncommon fixed-state variants compile on demand; the ordinary preload set stays small.
+
+The Iris emission pass now inherits the body's comparison and keeps depth writes disabled.
+A depth-writing body with a strict comparison cannot repeat that predicate after changing the buffer.
+That pairing remains unsupported until emission can retain the original depth outcome.
+Read-only strict emission and repeatable comparisons retain a valid paired state.
+This limit remains part of the full rendering integration work.
+
+The pinned 1.26.51.1 resource library contains 95 depth-related material declarations.
+Entity materials declare `Equal` and `LessEqual`; other renderer materials declare `Always` and depth-disable controls.
+Their source hashes and inheritance remain recorded privately.
+These are versioned declarations, not executed native backend state creation.
+The [creator material reference](https://learn.microsoft.com/en-us/minecraft/creator/documents/material-files?view=minecraft-bedrock-stable) describes renderer states and material inheritance.
+
+A surfaceless GPU control uses the production fragment shader and selected pipeline through Java's actual OpenGL comparison mapper.
+Its 168 cases cover near, equal, and far fragments, discarded and covered texels, and independent test/write settings.
+Existing native fragment comparisons and GUI coverage controls still pass.
+Wrong reversed comparison, ignored write state, ignored test state, and a default emission comparison each fail assertions.
+The restored focused suites pass without errors.
+
+Fresh plain and Iris/EntityCulling live controls pass with the final packaged artifact.
+The world actor owner adds the selective occlusion integration that these predicates require.
+The [coverage record](../../../docs/bedrock-coverage.md#actor-material-depth-and-occlusion-october-26-2026) records the causal isolation, final build totals, and remaining limits.
+
+## Native player layer lifetime, October 26, 2026
+
+Native appearances now reuse ordinary avatar layer roots within one renderer resource generation.
+Their native body models, poses, and persona surfaces remain separate.
+The original Minecraft model set keeps its ordinary behavior.
+Resource reload creates a fresh native context and both layer caches.
+
+The full modpack exposed repeated armor, cape, ear, and effect baking through native player construction.
+A production JFR capture includes `AvatarRenderer` and `ArmorModelSet.bake` in those constructor stacks.
+These samples establish the allocation path, without an exact allocation rate.
+EMF 3.3.8 counts those root transformations and eventually declines its custom model substitution.
+Its shoulder-parrot hook also creates a separate root outside Minecraft's model set.
+The first cache prototype retained 18 ordinary roots, but its shoulder counter still increased.
+
+The optional EMF integration now retains those transformed roots during native renderer construction.
+A separate map avoids recursive cache updates from hooks inside `bakeLayer`.
+The [Java 25 scoped-value API](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/ScopedValue.html)
+restores nested bindings and exception paths automatically.
+Calls outside native construction retain EMF's normal behavior.
+EMF remains optional and is not bundled.
+
+Four lifecycle tests cover 128 avatar constructors, both arm widths, ordinary baking, replacement generations, nested construction, and exception restoration.
+Removing ordinary root reuse fails the original two tests.
+Removing external root reuse fails the two new scoped-cache tests.
+Both restored suites pass.
+
+The complete build passes 2,961 tests and skips 315 optional tests, with no failures or errors.
+Both core Checkstyle tasks pass.
+Packaged client classes, embedded dependencies, shader resources, and all four source snapshots match the tested outputs.
+The tested development add-on has SHA-256 `37b5823147da4232fc62219524af5e8b37593155930ddba1cd17eabb9a6f1f8c`.
+
+A direct WildMC control uses Minecraft 26.3, EMF 3.3.8, EntityCulling, Iris 1.11.7, and Complementary Reimagined r5.9.3.
+The previous control records 14 model-limit diagnostics; the corrected full-modpack run records none.
+All 19 EMF counters remain one per generation, including the separate shoulder root.
+The retained native renderer count increases from 26 to 30 before reload, then from 44 to 54 afterward.
+Every observed appearance retains a distinct body root.
+All 18 ordinary roots and 19 transformed roots change on reload and remain stable during the following observation window.
+
+The read-only probe initially used an obsolete screen API.
+A corrected probe continued in the same client process, without a restart.
+All six final screenshots received visual review.
+Nearby actors obscure the front-facing local player, so these images do not establish skin composition or native graphical parity.
+This change fixes layer lifetime and EMF admission, without a claim about all skin allocation costs or arbitrary EMF versions.
+Packs, interactions, skins, emotes, and the original five-area goal remain unfinished.
+
+The same artifact also passes startup and resource replacement in the plain client without EMF or Iris.
+That absence control retains 18 ordinary roots and distinct native bodies as its renderer count increases from 23 to 34.
+Its actual window is 854 by 480; the full modpack control uses 1920 by 1013.
+The plain control uses model readiness because its profile lacks the modpack's reload-log marker.
+All six plain screenshots received visual review, including the reload overlay and the final unobscured world.
+Both final clients close normally, retire their owned processes, and restore the prepared profiles.
+
+
+## Native glint shader reference, October 27, 2026
+
+The pinned Bedrock 1.26.51.1 `Entity.material.bin` provides sampled `Glint` and `AlphaTestGlint` programs.
+Its SHA-256 is `403efcc7777c9712176f6715f861c873e31d8e45d0b73b8e320bd29754789058`.
+The original SM65 vertex and fragment programs pass 1,128 controlled cases after host retargeting.
+These cases supply inputs and uniforms rather than running native engine uniform production.
+
+The vertex program creates two UV pairs by rotating the original UV around the normalized texture center `(0.5, 0.5)`.
+Each pair uses its own rotation and horizontal offset, followed by the supplied UV scale.
+The fragment program samples the primary texture once and the secondary glint texture twice.
+Both secondary samples use fractional UV coordinates.
+It tints their sum with glint color and tile-light color, squares each RGB channel, and adds the result after fog.
+The alpha result uses an absolute value and can exceed one.
+This differs from a clamped alpha result.
+The cutout family retains the strict primary-alpha threshold before glint composition.
+
+The [DXIL opcode reference](https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst)
+identifies absolute value, fractional coordinates, trigonometry, and multiply-add operations.
+The controls retain the original shader arithmetic and control flow.
+Their supplied boundaries cover texture results, shader inputs, uniforms, output, and discard.
+They do not execute filtering, rasterization, material selection, engine timing, or native graphical comparison.
+
+The shader reference establishes 648 vertex controls and 480 fragment controls for the Java implementation.
+Native frame timing, glint strength, texture-scale production, sampler binding, Iris integration, and animated equipped drawing remain unfinished.
+The binary's uniform defaults do not establish the values of an animated native draw.
+The oversized enchanted shield remains unfixed.
+Private reference programs, source buffers, and controls remain under `.stackanvil/research/native-glint/`.
+
+## Explicit glint renderer and native clock sampler, October 27, 2026
+
+The shared renderer now accepts explicit immutable glint state and binds a repeated secondary sampler.
+A prepared draw retains its own uniform slice, with storage reset and closure tied to host GPU data.
+The production shaders preserve the base UV, rotate two secondary pairs, add glint after fog, and retain absolute unclamped alpha.
+All 648 vertex and 480 fragment controls match through OpenGL transform feedback and floating-point color/depth reads.
+
+The native clock wrapper and uniform writer at `0x141eb77e0` and `0x141eb7a90` execute completely in another 1,560 controls.
+The Java sampler matches their uploaded values exactly, including signed modulo, both truncating conversions, speed, scale, and strength tint.
+The boundaries supply frame time, valid context ownership, scale, other input colors, and option-tree virtual lookups.
+They do not supply the glint calculation or uniform writes.
+
+The 38-patch stack replays, and the shader implementation passes the add-on suite with 1,108 passed and 140 optional skipped.
+After the clock sampler is added, the final focused run passes nine tests, including both native comparisons.
+The owning prefix still depends on earlier lightmap-metadata and player-renderer changes and does not compile alone.
+The [coverage record](../../../docs/bedrock-coverage.md#native-glint-implementation-and-clock-controls-october-27-2026) records the complete scope and limits.
+
+Existing pack admission and enchanted-equipment fallback remain unchanged.
+Frame-time production, native settings and scale selection, tile lighting, Iris integration, and live rendering remain unfinished.
+The later supplied-input plain-client check below validates these lifecycle hooks, with production admission still unchanged.
+
+## Live supplied-input draw lifecycle, October 27, 2026
+
+The complete add-on build passes with 1,108 tests passed, 141 optional skipped, and no failures.
+The candidate runs in a plain Java 26.3 client at 854 by 480 without Iris.
+A private fixture supplies two states and a stand-in secondary image to the production draw API.
+Its 1,953 draws include both states and interleaving, with no prepared-slice mismatches.
+The storage follows 3,633 frame resets, and all six tracked buffers close on normal client shutdown.
+Five screenshots received visual review, and all 13 recorded identities retire with the profile and artifact restored.
+
+Initial harness controls fail; the corrected control passes after resuming the same second client.
+This does not establish a passing original control wrapper or native graphical equality.
+The [coverage record](../../../docs/bedrock-coverage.md#native-glint-draw-lifecycle-in-a-plain-client-october-27-2026) records the artifact, build correction, fixture boundaries, and remaining limits.
+Production frame-time, settings, scale, tile-light inputs, Iris, and enchanted equipment remain unfinished.
+
+## Captured frames and vertex-owned glint lighting, October 27, 2026
+
+Capture one immutable host clock/options snapshot before world and GUI extraction.
+Feed native clock arithmetic from that snapshot, independently of actor age or world time.
+This maps Java speed/strength settings deliberately; it does not establish native clock epoch, pause behavior, or setting defaults.
+
+The frame-glint pipeline reuses each vertex's exact GPU lightmap sample and floating color multiplier.
+Face shading and raw vertex tint do not affect this glint light.
+A CPU interpolation prototype failed fractional RGBA8 filtering controls and was removed.
+Explicit tile-light uniforms and independent fullbright GUI conversion remain available.
+
+The focused final run passes 12 tests, including both lighting paths against the 480 native fragment controls.
+It retains the 648 native vertex and 1,560 clock comparisons and adds 192 vertex-light controls.
+The normal build passes 1,110 tests, skips 142 optional tests, and reports no failures.
+A plain client exercises 1,581 prepared draws across frame-light, explicit-light, and interleaved phases without state mismatches.
+All six tracked buffers close during normal shutdown; the original profile is restored and all recorded process identities retire.
+The fixture supplies the secondary image and selects compatible actor draws; production equipment admission and Iris remain open.
+The [coverage record](../../../docs/bedrock-coverage.md#captured-glint-frames-and-gpu-tile-lighting-october-27-2026) records the candidate identity and verification boundaries.
+
+## Iris glint program variants and uniform ownership, October 27, 2026
+
+Native glint now feeds Iris's combined-glint API through separately cached programs.
+The pack retains its stages, directives, fog, alpha, and output targets.
+A source specialization keeps the transform cache independent of ordinary Java glint programs.
+The secondary image uses unit four; a separate native lightmap alias uses unit two.
+Native buffer descriptors and shader blocks share a free binding after Iris's reserved slots.
+The allocator preserves pack-owned blocks, including slot seven in the GPU control.
+
+All 17 focused tests pass, including 648 Iris UV comparisons, 1,008 native RGB comparisons, and 672 ordinary Java comparisons.
+The normal build passes 1,110 tests with 144 optional skips and no failures.
+Removing the native block assignment fails numerical UV and color checks.
+The corrected client binds the submitted 64-byte range and survives physical shader toggles with separate replacement programs.
+All eight tracked buffers close; the original profile and Iris configuration are restored.
+The [coverage record](../../../docs/bedrock-coverage.md#iris-glint-programs-and-native-buffer-bindings-october-27-2026) records the final artifact, lifecycle observations, and limits.
+
+This is a shared draw-API check with supplied actor selection and a reused image.
+It does not validate native GUI glint, geometry or tessellation interpolation, other shader packs, or actual enchanted-equipment admission.
+
+
+## Equipped GLINT material admission, October 27, 2026
+
+Material classification now retains a GLINT flag and two required sampler slots.
+Held-item callers provide the verified item scale and immutable extraction frame.
+Ordinary actor and GUI lookup still rejects glint without those inputs.
+The same cached definition supports both lookup domains without a rejected lookup hiding the held material.
+World held draws retain the Iris program and native buffer ownership verified in the preceding shader work.
+The [equipped check](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) records the tested artifact, actual enchanted shield, and remaining limits.

@@ -942,3 +942,175 @@ All 1,532 core classes and 198 assets match both embedded copies. All 1,192 comp
 Compared with the preceding core, 1,513 classes and all 198 assets remain byte-identical.
 Eleven further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
 The only added class is the typed crafting context. The native UI patch changes only exported hunk context.
+
+## Recipe source acquisition
+
+Capture inventory sources separately for each eligible recipe candidate.
+Skip source capture for an invalid output, an empty candidate list or a table-only candidate outside a workbench.
+Stop capture after the first complete recipe. Keep current-owner validation when a candidate needs ingredient counting.
+
+Twenty-eight original evaluator controls record 91 source-vector reads over 26 counter calls.
+They execute the original output lookup, priority sort, grid requirements and counter, with balanced temporary allocations.
+Source-model vectors, ordinary definitions, context, registry services and CRT calls remain supplied boundaries.
+These controls do not establish installed player inventory or controller behavior.
+
+A production regression reproduces a stale-owner exception before this change, even when there are no candidates.
+The new tests cover skipped candidates, selected-output fallback, fresh captures and stopping after a complete recipe.
+
+All four projects build with 2,995 passing tests, 152 optional skips and no failures or errors.
+Both Checkstyle tasks pass. All 104 core patches and all 38 add-on patches replay.
+The packaged core passes all five availability checks, including the 1,344-case original evaluator fixture.
+The preceding release passes the same fixture and existing source checks, but fails the new stale-owner regression without linkage errors.
+All 1,532 core classes, 198 core assets and 39 CubeConverter classes match both packaged consumers.
+All 1,193 compiled client classes match the add-on JAR.
+
+## Retained player recipe availability
+
+`CraftingDataTracker.playerRecipeAvailability` now connects the retained output index to the ingredient counter.
+It reads the owning block's current crafting contexts and reuses each accepted recipe's descriptor positions.
+First name resolution and tag admission remain owned by that registration.
+Ingredient retention follows concrete shaped, shapeless and smithing classes, including their chemistry and user-data variants.
+
+Candidate lookup is lazy. An invalid output returns before reading the owning block or building an output index.
+Each eligible candidate still captures current inventory sources separately.
+Availability counts descriptor positions independently of placement amounts and capacity.
+The user-data recipe's separate placement override remains unchanged.
+
+The target remains Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Inspected concrete tables share the corresponding shaped or shapeless grid and counting methods.
+The original evaluator matches Java's registered-owner path in all 864 cases across 18 recipe layouts.
+The matrix covers workbench state, filtering, cursor inclusion, selected output and source distribution.
+Four further original controls confirm first-source eligibility for each descriptor hash, with ingredient amounts 64 and zero.
+An earlier ineligible stack can suppress a later matching cursor stack. The bridge retains this native behavior.
+
+These controls execute the original evaluator, output lookup, priority sort, grid requirements, matcher, counter and selected-output fallback.
+Recipe constructor fields, ordinary definitions, model vectors, context production and the output-vector getter remain supplied boundaries.
+Temporary allocations balance per evaluation.
+The controls do not establish packet-family admission, normal smithing result materialization, complete registry lifetime or installed player behavior.
+Java fixtures use declared ordinary IDs to avoid built-in block associations.
+
+Production tests cover retained Name and Tag state, placement-quantity independence, source eligibility and current-owner validation.
+Changing workbench state selects custom contexts, preserves explicit-empty contexts and restores fallback only when the component is absent.
+World state and block components are supplied in that Java test.
+
+All four projects build with 3,000 passing tests, 152 optional skips and no failures or errors.
+Both Checkstyle tasks pass, and all 104 core patches replay.
+Ten packaged availability checks pass with nine implementation origins verified.
+They include the new 864-case registered-owner comparison and the existing 1,344-case supplied-candidate comparison.
+
+All 1,533 core classes, 198 core assets and 39 CubeConverter classes match both embedded consumers.
+All 1,193 compiled client classes match the add-on JAR.
+Against the preceding build, 1,514 core classes and all core assets remain byte-identical.
+Twelve changed nested classes retain identical declarations and instructions.
+The compiler moves the existing enum switch map to make room for the new counter adapter; its three recipe types remain unchanged.
+
+This entry point supplies counting only. Player collection ownership, search, unlock and Instabuild policies still need integration.
+Installed collection publication, controller behavior, specialized placement and complete native lifecycle verification remain unfinished.
+The all-empty counter safety divergence remains explicit. The four original live reports remain open.
+
+## Player category policies
+
+`CraftingDataTracker.playerRecipeCategoryAvailability` applies category policy before the retained ingredient counter.
+It reads current Instabuild abilities and output unlocks.
+With filtering off, a non-Instabuild category requires candidates and rejects the output if any candidate needs a table outside the workbench.
+A complete smaller candidate does not override that restriction.
+Instabuild skips those gates but still counts current ingredients.
+Only unfiltered categories map unavailable state 3 to state 2.
+Filtered categories return the counter state unchanged.
+When recipesUnlock is disabled, the unlock predicate skips context production.
+
+The original protocol-2193 installer selects, copies and stores all five collection callbacks in four Instabuild/filter combinations.
+The stored category callbacks agree with the Java retained-owner path in 384 cases across empty, small, table-only and mixed candidate lists.
+The matrix covers locked and unlocked outputs, missing and partial ingredients, workbench state, filtering and limited crafting, including all four returned states.
+All four native category collections agree per case, for 1,536 category calls.
+Original ability lookup, unlock checking, output indexing, concrete matching and counting execute.
+Enum-name/model-map backing, collection receivers, ordinary definitions, source vectors, context production and output getters remain supplied boundaries.
+Native temporary allocations balance per installation and evaluation.
+Full model, registry and controller lifetime and installed screen publication remain unverified.
+
+Six targeted tests pass, with one earlier optional fixture skipped in that targeted run.
+Both Checkstyle tasks pass, and all 104 core patches replay.
+The tests also cover live ability and unlock changes, stale ownership, selected output and lazy context lookup.
+This entry point does not yet connect the collections to the player screen.
+Search name production, search policy integration, controller behavior and the original four live reports remain open.
+
+## Player search policy
+
+`CraftingDataTracker.playerRecipeSearch` retains the Instabuild mode selected when the owner installs a search callback.
+Its availability method reads current rules, unlocks, recipe contexts and ingredients.
+Primary names and secondary descriptions remain lazy definition-owned inputs.
+The shared Unicode5.0 matcher supplies substring or word-prefix matching for the installed mode.
+
+Empty normalized queries skip output validity and text production.
+Non-Instabuild searches hide locked outputs when limited crafting is enabled or the query is empty.
+Other paths count ingredients after the search, including misses.
+Partial non-Instabuild results require candidates that all fit the current grid.
+A matching non-Instabuild search reads unlock state again after name production.
+
+All 2,384 original installed-search callback cases match the retained Java path and its primary/secondary producer call counts.
+The controls cover mixed grid requirements, missing and partial inputs, locks, limited crafting, filters, selected output and ability changes after installation.
+The original installer, search, formatting, normalization, unlock predicate, output query, concrete matcher and counter execute.
+Names, secondary descriptions, game type, enum/model backing, sources, contexts and output getters remain supplied boundaries.
+Temporary allocations balance per evaluation.
+
+Three further original query controls distinguish ordinary stacks, constructor-created empty stacks and retained defined stacks whose count becomes zero.
+The constructor clears identity at zero count. A retained defined stack can still match the output index and unlock query.
+The first Java fixture retained identity for both states and failed. Its construction was corrected.
+Shared catalog identity and query behavior remain unchanged.
+Nine targeted tests pass, two earlier optional fixtures skip, and both Checkstyle tasks pass.
+All 104 core patches replay.
+
+The native factory snapshot identifies seven secondary-description targets across 1,949 definitions.
+Inspection shows common enchantment descriptions and specialized effect or container descriptions. These are not second ordinary names.
+This increment verifies policy composition with supplied text producers.
+Specialized description production, full model/controller lifetime and installed player screen publication still need work.
+The original four live reports remain open.
+
+## Bound primary search text
+
+The player search entry point now binds `ItemRewriter.itemPrimaryName` and preserves its bytes through `NbtUtf8`.
+The producer remains lazy. Empty queries skip it, and primary matches skip the secondary-description supplier.
+Secondary production remains an explicit input.
+
+All 1,182 composed primary/search cases match the Java producer bytes, search states and producer call counts.
+The original primary selector, ordinary/component/book methods, common secondary methods, installed search callbacks, unlock query, concrete matcher and counter execute.
+The locale callback composes a separately executed original formatter over a supplied byte-key lookup table.
+Selected receiver fields, component and typed-NBT backing, root-tag self-equality, model/source vectors, contexts, output getters and CRT interfaces remain supplied.
+Main-machine native temporaries balance. The separate formatter resets its caller arena and does not establish complete native cleanup.
+
+Four targeted tests pass, and both Checkstyle tasks pass. All 104 core patches replay.
+Java tests cover retained definitions, missing definitions, malformed name bytes and source acquisition order.
+The native controls use stable receiver backing; they do not establish complete registry replacement or controller lifetime.
+Specialized secondary descriptions and installed player screen publication remain unfinished. The original four live reports remain open.
+
+## Bound secondary search text
+
+The player search API now binds both real item producers through the connection's retained definition and language resources.
+Empty queries skip both producers. A primary match skips the secondary producer.
+The description flag reads current raw game type and level default when needed.
+It remains separate from the Instabuild search policy captured when the query is installed.
+
+The producer comparison matches all 11,209 native secondary-description cases and 810 integer-format controls.
+Integration tests cover live game-type changes, retained zero-count definitions, ID collisions and lazy producer acquisition.
+The shulker path calls the shared saved ItemStack loader and primary-name producer.
+Native controller/model lifetime and installed player screen publication remain unfinished.
+The inventory, movement, eating and locator reports remain open.
+
+## Retained query edits
+
+A retained player search now accepts replacement query text without recapturing its installed Instabuild policy.
+Creating a new search explicitly selects the current policy again.
+The String APIs preserve native query bytes through `NbtUtf8`, including malformed UTF-8.
+
+All 160 original query-setter and stored-callback controls match states and primary/secondary producer call counts.
+They cover ability changes, explicit reinstallation, both filter modes, primary and secondary matches, formatting, NUL, empty queries and malformed bytes.
+Original setter `1434154d0`, installer `14341c4c0`, normalization, stored search callbacks, unlock lookup, output matching and the counter execute.
+Parsed model/collection and ordinary-item backing, text/context/source interfaces, final collection notification and allocator/CRT/stream services remain supplied.
+Native temporary allocations balance across each evaluation.
+
+Eight further native setter controls establish raw-byte equality, selected-stack clearing and search-collection notification with argument zero.
+Equal raw text preserves selection and sends no notification.
+Different raw text clears selection and notifies, including changes with identical normalized text or content after NUL.
+The original selected-stack comparison, assignment, normalization and destruction execute; dynamic string allocations retire after each control.
+These model-owned selection and notification effects are evidence for the pending screen integration, not effects of the search-policy object.
+Complete model/controller lifetime, installed screen ownership and text-edit delivery remain unfinished.

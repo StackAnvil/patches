@@ -1,190 +1,188 @@
-Render supported worn Bedrock attachables in the player equipment layer. Hive sends pink angel wings as chest equipment, separate from the player skin. The converted item selector must resolve before this layer can find the native definition.
+Render supported worn and held Bedrock attachables through the native player model path.
+Both direct ViaFabricPlus and ViaProxy connections use the accepted actor archive.
+Native item identity and authored item bindings select each equipped definition.
 
-The target is Bedrock 1.26.51.1, protocol 2193. A private recorded Hive session identifies chest item 10173 as `hivebackbling:angel_wings_pink` and head item 10209 as `hivehats:axe`. The wings use six zero-thickness planes, authored south-face UVs, and an alpha-test material with inherited `DisableCulling`. Their spawn animation reaches full scale at 0.64 seconds and holds that frame. Keep the authored geometry unchanged.
+The target is Bedrock 1.26.51.1, protocol 2193.
+A recorded Hive session identifies chest item 10173 as `hivebackbling:angel_wings_pink` and head item 10209 as `hivehats:axe`.
+The wings retain six authored planes, south-face UVs, and inherited `DisableCulling`.
+Their spawn animation reaches full scale at 0.64 seconds and holds that frame.
 
-Retain animation playback per player, slot, and equipment identity. Apply native render-controller visibility, UV and lighting controls. Bind supported same-name bones through the owner's current pose, including native root, waist, and body animation. Run parent setup when an existing owner variable scope becomes available or changes. Suppress duplicate vanilla head items only when a supported native head surface is selected.
+## Equipment scope and lifetime
 
-Unsupported non-default variants, explicit binding expressions, per-bone material maps, and unverified material families keep the existing fallback. Classic owners without a native graph or server controller have no parent variable scope. Independent equipped animation and visibility still work. Supported same-name bindings retain full deformation matrices, including shear and reflected scale. Explicit native binding expressions remain unverified.
+Each player, slot, selected item, and perspective retains its own playback scope.
+Animation, render-controller selection, and bone bindings share that sampled scope.
+Bindings run in authored bone order after item initialization and animation updates.
+Compiled geometry definitions contain no mutable evaluator.
+Replacement, rewind, resource reload, and disconnect release the corresponding state.
 
-Validation: 19 focused tests pass without skips. They cover equipment replacement and removal, stable spawn playback, identity collisions, owner context, ordered visibility, and animated owner binding with rotated ancestor rest poses. Layer registration uses the renderer superclass method; a failed early startup exposed an invalid inherited shadow before publication. The full rebuilt stack passes 821 tests without failures or skips: converter 16, ViaBedrock 334, and add-on 471. The final client starts successfully and passes the saved local Hive replay with the matched camera and FOV. The comparison visibly restores pink feather geometry. An observation-only agent records 160 chest vertices and 32 head vertices, both with culling disabled. Equipment start age remains constant while elapsed animation time advances. Wing bones stay visible at full scale after spawn. The vanilla head item remains cleared, so the supported axe renders once. The replay reports no runtime errors; all five artifact hashes remain unchanged and its owned services and display are stopped. Sky color, label overlap, and animation phase still differ from the native reference.
+Parent setup uses the existing owner scope when that scope becomes available or changes.
+Classic owners without a native graph or server controller have no parent variable scope.
+Their independent equipped animation and visibility still work.
+Supported native surfaces suppress the corresponding vanilla equipment layer.
+Unsupported queries, variants, or material families retain the existing fallback.
 
-The equipment layer currently reads native pack definitions from a direct ViaFabricPlus Bedrock connection. The ViaProxy appearance transport does not yet carry equipped attachable graphs.
+## Owner bone transforms
 
-The final local Java-to-ViaProxy-to-Bedrock regression also passes: three stable joins, 15 entity script actions, resource-pack loading for first, repeated and changed content, cache reuse, and cache invalidation. This regression verifies converted resources and client stability; it does not establish worn attachable support through ViaProxy. Artifact hashes remain unchanged after the run, and its services and virtual display are stopped.
+Implicit same-name bindings apply the complete owner deformation matrix.
+Explicit bindings replace the selected bone's bind transform with the complete owner matrix.
+The current item's sampled animation follows that copied transform.
+Entity-relative rotation retains the owner origin and clears its inherited basis.
+Independently bound children work beneath singular parents without parent inversion.
+Locators and Java drawing retain the same complete matrices, including shear and reflected scale.
 
-Rebase onto the account-wallet update preserves its optional animation and scripts handling. The equipped patch adds its loader and context support without repeating that constructor change. The latest merged add-on passes the recorded Hive replay. Rebuild ViaProxy against the final core and verify that its exporter, item rewriter, and converted-pack cache classes match that core. The rebuilt proxy passes the same local entity and resource-pack regression, with unchanged final artifact hashes and complete cleanup.
+Declarations remain separate from typed expression results.
+A missing owner name or non-string result leaves that bone in its local hierarchy.
+An explicit declaration suppresses implicit same-name deformation even when its target does not resolve.
+Other valid child bindings still work.
+Empty and whitespace strings remain string values for ordinary owner lookup.
+Numeric values do not become empty names or numeric-looking strings.
 
-Player and equipped graphs receive the same render tick fraction through `frame_alpha`. Shared equipment queries exclude body pivots. Attachable geometry queries still need their own selected model context. A rebuilt-client probe checks that body and preview pivots do not enter the shared equipment query map.
+Held and first-person admission use declared geometry ancestry instead of requiring every target name to exist.
+The guards for disconnected geometry, cycles, unbound mob equipment, and unavailable owner drawing remain active.
+Dedicated item paths retain their existing fallback rules.
 
-Same-name binding now preserves the complete owner deformation matrix through locators, bounds, and drawing. It keeps local animation poses intact and applies bound matrices directly. Unmatched descendants inherit the bound parent matrix. Independently bound children remain valid when their parent has zero scale. Each pose or replacement binding pass clears previous bindings. This removes parent inversion and TRS decomposition from the supported binding path.
+## Native evidence and validation
 
-Three new numerical tests fail against the previous implementation and pass with the complete matrices. They cover shear, reflections, singular parents, entity-relative descendants, repeated bindings, locators, vertices, and normals. Nine focused tests pass without skips. The rebuilt add-on passes 519 tests, with no failures or errors and 103 optional fixture skips. Dependency builds, the Prism bundle, and the north-star PR check pass. A private Java 26.3 client checks the applied `ModelPart` hooks with four synthetic models. All four bounds visits and 96 rendered vertices retain their expected matrices and finite normals. This establishes the Java drawing path for the supported binding rule. Native visible comparison, explicit binding expressions, and first-person equipment parity remain unverified. The owned test client is stopped.
+The pinned executable has SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Original binding setup supplies the child context to scripts, animation, and expressions, and the parent context to parent setup.
+The typed gate at `0x141c3a5cc` accepts string kind 1 and skips other result kinds.
+An unresolved string advances to the next bone without a matrix copy or local-channel reset.
 
-## Equipped resources and item bindings through ViaProxy
+The transform comparison uses these unchanged native routines:
 
-The equipment layer now reads the accepted actor archive on both routes. The earlier direct-only resource limitation is resolved for supported player equipment. Optional actor properties still require direct state; they are not supplied through ViaProxy yet.
+- Complete bone constructor `0x141c1b620` and rest setup `0x141c32b7a..0x141c32c0b`.
+- Owner hash search, matrix copy, and local-channel reset through `0x141c3a8fe`.
+- Recursive hierarchy `0x141c22010` and matrix composition `0x141bc3d20`.
 
-Preserved native item identity selects the attachable through its authored item bindings. Evaluate conditions in a per-avatar Molang scope with owner queries, properties, and the current equipment slot. Selected definition identity controls replacement and playback lifetime. Resource reload and disconnect release selectors, textures, and equipment state. Legacy converted selectors remain valid when native item identity is absent.
+The existing 96 controls cover successful nested bindings, reflected and singular owners, animation, and entity-relative rotation.
+Another 96 fresh-frame controls cover valid, missing, empty, whitespace, numeric, and unknown results with a colliding same-name owner.
+Java bone and locator matrices match both sets.
+The regression comparison fails when declaration-based suppression alone is removed.
+Scope tests cover ordered writes, owner and perspective isolation, replacement, rewind, standalone selection, and unsupported-query fallback.
+Other tests cover actual emitted Java vertices, normals, repeated binding, and binding removal.
 
-The target's player iron chestplate definition uses an explicit owner binding. A private native recording shows orange server costume geometry with green chest wings when the player-specific definition is overridden. Overriding only the generic iron definition leaves vanilla armor visible. No player suffix is hardcoded in selection.
+Parsed definitions, typed expression values, animation samples, owner matrices, and weak-reference backing are supplied inputs.
+Diagnostic formatting and logging are explicit return boundaries.
+Native JSON and Molang admission, component cleanup, and valid-to-missing lifecycle transitions do not run in these controls.
+Name normalization, native cube assembly, and complete visible parity remain unverified.
+The original executable, raw native fixtures, and diagnostic variants remain private.
 
-The new selection test covers owner and property changes, equipment context, generic fallback, unknown items, repeated evaluation, and query isolation. Explicit bone binding expressions, per-bone materials, additional material families, non-default variants, first-person equipment, missing proxy properties, and competing eligible item bindings remain incomplete or unverified.
+Earlier live Hive checks restore the supported wing and head geometry with stable playback and no duplicate vanilla head item.
+Earlier CubeCraft checks reach playable spawn but retain the unresolved overall rendering gate.
+These checks do not establish native first-person equipment placement or a live comparison of unresolved binding targets.
+Per-bone materials, additional variants and material families, and broader pack comparisons remain incomplete.
 
-A supported native equipment surface now clears the corresponding vanilla armor field after selection. Previously only head-item drawing was cleared, so ordinary chest armor remained visible behind custom wings. Missing or unsupported native surfaces keep vanilla drawing. Inventory and gameplay equipment state remain unchanged.
-
-The final unchanged native capture passes direct and ViaProxy playback. Each accepted library contains 61 layers, one server pack, the owner-bound iron definition, and both authored geometries. Equipment selection changes from zero to one surface after the chest update; both wing bones reach full scale. Final screenshots show the orange costume and green wings without duplicate vanilla chest armor. Java falls below the recorded terrain and its head appearance differs. These checks establish supported visible equipment selection, not complete native scene parity, exact animation timing, or lifecycle behavior.
-
-## Transported owner queries
-
-Equipped model queries now read owner inputs from the shared actor registry on both connection routes.
-Named properties and variants retain their core values without a direct Bedrock connection.
-This change does not complete binding expressions, material families, or first-person equipment.
-
-## Match costume visibility in the model's name scope
-
-The costume-rule overload now uses the same humanoid scope as actor-rule visibility. Cached patterns match converted legacy skin names without changing custom actor matching. Two actual model-cube regressions cover mixed case, wildcard override order, intentional hides, and exact custom actor controls. Both tests failed before this overload changed.
-
-These tests verify submitted model state. Candidate Vulkan and Iris rendering checks remain separate runtime gates.
-
-All four actor and costume cube regressions pass. The complete add-on stack replays all 30 patches. The full build passes 616 tests with 117 optional skips and no failures or errors. Actual candidate rendering remains pending.
-
-## Follow-up: bundled native armor dependencies
-
-Equipment inherits the licensed target library below accepted server packs. Resolve declared legacy equipment geometry through cross-file parents and accepted parent overrides. Preserve native item owner bindings and replacement conditions. The loaded library supplies armor models, textures, materials, controllers and offset animations.
-
-Tests cover owner binding, server replacement and inherited texture dimensions. A private bundled-resource probe selects the player iron chestplate and resolves its geometry, alpha-test material and animation. Explicit bone bindings and unsupported material families retain the existing fallback. Exact visible alignment on the reported custom-size skin remains pending.
-
-## Equipment preparation
-
-Equipment storage now prepares off the render thread. It keeps referenced models and textures, attachables, materials and animation controllers. Legacy parents resolve against the complete inherited library before unused models are omitted. Ordinary equipment remains available while preparation runs.
-
-The saved CubeCraft pack retains 107 attachables and 24 equipped models, compared with 1,005 models before this change. Three local equipment preparation samples drop from about 2.8 to 3.8 seconds to 306 to 358 ms. These measurements exclude network downloads and complete client startup. Existing tests cover server overrides, owner selection and legacy inheritance across files.
-
-## Native held equipment
-
-Supported held attachables now render in both first-person and world views. Evaluate authored bone bindings with the equipment slot. Bind each model to the owner's complete bone matrix. First-person equipment keeps its own playback lifetime.
-
-Current equipment supplies parent setup before owner animations on every frame. This also restores native armor visibility on ordinary classic skins. First-person bindings check the selected owner's bones before replacing a Java item draw. Unsupported surfaces, enchanted items and banner-pattern items retain Java rendering.
-
-Focused tests cover slot selection, spyglass bindings and owner transforms. These checks do not establish complete native item parity.
-
-## Native item-slot bone lookup
-
-The target callback maps `main_hand` to `rightitem` and `off_hand` to `leftitem`.
-It does not inspect handedness after checking that an associated owner exists.
-Other strings pass through unchanged, including body and custom bone names.
-The callback reads the first argument and returns an empty string for missing or non-string arguments.
-Owner animation state remains separate from this lookup.
-
-The previous Java query swapped hand names for left-handed owners and rejected most other slots.
-Both owner setup and attachable evaluation now use the verified native lookup.
-Remove the handedness parameter instead of retaining a second query implementation.
-
-Evidence uses Bedrock 1.26.51.1, build 51061372, protocol 2193, callback `0x1422265b0`.
-The executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
-The [Creator query reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions/query_item_slot_to_bone_name)
-describes the query's purpose. The pinned callback establishes the behavior above.
-
-Validation:
-
-- Execute 104 unchanged native callback controls, including absent owners, empty and multiple arguments, both hands, other strings, and numeric values.
-- Supply typed expression results at the native evaluator boundary. Bound error logging and empty temporary cleanup separately.
-- Compare all 52 owner-present native results with the Java query through the optional `STACKANVIL_NATIVE_ATTACHABLE_SLOTS` fixture.
-- Ten focused tests pass without skips. They cover authored query evaluation, numeric rejection, model admission, full matrices, and repeated slot changes.
-- The model regression resolves both hands and a custom slot, then checks the actual bone and drawing matrices across six selections.
-- Three private negative controls reject other names, swap hand bones, or reject additional arguments. Each fails the native comparison; restored code passes.
-- All four builds pass 2,510 tests, with 212 optional skips and no failures or errors. This includes the existing Iris GPU regression.
-- All 1,407 core classes match the add-on and proxy copies. All 1,134 final production client classes match the built add-on.
-
-These checks verify callback semantics and the Java model path.
-They do not establish full native Molang admission, context producers, or binding variable ownership.
-Nested binding transforms, missing-bone behavior, and visible native parity also remain unverified.
-Those remain part of the attachable work. Raw native controls and diagnostic variants remain private.
+The full four-project build passes 3,049 tests with 152 optional skips and no failures or errors.
+All 21 focused binding and owner tests pass without skips, including both native matrix fixtures and the existing native slot callback fixture.
+All 38 add-on patches replay.
+All 1,205 compiled client classes match the distributable add-on.
+All 1,557 core classes, 199 assets, and 39 converter classes match both embedded consumers.
+The rebuilt core and ViaProxy JARs remain byte-identical to the preceding milestone.
+The earlier unresolved-target increment used numerical controls. The live costume checks follow here.
 
 
-## Share the equipped item scope
+## Bind equipment to the rendered costume
 
-Animation, render-controller selection, and bone bindings now use the same sampled scope for each equipped item.
-Previously, controller selection repeated scripts in a second scope, while the global geometry cache retained binding variables for unrelated items.
-Compiled binding definitions now contain no mutable evaluator.
-Binding variables follow the existing owner, slot, item, and perspective playback lifetime.
-Standalone controller selection also supplies its scope when the raw animation graph is unavailable.
+Third-person equipment now uses the primary resolved server costume as its owner, matching the existing first-person owner order.
+Previously, equipment always used the base skin skeleton even when the server costume supplied the visible body.
+The equipment layer prepares the selected costume with the current immutable render state before reading its matrices.
+This preparation does not evaluate scripts or advance animation playback.
+If no costume resolves, equipment retains the skin owner.
 
-Bindings run in authored bone order and require string results.
-The early held-geometry check inspects declared ancestry without running expressions before item initialization.
-The later drawing check still resolves actual owner bones before replacing Java equipment.
+A real BDS 1.26.51.1 pack exposes the previous mismatch.
+Its visible costume has a body matrix at Y=24, while the base skin has Y=0.
+The valid body-bound child therefore appeared above the costume in third person.
+The regression covers this origin difference, current head animation, primary selection, replacement, and return to the skin.
 
-Evidence uses the same pinned Bedrock executable identified in the preceding section.
-Resolver `0x141c38f40` derives the child Molang context from the selected component at offset `0x88`.
-Initialization, pre-animation, animation update, and binding evaluation receive that child context.
-Parent setup receives the separate parent context.
-The gate at `0x141c3a5cc` accepts only string values, represented by kind 1.
+The live scene also exercises unresolved names, empty strings, whitespace, numeric results, and a valid body target.
+Real hotbar changes select the five items.
+Sneaking switches one binding between missing and valid targets while retaining the same item playback.
+A separate child keeps its valid binding throughout.
+The observer only reads production scopes and models after normal drawing setup.
 
-Twelve bounded instruction controls cover four supplied components, two parent contexts, and value kinds 0, 1, and 2.
-These controls run unchanged argument setup and result-kind instructions.
-Context setup, script dispatch, animation update, and expression evaluation remain explicit return boundaries.
-Component selection and frame locals are supplied inputs.
-This evidence establishes argument identity and the string gate, rather than complete resolver or Molang execution.
+Native component lifetime, multi-geometry owner semantics, native poses, and complete image parity remain unverified.
+The scene uses an authored test costume and does not supply a native graphical baseline.
 
-Fifteen focused controls pass, including the existing native slot comparison and actual model matrices.
-Four new tests cover shared phase writes, bone order, owner and perspective isolation, replacement, rewind, standalone selection, declaration inspection, and result types.
-Four private diagnostic variants share the first item scope, reorder bones, coerce numeric results, or separate controller state.
-Each variant fails its relevant regression. Restored code passes.
+Fresh direct and ViaProxy sessions each verify 16 equipment states with the same rebuilt add-on.
+Both views use the costume body matrix at Y=24 while the base skin remains at Y=0.
+The colliding owner head stays at X=32, while the unresolved item bone retains its local position.
+Sneak transitions preserve playback identity and start time as its clock advances.
+Clearing equipment retires both perspective caches after each view updates.
+All 28 final screenshots receive visual review, and installed runtime JAR hashes match the build.
 
-All four builds pass 2,518 tests, with 212 optional skips and no failures or errors.
-The native slot fixture and Iris GPU regression run without skips.
-All 1,410 core classes match both packaged copies. All 1,134 production client classes match the add-on.
-
-The current launcher completes a plain CubeCraft replay with playable spawn, complete payloads, and resource-pack loading.
-Its verification report matches the earlier plain replay, including the unresolved `cubecraft:empty.entity` mapping and overall rendering failure.
-The client records no equipment-evaluation or runtime errors. Build artifact checksums remain unchanged across the run.
-Normal cleanup removes the mutable runtime files and leaves no owned Java or display process.
-These scene checks do not establish native equipment pixel parity.
-
-Native component lifetime, internal controller evaluation, nested binding transforms, missing-bone behavior, and visible parity remain unverified.
-The native instruction controls and diagnostic variants remain private.
+The fixture also exposed blank ViaProxy hotbar icons while the direct route displayed vanilla icons.
+Core patch 0068 now supplies shared native image layers and atlases, which addresses that separate conversion difference.
+The equipment-owner correction retains its own validation boundaries.
 
 
-## Match explicit binding matrices
+## Prepare the selected controller owner, October 26, 2026
 
-Explicit bindings now replace the bone transform with the selected owner matrix.
-Previously, Java multiplied the item's unbound global transform into that matrix.
-Authored pivots, rotations, and animation therefore moved the bound item again.
-Bound descendants now select their own owner independently, including beneath singular parents.
-Entity-relative rotation preserves the owner origin and clears its inherited basis.
-The authored Java pose remains available after binding removal.
+Equipment prepares the primary costume's typed draw before reading its underlying native model matrices.
+This retains the selected controller visibility without changing the shared avatar state or advancing graph playback.
+The existing equipment-owner regression uses the real costume wrapper and passes alongside the new deferred-draw regressions.
+The [player costume controls](0016-render-server-player-costumes.pr.md#independent-player-controller-draws-october-26-2026) verify the installed wrapper on both routes.
+This adaptation does not add new live equipment-placement coverage.
 
-The same pinned executable supplies the transform evidence:
 
-- Complete bone constructor `0x141c1b620` establishes pivots, relative coordinates, and zero default render offsets.
-- Original rest setup `0x141c32b7a..0x141c32c0b` preserves the Y sign and rotation conversion.
-- Original pose reset `0x141bce57c..0x141bce5af` restores those rest values before supplied animation samples.
-- Owner lookup and copy `0x141c3a65c..0x141c3a8fe` search hashes, copy all sixteen matrix fields, and reset local channels.
-- Complete hierarchy `0x141c22010` and composition `0x141bc3d20` resolve the final matrices.
+## Per-bone equipped materials, October 26, 2026
 
-Ninety-six controls cover three nested binding arrangements, four owner matrix families, optional root bindings, entity-relative rotation, and animation.
-The controls run 288 complete bone constructors and 144 owner lookups with matrix copies.
-They include authored nonzero pivots, ordinary unbound bones, animated ancestors, reflected scale, shear, and singular matrices.
-Parsed definition lookup and empty CRT copies remain explicit boundaries.
-Animation samples, resolved binding names, and owner matrices are supplied inputs.
-Native JSON and Molang parsing, cube assembly, GPU drawing, and pixels do not run in these controls.
+Equipped models now admit supported per-bone materials instead of rejecting every non-wildcard declaration.
+Each material draws only its selected surfaces while retaining all owner and explicit binding targets.
+An unresolved parent binding still preserves local geometry, and an independently bound child retains its valid target.
+Materialized sprite geometry has a separate cache from the filtered draw models.
+Current draw subsets replace historical subsets without restarting the equipment entry.
+Missing active materials or required images retain the existing whole-slot fallback.
 
-Four Java regressions fail against the previous implementation and pass after the correction.
-The native comparison covers complete bone and locator matrices across all 96 controls.
-Other regressions cover actual emitted cube vertices, nested owners, copied-bone ancestors, matrix ownership, repeated binding, and binding removal.
-Four private variants retain local transforms, retain a relative basis, clear an ordinary basis, or chain an independent owner through its parent.
-Each variant fails the native matrix comparison.
+The authored live stick retains a local head matrix at `(4, 4, 12)` and a body-bound child at `(0, 24, 0)`.
+Physical sneaking changes the child material between cutout and opaque while the parent remains opaque.
+Direct and Iris-enabled ViaProxy captures show the green child appear and disappear beside the retained red parent.
+Both first-person and third-person views retain their selected model groups and complete binding matrices.
+These controls do not establish native placement or component-lifetime equality.
 
-All four builds pass 2,522 tests, with 212 optional skips and no failures or errors.
-The native binding fixture, native slot fixture, and Iris GPU regression run without skips.
-All 1,410 core classes match both packaged copies. All 1,134 production client classes match the add-on.
+The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.
 
-The current add-on completes a plain CubeCraft replay with playable spawn, complete payloads, and resource-pack loading.
-The installed add-on matches the full-build artifact byte for byte.
-Its verification report matches the previous replay, including the unresolved `cubecraft:empty.entity` mapping and overall rendering failure.
-The client records no equipment-evaluation or runtime errors. Build artifact checksums remain unchanged.
-Normal cleanup leaves no owned Java or display process.
-These scene checks do not establish native equipment pixel parity.
 
-Native missing-name behavior, component lifetime, external render-offset producers, full resource admission, native cube assembly, and visible parity remain unverified.
-The original binary, synthetic native fixtures, and diagnostic variants remain private.
+## Enchanted shield path remains incomplete, October 27, 2026
+
+A passive WildFFA trace confirms that an enchanted shield retains its converted static item model while the native equipped renderer skips it.
+The item has an empty banner-pattern list and no base color; component presence alone does not establish a patterned shield.
+The native body submits one surface, the shield submits no native surface, and Java draws an ordinary model layer with glint.
+Its draw matrix and display transform remain unchanged across actual idle and offhand-use states.
+The [coverage record](../../../docs/bedrock-coverage.md#enchanted-shield-draw-attribution-october-27-2026)
+records the resumed same-client observation, failed initial controls, and verification limits.
+
+The target material library defines glint with a second repeated texture sampler.
+This material family and complete animated enchanted equipment remain unsupported.
+The issue requires native material and animation work; the static fallback does not establish shield parity.
+
+## Plain shield banner-data routing, October 27, 2026
+
+Held-item admission now checks visible banner data instead of component presence.
+An empty pattern list without a base color no longer prevents native equipped rendering.
+A nonempty list or a base color still reserves the Java banner atlas path.
+Both perspectives use this shared check.
+
+A regression test covers missing, empty, colored, and patterned components, then replacement with empty layers.
+The focused equipment tests pass at the owning prefix.
+The complete stack replays, and its add-on suite reports 1,108 passed, 139 optional skipped, and no failures.
+The isolated upstream check still requires earlier StackAnvil actor-animation changes; its temporary apply was aborted.
+The reported WildFFA shield also has enchantment glint, which still keeps its existing fallback.
+This change does not resolve that separate shader and animation gap or establish visible shield parity.
+
+
+## Enchanted held materials and current animation, October 27, 2026
+
+Supported enchanted hand items now use native materials, secondary textures, and a fresh extraction frame.
+The nested target shield controller receives an explicit unpatterned flag.
+Visible banner data retains its existing atlas fallback.
+The current item's sampled animation follows the copied owner matrix instead of disappearing during explicit binding.
+
+The controller regression switches one item between plain and enchanted states and checks material selection and texture order.
+A separate 96-case comparison executes original native channel and hierarchy routines with a supplied stage order.
+The earlier pre-binding reset comparisons remain valid; the new control does not establish complete native frame scheduling.
+
+A real enchanted off-hand shield now submits one native surface and no observed Java shield draw.
+Blocking changes its visible pose with shaders enabled and disabled.
+All eight captures receive visual review.
+The shield remains large, and exact native size, placement, main-hand behavior, and banner composition remain unverified.
+The [coverage record](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) includes build counts, artifact identity, client evidence, and the failed attempts.

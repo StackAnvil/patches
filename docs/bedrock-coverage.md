@@ -281,12 +281,12 @@ Transport passes; complete scene rendering still fails on unresolved mappings. N
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| R1 | General actor controllers and scripts | Incomplete | Core-evaluated custom actor model selections now travel through the negotiated channel on both routes. Complete transitions, weighted entries, variables, events, queries, and native comparisons. |
+| R1 | General actor controllers and scripts | Incomplete | Core-evaluated custom actor model selections now travel through the negotiated channel on both routes. [Standard villager graph admission](#standard-villager-material-admission-october-26-2026) now accepts explicit supported depth metadata. Complete transitions, weighted entries, variables, events, queries, and native comparisons. |
 | R2 | Server particle dispatch | Incomplete | Core transports complete requests, typed variables, actor identity, and Java fallback bodies to native clients. Direct and ViaProxy authored fixtures verify dispatch, typed size/tint records, and fallback decoding. Complete actor queries, remote actor transport, interpolation, lifecycle comparisons, and visible native parity remain open. |
-| R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
+| R3 | Particle runtime | Incomplete | [Live actor queries](#live-actor-state-for-attached-effects-october-26-2026) include [target metadata and rendering recovery](#native-target-queries-and-rendering-recovery-october-26-2026). [Typed appearance metadata](#typed-appearance-metadata-and-actor-scopes-october-26-2026) supplies skin and trading queries. Complete components, child effects, concurrency, and native visible lifecycle comparisons remain required. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
 | R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties and per-face ambient strengths through ViaProxy. Native material arithmetic matches 576 executable cases. Native corner maxima also match 12,288 executable samples. Both routes retain the settings through model baking and injected terrain lighting. Java still supplies corner sampling and interpolation. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Core carries native random offsets in converted metadata. The add-on verifies continuous terrain, outline, and camera offsets separately from floored movement collision on both routes, including edge and corner queries. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, vanilla per-type collision shapes, and native collision solving. |
-| R6 | Equipped attachables | Incomplete | Accepted actor graphs now travel through ViaProxy. Both routes render the supported costume and owner-bound chest wings. Complete proxy properties, variants, explicit bone bindings, per-bone materials, material families, and broader native comparisons. |
+| R6 | Equipped attachables | Incomplete | Both routes receive accepted graphs and named properties. Supported equipment uses shared item scopes and complete owner matrices. Explicit unresolved targets retain their local hierarchy. Third-person equipment now selects the rendered primary costume. Complete variants, per-bone materials, additional material families, multi-geometry ownership, and native visual comparisons. |
 
 The attachable matrix tests establish supported same-name affine bindings.
 They do not establish explicit binding expressions or complete native equipment parity.
@@ -399,14 +399,14 @@ The sound-control change also passes the [complete main-branch CI build](https:/
 | --- | --- | --- | --- |
 | S1 | Animated face composition and native tint blending | Unverified | Existing production paths need broader native face, channel, mask, and outfit comparisons. |
 | S2 | Complete local persona assembly | Incomplete | Resolve unavailable free assets and remaining geometry, layering, and animation sources. |
-| S3 | Classic geometry and animation formats | Incomplete | Complete inherited legacy sources, aliases, metadata, and inheritance comparisons. |
-| S4 | Emotes and animation fidelity | Incomplete | Complete unavailable remote assets, events, effects, platform filters, timing, rotations, and scale comparisons. |
+| S3 | Classic geometry and animation formats | Incomplete | Per-face texture rotations survive parsing, model rendering, item export and head icon projection. Coordinate and pixel regressions cover all six faces and four angles. Complete inherited legacy sources, aliases, metadata, inheritance and native visual comparisons. |
+| S4 | Emotes and animation fidelity | Incomplete | Incoming proxy playback reaches the installed renderer for four controlled bundled emotes. Direct and proxy wheel controls verify native sending, movement cancellation, expiry and announcement names. Complete unavailable remote assets, events, effects, other interruption modes, platform filters and native visual comparisons. |
 | S5 | Native first-person and held-item drawing | Incomplete | Classic and persona graphs submit their sampled hierarchy with authored scale, death roll, and raw-name transforms. Server costumes now select resolved hand-view surfaces in the sampled actor scope. Verify native costume placement, visible timing, and persona overlap, then complete other global transforms, held items, charging, equipment, and input timing. |
 | S6 | Complete incoming skin records through ViaProxy | Implemented | Complete records and local-avatar ownership pass isolated direct and proxy playback. Broader remote-player, lifecycle, and native visual comparisons remain required. |
 | D1 | Palettes, color channels, and limb editing | Unverified | Compare remaining palette options, asynchronous saves, and fresh native limb edits. |
 | D2 | Classic packs and imported-skin synchronization | Incomplete | Complete imported images without downloadable pack references and remaining account/platform flows. |
 | D3 | Catalog acquisition, purchases, redemption, and wallet | Incomplete | Complete acquisition and interactive Store behavior with native account comparisons. |
-| D4 | Multiplayer synchronization | Unverified | Compare live changes, height, arm width, faces, capes, outfits, and remote emotes on additional clients. |
+| D4 | Multiplayer synchronization | Incomplete | Direct and proxy live changes preserve complete classic and persona appearances through native server echoes. Compare visibility, height, arm width, faces, capes, outfits and remote emotes on additional clients. |
 
 The [skin flow](skin-flow.md#missing-features) records detailed implementation evidence and outstanding comparisons.
 Its verification section preserves the original skin and persona scope.
@@ -877,7 +877,7 @@ Core applies converted model selectors after both vanilla and custom item mappin
 
 **Automated checks:** All four builds pass with 969 Java tests passing and 113 optional fixture tests skipped. Archive tests verify order, provenance, complete bytes, reconstruction, excluded paths, malformed headers, and indexes. Item and binding tests cover vanilla and custom models, unchanged gameplay data, accepted and rejected resources, explicit conditions, generic fallback, wearer changes, equipment context, and query isolation. Both north-star patch application checks pass. An isolated effects checkout, manually adapted for predecessor context without setup, passes 35 tests and both Checkstyle tasks. That result does not establish automatic isolated application of the effects patch.
 
-**Remaining:** ViaProxy now receives evaluated custom actor models. Named actor and player properties now travel through the shared actor-input channel. Complete events, emote state, and outbound account synchronization remain incomplete. This archive has memory bounds of 32 MiB per file, 256 MiB decompressed content, and 4,096 layers. Larger real packs need verification. First-person equipment, explicit bone binding expressions, per-bone materials, non-default variants, additional material families, competing eligible item bindings, and unavailable licensed default assets remain incomplete or unverified. Resource availability and submitted surfaces do not establish complete visible parity. All earlier skin, persona, account, gameplay, editor, audio, particle, UI, and platform requirements remain active.
+**Remaining:** ViaProxy now receives evaluated custom actor models. Named actor and player properties now travel through the shared actor-input channel. Complete events, emote state, and outbound account synchronization remain incomplete. This archive has memory bounds of 32 MiB per file, 256 MiB decompressed content, and 4,096 layers. Larger real packs need verification. First-person equipment placement, binding lifecycle and name admission, per-bone materials, non-default variants, additional material families, competing eligible item bindings, and unavailable licensed default assets remain incomplete or unverified. Resource availability and submitted surfaces do not establish complete visible parity. All earlier skin, persona, account, gameplay, editor, audio, particle, UI, and platform requirements remain active.
 
 **Integration evidence:** The unchanged native scene payloads pass direct playback `2026-10-04T12-34-33.379Z-replay-scene` and ViaProxy playback `2026-10-04T12-31-09.735Z-replay-scene`. Both load the accepted pack without a frontend Store account. The reconstructed library contains 61 layers, one server pack, the player-specific iron attachable, and both authored geometries. Each route installs both recorded skins without rejection. Equipment selection changes from zero to one supported surface after the captured chest update. Both wing bones reach full scale.
 
@@ -9959,6 +9959,17 @@ Retained Tag/Molang payload ownership, version-filtered Tag index membership, so
 The native index's additional version byte participates in version-value comparison; its nonzero producer behavior remains unverified.
 No new installed capture ran.
 The E-key inventory background/scale, pearl/wind-charge rollback, endless eating and missing locator reports remain unresolved.
+
+A fresh direct full-modpack control reaches the matching six-icon WildFFA kits menu with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Its actual window is 1920 by 1013, with Java GUI scale 4.
+Read-only observations verify the chat screen and exact `/kits` text before submission.
+E opens `InventoryScreen` in the lobby and WildFFA, including after closing the kits menu.
+The selector and kits command open `BedrockNativeContainerScreen` with complete backgrounds, three loaded images and no failed images.
+The locator remains active, with visible markers and 83 received native updates.
+These phases complete, but the recorder later exits with code 143 after saving its manifest and restoring the profile.
+All 14 recorded process identities have retired.
+This supplies scoped menu evidence, without a normal recorder exit or a native graphical baseline.
+The reported E-driven menu replacement and missing-background cause remain unreproduced.
 All five compatibility goal areas remain active.
 
 
@@ -10221,3 +10232,1512 @@ All 1,532 core classes and 198 assets match both embedded copies. All 1,192 comp
 Compared with the preceding core, 1,513 classes and all 198 assets remain byte-identical.
 Eleven further classes retain identical declarations, instructions and bootstrap methods despite metadata changes.
 The only added class is the typed crafting context. The native UI patch changes only exported hunk context.
+
+## Native secondary item descriptions (October 25, 2026)
+
+**Implemented:** Selected item definitions retain their secondary-description behavior through registry changes.
+Common enchantments, potions, arrows, shulker contents, suspicious stew and ominous bottles now have native description producers.
+Compiled protocol-2193 data records enchantment categories and limits, potion effects and stew effects without translations.
+The connection supplies current text resources, world version, saved ItemStack loading and primary names lazily.
+
+Player recipe search binds both primary and secondary production.
+Empty queries skip both producers; primary matches skip secondary production.
+The description flag follows current raw game type and level default, independently of the installed Instabuild search mode.
+
+**Verified within scope:** The Java description path matches 11,209 original cases.
+These include 4,276 fresh enchantment cases, 669 fresh shulker cases and existing same-binary potion, arrow, stew and ominous controls.
+Another 810 original integer-format cases match the Java formatter.
+Shulker controls execute the original saved loader, ordinary primary selection, integer formatting and stack destruction with balanced reference counts.
+Typed fields, stable enchantment order, version gates, duration scaling, skipped list positions, NUL and malformed UTF-8 are covered.
+Targeted integration tests and both Checkstyle tasks pass.
+
+The probes supply registry and NBT backing, synthetic locale tables, allocator/CRT and selected virtual methods.
+Shulker Item methods omit damage and Block association; Java supplies an air Block state for its actual receiver.
+Duration stream transport remains a supplied boundary around separately verified native selection and tick formatting.
+A non-compound enchantment child reaches a native null dereference. Java rejects that input explicitly.
+The Microsoft-specific `I32` formatter diagnostic has no supported native result and remains outside the implemented grammar.
+
+**Remaining work:** Complete registry and locale lifetime, installed player screen publication, controller navigation and visible parity remain unverified.
+This increment adds no new live gameplay capture. The inventory, movement, eating and locator reports remain open.
+
+## Retained player search queries (October 25, 2026)
+
+**Implemented:** A retained player search accepts query edits while keeping its installed substring or word-prefix policy.
+Explicit reinstallation captures current Instabuild again. String query APIs preserve native bytes through `NbtUtf8`.
+
+**Verified within scope:** All 160 original query-setter and stored-search controls match states and producer call counts.
+The original query setter, installer, normalization, search, unlock lookup, output matching and counter execute across ability and query changes.
+Both filter modes, empty text, NUL, formatting, malformed bytes and explicit reinstallation are covered.
+Model/collection backing, ordinary definitions, text/context/source interfaces, final collection notification and allocator/CRT/stream services remain supplied.
+Native temporaries balance per evaluation.
+
+Eight additional original setter controls establish that equal raw text preserves selection and sends no notification.
+Different raw text clears selection and notifies the search collection with argument zero, even when normalization produces the same text.
+The original selected-stack comparison, assignment, normalization and destruction execute. Dynamic string allocations retire after each control.
+Those selection and notification effects belong to the pending inventory model integration.
+
+**Remaining work:** Installed model ownership, full collection/controller lifetime, query-edit delivery and visible player publication remain unfinished.
+This increment does not resolve the original inventory, movement, eating or locator reports.
+
+## Gameplay, packs and incoming proxy emotes (October 25, 2026)
+
+**Priority:** Pack behavior, interactions, niche mechanics, emotes and skins remain explicit requirements alongside movement, inventory, cameras and rendering.
+Crafting research is parked while work returns to player-visible behavior.
+
+**Fresh gameplay controls:** Java 26.3 through ViaProxy joins Bedrock 1.26.51.1 and passes movement, golden-apple consumption and boat controls.
+The boat remains mounted across 51 samples and moves 13.45 blocks without a large position step.
+The custom-block texture passes initial loading, unchanged-pack cache reuse and conversion after a pack change.
+An initial run used an older server that rejected the fixture format. That environment failure is not evidence of a production pack defect.
+These controls do not reproduce the intermittent pearl/wind-charge rollback or endless-eating reports.
+
+**Fixed:** The core already forwards emote events through a negotiated channel, but the add-on lacked its receiver.
+Incoming proxy emotes now reach the same playback runtime as direct emotes.
+The receiver preserves available lists, bounds decoded values and rejects playback from a retired connection.
+Proxy announcements use Java player names and retain the native world chat-muting policy.
+
+**Runtime evidence:** A controlled replay retains a recorded protocol-2193 bootstrap and adds a stationary peer with a copied skin and four bundled emotes.
+A read-only observer records all four during installed world-render sampling through ViaProxy.
+A screenshot shows a wave, while three complete skin records load without rejection.
+The fixture supplies peer placement and emote durations. It is not an unchanged native capture.
+No native graphical comparison or complete emote fidelity is claimed.
+
+**Remaining:** Live skin changes through ViaProxy still need implementation.
+Local emote selection is covered by the later control milestone.
+The current skin-change request path requires a direct Bedrock connection.
+Broader skin composition, emote cancellation and effects, Iris rendering, interactions and original gameplay reports remain open.
+
+**Direct-route regression:** All four emotes reach world-render sampling, and all three skin records install without rejection.
+The broader direct scene gate fails on `viabedrock:item/item_textures/items/camera`.
+The proxy scene gate passes with the same controlled journal.
+The missing camera texture's cause and visible impact still need investigation.
+The rendering gate remains failed for that direct scene.
+
+## Pearl, wind-charge and moving-food controls (October 25, 2026)
+
+**Live scope:** Fresh Java 26.3 sessions use the current build with an isolated Bedrock 1.26.51.1 server.
+Both direct and ViaProxy routes receive physical input on a private display.
+The server records item use, projectile impacts, positions, velocity, item counts and food completion.
+Read-only client observers record correction replay and the final held-item state.
+
+Each route completes ordinary and steep pearl-then-wind-charge sequences.
+The second use follows the first by two or three server ticks.
+Steep throws produce an upward impulse, land and remain stationary.
+A second pair of sequences adds a declared 300 ms delay to inbound Java channel events.
+Those controls produce finite correction bursts and then settle. They do not reproduce endless rollback.
+The delayed ordinary throw differs between routes, including whether the impact launches the player upward.
+No native trajectory comparison or timing equality is claimed.
+
+Both routes complete four golden apples during an eight-second moving hold with the delay installed.
+They then consume a final single apple while moving and retain absorption.
+The client ends with an empty hand, inactive item use and no pending replay command.
+Corrections occur during food-use transitions, so these controls do not establish smooth movement parity.
+The later consumable-counter control below addresses the repeated delayed-completion burst, while retaining isolated direct corrections.
+The intermittent original reports remain open.
+
+**Repeatable checks:** Three integration cases now cover these outcomes.
+`pearl-wind-charge` requires both owned impacts, consumed items, a pearl teleport, a wind jump and a stationary landing.
+`eat-moving-repeat` requires several completed uses, matching item consumption, absorption and movement during use.
+`eat-moving-last` requires final consumption and no new use after the stack becomes empty.
+Unit controls reject missing impacts, unchanged inventory, late throws, absent motion, incomplete landings, cancelled uses and renewed empty-stack use.
+The checks establish bounded server outcomes. They do not replace packet analysis or native graphical comparisons.
+
+**Pack finding:** The bundled target library declares the camera item texture but contains no corresponding image.
+Its available camera images cover block faces, the tripod entity and UI icons.
+This explains the absent source image in the direct conversion. Correct native item presentation still needs evidence.
+The direct rendering gate remains failed until the mapping is resolved.
+
+## Local emote controls on direct and proxy connections (October 25, 2026)
+
+**Implemented:** The emote wheel now sends available IDs, playback and cancellation through the same negotiated core controls on both routes.
+Core supplies the connected actor runtime ID and Xbox identity.
+Requests contain no actor or account identity fields.
+Playback requires a registered capability, an advertised ID and a spawned local player.
+The decoder bounds lists and durations and rejects unknown versions, actions and trailing fields.
+
+The client waits for the current connection's world chat policy before it enables the wheel.
+Announcements use native player-list names because Java profile names can be synthetic or empty.
+Local lookup uses the native unique ID, preserving names when the Java and native UUIDs differ.
+Core supplies the connected account name until the native player-list entry arrives.
+Remote playback receives native announcement names through the new context channel, preserving the existing playback format.
+Connection replacement clears the client context and pending controls.
+
+Per-connection state supplies the native Emoting input flag through ViaProxy.
+Movement, interaction, natural completion and account replacement send an explicit stop.
+Duration expiry and capability withdrawal also clear core playback state.
+Zero duration preserves the existing client behavior until cancellation.
+
+**Verification:** The full four-project build passes 3,029 tests with 152 optional skips.
+Both core Checkstyle tasks pass, and all 104 core and 38 add-on patches replay.
+Seven focused tests also pass against the distributable core JAR with verified production origins.
+Core classes and resources match both embedded consumers, and client classes match the add-on JAR.
+
+Fresh direct and ViaProxy sessions use physical B-key and slot-key input against an isolated Bedrock 1.26.51.1 server.
+The fixture installs four declared bundled wheel choices without sending packets or starting animation.
+Both routes produce native server emote receipts, local world-render samples and correctly named announcements.
+Native journals retain the connected actor ID, zero outgoing flags and Emoting input during playback.
+Movement clears Emoting before the declared duration ends. A second selection completes naturally and clears it again.
+These controls use a private display and silent software rendering.
+
+The incoming proxy regression also passes its full rendering gate.
+All four declared bundled emotes reach world-render sampling across 73 observations, and the remote announcement uses the native player-list name.
+The peer placement and emote durations remain fixture inputs. The peer remains partly submerged in the recorded scene.
+This does not establish native placement, pose or complete graphical parity.
+
+**Remaining:** Account wardrobe assignment, purchases and native graphical comparisons remain outside these controls.
+Emote effects, additional interruption modes, persona composition, platform filters and native pose comparisons remain incomplete.
+The later [live skin checks](skin-flow.md#skin-data-in-a-world) verify native server echoes on both routes; remote visible parity remains open.
+The direct camera-item rendering gate and original gameplay reports remain open.
+
+
+## Live actor state for attached effects, October 26, 2026
+
+**Implemented:** Animation frames and attached particles share immutable actor queries.
+Each attachment sample refreshes native metadata and current Java movement and living status.
+Non-living Java carriers retain native flags for status without an equivalent Java method.
+Retired metadata clears those inputs, and each particle retains its own clocks and counts.
+Players, custom actors, supported world actors, and server particles use the shared adapter.
+Custom animation graphs also receive swimming, gliding, sleeping, item-use, and crawling flags.
+
+**Verified:** Targeted tests evaluate all 64 combinations of six living states against stale render inputs.
+They also verify native carrier flags, metadata replacement, retirement, and immutable captured samples.
+The matching 1.26.51.1 asset library contains these status queries; existing protocol enums supply their flags.
+The [owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#live-actor-state-for-attached-effects-october-26-2026) record the evidence and integration boundaries.
+
+Fresh direct and ViaProxy sessions load a real server pack on BDS 1.26.51.1.
+Its animation creates a parent particle and a bound child on a custom native actor.
+Both scopes follow native baby/adult changes, display red-green-red transitions, and clear after actor removal.
+The custom graph also evaluates the five additional status queries.
+A read-only observer records production scopes, colors, body submissions, and the packaged query-class origin.
+Actual runtime artifact hashes match the build, and screenshots show the transitions and cleanup.
+The four-project build passes 3,042 tests, skips 152 optional tests, and reports no failures.
+
+**Remaining:** Mounted, sleeping, and equipped world-model fallbacks remain.
+Other target queries, native poses, complete actor contexts, child-effect behavior, and graphical comparisons still require work.
+The near-actor fixture continues body rendering and does not reproduce a frozen render cache.
+First-person and hidden-HUD controls continued to refresh their body samples and did not reproduce stale queries.
+A distant-actor control did not receive changed native metadata, so it cannot establish a stale-render regression.
+
+## Native target queries and rendering recovery, October 26, 2026
+
+**Implemented:** The negotiated actor-state v4 format carries typed target metadata while preserving both earlier formats.
+Core render controllers and client animation and particle scopes bind `has_target` from the signed Long value.
+The matching 1.26.51.1 callback checks metadata slot 6 against zero, including negative values, without resolving the target entity.
+Missing or differently typed native data supplies zero; older wire formats leave the query unavailable.
+Registration and withdrawal replay the appropriate format.
+Animation commands, picking, and vehicle prediction also accept the new format's identity fields.
+
+Unsupported-query errors now belong to one actor frame.
+Changed native inputs let a failed world draw retry with its existing playback and animation phase.
+An unchanged unsupported snapshot remains cached.
+The [core transport notes](../patches/viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#native-target-query-metadata-october-26-2026) and [world renderer notes](../patches/viafabricplus-bedrock/upstreamable/0030-use-supported-native-world-actor-definitions.pr.md#recover-native-draws-after-input-changes-october-26-2026) record the integration boundaries.
+
+**Verified:** Eighty bounded executions of the original callback cover actor presence, vector bounds, entry presence, type, zero, and signed extremes.
+The fixture supplies backing storage and the entry's virtual type getter and guarded dispatch.
+Tests cover both legacy formats, signed round trips, truncation, sparse replacement, query retirement, and recovery without restarting playback.
+The full build passes 3,046 tests, skips 152 optional tests, and reports no failures.
+Fifteen focused actor tests pass against the distributable core JAR with eight production origins verified.
+All 1,557 core classes, 199 assets, and 39 CubeConverter classes match both embedded consumers.
+All 1,204 compiled client classes match the add-on JAR.
+
+Fresh direct and ViaProxy guardian controls verify target acquisition and clearing against actual BDS 1.26.51.1 packets.
+The signed target ID matches the real spawned squid.
+The authored body changes width, and its parent and child particles change red-green-red.
+Actual Fabric receiver withdrawal selects Java fallback; restoration returns native draws with the same playback instance and increasing age.
+Removal clears the actor and attached effects.
+Runtime artifact hashes match the build, and screenshots show the transitions.
+A pre-fix control remained failed for 566 samples after query metadata returned.
+The observer only reads production state; a separate declared control changes the actual Fabric receiver and restores its original handler.
+The fixture supplies the guardian appearance, without a native graphical baseline or complete guardian/emote parity claim.
+
+**Remaining:** Other query families, conditional and time-only recovery, native poses, complete actor contexts, and graphical comparisons remain incomplete.
+Mounted, sleeping, and equipped world-model fallbacks remain.
+The original gameplay reports and the direct camera-item rendering gate remain open.
+
+
+### Unresolved attachable bone targets
+
+Explicit binding declarations now suppress implicit same-name owner deformation even when their result does not resolve.
+The bone retains its local hierarchy, and independent valid child bindings still work.
+Typed non-string results remain distinct from empty or whitespace strings.
+Held and first-person admission retain declared geometry ancestry without requiring every target name to exist.
+Unsupported queries and unbound mob equipment retain their existing fallback.
+
+Ninety-six fresh-frame controls execute the pinned Bedrock 1.26.51.1 typed gate, owner lookup, complete constructors, and recursive matrix composition.
+The fixtures include a colliding same-name owner, four matrix families, entity-relative rotation, and animation.
+Java bone and locator matrices match every control.
+Removing declaration-based suppression makes the numerical comparison fail.
+
+The controls supply parsed definitions, typed values, owner matrices, animation samples, and weak-reference backing.
+Diagnostic formatting and logging remain explicit boundaries.
+Native parsing, component cleanup, valid-to-missing lifecycle transitions, name normalization, and visible parity remain unverified.
+The later live costume controls exercise this case on the Java rendering path.
+This result does not close the original inventory, locator, projectile rollback, eating, or direct camera-item rendering reports.
+
+The full build passes 3,048 tests with 152 optional skips and no failures or errors.
+All 20 focused binding tests pass without skips in that build.
+The distributable add-on matches all 1,205 compiled client classes, and both embedded consumers retain the matching core and converter classes.
+This increment adds no new live gameplay capture.
+
+
+### Equipment owners for server costumes
+
+Third-person equipment now selects the primary rendered costume, matching the existing first-person owner order.
+The equipment layer prepares that costume with the current immutable pose before reading complete bone and deformation matrices.
+If no costume resolves, equipment keeps the skin owner.
+This preparation does not evaluate scripts or advance playback.
+
+A real server-pack scene exposed the previous mismatch.
+The valid child used base-skin Y=0 in third person and costume Y=24 in first person.
+The missing target correctly retained its local position, while the independent valid child appeared above the visible costume.
+The regression covers current animation, primary selection, replacement, and return to the base skin.
+
+Native component lifetime, multi-geometry ownership, native poses, and complete image parity remain unverified.
+These authored costume controls do not provide a native graphical baseline or close the original gameplay and inventory reports.
+
+Both routes verify 16 equipped states with the same rebuilt add-on, including both views, five binding result cases, and live sneak transitions.
+The unresolved bone keeps its local pose while the valid child follows the costume at Y=24.
+Playback identity and start time remain stable through target changes.
+Equipment removal clears both view caches after each view updates.
+All 28 final screenshots receive visual review.
+
+The fixture exposed a separate route difference: ViaProxy hotbar icons were blank, while the direct route displayed vanilla icons.
+The shared native image bundle described below addresses that difference.
+The full build passes 3,049 tests with 152 optional skips and no failures or errors.
+All 21 focused binding and owner tests pass without skips.
+
+
+### Shared native item images
+
+ViaProxy now receives native item images through the core dependency.
+The build derives the image bundle from the same checksum-verified Bedrock 1.26.51.1 archives used by the direct add-on.
+The bundle preserves 11,398 images and atlas entries across 48 native layers, including path casing and numeric overlay order.
+Accepted server images and atlas definitions retain priority.
+
+The existing converter selects an inventory image when a native atlas entry resolves.
+Without those images, ViaProxy used held attachable geometry in the GUI, which left the authored fixture icons outside the view.
+Both selectors now remain available: the native image serves the GUI, while held views retain their authored geometry.
+Item identity and gameplay components remain unchanged.
+
+The runtime checks version, hashes, paths, sizes, resource types, and overlay order.
+Core, shaded proxy, and nested client resources match the verified image bundle exactly.
+Generated native image files remain outside Git.
+
+The full build passes 3,053 tests with 152 optional skips and no failures or errors.
+Four focused core tests cover default icons, held geometry, server priority, overlays, and malformed bundles.
+Four additional checks run against the distributable core JAR with five production class origins verified.
+Three tooling tests cover original bytes, deterministic packaging, and exact embedded resources.
+All 1,558 core classes, 200 assets, 39 converter classes, and 1,205 compiled client classes match their distributions.
+
+The original inventory background and scale report remains open.
+The camera item still lacks its declared texture image, and complete native image and pose parity remains unverified.
+
+Fresh BDS 1.26.51.1 sessions verify both routes with the same final distributables.
+Five real hotbar items retain their GUI icon selectors and held-model selectors.
+Four icons use the native image fallback; the bone uses an accepted server atlas override with an orange and cyan checkerboard.
+Screenshot review shows all five icons in the hotbar and the creative inventory opened with E.
+Each route also passes 16 equipped-state checks, including real sneak transitions and equipment removal.
+All 30 screenshots receive visual review, and installed runtime hashes match the build.
+These creative-screen controls do not reproduce the reported survival inventory or establish complete native visual parity.
+
+
+### Native desktop scale preference
+
+Supported native presentations now use a separate persisted scale offset from ViaFabricPlus Bedrock settings.
+The previous runtime always supplied zero to the native desktop scale calculation.
+Players can select offsets from zero through -4 without changing Java GUI scale.
+The viewport retains the preference and clamps the resolved scale to its current native limits.
+Native screen dimensions, supported HUD layouts, portraits, extraction, and pointer coordinates share that result.
+
+Existing Bedrock 1.26.51.1 `GuiData` controls establish the desktop bounds at `141566fd0`.
+A new runtime-wiring regression covers three resolutions, five Java GUI scales, and all five preference values.
+The four viewport tests pass without skips.
+The full build passes 3,054 tests with 152 optional skips and no failures or errors.
+All 1,206 compiled client classes match the add-on.
+The core and both consumers retain matching 1,558 core classes, 200 assets, and 39 converter classes.
+
+The original E-key missing-background report remains unconfirmed.
+This preference does not complete the native player-inventory controller, pocket layouts, or native pixel parity.
+
+Fresh direct and ViaProxy BDS 1.26.51.1 sessions each verify 12 physical inventory actions at 1920 by 1013 pixels.
+The native/Java scale pairs are 4/2, 3/3, 2/2, and 4/4.
+At each pair, actual clicks pick up three diamonds, place one, and restore the stack.
+Independent BDS chest counts confirm every transfer, and the production hovered slot remains aligned with the visible cell.
+The real VFP setting passes four serialization round trips per route.
+A physical click on its published settings row selects -1, and the private client configuration saves that preference.
+All 20 screenshots receive visual review, including backgrounds, slot layouts, and the settings row.
+Runtime hashes match the final distributables.
+These controls cover a real chest and desktop settings; they do not reproduce the reported E-key player inventory or compare native pixels.
+
+
+### Opaque actor materials
+
+Native actor materials now retain their opaque or alpha-tested coverage through every supported appearance consumer.
+The same material value reaches custom actors, skins, persona layers, server costumes, equipped items, and native portraits.
+Opaque world draws write color and depth even when a source texel has zero alpha.
+Ordinary cutouts keep their strict alpha cutoff, while emissive cutouts discard only empty RGBA texels.
+Iris receives a solid lit pass for opaque emissive materials and a cutout lit pass for alpha-tested emissive materials.
+Unknown shader effects and unsupported material states keep the existing fallback.
+
+The pinned Bedrock 1.26.51.1 container contains `BaseColor`, `AlphaTest`, `Emissive`, and `AlphaTestEmissive` passes.
+Its SHA-256 is `403efcc7777c9712176f6715f861c873e31d8e45d0b73b8e320bd29754789058`.
+Unmodified Lazurite 0.10 reads the complete version-26 container through its closing magic and end of file.
+All four sampled vertex shaders are byte-identical.
+The opaque fragments retain the same lighting, overlay, inverse-alpha emission, and fog arithmetic without either discard operation.
+
+A private control executes the original fragment IR with supplied texture, interpolation, constant-buffer, and output boundaries.
+The actual production fragment shader matches all 672 controls through Mesa EGL at tolerance `1e-6`.
+The comparison includes RGBA output, discard behavior, and retained depth for zero-alpha opaque texels.
+It does not establish native vertex production, pass selection, GPU state, or complete rasterization parity.
+
+The full build passes 3,056 tests with 152 optional skips and no failures or errors.
+All 19 focused material, pipeline, bundled-definition, and GPU tests pass without skips.
+The distributable add-on matches all 1,207 compiled client classes.
+Both consumers retain matching core and converter classes and assets.
+
+Fresh BDS 1.26.51.1 controls exercise six material selections on both routes, with and without Iris.
+Both views retain the selected native graphs, textures, coverage flags, depth writes, and derived Iris passes.
+Real server removal retires the six observed UUID snapshots in each session.
+All eight final screenshots receive visual review and show the expected material surfaces and cutout holes.
+The plain and shader scenes use different actor carriers to isolate material behavior from entity-specific pack effects.
+Installed add-on and proxy hashes match the final build.
+These checks do not establish complete renderer-cache cleanup or native graphical parity.
+
+Complete Iris emissive overlay order and framebuffer alpha remain unverified.
+An initial chicken-carrier control appeared black on both routes with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Generated shader output retains a chicken depth offset in the body program and omits it from the eye program.
+The paired-stage change below addresses this captured case.
+Other shader-pack transforms and complete emission parity remain separate requirements.
+Native graphical comparison remains unavailable because the installed native launcher cannot decode its licensing response.
+The original inventory, locator, intermittent item-use, emote, skin, interaction, and other gameplay requirements remain open.
+
+
+### Shared geometry stages for Iris emission
+
+Native emission now uses the complete geometry-producing stages of its depth-writing body.
+The selected Iris body supplies vertex, geometry, tessellation-control, and tessellation-evaluation sources and attribute decisions.
+The selected emission program supplies the fragment source and framebuffer directives.
+Both selections remain part of the cache key, including Iris context variants.
+Body lightmap and overlay bindings remain available to the paired program.
+
+Previously, the two passes selected separate entity and eye vertex programs.
+Complementary Reimagined r5.9.3 offsets chicken clip depth only in its entity program.
+The lit surface therefore covered its own additive emission.
+Generated Iris 1.11.7 programs retain that difference.
+With paired geometry stages, the same native chicken control emits in both captured views.
+Prototype exports are byte-identical. Final exports can differ in formatting and unused helper functions.
+GPU controls compare their resulting clip positions with explicit supplied inputs.
+
+Compilation context restores the previous pipeline after nested lookups and exceptions.
+Each Iris world pipeline owns its paired program cache and registers those programs with its normal shader lifetime.
+Missing program sources retain the existing eye path.
+Incompatible stage interfaces produce one diagnostic per selection and retain that path.
+No shader-pack name, entity identifier, fixed depth offset, or forced depth comparison selects this behavior.
+
+The twelve native body/emission mappings and nested compilation recovery have targeted tests.
+Ordinary program lookups, GUI portraits, and shadow selection keep their existing paths.
+Complete hand behavior, stage interfaces in other packs, emissive overlay order, and framebuffer alpha remain unverified.
+Native graphical comparison still depends on the unavailable launcher licensing response.
+
+
+**Verification:** Current reports cover 3,210 tests, with 3,058 passes, 152 optional skips, and no failures or errors.
+All 21 focused material, pipeline, bundled-definition, and fragment GPU tests pass without skips.
+The full prototype build passes for all four projects. The final cache refinement also passes a direct prepared-source Gradle build.
+All 1,212 compiled client classes match the distributable add-on.
+Core and converter classes and assets match both embedded consumers.
+All 38 add-on patches replay, with all 988 source and resource file hashes unchanged after the final export cleanup.
+
+Fresh direct and ViaProxy BDS sessions render the original chicken material correctly in both views and after a real Iris reload.
+Actual Iris overrides retain the paired GL program objects and their exact native body-pipeline associations.
+Each reload deletes two owned GL programs before the new world pipeline rebuilds its cache.
+Server removal retires the six observed actor UUID snapshots on each route.
+A separate ViaProxy session without the Iris mod preserves all six material controls and retires their snapshots.
+All eight final screenshots receive visual review, and installed artifacts match the final build.
+
+Mesa transform feedback executes 108 controls from actual generated shaders and links the paired vertex and fragment stages.
+Twelve baseline controls include six expected chicken depth mismatches of `0.000075` in clip Z.
+The other 96 controls match body and emission clip positions at tolerance `1e-7` across both routes and reload phases.
+Inputs supply matrices, vertex attributes, entity identifiers, color alpha, and the overlay texture.
+These controls establish the tested geometry correction, not complete native rasterization or arbitrary shader-pack parity.
+
+
+## Typed appearance metadata and actor scopes, October 26, 2026
+
+**Status:** Incomplete. Core and frontend scopes now share `skin_id` and `trade_tier` from typed native INT metadata.
+Actor-state v5 preserves signed values and distinguishes known zero defaults from unavailable legacy metadata.
+Older snapshots remove cached values for these queries.
+Shared capability selection also retains state replay, movement identity, animation commands, and picking support.
+
+**Native evidence:** Bedrock 1.26.51.1/protocol 2193 reads metadata slots 104 and 101 and converts signed int32 directly to float.
+Original callbacks pass 640 bounded executions across presence, bounds, metadata types, and signed or rounding boundaries.
+The harness supplies backing storage and virtual type dispatch.
+The [core notes](../patches/viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#typed-appearance-queries-october-26-2026) record target identity and limits.
+
+**Live verification:** Direct and ViaProxy sessions load the same authored villager pack on BDS 1.26.51.1.
+Native journals contain INT skin values 1, 2, and 1, plus explicit trading tier 0.
+Texture selection, body width, and parent/child particle colors follow those values.
+Real receiver withdrawal selects Java fallback; restoration recovers the native body with the same actor playback.
+Withdrawal retires one-shot particles, and restoration does not replay their consumed event.
+After removal, no actor state or attached effects remain.
+All 12 screenshots receive visual review, and runtime hashes match the build.
+
+The full four-project build passes 3,065 tests, skips 152 optional tests, and reports no failures.
+All 1,213 compiled client classes match the add-on.
+Both consumers contain matching copies of 1,559 core classes, 200 assets, and 39 converter classes.
+The full replay preserves source contents after removal of generated metadata changes.
+
+**Remaining:** Higher trading tiers have callback and semantic coverage only.
+These authored controls do not establish native graphical parity, complete player skins, emote behavior, or complete actor query support.
+The [frontend notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#integer-metadata-in-actor-scopes-october-26-2026) record the shared scope behavior and tests.
+
+
+## Standard villager material admission, October 26, 2026
+
+**Status:** Incomplete. The bundled villager graph can now resolve its explicit `LessEqual` material declaration.
+The existing Java actor pipeline uses the corresponding reversed-depth comparison.
+The material resolver retains inherited declarations, validates the final comparison, and rejects malformed string values.
+A supported child declaration can recover an inherited unsupported comparison.
+Other depth functions and masked multitexture professions retain fallback.
+The [material notes](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#explicit-default-depth-declarations-october-26-2026) record source identity and comparison limits.
+
+**Verification:** All 27 focused material, pipeline, and world graph tests pass without skips.
+The bundled graph resolves adult and baby geometry across all seven biomes with supplied stationary motion inputs.
+The full four-project build passes 3,067 tests, skips 152 optional tests, and reports no failures.
+Replay preserves all source files after removal of generated metadata changes.
+All 1,213 compiled client classes match the add-on, and both consumers contain matching core and converter classes and assets.
+
+Direct and ViaProxy BDS sessions drive the standard client graph through authored biome, age, and profession events.
+A further ViaProxy session checks the same states with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Native journals confirm the typed metadata transitions.
+Earlier observers report four surfaces, including the duplicate removed by the [sampler correction](#controller-texture-slots-october-26-2026).
+They also verify biome textures, age geometry, script scales, and a stable actor lifetime and playback.
+Masked profession fallback and later supported-state recovery work on each run.
+Actor removal retires its snapshot, all 21 final screenshots receive visual review, and installed artifacts match the build.
+
+**Remaining:** Masked multitexture, other depth comparisons, native visual comparisons, and complete actor contexts remain open.
+The white bar in the early shader captures is the [RRLS reload indicator](#shader-profile-reload-indicator-october-26-2026), which clears after loading.
+These authored behavior controls do not establish natural vanilla aging, collision, or interaction parity.
+The [world actor notes](../patches/viafabricplus-bedrock/upstreamable/0030-use-supported-native-world-actor-definitions.pr.md#bundled-villager-graph-admission-october-26-2026) record the graph scope and fallback rules.
+
+
+## Shader-profile reload indicator, October 26, 2026
+
+**Classified:** The white bar in the early shader captures is RRLS 5.2.8's configured resource-reload progress indicator.
+The shader profile includes this mod with `miniRender = true` and `type = "PROGRESS"`.
+Its [versioned renderer](https://github.com/dima-dencep/rrls/blob/26.3-5.2.8/src/main/java/org/redlance/dima_dencep/mods/rrls/mixins/LoadingOverlayMixin.java) supplies the observed progress-bar shape and position.
+No product rendering workaround is required for this indicator.
+
+**Verification:** A fresh BDS 1.26.51.1 session through ViaProxy uses Minecraft 26.3, Iris 1.11.7, and Complementary Reimagined r5.9.3.
+A read-only observer records the current screen, loading overlay, native HUD state, RRLS state, and shader state.
+All eleven reviewed screenshots have matching observations within 200 milliseconds.
+The seven bar frames have an active `LoadingOverlay`, while the four clear frames have no overlay.
+A pixel check confirms the long white progress edge only in the loading frames.
+The HUD scenes and native locator session remain inactive throughout these controls.
+
+F1, inventory opening, and the server's progress-bar hide command do not hide the loading overlay.
+The bar clears after initial resource loading completes, with Iris still enabled.
+Normal Iris toggles leave settled frames clear.
+Physical F3+T restores the loading indicator, which clears again after the reload finishes.
+RRLS's mini-render option remains enabled, and runtime artifacts match the verified build.
+
+This classification applies to the indicator in these lab modpack captures.
+It does not close the original inventory background, locator, movement, eating, or broader parity reports.
+
+## Classic skin assets before protocol mapping initialization
+
+Default Steve and Alex selection, standard animation models, and live uploads share the bundled native vanilla skin pack.
+They no longer depend on the local Bedrock mapping table.
+A regression reproduced the default appearance null-pointer failure with that table unloaded.
+The new checks preserve native pixels, independent model definitions, and distinct four-pixel and three-pixel arms.
+Authored custom geometry retains precedence.
+
+The replayed four-project build passes 3,070 tests with 152 optional skips and no failures or errors.
+All 14 focused appearance checks pass without skips.
+Compiled client classes match the packaged add-on, and embedded core classes and assets match both consumers.
+
+The live controls use a declared remote classic player without supplied geometry and four bundled emotes.
+The renderer resolves the native wide model and samples all four emotes.
+The installed proxy profile loads local mappings, so the unloaded-mapping result comes from the isolated regression.
+The initial scene gate failed on an unused camera atlas declaration.
+The item atlas dependency checks below resolve that conversion failure on both routes.
+These controls do not establish complete native skin, pose, timing, placement or shader parity.
+
+## Item atlas dependency checks
+
+The converter now exports item icon variants only when their native images resolve.
+Sparse selector indices, native pixels and pack priority remain intact.
+Missing variants retain their reasons in converter metadata, including cached results.
+An actively selected missing icon reports a diagnostic that the rendering gate rejects.
+A later conversion clears the missing state when its image becomes available.
+An atlas without resolved variants uses the existing empty item-definition schema.
+
+Bedrock 1.26.51.1 declares `textures/items/camera` without supplying that item image.
+Its current camera definitions and ordinary item mapping do not select the atlas entry.
+Eager conversion previously produced a dangling Java sprite on unrelated joins.
+The fix applies to atlas dependencies generally and supplies no replacement image.
+Native camera interaction behavior remains outside these checks.
+
+The replayed four-project build passes 3,072 tests with 152 optional skips and no failures or errors.
+Two focused icon tests, 19 cache tests and 14 replay gate tests pass without skips.
+Checkstyle and the tooling checks pass.
+Compiled client classes and embedded core classes, assets and CubeConverter classes match their verified packages.
+
+The same controlled classic-player scene now passes full transport and rendering gates on direct and ViaProxy connections.
+Both routes sample four bundled emotes and install all three expected skin records with unchanged pixels and metadata.
+The direct observer retains the missing camera-icon reason without selecting it.
+These controls use authored placement and durations, plain software rendering, and no native graphical comparison.
+Complete native skin, emote, camera and shader parity remain open.
+
+A declared negative control requests the unresolved `camera/0` model through the production selection API in a running direct client.
+The API reports the retained missing-image reason, and the full rendering gate fails as expected.
+All four emotes still render during that control.
+The probe tests the selection diagnostic; it does not exercise a native camera item interaction.
+
+## Consumable movement after counter expiry
+
+The local consumable counter can reach zero before its server completion event arrives.
+Java retains active use during that wait.
+The previous movement path therefore kept applying the native slowdown after the counter expired.
+A fresh strict-BDS 1.26.51.1 control reproduced repeated corrections with a declared 300 ms inbound Java channel delay.
+A read-only observer recorded seven active zero-counter ticks per delayed completion.
+
+Movement now resumes at counter expiry for automatic consumables.
+Inventory, completion handling and the active use cycle retain their existing authority.
+Non-consumables and release-based items keep their existing path.
+Historical physics uses its recorded counter and item components for the same decision, without repeating consumption.
+The change adds no delay constant, extra timer or network revision.
+
+| Control | Undelayed corrections | Delayed repeated food | Delayed final item |
+| --- | ---: | ---: | ---: |
+| Fresh direct baseline | 0 | 8 | 2 |
+| Direct candidate | 0 | 0 | 0 |
+| Final direct artifact | 0 | 1 | 1 |
+| Final proxy artifact | 0 | 0 | 0 |
+
+Counts exclude declared preparation corrections before physical item use starts.
+All runs retain the same physical input and server fixture; the observer adds a read of the applied scale after the baseline.
+Both final routes complete four delayed foods and the last single item, retain absorption, and end with an empty hand and inactive use.
+Undelayed completion counts vary between four and five during the fixed input window.
+These controls do not establish exact native consumption timing.
+
+The full replayed build passes 3,072 tests with 152 optional skips and no failures or errors.
+The permanent repeated-food, final-item, bow-release and reconnect checks pass against the final build.
+Compiled client classes and both embedded core copies match the verified packages.
+A body-only patch amendment preserves the exact tested source contents.
+
+The two isolated direct corrections remain under investigation.
+Packet inspection pairs each `StartUsingItem` flag with active local use and its recorded input vector.
+That evidence does not justify adding an arbitrary action delay or changing the prediction transport.
+The original intermittent endless-eating and pearl/wind-charge rollback reports remain open.
+No fresh native graphical comparison or complete movement parity is claimed.
+
+Native journals independently confirm the changed movement state.
+All 40 matched active zero-counter baseline frames still send the slowed forward vector `0.122499995`.
+The 36 matched final direct frames send `1.0`; their positions match the read-only counter samples.
+The first-use flags remain paired with active use and recorded movement, so the residual direct corrections need separate timing analysis.
+
+
+## Controller texture slots, October 26, 2026
+
+**Corrected within scope:** Supported single-sampler materials now produce one model draw per render controller.
+Secondary texture slots previously duplicated geometry and could incorrectly select Steve/Alex body visibility.
+All texture expressions still run in order, preserving their effects on later controllers.
+Separate controllers remain separate draws.
+The bundled villager graph now resolves three controller draws; earlier four-surface observations included the duplicate texture draw.
+
+The [shared runtime notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#controller-texture-slots-october-26-2026) record 112 target fragment controls and failing-before/passing-after selector regressions.
+These controls verify sampled slot identity and unchanged fragment results when the secondary texture changes.
+They do not establish native controller expression timing or complete graphical parity.
+Masked multitexture blending remains unsupported.
+
+The full replayed build passes 3,073 tests, skips 152 optional tests, and reports no failures or errors.
+All 18 focused controller, world-graph, and native fragment GPU tests pass without skips.
+Compiled client classes and embedded dependencies match the packaged artifacts.
+Fresh direct and ViaProxy sessions verify three controller draws across biome and age transitions, fallback, recovery, and removal.
+The ViaProxy control uses Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Native packets confirm the metadata changes, and both controls retain their playback identity and native actor lifetime.
+All 14 screenshots receive visual review, and installed artifacts match the build.
+These authored behavior controls do not establish native graphical parity, natural aging, collision, or complete interactions.
+
+
+## Complete controller sampler transport, October 26, 2026
+
+Each evaluated render controller now retains one model with an ordered immutable list of texture bindings.
+Secondary-only changes replace its snapshot and refresh the draw cache on the following render.
+The negotiated `viabedrock:custom_entity_v2` channel carries those lists through direct connections and ViaProxy.
+The original channel retains its version-one layout and sends the primary texture to older clients.
+The 128-slot bound limits transport allocation; it does not describe native shader capacity.
+
+Shared player, equipped-item, world, and portrait selections retain all sampler slots.
+Current single-sampler material consumers explicitly use slot zero.
+Unsupported masked materials still select their existing fallback; this transport does not implement their blending.
+
+All 17 focused codec, model-state, store, and controller checks pass without skips.
+They cover ordered bindings, immutable snapshots, secondary-only changes, version isolation, legacy encoding, malformed counts, and truncated data.
+The full replayed build passes 3,077 tests, skips 152 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass, and packaged classes and embedded dependencies match their compiled outputs.
+
+Fresh direct and Iris-enabled ViaProxy BDS controls change only the secondary texture, then restore it and remove the actor.
+Both bindings reach the client, snapshots and draw caches change, and the native actor lifetime remains stable.
+The renderer retains one red model from slot zero throughout; the blue and green secondary images never become extra geometry draws.
+Read-only observations, replay audit bindings, server component transitions, and eight reviewed screenshots support these checks.
+These authored fixtures use ordinary single-sampler materials and do not establish masked blending or native graphical parity.
+
+The target masked shader now has 512 original fragment IR controls for the next material integration.
+DXIL opcode 28 rounds toward positive infinity, as specified in [Microsoft's DXIL reference](https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#round_pi).
+The controls supply texture samples, handles, constant buffers, lighting, and output sinks.
+They do not execute native material selection, sampler filtering, controller expressions, or rasterization.
+Production masked-shader comparisons remain pending.
+
+## Sampled masked actor materials, October 26, 2026
+
+The renderer now supports the target's sampled `MASKED_MULTITEXTURE` alpha-test family.
+Each controller keeps one geometry draw with two independently loaded GPU images.
+The mask overwrites the base unless its RGB sum, multiplied by inverse alpha, rounds upward to a positive value.
+The selected color then follows the existing native discard, overlay, lighting, and fog path.
+This supersedes the masked-material fallback limit in the preceding sampler-transport milestone.
+
+Material inheritance retains the mask flag and rejects unsupported opaque or emissive combinations.
+Custom actors, equipped pack models, server player costumes, first-person hands, world actors, and GUI portraits load the required bindings.
+The two images retain their own dimensions and share normalized UV coordinates.
+The mask has a separate resource binding; Minecraft's overlay sampler keeps its existing role.
+Missing custom-actor bindings retain the legacy fallback, including snapshots from older core versions.
+
+Default-body costumes use the player's uploaded skin as the primary image.
+A loaded masked replacement retains Character Creator face and clothing surfaces with their own primary images.
+Missing replacement images leave the ordinary body and its layers available.
+Supported costume UV animation runs in the shader, while unsupported legacy materials retain their previous presentation.
+
+Iris receives the composed input before shader-pack color processing.
+Native coverage still uses the original actor UV and the composed alpha.
+Sampler identity passes through helper functions, prototypes, and overloads, leaving unrelated image reads unchanged.
+A reserved mask texture unit keeps the primary image, overlay, and lightmap independent.
+Iris hooks load only when that optional mod is installed.
+Each pipeline binding restores its mask and alpha state when control returns to a Java draw.
+
+The production fragment shader passes all 512 original native masked controls and 672 ordinary-material controls at tolerance 1e-6.
+These controls check color, discard, and depth with supplied texture samples and buffer values.
+A deliberate floor substitution fails the masked comparison; restoring upward rounding passes.
+The Iris GPU regression checks ordinary, LOD, and gradient reads through sampler helpers, unrelated images, and shared native/Java programs.
+Material, controller, equipment-owner, and bundled world-actor regressions also pass.
+The bundled villager profession now resolves one two-image masked draw.
+The full four-project build passes 3,080 tests, skips 152 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass; packaged classes, shader assets, and embedded dependencies match their compiled inputs.
+
+
+Fresh direct and Iris-enabled ViaProxy sessions verify blue overwrite, red base retention, restoration, and actor removal.
+Only the secondary image changes; the controller retains one model and the same native actor lifetime.
+The primary image is 16 × 16, while the two secondary images are 13 × 9 and 7 × 11.
+Native component events, received bindings, refreshed draw caches, and eight reviewed screenshots support these checks.
+Installed artifact hashes match the final build, and the shader profile loads Iris with Complementary Reimagined.
+These authored pack controls do not establish native graphical parity or fresh player-costume visual coverage.
+
+**Limits:** The native controls cover the both-sampled fragment variant.
+They do not verify native pass selection, constant/shared-input variants, sampler filtering, or rasterization.
+The Iris bridge covers normalized texture, LOD, and gradient reads in the supported vertex/fragment stages.
+Geometry/tessellation transport and other shader-pack sampling operations still need implementation or verification.
+The shared consumer changes do not establish complete skin, emote, equipment, interaction, or pack parity.
+Native graphical comparisons and the original inventory, locator, movement, and eating reports remain open.
+
+
+## Independent player controller visibility, October 26, 2026
+
+**Corrected within scope:** Visibility-only native player models now use their native hierarchy even with an empty bone pose.
+Each third-person costume draw retains its own controller visibility through deferred submission of shared geometry.
+Separate controllers no longer paint each other's selected body parts.
+Base skins and persona surfaces retain the same per-controller rules.
+
+The target Bedrock 1.26.51.1 player assets define separate part rules for first-person, third-person, spectator, and map views.
+The [runtime notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#static-player-visibility-october-26-2026) record the source hash and failing-before regression.
+The [costume notes](../patches/viafabricplus-bedrock/upstreamable/0016-render-server-player-costumes.pr.md#independent-player-controller-draws-october-26-2026) describe shared-model replay and live controls.
+
+A declared BDS pack selects separate blue and red arms and a masked head from the same geometry, without world bone animation.
+The earlier artifact draws a complete red body and no blue arm.
+Fresh direct and Iris-enabled ViaProxy captures show separate arms, hidden torso and legs, and the declared yellow persona face.
+The native server confirms the persona through the production skin-change API.
+Physical sneak transitions change the right-arm mask while retaining the left arm and face.
+First-person hands and the creative survival-tab avatar preview also receive visual review.
+All twelve final candidate screenshots receive review.
+
+All ten focused regressions pass without skips.
+The full build passes 3,083 tests with 152 optional skips and no failures or errors.
+Packaged classes, embedded dependencies, and installed runtime hashes match.
+
+The final face shell avoids coincident geometry and does not establish native depth ordering.
+The read-only observer never samples the ephemeral first-person frame, and its player-frame counter stays zero.
+Pixels and actual cached model state support the rendering results.
+These authored controls do not establish native graphical parity, remote-player skin parity, or complete persona composition.
+The original E-key inventory report, emote timing, pack interactions, and other in-game behavior remain separate work.
+
+
+## Ordered material assignments, October 26, 2026
+
+**Corrected within scope:** Render-controller parsing now preserves repeated material patterns as immutable ordered assignments.
+Core evaluates every expression before reducing the results to a final pattern map.
+Repeated patterns take their final declaration positions, preserving later override precedence for bone materials.
+The client selector also retains script effects from every assignment before later draw expressions.
+
+The target Bedrock 1.26.51.1 library includes eight controllers with multiple material rules.
+The [converter notes](../patches/cubeconverter/upstreamable/0002-preserve-actor-lighting-controls.pr.md#ordered-material-declarations-october-26-2026) record the API change and target references.
+Core now depends on that converter declaration API.
+Constructor and admission changes remain in the owning client patches.
+
+The core regression previously accumulated 32 instead of the declared sequence 123.
+The player selector previously accumulated only 3.
+Both corrected regressions pass, together with the parser's duplicate-pattern control.
+All ten focused parser and selector tests pass without skips.
+
+Fresh direct and Iris-enabled ViaProxy controls show two red actor parts after a final opaque wildcard replaces an arm-specific cutout rule.
+Native BDS state changes hide both parts, then restore both before removal.
+Received materials retain their final override order, while snapshots and rendered caches refresh within the same actor lifetime.
+Both routes download the exact declared fixture files.
+A physical third-person view also exercises player material scripts and retains the expected blue texture and accumulated value 123.
+The plain player head appears blue.
+Iris produces a saturated white head with blue bloom under the fixture's light multiplier 123.
+The cached selection establishes texture identity separately from those saturated pixels.
+All ten final screenshots receive visual review.
+
+The full four-project build passes 3,086 tests with 152 optional skips and no failures or errors.
+Both core Checkstyle tasks pass.
+All 1,227 client classes and the embedded copies of 1,559 core classes, 200 assets, and 40 converter classes match compilation.
+Installed add-on and proxy hashes match the build.
+
+These authored controls do not execute a native expression or graphical baseline.
+Player, equipment, world-graph, and portrait consumers retain their existing per-bone material limits.
+Emote effect ownership and broader pack, interaction, skin, and graphical parity remain open.
+
+
+## Per-bone material rendering, October 26, 2026
+
+**Corrected within scope:** Player costumes, native hands, equipment, world graphs, and portrait extraction now retain each controller's complete material map.
+They partition cubes and meshes by the selected material while preserving the full skeleton in every model.
+Empty transform helpers do not require materials, while mesh-only surfaces retain their assignments.
+Deferred draws retain independent controller visibility, owner matrices, and explicit child bindings.
+Current model subsets replace historical subsets as materials change.
+Required native body, equipment, and world groups resolve before replacement, preserving fallback for incomplete selections.
+
+The [shared runtime notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#material-specific-surfaces-with-complete-skeletons-october-26-2026) describe the model contract and target references.
+Bedrock 1.26.51.1 bundled controllers use distinct materials for axolotl limbs and chicken legs.
+The implementation follows ordered whole-bone assignments without evaluating scripts again for each material.
+The target asset evidence does not supply a native graphical or expression baseline.
+
+Native opaque samples now retain coverage through shader-pack hand branches.
+The initial Iris capture shows an invisible first-person item despite correct model groups and binding matrices.
+Complementary Reimagined r5.9.3 checks sampled alpha inside its hand program, independently of the engine alpha test.
+The [Iris correction](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#opaque-input-for-shader-pack-hand-branches-october-26-2026) supplies opaque coverage before pack shading and resets it for ordinary Java draws.
+Raw native coverage sampling and emission preprocessing retain their existing behavior.
+
+New geometry and world regressions fail when the previous unfiltered models and blanket material rejection return.
+A real EGL regression also fails on the previous hand shader branch and passes after the correction.
+It alternates opaque, cutout, and Java binds through forwarded samplers in transformed and fallback programs.
+The full four-project build passes 3,090 tests, skips 152 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass, and all 38 add-on patches replay.
+All 1,229 client classes match compilation, as do the embedded 1,559 core classes, 200 assets, and 40 converter classes.
+All four source snapshots remain unchanged through the normal build.
+
+Fresh direct and Iris-enabled ViaProxy sessions use the same downloaded server pack and final add-on artifact.
+Physical sneak transitions show a retained red item parent and a green child that appears only with opaque selection.
+The local head remains at `(4, 4, 12)`, while the independently body-bound child retains `(0, 24, 0)`.
+First-person and equipped caches each retain their own entry identity and start time through two-to-one-to-two model changes.
+A blue player body remains visible while a separate yellow surface follows the same material transition.
+A world crystal independently hides and restores its green surface within one native actor lifetime.
+Clearing the item retires both equipment-view caches.
+
+All 26 final-run screenshots receive visual review.
+Twenty scoped world, player, item, and removal phase captures pass.
+Both zero-alpha inventory avatar captures remain empty, and four preliminary direct world captures remain outside those passing controls.
+The direct world sequence repeats within the same owned session after the first gate accepts a removed cached crystal.
+The final observer distinguishes removed entities before the ViaProxy sequence.
+An earlier ViaProxy observation gate expires during initial shader compilation and supplies no passing phases.
+The final run waits for scene readiness before the world controls.
+Downloaded fixture files and installed artifact hashes match, and every owned process retires after normal shutdown.
+
+Fresh multi-material persona layers, masked native hands, and generic portrait rendering remain unverified.
+The creative inventory avatar is a separate renderer and does not establish generic portrait coverage.
+The original E-key background/scale report, locator report, rollback, and endless eating remain open.
+Remote skins, native depth and animation equality, emote effect ownership, and broader pack and interaction parity also remain open.
+
+
+## Inventory avatar coverage, October 26, 2026
+
+**Corrected within scope:** Native material coverage now survives texture-backed inventory avatars and other picture-in-picture submissions.
+The earlier zero-alpha fixture renders its opaque blue body in the world but leaves its inventory avatar empty.
+Minecraft 26.3 composites that avatar through a GUI shader that discards zero alpha.
+Native opaque world fragments retain their source alpha, so the previous intermediate texture loses those otherwise visible surfaces.
+
+Picture-in-picture submission now selects a separate GUI variant for each native material.
+The lazy variant retains its image bindings, lighting, multiplier, and UV transform without changing the cached world material.
+Ordinary Java materials retain their existing paths.
+The submission scope restores nested failures and does not create an actor perspective or advance its playback.
+GUI materials retain their native emission calculation instead of acquiring world Iris additive passes.
+
+After native cutout and emission calculations, surviving GUI fragments use control opacity as coverage.
+Source alpha still controls those earlier calculations, but it no longer multiplies control opacity again.
+World shader output remains unchanged.
+The [shared UI notes](../patches/viafabricplus-bedrock/upstreamable/0029-share-native-ui-scene-rendering.pr.md#texture-backed-avatar-coverage-october-26-2026) describe the owning correction and verification.
+
+A new real EGL regression fails on the previous GUI shader with expected coverage 0.0925 and actual coverage zero.
+The correction passes 3,552 GUI blends at three opacity values across ordinary, cutout, emissive, and masked controls.
+All 1,184 existing native color, discard, and depth controls still pass.
+These GUI opacity expectations describe the Java compositor integration, not a native GUI graphical baseline.
+All 15 focused tests pass without skips, including nested submission recovery.
+
+The normal four-project build passes 3,092 tests, skips 152 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass, and all 38 add-on patches replay.
+All 1,230 client classes and the shader assets match compilation.
+Both consumers retain matching copies of 1,559 core classes, 200 assets, and 40 converter classes.
+All four source snapshots remain unchanged through the build.
+
+Fresh direct and Iris-enabled ViaProxy captures now show the blue avatar body on both inventory openings.
+The zero-alpha yellow cutout surface remains hidden, and the red equipment parent remains visible.
+Closing the inventory preserves the world body and item appearance.
+Actual cached GUI variants remain distinct from world materials and retain their identities across reopening.
+Their pipelines carry the GUI flag while the original world pipelines retain their original flags.
+Both routes also preserve the earlier world, player, item, binding, and cache-retirement controls.
+All 26 main screenshots receive visual review, and the strict state and pixel checks pass.
+
+A separate unchanged-artifact Iris probe repeats three physical sneak cycles.
+Its 15 reviewed captures retain the red parent and show the green child only during sneaking.
+Restoration checks include the first accepted released sample and samples after 500 and 1,500 milliseconds.
+The equipment entry and its complete binding matrices remain stable through all three cycles.
+
+All three successful sessions download the exact 22 fixture files and use the verified build artifacts.
+Every owned process retires after normal recorder and server shutdown.
+An earlier Iris launch stops at the disk-reserve check before creating a client and supplies no live result.
+
+This supersedes the empty-avatar limit for this authored pack and these installed artifacts.
+The original E-key background/scale report and generic native portrait visuals remain separate work.
+Native graphical equality, remote skins, broader persona composition, emote effects, and complete pack and interaction parity remain open.
+
+## Emote status in pack queries, October 26, 2026
+
+**Corrected within scope:** Actor animations, player controllers, and existing attached particles now receive `query.is_emoting`.
+The bundled Bedrock 1.26.51.1 player controllers use this query to suppress look-at behavior during emotes.
+[Mojang's Molang reference](https://mojang.github.io/bedrock-samples/Molang.html) defines the query as the entity's current emote status.
+
+The shared sampler combines native metadata with accepted playback for remote actors.
+For the local player, active playback owns the status.
+A live BDS baseline retains the native metadata flag after movement cancels playback.
+The earlier combined query leaves authored visuals in their emote state for about 1.6 seconds.
+The correction restores local queries before that delayed metadata clears.
+Player controller caches also include the emote status, including changes without a new render age or metadata snapshot.
+
+Three regressions cover native status removal in an existing emitter, independent players, movement cancellation, and delayed local metadata.
+The first two fail on the preceding implementation.
+The local precedence regression separately fails on the initial combined query and passes after the correction.
+The full four-project build passes 3,095 tests, skips 152 optional tests, and reports no failures or errors.
+All 38 add-on patches replay, and both core Checkstyle tasks pass.
+All four source snapshots remain unchanged through the final build.
+Compiled client classes, shader assets, and embedded core and converter copies match their packaged artifacts.
+
+Fresh direct and Iris-enabled ViaProxy sessions use the same authored pack and final add-on artifact.
+Physical B-key and slot controls start two emotes that the native BDS receives.
+The body texture and two particle markers change from blue to red, then return after movement cancellation and natural completion.
+The shader pack renders the authored red particle tint as bright pink.
+One marker comes from a bound child emitter.
+Both emitters and their existing particles retain their identities across all five captured phases.
+At the cancellation draw, local queries and all three visuals reset while the native metadata flag remains true.
+Both routes pass state, pixel, pack-file, artifact, and process-retirement checks.
+All ten final screenshots receive visual review.
+
+The private wheel fixture installs the four already bundled assets and controlled labels.
+It does not send packets, start or stop playback, change capabilities, or write account state.
+Subsequent observations only read production state.
+Earlier disk-reserve failures and an invalid authored animation fixture supply no passing live result.
+An earlier proxy driver loses its terminal receipts during teardown and supplies no normal lifecycle result.
+The final proxy control uses an isolated supervisor and records normal recorder and server exits.
+
+This fixture verifies authored pack responses to emote status.
+The four bundled emote animations declare no sound or particle effects, so they do not establish native emote effect ownership.
+Native graphical equality, remote metadata precedence, remote skin visuals, and broader skin and emote parity remain open.
+The original inventory, locator, rollback, and eating reports remain separate work.
+The full implementation goal stays active.
+
+## Aim actor selection prerequisites, October 26, 2026
+
+Fresh target-executable controls characterize actor filtering needed by the unfinished live aim adapter.
+The 2,958 controls cover cached exclusions, component eligibility, signed priority keys, typed actor-ID metadata, capacity, and the player predicate.
+Exclusion updates still execute after the candidate vector reaches its geometry capacity.
+Existing cache entries retain their decisions until the caller requests a recheck.
+
+The player predicate reads raw native game type and an optional editor service.
+Default and Undefined differ when the level uses Spectator mode.
+Creative mode alone does not reject a player.
+The [camera evidence](../patches/viabedrock/upstreamable/0089-resolve-and-transport-native-camera-instructions.pr.md#native-actor-targeting-requirements-october-26-2026) records the native inputs and supplied boundaries.
+
+The current client transport lacks some required actor inputs.
+The remote-mode cache below retains decoded game types for Java profile updates.
+Native aim execution still needs verified input producers and transport.
+The native block mirror already retains both block layers and properties.
+A complete native selection-shape provider, actor enumeration order, and final hit construction remain unfinished.
+These controls change the requirements for live wiring.
+They do not establish target selection, interaction rotation, reticles, or native gameplay parity.
+The full five-area goal remains active.
+
+
+## Remote profile game modes, October 26, 2026
+
+World-default changes now refresh affected remote Java profiles, including players outside render distance.
+Explicit modes keep their values.
+The cache retains decoded game types from player spawn and update packets.
+Player-list refreshes include the retained effective mode, so they no longer reset known spectator profiles to Java defaults.
+Replacement actor identities and player removal clear old state.
+
+Six focused tests cover translated packet fields, default transitions, explicit modes, local mode events, and cache cleanup.
+The previous packet handlers fail both remote-update regressions.
+The corrected handlers pass after replay of the full 104-patch core stack.
+The [game-mode patch notes](../patches/viabedrock/upstreamable/0007-forward-local-game-mode-updates.pr.md) record the packet references and test scope.
+
+Java's existing Undefined fallback stays unchanged.
+These tests do not establish the distinct native spectator predicate, live aim selection, remote skin visuals, or native graphical equality.
+The broader pack, interaction, skin, emote, and original gameplay requirements remain open.
+
+The four-project build reports 2,941 passed tests, 312 optional skips, and no failures or errors.
+Both core Checkstyle tasks pass.
+All six new mode tests pass without skips.
+The packaged client classes, core and converter dependencies, and four source snapshots match the tested outputs.
+Optional native-reference and GPU controls from earlier rendering milestones are outside this build run.
+
+## Native game-mode timing prerequisites, October 26, 2026
+
+The profile-cache correction above does not implement the input tick in `UPDATE_PLAYER_GAME_TYPE`.
+The current translation discards that tick.
+Fresh native controls establish the raw component write, replay admission, packet dispatch, and local event transformation.
+All 7,544 controls pass against the pinned Bedrock 1.26.51.1 executable.
+The [movement evidence](../patches/viabedrock/upstreamable/0092-retain-completed-client-prediction-frames.pr.md#ticked-game-mode-inputs-october-26-2026) records each step and its supplied boundaries.
+
+Native replay admission requires a nonzero tick, a valid replay component, and a history owner.
+It compares the history start and packet tick as unsigned values.
+The native handler skips removed actors and selects immediate or deferred delivery.
+During local admission, raw Default remains in the actor component while the event payload becomes the effective world mode.
+The complete deferred replay can apply further changes, which these controls do not establish.
+
+Queue placement, snapshot consumption, mode-dependent motion and mount effects, and live client integration remain unfinished.
+The actor-class, enumeration, geometry, and interaction requirements for native aim also remain open.
+This evidence milestone changes no runtime source and establishes no new visual or gameplay parity claim.
+The full implementation goal stays active.
+
+
+## Native game-mode ability ownership, October 26, 2026
+
+Local mode changes now update Base and Spectator ability layers through one shared native operation.
+Each mode change clears old Spectator declarations while higher policy layers keep their values.
+Creative preserves Base Flying.
+Spectator declares Flying as true and MayFly as false, independently of Java spectator defaults.
+Undefined does not inherit the world mode for native ability writes.
+Java profile fallback keeps its existing behavior.
+
+The previous local producer fails the new regression.
+The corrected implementation matches 3,456 native writes across 1,728 two-mode sequences, with all six layers compared after each write.
+Separate mutations of Base ownership and Spectator reset fail the targeted tests.
+The [ability notes](../patches/viabedrock/upstreamable/0103-honor-native-ability-layer-priority.pr.md#native-game-mode-layer-writes-october-26-2026) record the native inputs and supplied boundaries.
+
+This correction establishes mode-dependent ability state in the core model and local producer.
+Input-tick placement, full native world effects, live flight comparisons, and complete movement and aim parity remain open.
+The full implementation goal stays active.
+
+
+The four-project build reports 2,946 passed tests, 311 optional skips, and no failures or errors.
+The new native mode-sequence comparison and existing native ability comparisons run without skips.
+Both core Checkstyle tasks pass, and packaged dependencies match their tested classes and assets.
+No fresh live flight or game-mode capture ran for this correction.
+
+
+## Local game-mode replay, October 26, 2026
+
+**Implemented:** Local mode packets retain their input tick through a negotiated channel.
+Historical replay applies native mode writes to retained ability owners before the following physical input.
+Ordinary ability snapshots remain arrival-time updates.
+Mode updates preserve packet order with motion and position corrections and accept mounted local players.
+Actor identity, lifetime, world, and connection constrain admission.
+
+**Evidence:** Native queue and insertion execution passes 23,040 controls with explicit host boundaries.
+Core tests compare the applicable admitted local cases and verify the registered packet producer and bounded payload.
+Client tests cover historical ownership, later corrections, duplicate admission, lifetime replacement, mounted players, and spectator motion boundaries.
+The [core notes](../patches/viabedrock/upstreamable/0092-retain-completed-client-prediction-frames.pr.md#native-mode-replay-integration-october-26-2026)
+and [client notes](../patches/viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md#native-mode-events-in-retained-physics-october-26-2026) record the boundaries.
+
+**Open:** Fresh live mode trajectories, full native world and mount effects, and the intermittent rollback and eating reports.
+Packs, rendering, interactions, skins, emotes, native screen parity, and the remaining five-area work stay open.
+Crafting remains parked.
+
+The complete build passes 2,955 tests, with 311 optional skips and no failures or errors.
+Four deliberately incorrect variants fail assertions; restored focused suites pass.
+The permanent creative-flight and reconnect control passes on a private display with the final add-on artifact.
+It records about 9.95 blocks of ascent and 41 flying samples.
+Delayed mode-event replay still needs a live trace.
+
+
+## Actor material depth and occlusion, October 26, 2026
+
+Actor materials now retain inherited depth comparisons and independent depth-test and depth-write controls.
+The reader previously rejected these declarations and restored the Java fallback for the complete native actor.
+World and GUI pipelines now retain the selected state, including uncommon variants compiled on demand.
+The Iris emission pass retains the body comparison and disables its own depth writes.
+
+EntityCulling can otherwise hide the complete actor before these material rules run.
+The optional integration exempts actors with supported materials that intentionally draw behind opaque geometry.
+It resolves declared alternatives before a draw, without sampling animations or emitting effects.
+Its worker reads an immutable snapshot from the client tick.
+Ordinary materials retain their normal occlusion policy.
+
+The pinned 1.26.51.1 library contains 95 depth-related material declarations.
+These declarations establish authored state, without executing native backend state creation.
+A real OpenGL control covers 168 combinations of depth comparison, coverage, and write behavior through the production pipeline mapper.
+Separate GPU checks retain the 672 ordinary and 512 masked native fragment controls, plus 3,552 GUI opacity combinations.
+Four incorrect depth and emission variants fail assertions.
+
+A fresh Java-to-ViaProxy-to-BDS scene tests three authored materials against the same stone wall.
+The previous artifact restores a vanilla crystal instead of the authored model.
+The intermediate depth implementation passes in the plain profile, but EntityCulling hides all three parts in the full modpack.
+Removing only EntityCulling restores the two through-wall parts under Iris.
+The final artifact passes with EntityCulling enabled, Iris 1.11.7, and Complementary Reimagined r5.9.3.
+Its normal material disappears behind stone, while Always and disabled-depth materials remain visible.
+The same artifact also passes in the plain profile without EntityCulling installed.
+All six final phase screenshots received visual review, and the source server installation was restored after each run.
+
+The four-project build reports 2,957 passed tests, 315 optional skips, and no failures or errors.
+The separate focused run passes 34 tests and skips one optional licensed NPC-variant control outside this change.
+Both core Checkstyle tasks pass.
+Packaged client classes, embedded dependencies, shader resources, and source snapshots match the tested outputs.
+EntityCulling remains an optional compile dependency and is not bundled.
+
+Depth-writing strict comparisons with split emission remain unsupported because the second pass cannot repeat the original depth outcome.
+The authored live scene supplies no native graphical baseline.
+Other shaderpacks, pack features, skins, emotes, interactions, and the original five-area goal remain unfinished.
+The inventory/background, rollback, and eating reports remain open.
+Crafting stays parked.
+The [material notes](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#actor-material-depth-state-october-26-2026)
+and [occlusion notes](../patches/viafabricplus-bedrock/upstreamable/0030-use-supported-native-world-actor-definitions.pr.md#material-depth-and-entityculling-october-26-2026) record ownership and evidence.
+
+## Native player layer lifetime, October 26, 2026
+
+Native appearances now reuse ordinary avatar layer geometry for one renderer resource generation.
+Their native body models, poses, and persona surfaces remain separate.
+Resource reload replaces the shared roots through a fresh native context.
+The original Minecraft model set retains ordinary baking behavior.
+
+A production JFR capture attributes repeated root baking to native renderer construction through `AvatarRenderer` and `ArmorModelSet.bake`.
+EMF 3.3.8 counts those transformations and eventually declines its custom model substitution.
+Its shoulder-parrot hook bypasses Minecraft's model set, which left the first cache prototype incomplete.
+An optional integration now retains that transformed root during native construction too.
+EMF remains optional and is not bundled.
+
+Four lifecycle tests pass, including 128 avatar constructors, both arm widths, replacement generations, nested construction, and exception restoration.
+Removing ordinary or external root reuse fails the corresponding regressions.
+The complete four-project build passes 2,961 tests, skips 315 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass, and packaged classes, dependencies, shaders, and source snapshots match the tested outputs.
+
+A direct WildMC control uses the complete shader modpack with EMF 3.3.8, EntityCulling, Iris 1.11.7, and Complementary Reimagined r5.9.3.
+The previous control records 14 model-limit diagnostics; the corrected full-modpack run records none.
+All 19 EMF counters remain one per generation while observed native renderers increase from 26 to 30 before reload.
+After reload, that count increases from 44 to 54 while the counters remain one.
+Each observed appearance retains a distinct body root.
+Both layer caches contain fresh roots after reload and retain stable identities afterward.
+A corrected read-only probe continues in the same client after an initial screen-API error.
+All six final screenshots received visual review; nearby actors obscure the front-facing local player.
+These controls establish model lifetime and EMF admission, without native graphical or complete skin parity.
+
+The original E-key inventory panel, locator, rollback, and eating reports remain open.
+Packs, interactions, skins, emotes, and the original five-area goal remain unfinished.
+Crafting stays parked.
+The [owning skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#native-player-layer-lifetime-october-26-2026)
+record the construction scope and verification limits.
+
+The same artifact also passes startup and resource replacement in the plain client without EMF or Iris.
+That absence control retains 18 ordinary roots and distinct native bodies as its renderer count increases from 23 to 34.
+Its actual window is 854 by 480; the full modpack control uses 1920 by 1013.
+The plain control uses model readiness because its profile lacks the modpack's reload-log marker.
+All six plain screenshots received visual review, including the reload overlay and the final unobscured world.
+Both final clients close normally, retire their owned processes, and restore the prepared profiles.
+
+## Bundled default emote wheel, October 26, 2026
+
+The world emote wheel now loads its four bundled free choices without an appearance account.
+It uses the target starter-recipe positions for Follow Me, Over There, Clapping, and Wave.
+Account loadouts without an active character use those same defaults.
+Saved positions and explicit empty slots retain precedence when an account wheel arrives.
+Native actions must be negotiated before asset preparation and advertisement.
+Pack-local titles supply localized labels with an English fallback per key.
+
+The target Bedrock 1.26.51.1 bundle contains all four packs and their translations.
+All nine starter recipes share their slot order.
+[Mojang's emote update](https://www.minecraft.net/en-us/article/new-emote-features-bedrock-edition) documents the four default free emotes.
+The previous live accountless control shows four disabled, unassigned positions despite an enabled connection.
+Selecting a position sends no native emote.
+A corrected observer continues in the same client after an early initialization error and records that baseline.
+
+Fresh plain and full-modpack ViaProxy controls run against a private BDS 1.26.51.1 server.
+The full modpack loads Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Neither observer installs a wheel, seeds assets, or starts playback.
+Physical B and 1-4 controls produce four native server receipts in each run.
+Packet journals verify pack IDs, advertisement, actor ownership, flags, and the current duration calculation.
+Four separate world playback intervals, early movement cancellation, natural completion, and inactive final input flags pass in both runs.
+All twelve final screenshots received visual review, including loading and ready wheel states.
+Both clients and servers close normally, retire owned processes, and restore the prepared profiles.
+
+Regressions cover all nine starter recipes, absent active characters, reordered and cleared wheels, and title translation fallback.
+Three incorrect variants fail assertions; restored tests pass.
+The complete build passes 2,962 tests, skips 315 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass.
+Packaged classes, embedded dependencies, shaders, and four source snapshots match the tested outputs.
+Offline tooling and patch-metadata validation pass.
+
+The accountless controls use manual third-person selection and do not establish native camera, pose, or exact timing equality.
+Saved account selection preservation has unit coverage, without new live account writes.
+Quick-wheel behavior, controller navigation, broader skins, emote effects, packs, and interactions remain unfinished.
+The original E-key inventory, locator, rollback, and eating reports remain open.
+The full five-area goal stays active, and crafting stays parked.
+The [owning emote notes](../patches/viafabricplus-bedrock/upstreamable/0009-manage-character-creator-accounts-and-wardrobes.pr.md#bundled-default-emote-wheel-october-26-2026)
+record the default selection and verification limits.
+
+## Emote capability renewal, October 27, 2026
+
+Emote controls now retire local playback when support is withdrawn on the current connection.
+Renewal invalidates the advertisement cache, so ready choices reach fresh ViaBedrock state before another selection.
+Stale listeners and unrelated channels cannot change the current emote session.
+The wheel and loaded assets remain available, and the API regression preserves independent remote playback.
+
+The previous live client receives withdrawal and renewal within one measured client tick but retains its old local emote.
+Its next selection animates locally without reaching BDS because it does not advertise to the fresh server state.
+The correction observes Fabric's channel events rather than depending on a disabled tick.
+Fabric updates its registry before delivering the queued notification.
+The handler checks current support before retiring policy, so a late withdrawal notification cannot discard current policy.
+A first candidate exposed that ordering problem and is excluded from the passing controls.
+
+Fresh plain and Iris/full-modpack ViaProxy controls pass against a private BDS 1.26.51.1 server.
+The shader control loads Iris 1.11.7 and Complementary Reimagined r5.9.3.
+The declared fixture sends ordinary registration packets; physical B and slot keys exercise production playback.
+It never replaces the wheel, seeds assets, changes core storage, or starts playback itself.
+Both rapid renewal and held withdrawal restore native playback in each final run.
+Each packet journal records four native emotes and three matching four-ID advertisements, including both renewals.
+The Java connection and asset-future identities remain unchanged, and final input flags are inactive.
+All six final screenshots received visual review.
+Both final clients and servers close successfully, retire owned processes, and restore their profiles.
+An earlier shader attempt timed out before the control; the fresh same-artifact run passes.
+
+Removing immediate local retirement or the listener guard fails the API regression; the restored test passes.
+The complete build passes 2,963 tests, skips 315 optional tests, and reports no failures or errors.
+Both core Checkstyle tasks pass.
+Packaged classes, dependencies, shaders, and four source snapshots match the tested outputs.
+Offline tooling and patch-metadata validation pass.
+
+Configuration-transfer behavior, native camera and timing equality, remote skins, and emote effects still need further work.
+The original inventory, locator, rollback, and eating reports remain open.
+The full five-area goal stays active, and crafting stays parked.
+The [owning emote notes](../patches/viafabricplus-bedrock/upstreamable/0009-manage-character-creator-accounts-and-wardrobes.pr.md#emote-capability-renewal-october-27-2026)
+record the registry ordering and live evidence.
+
+
+## Player head equipment and native vehicle query bindings, October 27, 2026
+
+Shared animation frames now expose head-slot occupancy and native vehicle-type matching.
+These inputs serve player packs, custom actors, world actors, and attached effects.
+Vehicle matching uses the native identifier rather than the translated Java carrier type.
+Missing metadata leaves the relevant query unavailable, and frame refresh removes stale values.
+An unmounted actor supplies a known false vehicle predicate.
+The [owning runtime notes](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md#head-equipment-and-native-vehicle-queries-october-27-2026)
+record the semantics and remaining limits.
+
+The earlier WildFFA capture reports both queries missing from the native first-person graph.
+The candidate capture reports no missing queries in the sampled first-person phases.
+Its head query matches the actual diamond helmet, and its vehicle predicate reports false while unmounted.
+Physical controls verify nine phases across HUD visibility, shield use and release, three camera modes, and a changed main-hand item.
+The capture uses the full modpack with Iris 1.11.7 and Complementary Reimagined r5.9.3 at 1920 × 1013 and GUI scale 4.
+All nine candidate screenshots received visual review.
+The candidate recorder exits successfully, retires all 49 recorded process identities, and restores its prepared profile.
+
+The large shield remains in the first-person screenshots.
+It disappears with hidden hands and HUD, and it returns after restoring them.
+This query change does not fix that separate rendering issue.
+The live control does not test mounted vehicle matches, remote players, native skin motion equality, or complete emote and equipment behavior.
+The earlier recorder exits with a disconnect failure; its saved observations support only the stated missing-query finding.
+
+Removing the new bindings produces two assertion failures; the restored focused tests pass.
+All four project test suites report 2,968 passes, 315 optional skips, and no failures or errors.
+ViaProxy packaging initially fails because the filesystem is full.
+The same build and publication tasks complete with ZIP/TAR outputs on a RAM disk; both archives pass integrity checks.
+Packaged client classes, shaders, embedded dependencies, and four source snapshots match the tested outputs.
+Tooling checks, 278 tooling tests, and offline patch validation pass.
+Build and launcher artifact copies now request filesystem copy-on-write sharing to reduce duplicate storage.
+
+The original inventory, locator, rollback, and eating reports remain open.
+The five-area goal, packs, skins, emotes, and niche interactions remain active; crafting stays parked.
+
+
+## Enchanted shield draw attribution, October 27, 2026
+
+A passive draw observer identifies the oversized shield's current rendering path on WildFFA.
+The item carries `viabedrock:attachables/minecraft/shield` as its converted item model.
+It is enchanted, has zero banner patterns, and has no banner base color.
+The presence of an empty pattern component does not establish a patterned shield.
+
+The native player body submits one surface, but the shield submits no native attachable surface.
+The Java item path draws one ordinary model layer with glint and no special shield renderer.
+Across 96 Java draws, the incoming matrix and item display transform remain identical while item use changes.
+The item display transform has zero rotation, zero translation, and uniform scale of about 1.72.
+Actual render state verifies offhand use and decreasing use ticks during the held-input interval.
+The three idle, use, and release screenshots received visual review and retain the oversized shield.
+
+This evidence confirms a split rendering path rather than a missing item-use input.
+Core assigns the converted model after item translation; the equipped renderer skips enchanted hands before native attachable selection.
+The static model does not retain the authored native hand animation or Java's special shield model selection.
+The pinned material library declares glint materials with a second repeated texture sampler.
+The current actor material runtime does not support that material family.
+Native glint and animated equipped rendering still need implementation and comparison; changing shield scale alone does not address the missing behavior.
+
+The first trace control expires in the loading screen and does not attach its draw observer.
+The next recorder reaches WildFFA, but its initial observer attachment uses a path unavailable inside the launcher sandbox.
+Copying the observer into the permitted run directory allows attachment to that same running client.
+The resumed idle, use, and release control passes without restarting the client.
+The recorder exits successfully, all 35 tracked identities retire, and the prepared profile is restored.
+The initial controller failure remains recorded; this is scoped draw attribution, without a full successful control wrapper or native graphical parity claim.
+Private evidence is `.stackanvil/research/shield-draw/attribution.json`.
+
+
+## Native glint shader reference, October 27, 2026
+
+Original shaders from the pinned Bedrock 1.26.51.1 material binary now provide a controlled reference for the glint implementation.
+Host execution passes 648 vertex controls and 480 fragment controls.
+The controls verify two independent UV transforms, fractional secondary sampling, tint and tile-light multiplication, squared RGB addition after fog, and cutout behavior.
+The original alpha operation takes an absolute value; it does not clamp the result to one.
+The [owning material notes](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#native-glint-shader-reference-october-27-2026)
+record the target identity, supplied boundaries, and excluded behavior.
+
+These controls establish shader arithmetic, without establishing native frame inputs or live rendering parity.
+Engine animation timing, glint strength, texture-scale production, sampler bindings, and the Java/Iris implementation remain pending.
+The enchanted shield still uses the previously recorded static fallback path.
+No production shader or renderer changes accompany this reference milestone.
+
+## Plain shield banner-data routing, October 27, 2026
+
+The native equipped renderer now distinguishes an empty banner component from visible banner data.
+Missing or empty patterns without a base color no longer prevent native held rendering.
+A nonempty pattern list or a base color still reserves the Java banner atlas path.
+This shared admission rule applies in first-person and third-person views.
+
+The regression test uses real item components and covers missing, empty, colored, and patterned shields, then replacement with empty layers.
+The focused equipment tests pass at the owning patch prefix.
+The complete 38-patch add-on stack replays, and its suite reports 1,108 passed, 139 optional skipped, and no failures.
+
+The isolated upstream check cannot apply this equipment patch without earlier StackAnvil changes.
+It stops at the absent actor-animation source; that temporary PR apply was aborted.
+The full-stack tests do not establish standalone upstream compatibility.
+
+No new client build or live comparison validates this change.
+The observed WildFFA shield is enchanted and still takes the existing glint fallback.
+Native glint, complete shield animation, and visible placement remain open.
+
+## Native glint implementation and clock controls, October 27, 2026
+
+The shared actor renderer now has an explicit glint draw API, shader, and repeated secondary sampler.
+Its immutable state contains two offsets, two rotations, UV scale, glint tint, and tile-light color.
+Each prepared draw retains its own uniform-buffer slice.
+The storage follows Minecraft's frame reset and GPU-data shutdown.
+GUI conversion retains the state and the existing independent portrait-coverage rule.
+The later plain-client lifecycle check below exercises these hooks with supplied inputs.
+
+The production vertex shader preserves the original base UV and computes both secondary UV pairs.
+The fragment shader adds squared tinted glint after fog and computes absolute alpha without saturation.
+A surfaceless OpenGL comparison passes all 648 native vertex controls and 480 native fragment controls.
+The vertex comparison reads transform feedback from the production shader.
+The fragment comparison reads floating-point color and depth, including discarded pixels.
+Its supplied inputs cover negative tint alpha, alpha above one, two distinct texture samples, and repeated coordinates.
+This comparison does not run Iris, the native GPU, or a complete client draw.
+
+The pinned executable's complete clock wrapper at `0x141eb77e0` calls the original uniform writer at `0x141eb7a90`.
+It reads supplied frame seconds, glint strength and speed settings, and UV scale.
+The two offsets use signed millisecond remainders with periods of 1,375 and 3,750 milliseconds.
+The rotations are -20 and 80 degrees, converted to radians before shader upload.
+The tint is `(0.38, 0.19, 0.608)` multiplied by strength, with alpha one.
+Both millisecond conversions truncate to signed int32 and preserve the native overflow result.
+
+Both complete original routines execute in 1,560 private controls.
+The Java sampler's uploaded values match every result exactly.
+These controls include millisecond boundaries, negative speed, reflected UV scale, and int32 overflow.
+Their supplied boundaries cover frame time, the scale pointer, valid context ownership, other input colors, and option-tree virtual lookups.
+They do not replace the clock arithmetic or uniform writes.
+They do not execute frame-time production, option parsing or defaults, tile-light production, material selection, or rendering.
+The executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Raw native buffers, captures, and controls remain private.
+
+The complete 38-patch stack replays with the shader and draw-state changes.
+Its add-on suite passes 1,108 tests with 140 optional skips before the clock sampler is added.
+The final focused run passes nine tests, including the clock and GPU comparisons after that addition.
+The owning material prefix still has earlier dependencies on lightmap metadata and player-renderer changes; it does not compile alone.
+
+Production pack admission and the enchanted-equipment fallback remain unchanged.
+Live frame time, settings, UV-scale selection, tile lighting, and Iris integration still need verified connections to this API.
+The later supplied-input client check validates the draw API, without validating production admission or native scene equality.
+The oversized enchanted shield remains unresolved, and the five-area goal remains active.
+
+## Native glint draw lifecycle in a plain client, October 27, 2026
+
+A normal add-on build now includes the complete clock sampler and passes all required build tasks.
+Its suite reports 1,108 passed, 141 optional skipped, and no failures.
+Build outputs and test temporary files use RAM storage because home storage and the `/tmp` user quota are nearly full.
+An earlier run hit that quota and failed; the corrected full build passes without skipped tasks.
+
+The candidate JAR has SHA-256 `8c2e1dcea45e5b4c5688465043193817961638d51d822b56f23661750afdb582`.
+It is built from [a186537](https://github.com/StackAnvil/patches/commit/a1865377c64e1700cad644d40c3521bfdd88f601).
+Its embedded dependency contents match the protected previous artifact.
+The CubeConverter archive has different ZIP metadata but identical entry contents.
+
+A private fixture exercises the production glint draw API in a plain Java 26.3 client on the WildMC lobby.
+It supplies two glint states and reuses the primary actor image as the secondary sample image.
+The fixture changes native actor draw selection without changing gameplay or implementing shader arithmetic.
+The actual window is 854 by 480; Iris is absent.
+
+The resumed control passes 636 first-state draws, 591 second-state draws, and 726 interleaved draws.
+All 1,953 prepared draws retain their own live uniform slice, with no recorded mismatches.
+Storage follows 3,633 host frame resets, and all six tracked buffers close after the host GPU-data close.
+The final summary confirms normal client shutdown.
+The corrected fixture returns to the original draw path before exit.
+Five screenshots received visual review; nearby players prevent a clean local-player graphical comparison.
+No shader-compilation, missing-uniform, pipeline, or mixin failures appear in the captured client log.
+
+Earlier readiness, display-selection, and PID-handling failures remain failed controls.
+The corrected control resumes the same second client and passes; both recorders exit successfully.
+This establishes the resumed control's scope, not a passing original control wrapper.
+All 13 recorded identities from the final session retire, and the prepared profile and original artifact are restored.
+
+This validates supplied-input native draw state, shader execution, frame reset, and buffer closure.
+It does not validate native frame-time production, settings or scale selection, tile lighting, Iris, or enchanted equipment admission.
+The reported shield, visible placement, native graphical comparison, and the complete five-area goal remain unfinished.
+
+## Captured glint frames and GPU tile lighting, October 27, 2026
+
+The actor renderer now captures immutable host time and Java glint settings before world and GUI extraction.
+The monotonic clock continues through menus, resource replacement, and world-time corrections.
+Queued draws keep their captured values after later frames or disconnects.
+The native clock arithmetic consumes this host snapshot; native clock epoch, pause behavior, and setting defaults remain unverified.
+
+A separate frame-glint pipeline uses each vertex's actual GPU lightmap sample and floating color multiplier.
+It excludes directional face shading and raw vertex tint from glint lighting.
+A rejected CPU sampler differed from RGBA8 hardware filtering at fractional coordinates.
+The final implementation reuses the actor shader's sample instead of reconstructing or caching it on the CPU.
+Explicit supplied-light draws remain available, and GUI conversion retains its independent fullbright policy.
+
+The final focused run passes 12 tests without skips or failures.
+Both lighting paths match the same 480 native fragment controls, alongside 648 native vertex controls and 1,560 native clock controls.
+Another 192 vertex draws cover packed-light coordinates, normals, raw tints, and Overworld, Nether, and unlit variants.
+These GPU controls verify light-sample ownership and arithmetic, without establishing the native tile-light producer.
+The normal add-on build passes 1,110 tests, skips 142 optional tests, and reports no failures or errors.
+The 38-patch stack replays, and offline tooling and patch validation pass.
+
+The candidate JAR SHA-256 is `a5155fe3b2e26a49c2ae223467091202198a7fb69f042c30d615747090a1a489`.
+A plain Java 26.3 client on WildMC exercises the production frame hook and both glint pipelines.
+The private fixture replaces compatible actor draws and reuses their primary image as the secondary image.
+It records 527 distinct captured frames, with speed 0.5 and strength 0.75 from the active profile.
+All 1,581 selected draws retain their own uniform slice: 744 frame-light draws and 837 explicit-light draws.
+The three phases contain 480 frame draws, 573 explicit draws, and 528 interleaved draws, with no recorded mismatches.
+Storage follows 3,865 host resets, and all six tracked buffers close during normal client shutdown.
+All 39 recorded process identities retire, and the original profile and artifact are restored.
+The five screenshots received visual review at the actual 854 by 480 window size.
+Nearby players prevent a clean local-player graphical comparison; Iris is absent.
+Client logs contain no shader-compilation, missing-uniform, invalid-pipeline, or mixin failures.
+An earlier candidate-hash guard stops before client launch; its profile restoration completes before the corrected run.
+
+This establishes the host input connection and GPU light sampling in that client.
+It does not establish native clock epoch, general UV-scale selection, Iris glint support, or production enchanted-equipment admission.
+The reported shield remains unresolved, and the full five-area goal remains active.
+
+## Iris glint programs and native buffer bindings, October 27, 2026
+
+Native glint now feeds Iris's `mc_sampleGlint()` API through separate cached program variants.
+The variants retain the pack's stages and directives without replacing ordinary Java programs.
+The shader pack controls composition, fog, alpha, and framebuffer outputs.
+The variant reuses the native UV library and computes the native squared RGB contribution.
+
+The glint image uses external texture unit four.
+A separate native lightmap alias uses unit two, independently of the pack's `lightmap` override.
+The native uniform block and its pipeline descriptor receive the same free binding after Iris's reserved slots zero through six.
+The allocator retains other active block bindings, including a pack-owned block at slot seven.
+Each prepared draw keeps its existing immutable 64-byte slice.
+
+The live check exposed two integration errors before the final candidate passed.
+Iris requires a version directive when parsing the shared library as a translation unit.
+Iris also ignores unknown buffer descriptions, which left the native block reading the 160-byte dynamic-transform range at slot zero.
+The final code imports a versioned library and binds the native block explicitly on both sides.
+
+All 17 final focused tests pass without skips.
+The Iris path matches 648 native UV controls and 336 surviving native fragment controls in each of three lighting modes.
+Another 672 comparisons retain ordinary Java glint before and after the native variants.
+The pack's independent lightmap override, buffer contents, RGB contribution, and alpha remain separate in these controls.
+Removing the native block assignment fails both numerical GPU tests; the restored implementation passes.
+The normal build passes 1,110 tests with 144 optional skips and no failures or errors.
+The 38-patch stack replays, and offline tooling and metadata validation pass.
+
+The final candidate SHA-256 is `f61ee9567e2496aa8b4208f44e12313128d8bb3903b9b941484496c01bccf949`.
+A full modpack client runs Minecraft 26.3 with Iris and Complementary Reimagined r5.9.3 at 1920 by 1013.
+The private fixture replaces compatible actor draws and reuses their primary image as the secondary image.
+It observes 334 prepared draws: 133 frame-light draws and 201 explicit-light draws, with no state mismatches.
+Sixty backend observations verify active Iris programs, image unit four, and the submitted 64-byte range.
+Lit variants also verify the native lightmap on unit two.
+The final profile selects uniform binding seven.
+
+Physical shader toggles close the two original native Iris programs and create two replacements that resume drawing.
+The replacement programs remain active until client termination; no explicit close callbacks are observed for those two programs.
+All eight tracked uniform buffers close during normal shutdown.
+All 41 unique recorded process identities retire, and the original profile, artifact, and Iris configuration are restored.
+Six screenshots received visual review; the shader-off image captures a rebuild transient, and the world returns after re-enabling shaders.
+The final client log contains no native-program compilation, missing-uniform, invalid-pipeline, or mixin failures.
+
+This validates the shared API and buffer ownership in the tested shader pack.
+Other packs, geometry and tessellation interpolation, native GUI glint, clock epoch, general scale selection, and actual enchanted-equipment routing remain unverified.
+Production GLINT material admission and the equipped foil fallback remain unchanged.
+The reported shield and the full five-area goal remain unfinished.
+
+
+## Equipped native glint and current item channels, October 27, 2026
+
+Supported enchanted hand attachables now select native GLINT materials and their ordered second texture.
+Each draw retains its extraction frame and the verified item UV scale of `(0.5, 0.5)`.
+Ordinary actor, armor, and GUI consumers keep their existing material admission limits.
+Patterned shields still require native atlas composition and retain their existing fallback.
+
+The accepted shield uses `controller.render.shield`, including nested patterned and enchanted branches.
+Supported plain items now supply an explicit false `is_patterned` value.
+Previously, that missing variable made material selection return numeric zero before any texture loaded.
+The shared equipment snapshot also supplies `query.is_item_name_any` with full item identifiers and explicit empty equipment slots.
+The deprecated equipped-name query still returns the item path.
+The target shield script uses the new query to select the blocking hand.
+The [Mojang query reference](https://github.com/Mojang/bedrock-samples/blob/main/documentation/Molang.html) describes namespaced matching and the optional slot index.
+This adapter covers its captured single-item equipment slots; it does not supply hotbar or inventory lookup.
+
+Explicit binding now retains the current item's sampled animation after the owner matrix replaces its bind transform.
+An initial admitted draw lost those channels, which left the shield outside the first-person view.
+A new 96-case control executes the original channel producer `0x141e62f40` after the original owner-copy path.
+It then executes the original recursive hierarchy and matrix composition.
+The comparison covers typed and missing names, independent children, reflected and singular owners, and entity-relative rotation.
+Discarding the current channels fails the comparison; the corrected renderer passes.
+The earlier pre-binding reset controls still pass.
+The new control supplies the stage order and constant channel inputs.
+It does not establish complete native frame scheduling, JSON admission, or interpolation.
+
+The normal add-on build passes 1,126 tests, with 133 optional skips and no failures or errors.
+All 1,256 compiled client classes match the distributable artifact.
+All 45 embedded dependency archives retain the baseline entry contents; one archive differs only in container bytes.
+The tested add-on has SHA-256 `9a8edeef683685faff420a25e3272b9243b3c8aa9cb8ecb88f71554f49b39e17`.
+
+The final full-modpack client uses Minecraft 26.3, the target Bedrock 1.26.51.1 resources, and a 1920 by 1013 window at GUI scale four.
+Physical input selects a real enchanted off-hand shield on WildFFA.
+Eight reviewed captures cover idle, use, release, and third person with Complementary Reimagined r5.9.3 enabled and disabled.
+All 302 sampled shield hand observations retain one native attachable surface and no Java shield submission.
+Prepared and draw observations retain 64-byte native slices, changing glint values, and the pack's two required textures.
+All 74 sampled Iris backend observations retain a 64-byte block and range, texture unit four, and buffer binding seven.
+These are throttled observations, not total draw counts.
+No shader-disabled backend uniform observation is claimed.
+The shader-disabled images show the native surface, visible glint, and a changed blocking pose.
+All 45 recorded process identities retire, and the final run restores its valid starting profile bytes.
+
+Earlier attempts remain separate failures or diagnostics.
+An interrupted capture exhausted storage and left corrupt settings in the owned lab profile.
+Valid saved lab settings restored that profile before the final run; exact recovery of its earlier bytes is not established.
+The final recorder persists private originals before profile changes.
+Raw captures, account data, probes, native fixtures, and recovery records remain private.
+
+The shield remains large in first person.
+Exact native size, placement, full frame order, main-hand equipment, Java display overrides, and other resource packs remain unverified.
+Native GUI glint, enchanted armor, banner composition, other shader packs, and geometry or tessellation interpolation remain open.
+This checkpoint does not resolve the original E-key inventory background, locator, intermittent rollback, or endless-eating reports.
+The complete five-area goal and the broader pack, interaction, skin, and emote work remain incomplete.

@@ -10,7 +10,26 @@ ViaBedrock reads skins from `PlayerListPacket` and `PlayerSkinPacket`. Its `Skin
 
 Native captures exposed two details that affect rendering. Geometry descriptions can use the full animation strip dimensions. Bedrock polygon UVs also use a bottom origin. The renderer adjusts the frame dimensions and UVs before it uploads each frame. It checks strip sizes, frame counts, and model bindings, then releases all animation textures when the skin changes.
 
-The add-on sends a [PlayerSkinPacket](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/player-skin-packet/) for classic and account character changes in a connected world. A matching packet from the server confirms the returned skin ID. A private protocol-2193 relay accepted an assembled character update with one animation, ten pieces, and three tint groups, then returned its matching acknowledgement. The run also exposed a PlayerList actor-ID decoding error. ViaBedrock now reads signed actor IDs consistently with StartGame and the native schema. A native second client displayed the assembled HelliArm character. A controlled color probe did not establish which animation frames it used. Acknowledgement and visual presence therefore do not establish native timing or complete format parity.
+The add-on requests a [PlayerSkinPacket](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/player-skin-packet/) through the same negotiated Java transport on direct and ViaProxy connections.
+Core assembles the complete appearance and selects the spawned native local player.
+A matching server appearance confirms the request after core publishes that appearance to the Java client.
+Confirmation compares all appearance fields and pixels, excluding the server-owned trust flag.
+Geometry comparison uses JSON values because the target server changes numeric formatting.
+The profile hash remains part of the comparison.
+The immediate local preview does not confirm synchronization.
+Replacement, timeout, disconnect and capability withdrawal retire the pending request.
+
+Earlier direct-path evidence: a private protocol-2193 relay accepted an assembled character update with one animation, ten pieces, and three tint groups, then returned its matching acknowledgement. The run also exposed a PlayerList actor-ID decoding error. ViaBedrock now reads signed actor IDs consistently with StartGame and the native schema. A native second client displayed the assembled HelliArm character. A controlled color probe did not establish which animation frames it used. Acknowledgement and visual presence therefore do not establish native timing or complete format parity.
+
+
+Fresh direct and ViaProxy checks use the same controlled 128 by 128 classic and persona appearances against BDS 1.26.51.1.
+Each route sends two complete native updates and receives two matching server echoes.
+The classic record includes a cape; the persona record also includes an animated surface, a piece and four tint channels.
+Packet comparison preserves all pixels and metadata, including the profile hash.
+Geometry JSON values match despite native numeric formatting changes; the server selects trust independently.
+Both production requests return confirmed results, and screenshots show the local skins and capes.
+These checks use declared geometry and textures without account writes.
+Additional clients and native graphical comparisons remain necessary for complete multiplayer and animation parity.
 
 ## Classic skins
 
@@ -22,6 +41,11 @@ Legacy 64×32 skins expand to 64×64 by mirroring limb faces. The importer prese
 
 Custom geometry import checks bone hierarchy, coordinate bounds, texture dimensions, and model size before replacing a saved skin. Legacy inheritance keeps parent surfaces and appends child cubes on matching bones. Child bones supply their pose and flags. Each texture dimension inherits separately, with a 64×64 default. The importer preserves cube mirror and inflation defaults, polygon indices, and visible bounds. It rejects unresolved parents, ambiguous names, inheritance cycles, and inheritance in format versions 1.12 and later.
 
+Per-face texture rotations survive geometry parsing, actor and skin drawing, and Java head icon projection.
+The renderer supports the clockwise quarter turns defined by the [Bedrock geometry schema](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/geometry.v1.26.40?view=minecraft-bedrock-stable).
+Regression checks cover face coordinates, mirrored cubes, reversed texture rectangles and exact head pixels.
+Native visual comparisons remain pending.
+
 Missing legacy parents resolve from the bundled vanilla model library. Pack definitions take precedence, including across library chains. Imports run in the background and load built-in models only when needed. The importer checks the account and open screen before showing the result.
 
 Licensed tests resolve all seven inherited entries from the base skin-model library, including parents supplied by entity model files. Equal duplicate definitions share one library entry. Conflicting definitions remain errors. The library now resolves versioned vanilla overlays.
@@ -29,6 +53,11 @@ Licensed tests resolve all seven inherited entries from the base skin-model libr
 The importer applies native ASCII lowercase rules to legacy bone names and parent references before inheritance merges. This rule resolves the Vex model's `rightArm`/`rightarm` mismatch. Non-ASCII characters and modern geometry names retain their case. Native visual comparisons and other inheritance edges remain pending.
 
 Classic skin animation aliases and render flags survive import and transport. Local alias playback uses the licensed player graph. Geometry-provided alias precedence remains incomplete.
+
+Default Steve and Alex images and animated player models now use the same bundled native skin pack as live uploads.
+They do not require local Bedrock mappings, which can remain unloaded on ViaProxy connections.
+The default appearance regression reproduced a null-pointer failure before this change.
+Focused checks verify both presets, distinct wide and slim arm geometry, and independent images and model definitions.
 
 ## Account-owned classic packs
 
@@ -551,3 +580,12 @@ The matching official package resolves 72 aliases from a top player file with 68
 The fixture-enabled test checks the four inherited mappings and samples the real licensed graph for 120 frames.
 Synthetic layered playback checks the upper right-arm pose, retained left-arm pose, script scale, and empty-list replacement.
 These checks establish resource resolution and sampled playback, not complete item or first-person visual parity.
+
+
+## Live head and vehicle inputs
+
+Player graphs now receive head-slot occupancy and native vehicle-type predicates from the shared actor runtime.
+A direct WildFFA control verifies the equipped helmet and the unmounted predicate in the actual first-person playback context.
+The sampled graph reports no missing queries, while the earlier capture reports both inputs missing.
+The [coverage record](bedrock-coverage.md#player-head-equipment-and-native-vehicle-query-bindings-october-27-2026)
+separates this result from unfinished shield rendering, live mounted cases, remote skins, and native motion comparisons.

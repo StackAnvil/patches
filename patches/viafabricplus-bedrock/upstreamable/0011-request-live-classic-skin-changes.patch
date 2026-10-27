@@ -1,26 +1,63 @@
-From 106be63f265c55c9c7e554ccff0f540d08224384 Mon Sep 17 00:00:00 2001
+From a21fe61033288101e8132855a2a875aca841ae0d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(bedrock): request live skin changes
 
 Send a PlayerSkin update for classic skins and converted account characters while connected to a Bedrock world. Use the local actor UUID from the Bedrock player list, and keep the next-join appearance if a live update cannot be attempted. A matching server skin packet confirms the echo, but a second client is still needed to verify what others see.
+
+Use the same negotiated Java upload path through ViaProxy and direct
+translation instead of requiring client-local Bedrock storages. Preserve
+complete persona, classic, animation, cape and geometry data, loading the
+real bundled native skin geometry without initializing a local translator.
+
+Correlate results with the actual Java connection and request generation.
+Replacement, timeout and disconnect fail the retired request. Keep the
+local preview immediate, but report synchronization only after core sees a
+matching native server appearance. Remove the previous direct-only
+acknowledgment path and guard character-screen status from stale replies.
+
+Use the shared native vanilla skin pack for upload geometry as well as
+preset images and emote models, so direct and proxy appearances use the
+same source without loading a local translator or maintaining a second
+archive cache.
 ---
- .../bedrock/appearance/BedrockSkinChange.java | 108 +++++++++++++++++
- .../appearance/ViaFabricPlusSkinProvider.java |   7 ++
- .../screen/BedrockCharacterSlotsScreen.java   |  20 +++-
+ .../bedrock/ViaFabricPlusBedrock.java         |   1 +
+ .../bedrock/appearance/BedrockSkinChange.java |  61 ++++++++++
+ .../appearance/NativeSkinChangePayload.java   |  22 ++++
+ .../NativeSkinChangeResultPayload.java        |  22 ++++
+ .../bedrock/appearance/SkinChangeSession.java |  47 ++++++++
+ .../appearance/ViaFabricPlusSkinProvider.java |   1 +
+ .../screen/BedrockCharacterSlotsScreen.java   |  25 +++-
  .../screen/BedrockDressingRoomScreen.java     |  29 ++++-
  .../viafabricplus-bedrock/lang/en_us.json     |   4 +
- .../appearance/BedrockSkinChangeTest.java     | 111 ++++++++++++++++++
- 6 files changed, 272 insertions(+), 7 deletions(-)
+ .../appearance/BedrockSkinChangeTest.java     | 110 ++++++++++++++++++
+ .../appearance/SkinChangeSessionTest.java     |  49 ++++++++
+ 11 files changed, 364 insertions(+), 7 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChange.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeSkinChangePayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeSkinChangeResultPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/SkinChangeSession.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChangeTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/SkinChangeSessionTest.java
 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index 9feb3e2..8fd0b8e 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -74,6 +74,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+ 
+     @Override
+     public void onPreSettingsLoading() {
++        com.viaversion.viafabricplus.bedrock.appearance.BedrockSkinChange.register();
+         com.viaversion.viafabricplus.bedrock.appearance.BedrockEmotePlayback.register();
+         PayloadTypeRegistry.clientboundPlay().register(NativeSkinPayload.TYPE, NativeSkinPayload.CODEC);
+         // Capture the listener identity at INIT. Fabric Context.player() returns the current client player.
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChange.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChange.java
 new file mode 100644
-index 0000000..49f3754
+index 0000000..d0b7028
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChange.java
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,61 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -28,132 +65,181 @@ index 0000000..49f3754
 + */
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
-+import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore.Appearance;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
-+import com.viaversion.viaversion.api.connection.UserConnection;
-+import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 +import net.minecraft.client.Minecraft;
++import net.minecraft.network.Connection;
++import net.raphimc.viabedrock.api.model.NativeSkinChange;
++import net.raphimc.viabedrock.api.model.NativeSkinFragment;
++
 +import java.util.UUID;
 +import java.util.concurrent.CompletableFuture;
-+import java.util.concurrent.ConcurrentHashMap;
-+import java.util.concurrent.TimeUnit;
-+import net.raphimc.viabedrock.api.BedrockProtocolVersion;
-+import net.raphimc.viabedrock.protocol.BedrockProtocol;
-+import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
-+import net.raphimc.viabedrock.protocol.data.DataValues;
-+import net.raphimc.viabedrock.protocol.model.SkinData;
-+import net.raphimc.viabedrock.protocol.storage.EntityTracker;
-+import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
-+import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +
-+/** Requests a selected-skin change in an already connected Bedrock world. */
++/** Uses the same negotiated Java transport for direct translation and ViaProxy. */
 +public final class BedrockSkinChange {
++    private static final SkinChangeSession<Connection> SESSION = new SkinChangeSession<>();
 +
-+    private static final ConcurrentHashMap<UserConnection, Pending> PENDING = new ConcurrentHashMap<>();
++    private BedrockSkinChange() {}
 +
-+    private BedrockSkinChange() {
++    public static void register() {
++        PayloadTypeRegistry.serverboundPlay().register(NativeSkinChangePayload.TYPE, NativeSkinChangePayload.CODEC);
++        PayloadTypeRegistry.clientboundPlay().register(NativeSkinChangeResultPayload.TYPE, NativeSkinChangeResultPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++                ClientPlayNetworking.registerReceiver(NativeSkinChangeResultPayload.TYPE, (payload, context) -> client.execute(() -> {
++                    if (client.getConnection() == listener) {
++                        SESSION.complete(listener.getConnection(), payload.result().request(), payload.result().confirmed());
++                    }
++                })));
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> SESSION.disconnect(listener.getConnection()));
 +    }
 +
-+    /** Returns a future for the server's matching skin packet, or null when no world is connected. */
++    /** A local preview is immediate. Only a matching native server echo confirms synchronization. */
 +    public static CompletableFuture<Boolean> request(final Appearance appearance) {
-+        if (!BedrockProtocolVersion.BEDROCK_LATEST.equals(ViaFabricPlus.api().targetVersion())) {
-+            return null;
-+        }
-+        final UserConnection connection = ViaFabricPlus.api().userConnection();
-+        if (connection == null) {
-+            return null;
-+        }
-+        final EntityTracker entities = connection.get(EntityTracker.class);
-+        if (entities == null || entities.getClientPlayer() == null || !entities.getClientPlayer().isInitiallySpawned()) {
-+            return null;
-+        }
-+        final UUID bedrockUuid = bedrockPlayerUuid(connection.get(PlayerListStorage.class),
-+            entities.getClientPlayer().uniqueId());
-+        if (bedrockUuid == null) {
-+            return null;
-+        }
-+
-+        final String geometryData = appearance.persona() == null
-+            ? BedrockProtocol.MAPPINGS.getBedrockSkinPacks().get(DataValues.VANILLA_SKIN_PACK_KEY)
-+                .content().getSortedJson("geometry.json").toString() : "";
-+        final SkinData skin = skinData(appearance, geometryData);
-+        final CompletableFuture<Boolean> confirmation = new CompletableFuture<>();
-+        final Pending pending = new Pending(bedrockUuid, skin.skinId(), confirmation);
-+        final Pending previous = PENDING.put(connection, pending);
-+        if (previous != null) {
-+            previous.confirmation().complete(false);
-+        }
-+        confirmation.completeOnTimeout(false, 10, TimeUnit.SECONDS);
-+        confirmation.whenComplete((_, _) -> PENDING.remove(connection, pending));
-+        final PacketWrapper packet = PacketWrapper.create(ServerboundBedrockPackets.PLAYER_SKIN, connection);
-+        packet.write(BedrockTypes.UUID, bedrockUuid);
-+        packet.write(BedrockTypes.SKIN, skin);
-+        packet.write(BedrockTypes.STRING, ""); // localized new skin name
-+        packet.write(BedrockTypes.STRING, ""); // localized old skin name
++        final Minecraft client = Minecraft.getInstance();
++        final var listener = client.getConnection();
++        if (listener == null || client.player == null || !ClientPlayNetworking.canSend(NativeSkinChangePayload.TYPE)) return null;
++        final Connection owner = listener.getConnection();
++        final UUID request = UUID.randomUUID();
++        final CompletableFuture<Boolean> confirmation = SESSION.begin(owner, request);
 +        try {
-+            packet.sendToServer(BedrockProtocol.class);
-+        } catch (RuntimeException e) {
-+            PENDING.remove(connection, pending);
-+            confirmation.complete(false);
-+            throw e;
-+        }
-+        final var listener = Minecraft.getInstance().getConnection();
-+        if (listener != null && ViaFabricPlus.api().userConnection() == connection) {
-+            BedrockPlayerSkins.accept(listener.getConnection(), entities.getClientPlayer().javaUuid(), skin);
++            // Read the real bundled native geometry without initializing a local translator on proxy connections.
++            final var skin = appearance.skinData(appearance.persona() == null ? BedrockVanillaSkins.geometry().toString() : "");
++            final byte[] encoded = NativeSkinFragment.encode(skin);
++            BedrockPlayerSkins.accept(owner, listener.getLocalGameProfile().id(), skin);
++            NativeSkinChange.split(request, encoded, fragment -> ClientPlayNetworking.send(new NativeSkinChangePayload(fragment)));
++        } catch (final RuntimeException failure) {
++            SESSION.complete(owner, request, false);
++            ViaFabricPlusBedrock.impl().logger().warn("Could not request live Bedrock skin", failure);
 +        }
 +        return confirmation;
 +    }
 +
-+    public static void acknowledge(final UserConnection connection, final UUID playerUuid, final SkinData skin) {
-+        final Pending pending = PENDING.get(connection);
-+        if (pending != null && pending.playerUuid().equals(playerUuid) && pending.skinId().equals(skin.skinId())) {
-+            pending.confirmation().complete(true);
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeSkinChangePayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeSkinChangePayload.java
+new file mode 100644
+index 0000000..f9349f8
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeSkinChangePayload.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeSkinChange;
++
++public record NativeSkinChangePayload(NativeSkinChange fragment) implements CustomPacketPayload {
++    public static final Type<NativeSkinChangePayload> TYPE = new Type<>(Identifier.parse(NativeSkinChange.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeSkinChangePayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> NativeSkinChange.TYPE.write(buffer, payload.fragment),
++            buffer -> new NativeSkinChangePayload(NativeSkinChange.TYPE.read(buffer)));
++
++    @Override
++    public Type<NativeSkinChangePayload> type() { return TYPE; }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeSkinChangeResultPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeSkinChangeResultPayload.java
+new file mode 100644
+index 0000000..bfd8366
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeSkinChangeResultPayload.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeSkinChange;
++
++public record NativeSkinChangeResultPayload(NativeSkinChange.Result result) implements CustomPacketPayload {
++    public static final Type<NativeSkinChangeResultPayload> TYPE = new Type<>(Identifier.parse(NativeSkinChange.Result.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeSkinChangeResultPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> NativeSkinChange.Result.TYPE.write(buffer, payload.result),
++            buffer -> new NativeSkinChangeResultPayload(NativeSkinChange.Result.TYPE.read(buffer)));
++
++    @Override
++    public Type<NativeSkinChangeResultPayload> type() { return TYPE; }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/SkinChangeSession.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/SkinChangeSession.java
+new file mode 100644
+index 0000000..6112972
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/SkinChangeSession.java
+@@ -0,0 +1,47 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.util.UUID;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.TimeUnit;
++
++/** Correlates native confirmations with the actual Java connection and selection that requested them. */
++final class SkinChangeSession<O> {
++    private Pending<O> pending;
++
++    synchronized CompletableFuture<Boolean> begin(final O owner, final UUID request) {
++        final Pending<O> previous = this.pending;
++        final var next = new Pending<>(owner, request, new CompletableFuture<Boolean>());
++        this.pending = next;
++        if (previous != null) previous.confirmation().complete(false);
++        next.confirmation().completeOnTimeout(false, 45, TimeUnit.SECONDS);
++        next.confirmation().whenComplete((_, _) -> this.remove(next));
++        return next.confirmation();
++    }
++
++    synchronized void complete(final O owner, final UUID request, final boolean confirmed) {
++        final Pending<O> current = this.pending;
++        if (current != null && current.owner() == owner && current.request().equals(request)) {
++            this.pending = null;
++            current.confirmation().complete(confirmed);
 +        }
 +    }
 +
-+    private record Pending(UUID playerUuid, String skinId, CompletableFuture<Boolean> confirmation) {
-+    }
-+
-+    static UUID bedrockPlayerUuid(final PlayerListStorage players, final long actorUniqueId) {
-+        if (players == null) {
-+            return null;
++    synchronized void disconnect(final O owner) {
++        if (this.pending != null && this.pending.owner() == owner) {
++            final Pending<O> previous = this.pending;
++            this.pending = null;
++            previous.confirmation().complete(false);
 +        }
-+        final var player = players.getPlayer(actorUniqueId);
-+        return player == null ? null : player.key();
 +    }
 +
-+    static SkinData skinData(final Appearance appearance, final String geometryData) {
-+        return appearance.skinData(geometryData);
++    private synchronized void remove(final Pending<O> completed) {
++        if (this.pending == completed) this.pending = null;
 +    }
 +
-+
++    private record Pending<O>(O owner, UUID request, CompletableFuture<Boolean> confirmation) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
-index 55e7950..847f5f8 100644
+index 55e7950..b483a36 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
-@@ -29,6 +29,7 @@ import java.io.IOException;
- import java.nio.charset.StandardCharsets;
- import java.util.Base64;
- import java.util.Map;
-+import java.util.UUID;
- import net.raphimc.viabedrock.protocol.model.SkinData;
- import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
- import net.raphimc.viabedrock.protocol.provider.SkinProvider;
-@@ -83,4 +84,10 @@ public final class ViaFabricPlusSkinProvider extends SkinProvider {
+@@ -83,4 +83,5 @@ public final class ViaFabricPlusSkinProvider extends SkinProvider {
          return claims;
      }
  
-+    @Override
-+    public void setSkin(final UserConnection user, final UUID playerUuid, final SkinData skin) {
-+        BedrockSkinChange.acknowledge(user, playerUuid, skin);
-+        super.setSkin(user, playerUuid, skin);
-+    }
 +
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
-index 503b507..5845ac5 100644
+index 503b507..c0532c4 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
 @@ -23,6 +23,7 @@ import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.
@@ -164,15 +250,16 @@ index 503b507..5845ac5 100644
  import com.viaversion.viafabricplus.bedrock.visual.BedrockImageCache;
  import com.viaversion.viafabricplus.screen.base.VFPScreen;
  import java.util.ArrayList;
-@@ -83,6 +84,7 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+@@ -83,6 +84,8 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
      private boolean selectionFailed;
      private boolean editFailed;
      private boolean modelFailed;
 +    private boolean liveFailed;
++    private int liveRequestGeneration;
      private boolean characterSelected;
      private boolean confirmDelete;
      private final Button[] slotButtons = new Button[5];
-@@ -314,6 +316,9 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+@@ -314,6 +317,9 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
          } else if (this.modelFailed) {
              graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.model_failed"),
                  left, top + 64, 300, ACCENT_COLOR);
@@ -182,25 +269,28 @@ index 503b507..5845ac5 100644
          } else if (this.selectionFailed) {
              graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.select_failed"),
                  left, top + 64, 300, ACCENT_COLOR);
-@@ -1297,6 +1302,7 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+@@ -1297,6 +1303,8 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
      private void prepareCharacter(final BedrockAuthManager account) {
          this.saving = true;
          this.modelFailed = false;
 +        this.liveFailed = false;
++        this.liveRequestGeneration++;
          this.updateControls();
          final BedrockAppearanceStore store = ViaFabricPlusBedrock.impl().appearances();
          final String accountId = BedrockAppearanceStore.accountId(account);
-@@ -1311,11 +1317,22 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+@@ -1311,11 +1319,24 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
                  ViaFabricPlusBedrock.impl().logger().warn("Could not use Bedrock account character in worlds", error);
              } else {
                  try {
 -                    prepared.importInto(store, accountId);
 +                    final var appearance = prepared.importInto(store, accountId);
                      this.characterSelected = true;
++                    final int liveGeneration = this.liveRequestGeneration;
 +                    final var confirmation = BedrockSkinChange.request(appearance);
 +                    if (confirmation != null) {
 +                        confirmation.whenComplete((confirmed, liveError) -> this.minecraft.execute(() -> {
-+                            if (this.minecraft.gui.screen() == this && (liveError != null || !Boolean.TRUE.equals(confirmed))) {
++                            if (this.minecraft.gui.screen() == this && this.liveRequestGeneration == liveGeneration
++                                    && (liveError != null || !Boolean.TRUE.equals(confirmed))) {
 +                                this.liveFailed = true;
 +                            }
 +                        }));
@@ -214,11 +304,12 @@ index 503b507..5845ac5 100644
                  }
              }
              this.updateControls();
-@@ -1338,6 +1355,7 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+@@ -1338,6 +1359,8 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
          this.selectionFailed = false;
          this.modelFailed = false;
          this.confirmDelete = false;
 +        this.liveFailed = false;
++        this.liveRequestGeneration++;
          BedrockMarketplaceTransactions.redeemXbox(account).whenComplete((result, error) -> this.minecraft.execute(() -> {
              if (ViaFabricPlusBedrock.impl().account().get() != account || this.minecraft.gui.screen() != this) {
                  this.loading = false;
@@ -342,10 +433,10 @@ index db52332..fa7eff9 100644
    "bedrock_character_slots.viafabricplus.select_failed": "Could not save this slot. Try again.",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChangeTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChangeTest.java
 new file mode 100644
-index 0000000..33e6105
+index 0000000..14f2305
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSkinChangeTest.java
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,110 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -360,7 +451,6 @@ index 0000000..33e6105
 +import java.awt.image.BufferedImage;
 +import java.util.List;
 +import java.util.UUID;
-+import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
 +import net.raphimc.viabedrock.protocol.types.model.SkinType;
 +import org.junit.jupiter.api.Test;
 +
@@ -380,7 +470,7 @@ index 0000000..33e6105
 +        capeImage.setRGB(3, 4, 0xFF4D5E6F);
 +        final Appearance appearance = new Appearance(Selection.CUSTOM, true, skinImage, capeImage, "skin", "cape", null, new BedrockClassicOptions(java.util.Map.of("move.arms", "animation.player.move.arms.zombie"), java.util.Map.of("hide_armor", true)), null);
 +
-+        final var skin = BedrockSkinChange.skinData(appearance, "{}");
++        final var skin = appearance.skinData("{}");
 +        final var bytes = Unpooled.buffer();
 +        try {
 +            new SkinType().write(bytes, skin);
@@ -403,7 +493,7 @@ index 0000000..33e6105
 +        final Appearance appearance = new Appearance(Selection.STEVE, false,
 +            new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB), null, "skin", "", null, BedrockClassicOptions.EMPTY, null);
 +
-+        final var skin = BedrockSkinChange.skinData(appearance, "{}");
++        final var skin = appearance.skinData("{}");
 +        assertFalse(skin.capeOnClassic());
 +        assertNull(skin.capeData());
 +        assertFalse(skin.persona());
@@ -422,7 +512,7 @@ index 0000000..33e6105
 +                        new BufferedImage(32, 64, BufferedImage.TYPE_INT_ARGB), 1, 2, 1)));
 +        final Appearance appearance = new Appearance(Selection.PERSONA, true, atlas, null, "account-skin", "", null, BedrockClassicOptions.EMPTY, persona);
 +
-+        final var skin = BedrockSkinChange.skinData(appearance, "");
++        final var skin = appearance.skinData("");
 +        final var bytes = Unpooled.buffer();
 +        try {
 +            new SkinType().write(bytes, skin);
@@ -447,14 +537,69 @@ index 0000000..33e6105
 +    }
 +
 +    @Test
-+    void usesBedrockPlayerListUuidForTheLocalActor() {
-+        final PlayerListStorage players = new PlayerListStorage();
-+        final UUID local = UUID.randomUUID();
-+        players.addPlayer(UUID.randomUUID(), 12L, "");
-+        players.addPlayer(local, 34L, "");
++    void loadsUsableNativeGeometryWithoutALocalTranslator() throws Exception {
++        final String geometry = BedrockVanillaSkins.geometry().toString();
++        for (final String identifier : List.of("geometry.humanoid.custom", "geometry.humanoid.customSlim")) {
++            final var model = BedrockClassicModel.read(geometry, identifier);
++            final var decoded = org.cube.converter.model.impl.bedrock.BedrockGeometryModel.fromJson(model.geometry()).getFirst();
++            assertFalse(decoded.getParents().isEmpty());
++        }
++    }
 +
-+        assertEquals(local, BedrockSkinChange.bedrockPlayerUuid(players, 34L));
-+        assertNull(BedrockSkinChange.bedrockPlayerUuid(players, 56L));
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/SkinChangeSessionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/SkinChangeSessionTest.java
+new file mode 100644
+index 0000000..ad2415d
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/SkinChangeSessionTest.java
+@@ -0,0 +1,49 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.util.UUID;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class SkinChangeSessionTest {
++    @Test
++    void matchesBothRequestAndActualConnectionAndRetiresReplacedSelections() {
++        final var session = new SkinChangeSession<Object>();
++        final Object owner = new Object();
++        final UUID firstId = UUID.randomUUID();
++        final var first = session.begin(owner, firstId);
++        final UUID nextId = UUID.randomUUID();
++        final var next = session.begin(owner, nextId);
++        assertFalse(first.join());
++        session.complete(owner, firstId, true);
++        session.complete(new Object(), nextId, true);
++        session.disconnect(new Object());
++        assertFalse(next.isDone());
++        session.complete(owner, nextId, true);
++        assertTrue(next.join());
++    }
++
++    @Test
++    void rejectsRetiredConnectionRepliesAndDoesNotLetTimeoutCleanupEraseANewerRequest() {
++        final var session = new SkinChangeSession<Object>();
++        final Object oldOwner = new Object();
++        final UUID oldId = UUID.randomUUID();
++        final var old = session.begin(oldOwner, oldId);
++        old.complete(false); // The same conditional cleanup runs after a timeout.
++        final Object owner = new Object();
++        final UUID id = UUID.randomUUID();
++        final var next = session.begin(owner, id);
++        session.complete(oldOwner, oldId, true);
++        session.disconnect(oldOwner);
++        assertFalse(next.isDone());
++        session.disconnect(owner);
++        assertFalse(next.join());
++        session.complete(owner, id, true);
++        assertFalse(next.join());
 +    }
 +}
 -- 

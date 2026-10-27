@@ -1,5 +1,35 @@
 # Native world actor definitions
 
+## Bundled villager graph admission, October 26, 2026
+
+The standard 1.26.51.1 villager graph now resolves after its explicit default depth declaration passes material validation.
+The [material notes](0002-native-entities-and-skins.pr.md#explicit-default-depth-declarations-october-26-2026) explain the declaration and reversed-depth pipeline.
+No authored client-entity replacement supplies the villager graph in these controls.
+
+The regression samples seven biome textures for both adult and baby geometry.
+It retains three controller draws and native script scales of 0.9375 and 2.
+The [shared selector correction](0008-share-native-actor-and-resource-runtime.pr.md#controller-texture-slots-october-26-2026) removes a duplicate draw from the biome controller’s second sampler slot.
+The level surface retains its adult geometry while the baby visibility rule hides it.
+Supplied stationary movement inputs isolate graph admission and texture selection.
+Masked profession layers still retain Java fallback; resetting that state recovers the same playback.
+
+
+Fresh direct and ViaProxy sessions load the bundled villager client graph on BDS 1.26.51.1.
+An additional ViaProxy session verifies the same transitions with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+Authored server component events change biome, age, and profession metadata; they do not replace the client graph.
+Native packet journals confirm each typed biome, age, and profession transition.
+Those earlier read-only observations report four surfaces, including the duplicate sampler draw corrected by the shared selector.
+They also verify biome textures, adult/baby geometry, and native script scales.
+Masked professions select Java fallback, and resetting the profession recovers the same actor playback and lifetime.
+Removal retires the native snapshot on all three runs.
+All 21 final screenshots receive visual review, and runtime artifacts match the build.
+
+The white bar in these early shader captures is the configured RRLS reload indicator.
+[Lifecycle controls](../../../docs/bedrock-coverage.md#shader-profile-reload-indicator-october-26-2026) show that it clears automatically after loading completes.
+Complete Iris and native visual parity remain unverified.
+
+These controls do not establish native graphical parity, natural aging, collision behavior, or complete villager interactions.
+
 Ordinary mapped entities now resolve the bundled Bedrock 1.26.51.1 client entity definition beneath accepted server packs. Supported definitions supply native geometry, textures, animation, visibility and materials. The Java entity continues to handle gameplay.
 
 The target library's end crystal uses `animation.ender_crystal.move` and `controller.render.ender_crystal`. Its authored rotation uses lifetime and a random phase. It does not face the camera. The native draw retains server animation commands and the original Java shadow radius.
@@ -93,3 +123,95 @@ Raw recordings, screenshots and native assets remain private.
 Bound world-actor particles sample current common actor inputs and native metadata independently of another body submission.
 The existing resource and actor lifetime guards, locator pose, and unrelated graph inputs remain available.
 See the [shared runtime evidence](0008-share-native-actor-and-resource-runtime.pr.md#fresh-common-particle-actor-inputs) for tested queries, native boundaries, and remaining limits.
+
+## Recover native draws after input changes, October 26, 2026
+
+A failed native draw can retry when its immutable actor snapshot changes.
+The renderer retains its playback instance, variables, animation phase, and consumed effect cursors.
+The shared runtime now records unsupported queries per frame instead of retaining an earlier frame's admission errors.
+An unchanged unsupported snapshot remains cached.
+This change does not implement every conditional or time-only recovery path.
+
+The target-query transport provides a concrete recovery case.
+Withdrawing the actual Fabric v4 receiver selects the older actor format and Java fallback.
+Restoring the receiver republishes target metadata and permits native rendering again.
+Before this change, a live guardian remained failed for 566 samples after metadata returned.
+Tests restore a required query in the same world playback and verify the native crystal animation phase.
+
+Fresh direct and ViaProxy sessions repeat the guardian control with the fix.
+They verify native target changes, the authored model's width, and parent and child particle scopes and colors.
+Receiver withdrawal selects Java fallback, and restoration resumes native draws with the same playback identity and increasing age.
+Screenshots show the native model, Java fallback, restored model, and removal.
+The observer only records production state; a separate declared control changes the actual Fabric receiver and restores its original handler.
+The fixture supplies the guardian appearance, without a native graphical baseline or complete guardian parity claim.
+
+The replayed four-project build passes 3,046 tests, skips 152 optional tests, and reports no failures.
+Fifteen focused actor tests also pass against the distributable core JAR with eight production origins verified.
+Mounted, sleeping, equipped, unsupported-material, and active crystal-beam fallbacks remain.
+Other native queries and complete graphical and gameplay parity still require work.
+
+
+## Controller draw correction, October 26, 2026
+
+The shared selector now binds texture entries as sampler slots within one draw.
+Fresh direct and Iris-enabled ViaProxy controls each resolve three villager draws through biome and age changes.
+Masked profession fallback, recovery, and removal preserve their existing lifetime rules.
+The [shared runtime evidence](0008-share-native-actor-and-resource-runtime.pr.md#controller-texture-slots-october-26-2026) records native fragment controls, regressions, builds, and limits.
+
+
+## Per-bone world materials, October 26, 2026
+
+Supported world actor graphs now select separate material groups from the complete controller map.
+The renderer intersects each group's bone set with controller visibility before model lookup.
+All active groups and required images must resolve before native rendering replaces Java.
+An unavailable group retains fallback for the whole actor.
+Effect and locator models retain their complete skeleton independently of material partitions.
+
+The new world regression splits two rendered bones across opaque and cutout materials, then merges them through a later rule.
+It retains the parent pose, excludes an empty anchor from material demand, rejects an unsupported active group, and recovers afterward.
+Restoring the earlier non-wildcard admission rejection fails this regression.
+
+A declared native crystal uses two zero-alpha color surfaces and a material expression based on its actual actor lifetime.
+Direct and Iris-enabled ViaProxy captures show the green surface disappear and reappear while the red surface remains visible.
+The controller retains one native actor lifetime across those changes.
+This authored scene does not provide a native expression or graphical baseline.
+
+The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.
+
+
+## Material depth and EntityCulling, October 26, 2026
+
+An ordinary occlusion test can discard an actor whose material intentionally draws behind an opaque wall.
+The resolved actor definition now retains this requirement across all supported declared material alternatives.
+It resolves before the first draw and does not sample animations or emit effects.
+Unknown materials retain their existing fallback policy.
+
+The optional EntityCulling integration uses its public dynamic whitelist API.
+The client tick publishes an immutable set of entity instances for its worker.
+The integration clears stale culled state after a definition finishes loading.
+Resource replacement and disconnect clear the snapshot, while removed entity instances leave it on the next tick.
+Ordinary material comparisons retain the normal culling policy.
+The dependency is compile-only, and the bridge loads only with EntityCulling installed.
+
+Tests cover each depth comparison, independent depth writes, inherited alternatives, unsupported materials, and resource generations before any draw.
+A fresh Iris scene hides all three authored parts behind stone before the hook.
+Removing only EntityCulling restores the Always and disabled-depth parts.
+The [public implementation](https://github.com/tr7zw/EntityCulling/blob/main/src/main/java/dev/tr7zw/entityculling/EntityCullingModBase.java) defines the dynamic whitelist API.
+The installed 1.11.1 Fabric artifact matches the pinned Modrinth version and its SHA-512.
+
+This correction does not establish native backend state creation or complete graphical parity.
+
+The final artifact passes the same scene with EntityCulling enabled, Iris 1.11.7, and Complementary Reimagined r5.9.3.
+Normal depth disappears behind stone; Always and disabled testing remain visible.
+The plain profile also passes with EntityCulling absent.
+All six final screenshots received visual review, and both temporary server installations were restored.
+The [coverage record](../../../docs/bedrock-coverage.md#actor-material-depth-and-occlusion-october-26-2026) records final test totals and remaining limits.
+
+
+## Shared equipment and vehicle queries, October 27, 2026
+
+Actor animation frames now receive the shared head-slot and native vehicle-type bindings.
+Unknown equipment or native vehicle metadata remains unavailable instead of receiving invented defaults.
+The [shared runtime notes](0008-share-native-actor-and-resource-runtime.pr.md#head-equipment-and-native-vehicle-queries-october-27-2026)
+record the semantics, regression controls, and verification limits.
+Living world actors also derive `query.is_riding` from their current passenger state.

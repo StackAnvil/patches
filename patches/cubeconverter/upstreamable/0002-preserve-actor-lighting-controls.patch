@@ -1,4 +1,4 @@
-From 565d17ccd1e4a295f12254e3a702aab0b0801d00 Mon Sep 17 00:00:00 2001
+From b5f4326d767b6cb029f25e5ad4b6844e79fd0265 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 02:20:53 +0200
 Subject: [PATCH] feat(controllers): preserve actor rendering controls
@@ -48,16 +48,25 @@ controls for invisibility, first-person visibility and owner variables.
 Keep existing constructors while exposing immutable new declarations.
 Semantic parser regressions cover visibility precedence, scalar and array
 setup, missing controls and defensive ownership.
+
+Retain every material assignment as an immutable ordered declaration,
+including repeated bone patterns. A map overwrote earlier expressions and
+left a repeated wildcard at its first position, so later consumers could
+both skip Molang effects and select a superseded bone override. The target
+Bedrock controller contract applies declarations in order, with later
+matches replacing earlier ones. Keep parsing separate from evaluation.
+
+BREAKING CHANGE: Replace BedrockRenderController.materialsMap with ordered materialAssignments and update constructor callers to pass MaterialAssignment lists.
 ---
  .../data/bedrock/BedrockAttachableData.java   |   7 ++
  .../data/bedrock/BedrockEntityData.java       |  59 +++++++++-
- .../controller/BedrockRenderController.java   |  23 +++-
- .../controller/BedrockControllerParser.java   |  53 ++++++++-
+ .../controller/BedrockRenderController.java   |  30 ++++-
+ .../controller/BedrockControllerParser.java   |  58 ++++++++--
  .../bedrock/data/BedrockDataParser.java       |   5 +-
- .../BedrockAttachableRenderingTest.java       | 109 ++++++++++++++++++
- .../BedrockControllerLightingTest.java        |  62 ++++++++++
+ .../BedrockAttachableRenderingTest.java       | 108 ++++++++++++++++++
+ .../BedrockControllerLightingTest.java        |  77 +++++++++++++
  .../BedrockLegacyAnimationControllerTest.java |  38 ++++++
- 8 files changed, 347 insertions(+), 9 deletions(-)
+ 8 files changed, 368 insertions(+), 14 deletions(-)
  create mode 100644 src/test/java/org/cube/converter/parser/bedrock/controller/BedrockAttachableRenderingTest.java
  create mode 100644 src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java
  create mode 100644 src/test/java/org/cube/converter/parser/bedrock/controller/BedrockLegacyAnimationControllerTest.java
@@ -163,27 +172,39 @@ index 21f1685..c7e1a5f 100644
  
          public static Scripts emptyScript() {
 diff --git a/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java b/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java
-index e76cc41..22fea0e 100644
+index e76cc41..4ac4336 100644
 --- a/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java
 +++ b/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java
-@@ -13,7 +13,28 @@ import static org.cube.converter.util.GsonUtil.*;
+@@ -6,14 +6,38 @@ import com.viaversion.viaversion.libs.gson.JsonObject;
+ 
+ import java.util.ArrayList;
+ import java.util.List;
+-import java.util.Map;
+ 
+ import static org.cube.converter.util.GsonUtil.*;
+ 
  // TODO: hurt color, overlay color, etc....
- public record BedrockRenderController(String identifier, Map<String, String> materialsMap,
+-public record BedrockRenderController(String identifier, Map<String, String> materialsMap,
++public record BedrockRenderController(String identifier, List<MaterialAssignment> materialAssignments,
                                        String geometryExpression, List<String> textureExpressions,
 -                                      List<Array> materials, List<Array> textures, List<Array> geometries) {
 +                                      List<Array> materials, List<Array> textures, List<Array> geometries,
 +                                      boolean ignoreLighting, String lightColorMultiplierExpression, UvAnimation uvAnimation,
 +                                      List<BoneVisibility> partVisibility) {
 +    public BedrockRenderController {
++        materialAssignments = List.copyOf(materialAssignments);
 +        partVisibility = List.copyOf(partVisibility);
 +    }
 +
-+    public BedrockRenderController(String identifier, Map<String, String> materialsMap,
++    public BedrockRenderController(String identifier, List<MaterialAssignment> materialAssignments,
 +                                   String geometryExpression, List<String> textureExpressions,
 +                                   List<Array> materials, List<Array> textures, List<Array> geometries,
 +                                   boolean ignoreLighting, String lightColorMultiplierExpression, UvAnimation uvAnimation) {
-+        this(identifier, materialsMap, geometryExpression, textureExpressions, materials, textures, geometries,
++        this(identifier, materialAssignments, geometryExpression, textureExpressions, materials, textures, geometries,
 +            ignoreLighting, lightColorMultiplierExpression, uvAnimation, List.of());
++    }
++
++    public record MaterialAssignment(String pattern, String expression) {
 +    }
 +
 +    public record BoneVisibility(String pattern, String expression) {
@@ -197,28 +218,36 @@ index e76cc41..22fea0e 100644
          public static List<Array> parse(final JsonObject object) {
              if (object == null) {
 diff --git a/src/main/java/org/cube/converter/parser/bedrock/controller/BedrockControllerParser.java b/src/main/java/org/cube/converter/parser/bedrock/controller/BedrockControllerParser.java
-index 6949359..84ccea3 100644
+index 6949359..de35231 100644
 --- a/src/main/java/org/cube/converter/parser/bedrock/controller/BedrockControllerParser.java
 +++ b/src/main/java/org/cube/converter/parser/bedrock/controller/BedrockControllerParser.java
-@@ -7,7 +7,7 @@ import org.cube.converter.data.bedrock.controller.BedrockRenderController;
+@@ -7,11 +7,8 @@ import org.cube.converter.data.bedrock.controller.BedrockRenderController;
  import org.cube.converter.util.GsonUtil;
  
  import java.util.ArrayList;
 -import java.util.HashMap;
-+import java.util.LinkedHashMap;
  import java.util.List;
- import java.util.Map;
+-import java.util.Map;
  
-@@ -45,7 +45,7 @@ public class BedrockControllerParser {
+-import static org.cube.converter.util.GsonUtil.objectToMap;
+ 
+ public class BedrockControllerParser {
+     public static List<BedrockRenderController> parse(final String json) {
+@@ -45,19 +42,25 @@ public class BedrockControllerParser {
                  }
              }
  
 -            final Map<String, String> materialsMap = new HashMap<>();
-+            final Map<String, String> materialsMap = new LinkedHashMap<>();
++            final List<BedrockRenderController.MaterialAssignment> materialAssignments = new ArrayList<>();
              if (object.has("materials")) {
                  for (final JsonElement element : object.getAsJsonArray("materials")) {
                      if (!element.isJsonObject()) {
-@@ -55,9 +55,13 @@ public class BedrockControllerParser {
+                         continue;
+                     }
+-                    materialsMap.putAll(objectToMap(element.getAsJsonObject()));
++                    for (final var entry : element.getAsJsonObject().entrySet()) {
++                        materialAssignments.add(new BedrockRenderController.MaterialAssignment(entry.getKey(), entry.getValue().getAsString()));
++                    }
                  }
              }
  
@@ -229,16 +258,16 @@ index 6949359..84ccea3 100644
              final JsonObject arrays = object.getAsJsonObject("arrays");
              if (arrays == null) {
 -                list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, List.of(), List.of(), List.of()));
-+                list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, List.of(), List.of(), List.of(), ignoreLighting, lightColorMultiplier, uvAnimation, partVisibility));
++                list.add(new BedrockRenderController(identifier, materialAssignments, geometryExpression, textureExpressions, List.of(), List.of(), List.of(), ignoreLighting, lightColorMultiplier, uvAnimation, partVisibility));
                  continue;
              }
  
-@@ -65,12 +69,53 @@ public class BedrockControllerParser {
+@@ -65,12 +68,53 @@ public class BedrockControllerParser {
              final List<BedrockRenderController.Array> geometries = BedrockRenderController.Array.parse(arrays.getAsJsonObject("geometries"));
              final List<BedrockRenderController.Array> materials = BedrockRenderController.Array.parse(arrays.getAsJsonObject("materials"));
  
 -            list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, materials, textures, geometries));
-+            list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, materials, textures, geometries, ignoreLighting, lightColorMultiplier, uvAnimation, partVisibility));
++            list.add(new BedrockRenderController(identifier, materialAssignments, geometryExpression, textureExpressions, materials, textures, geometries, ignoreLighting, lightColorMultiplier, uvAnimation, partVisibility));
          }
  
          return list;
@@ -312,10 +341,10 @@ index c782b38..06e925f 100644
  }
 diff --git a/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockAttachableRenderingTest.java b/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockAttachableRenderingTest.java
 new file mode 100644
-index 0000000..5a834f5
+index 0000000..b8f540e
 --- /dev/null
 +++ b/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockAttachableRenderingTest.java
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,108 @@
 +package org.cube.converter.parser.bedrock.controller;
 +
 +import org.cube.converter.data.bedrock.BedrockEntityData;
@@ -325,7 +354,6 @@ index 0000000..5a834f5
 +
 +import java.util.ArrayList;
 +import java.util.List;
-+import java.util.Map;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -408,7 +436,7 @@ index 0000000..5a834f5
 +    @Test
 +    void recordsDefensivelyCopyNewDeclarationsAndKeepExistingConstructors() {
 +        final var visibility = new ArrayList<>(List.of(new BedrockRenderController.BoneVisibility("*", "1")));
-+        final var controller = new BedrockRenderController("controller.render.worn", Map.of(), "", List.of(),
++        final var controller = new BedrockRenderController("controller.render.worn", List.of(), "", List.of(),
 +            List.of(), List.of(), List.of(), false, "1", BedrockRenderController.UvAnimation.IDENTITY, visibility);
 +        visibility.clear();
 +        assertEquals(1, controller.partVisibility().size());
@@ -420,17 +448,17 @@ index 0000000..5a834f5
 +        assertEquals(1, scripts.parentSetup().size());
 +
 +        assertTrue(new BedrockEntityData.Scripts(List.of(), List.of(), scale, List.of()).parentSetup().isEmpty());
-+        assertTrue(new BedrockRenderController("controller.render.worn", Map.of(), "", List.of(),
++        assertTrue(new BedrockRenderController("controller.render.worn", List.of(), "", List.of(),
 +            List.of(), List.of(), List.of(), false, "1", BedrockRenderController.UvAnimation.IDENTITY)
 +            .partVisibility().isEmpty());
 +    }
 +}
 diff --git a/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java b/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java
 new file mode 100644
-index 0000000..521b7d8
+index 0000000..9553968
 --- /dev/null
 +++ b/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,77 @@
 +package org.cube.converter.parser.bedrock.controller;
 +
 +import org.junit.jupiter.api.Test;
@@ -453,8 +481,23 @@ index 0000000..521b7d8
 +            """).get(0);
 +        assertTrue(controller.ignoreLighting());
 +        assertEquals("query.variant * 0.5", controller.lightColorMultiplierExpression());
-+        assertEquals(List.of("*", "Light*"), List.copyOf(controller.materialsMap().keySet()));
++        assertEquals(List.of("*", "Light*"), controller.materialAssignments().stream().map(BedrockRenderController.MaterialAssignment::pattern).toList());
 +        assertEquals(2, controller.materials().get(0).values().size());
++    }
++
++    @Test
++    void retainsRepeatedMaterialPatternsInTheirDeclaredPositions() {
++        final var controller = BedrockControllerParser.parse("""
++            {"render_controllers":{"controller.render.repeated":{
++                "materials":[{"*":"Material.base"},{"Arm*":"Material.glow"},{"*":"Material.final"}]
++            }}}
++            """).get(0);
++        assertEquals(List.of(
++            new BedrockRenderController.MaterialAssignment("*", "Material.base"),
++            new BedrockRenderController.MaterialAssignment("Arm*", "Material.glow"),
++            new BedrockRenderController.MaterialAssignment("*", "Material.final")
++        ), controller.materialAssignments());
++        assertThrows(UnsupportedOperationException.class, () -> controller.materialAssignments().clear());
 +    }
 +
 +    @Test

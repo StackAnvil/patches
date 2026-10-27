@@ -111,3 +111,34 @@ Both converted archives load without unresolved model or block errors.
 ViaProxy exports 16,383 and 16,741 entries, with 782 shared parents in each archive.
 The direct route also loads both newly converted archives.
 These checks establish conversion and loading regressions. They do not establish complete native visual parity or faster end-to-end joins.
+
+## Item atlas dependencies
+
+Item atlas conversion now follows the same complete-asset rules as entity and attachable conversion.
+Resolved variants retain their original selector indices, native pixels and pack priority.
+Missing images remain recorded in converter metadata instead of producing Java models with dangling sprites.
+An actively selected missing icon emits a diagnostic that the rendering gate rejects.
+If an image becomes available, conversion clears that variant's missing state.
+The existing empty item-definition schema handles an atlas with no resolved variants.
+
+The pinned Bedrock 1.26.51.1 package declares `camera` as `textures/items/camera` but supplies no matching item image.
+The current native camera definitions and ordinary item mapping do not select that atlas entry.
+The converter previously baked the unused declaration during unrelated joins.
+The native package's 470 texture archives contain 15,586 indexed entries; its camera images are block, entity and UI assets.
+No camera-specific exclusion, replacement pixels or native camera interaction behavior is added.
+
+Focused tests cover sparse indices, resolved pixels, omitted dependencies, active diagnostics and recovery.
+Cache tests retain missing-icon metadata through memory, disk and reopened caches.
+The resource fingerprint advances so older dangling models are not reused.
+
+Validation: the replayed four-project build passes 3,072 tests with 152 optional skips and no failures or errors.
+Both new icon tests and all 19 cache tests pass without skips; Checkstyle and tooling checks pass.
+The same controlled classic-player scene passes full transport and rendering gates on direct and ViaProxy connections.
+Each route samples four bundled emotes and installs all three expected complete skin records.
+The direct observer retains the unresolved camera-icon reason while ordinary rendering passes.
+These plain software controls do not establish complete native camera, emote, skin or shader parity.
+
+A declared negative control requests the unresolved `camera/0` model through the production selection API in a running direct client.
+The API reports the retained missing-image reason, and the full rendering gate fails as expected.
+All four emotes still render during that control.
+The probe tests the selection diagnostic; it does not exercise a native camera item interaction.
