@@ -47,6 +47,7 @@ public final class NativeCaptureSelfTest {
         properties.put("ServerAddress", "target.example:19132");
         if (!new Gson().toJsonTree(properties).equals(new Gson().toJsonTree(claims))) throw new AssertionError("Native claims changed");
         authenticatedIdentity(original, relay, source);
+        offlineSignalingIdentity(source);
         if (!NativeCaptureIdentity.offlineClientKey(source).equals(original.getPublic())) throw new AssertionError("Offline client key changed");
         KeyPair remote = CryptUtil.generateEcdsa384KeyPair();
         byte[] salt = new byte[16]; new SecureRandom().nextBytes(salt);
@@ -63,6 +64,38 @@ public final class NativeCaptureSelfTest {
         captureShutdown();
         if (args.length == 2) smoke(Integer.parseInt(args[0]), Path.of(args[1]));
         System.out.println("PASS native relay JWT claim preservation, trusted multiplayer identity and proof of possession, ECDH, transport framing, and encrypted chunk-pack export" + (args.length == 2 ? ", local backend reached StartGame" : ""));
+    }
+
+    private static void offlineSignalingIdentity(String clientJwt) throws Exception {
+        var identity = NativeCaptureProxy.Identity.selfSigned();
+        if (identity.online()) throw new AssertionError("Self-signed login must remain offline");
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(identity.keys().getPublic().getEncoded());
+        String fingerprint = HexFormat.ofDelimiter(":").withUpperCase().formatHex(digest);
+        String offer = "v=0\r\na=fingerprint:sha-256 " + fingerprint + "\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n";
+        String signed = identity.signaling().withAssertion(offer);
+        String line = signed.lines().filter(value -> value.startsWith("a=identity:")).findFirst().orElseThrow();
+        JsonObject envelope = JsonParser.parseString(new String(Base64.getDecoder().decode(line.substring("a=identity:".length())), StandardCharsets.UTF_8)).getAsJsonObject();
+        JsonObject assertion = JsonParser.parseString(envelope.get("assertion").getAsString()).getAsJsonObject();
+        String token = assertion.get("token").getAsString();
+        if (!token.equals(identity.token())) throw new AssertionError("Signaling replaced the game login identity");
+        Jwts.parser().verifyWith(identity.keys().getPublic()).build().parseSignedClaims(token);
+
+        String payload = "{\"fingerprint\":[{\"algorithm\":\"sha-256\",\"digest\":\"" + fingerprint + "\"}]}";
+        String[] proof = assertion.get("fingerprints").getAsString().split("\\.", -1);
+        if (proof.length != 3 || !proof[1].isEmpty()) throw new AssertionError("Expected a detached fingerprint proof");
+        String compact = proof[0] + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes(StandardCharsets.UTF_8)) + "." + proof[2];
+        Jwts.parser().verifyWith(identity.keys().getPublic()).build().parseSignedClaims(compact);
+
+        ByteBuf packet = NativeCaptureProxy.login(identity, clientJwt);
+        try {
+            if (Types.VAR_INT.readPrimitive(packet) != 1 || packet.readInt() != ProtocolConstants.BEDROCK_PROTOCOL_VERSION)
+                throw new AssertionError("Unexpected login packet");
+            int length = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(packet);
+            if (length != packet.readableBytes()) throw new AssertionError("Invalid login payload length");
+            JsonObject login = JsonParser.parseString(BedrockTypes.ASCII_STRING.read(packet)).getAsJsonObject();
+            if (login.get("AuthenticationType").getAsInt() != 2 || !login.get("Token").getAsString().equals(token))
+                throw new AssertionError("Offline game login did not reuse the signaling token");
+        } finally { packet.release(); }
     }
 
     private static void captureShutdown() throws Exception {

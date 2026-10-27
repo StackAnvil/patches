@@ -155,6 +155,9 @@ Named server recordings use their configured address and reject `--target`.
 The native recorder supports RakNet and owned BDS NetherNet targets.
 For NetherNet, it exposes a loopback RakNet endpoint to the native client and records the decoded backend packets.
 It uses the recording account for the NetherNet session and keeps authentication data private.
+An account-free loopback recording uses one self-signed identity for HTTP signaling and game login.
+The SDP offer includes proof of possession for that identity, even when the owned server disables online authentication.
+The recorder retains offline game authentication and validates the SDP answer.
 
 A server spawn packet alone does not prove a successful join.
 Recordings require local-player initialization and movement acknowledgments.
