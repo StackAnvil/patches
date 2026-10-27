@@ -1,24 +1,23 @@
-From 1f0fdf68f101813bf8e857c11b7f8312912f7b9a Mon Sep 17 00:00:00 2001
+From 7eb171b4b7e114020765676f2214187364a13736 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] fix(sound): decode native sound coordinates and update
  variants
 
-Native 1.26.51.1 captures on protocol 2193 establish signed eighth-block positions and signed loop counts. UpdateSoundData carries a 64-bit handle followed by seven tagged variants. Consume all seven fields and use the last variant, matching the shared native member. Fade serializes duration before target volume.
+Native 1.26.51.1 captures on protocol 2193 establish signed eighth-block positions and signed loop counts. Protocol 2225 replaces the seven repeated UpdateSoundData fields with one Event variant. Read its uint32 variant index and matching uint8 SoundDataEventType discriminator, then consume only that event payload. Mojang documents this change in the v1.26.60 release: https://github.com/Mojang/bedrock-protocol-docs/releases/tag/v1.26.60. Fade serializes duration before target volume.
 
 Preserve Java fallback coordinates exactly and retain the native float listener-range gate. The 1.26.51.1 executable 537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7 verifies the gate in function 144719f20. Keep native playback channels and resource archives in the following feature patch.
 ---
  .../api/model/SoundListenerRange.java         |  24 ++++
  .../protocol/ClientboundBedrockPackets.java   |   4 +-
- .../bedrock/generated/MinecraftPacketIds.java |   1 +
  .../viabedrock/protocol/model/PlaySound.java  |  58 +++++++++
- .../protocol/model/SoundUpdate.java           | 114 ++++++++++++++++++
+ .../protocol/model/SoundUpdate.java           | 115 ++++++++++++++++++
  .../protocol/packet/WorldEffectPackets.java   |  91 ++++----------
- .../api/model/SoundListenerRangeTest.java     |  27 +++++
+ .../api/model/SoundListenerRangeTest.java     |  27 ++++
  .../protocol/model/PlaySoundTest.java         |  66 ++++++++++
  .../protocol/packet/PlaySoundPacketsTest.java |  88 ++++++++++++++
- .../protocol/packet/SoundUpdateTest.java      |  74 ++++++++++++
- 10 files changed, 478 insertions(+), 69 deletions(-)
+ .../protocol/packet/SoundUpdateTest.java      |  68 +++++++++++
+ 9 files changed, 472 insertions(+), 69 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundListenerRange.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java
@@ -58,32 +57,20 @@ index 000000000..d5704cbb6
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java
-index 6d2c123e1..49d91300f 100644
+index 0b2428b05..b21e9fe2d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java
-@@ -190,8 +190,8 @@ public enum ClientboundBedrockPackets implements ClientboundPacketType {
-     VOXEL_SHAPES(MinecraftPacketIds.VoxelShapesPacket.getValue()),
-     SET_PLAYER_FURNACE_OPTIONS(MinecraftPacketIds.SetPlayerFurnaceOptions.getValue()),
+@@ -192,8 +192,8 @@ public enum ClientboundBedrockPackets implements ClientboundPacketType {
      RECORD_STARTED(MinecraftPacketIds.RecordStarted.getValue()),
--    STONECUTTER_SET_RECIPE(MinecraftPacketIds.ClientboundStonecutterSetRecipePacket.getValue());
+     STONECUTTER_SET_RECIPE(MinecraftPacketIds.ClientboundStonecutterSetRecipePacket.getValue()),
+     SET_PASSENGER_OF_BLOCK(MinecraftPacketIds.SetPassengerOfBlockPacket.getValue()),
+-    PLAY_AUDIO_CONTENT(MinecraftPacketIds.ClientboundPlayAudioContent.getValue());
 -    // UPDATE_SOUND_DATA(MinecraftPacketIds.ClientboundUpdateSoundDataPacket.getValue());
-+    STONECUTTER_SET_RECIPE(MinecraftPacketIds.ClientboundStonecutterSetRecipePacket.getValue()),
++    PLAY_AUDIO_CONTENT(MinecraftPacketIds.ClientboundPlayAudioContent.getValue()),
 +    UPDATE_SOUND_DATA(MinecraftPacketIds.ClientboundUpdateSoundDataPacket.getValue());
      // CONTROL_SCHEME_SET(MinecraftPacketIds.ClientboundControlSchemeSetPacket.getValue()),
      // PRIMITIVE_SHAPES(MinecraftPacketIds.PrimitiveShapesPacket.getValue()),
      // DATA_STORE(MinecraftPacketIds.ClientboundDataStore.getValue()),
-diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/MinecraftPacketIds.java b/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/MinecraftPacketIds.java
-index 43bd02513..1741eba05 100644
---- a/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/MinecraftPacketIds.java
-+++ b/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/MinecraftPacketIds.java
-@@ -226,6 +226,7 @@ public enum MinecraftPacketIds {
-     RecordStarted(352),
-     ClientboundMatchmakingState(353),
-     ServerboundStonecutterSetRecipePacket(354),
-+    ClientboundUpdateSoundDataPacket(348),
-     ClientboundStonecutterSetRecipePacket(355),
-     ServerboundMatchmakingCancel(356),
-     ;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java b/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
 new file mode 100644
 index 000000000..2a52ef805
@@ -150,10 +137,10 @@ index 000000000..2a52ef805
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java b/src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java
 new file mode 100644
-index 000000000..3285c7609
+index 000000000..8723ad10c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,115 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -171,25 +158,25 @@ index 000000000..3285c7609
 +        @Override
 +        public SoundUpdate read(final ByteBuf buffer) {
 +            final long handle = buffer.readLongLE();
-+            Event event = null;
-+            // Protocol 2193 serializes the same variant member seven times. The last read wins.
-+            for (int i = 0; i < 7; i++) {
-+                event = readEvent(buffer);
-+            }
-+            return new SoundUpdate(handle, event);
++            return new SoundUpdate(handle, readEvent(buffer));
 +        }
 +
 +        @Override
 +        public void write(final ByteBuf buffer, final SoundUpdate value) {
 +            buffer.writeLongLE(value.handle);
-+            for (int i = 0; i < 7; i++) {
-+                writeEvent(buffer, value.event);
-+            }
++            writeEvent(buffer, value.event);
 +        }
 +    };
 +
 +    public static Event readEvent(final ByteBuf buffer) {
-+        return switch (BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(buffer)) {
++        final int variant = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(buffer);
++        if (variant < 0 || variant > 6) {
++            throw new IllegalArgumentException("Unknown sound update variant");
++        }
++        if (buffer.readUnsignedByte() != variant) {
++            throw new IllegalArgumentException("Sound update tag does not match variant");
++        }
++        return switch (variant) {
 +            case 0 -> new Stop();
 +            case 1 -> new Volume(buffer.readFloatLE());
 +            case 2 -> new Pitch(buffer.readFloatLE());
@@ -203,6 +190,7 @@ index 000000000..3285c7609
 +
 +    public static void writeEvent(final ByteBuf buffer, final Event event) {
 +        BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, event.id());
++        buffer.writeByte(event.id());
 +        if (event instanceof Volume volume) {
 +            buffer.writeFloatLE(volume.volume);
 +        } else if (event instanceof Pitch pitch) {
@@ -595,10 +583,10 @@ index 000000000..11aa77cad
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/SoundUpdateTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/SoundUpdateTest.java
 new file mode 100644
-index 000000000..9fb210508
+index 000000000..e4d34c8de
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/SoundUpdateTest.java
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,68 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -620,19 +608,17 @@ index 000000000..9fb210508
 +        new SoundUpdate.Pause(), new SoundUpdate.Resume()};
 +
 +    @Test
-+    void readsCapturedVariantLayoutsAndPreservesNextValue() throws Exception {
++    void readsProtocol2225TaggedVariantsAndPreservesNextValue() throws Exception {
 +        for (int tag = 0; tag < EVENTS.length; tag++) {
 +            final var buffer = Unpooled.buffer();
 +            try {
 +                buffer.writeLongLE(Long.MIN_VALUE);
-+                for (int repeat = 0; repeat < 7; repeat++) {
-+                    buffer.writeByte(tag);
-+                    switch (tag) {
-+                        case 1 -> buffer.writeFloatLE(0.3F);
-+                        case 2 -> buffer.writeFloatLE(1.3F);
-+                        case 3 -> buffer.writeFloatLE(2).writeFloatLE(0.2F);
-+                        case 4 -> buffer.writeFloatLE(0.01F);
-+                    }
++                buffer.writeByte(tag).writeByte(tag);
++                switch (tag) {
++                    case 1 -> buffer.writeFloatLE(0.3F);
++                    case 2 -> buffer.writeFloatLE(1.3F);
++                    case 3 -> buffer.writeFloatLE(2).writeFloatLE(0.2F);
++                    case 4 -> buffer.writeFloatLE(0.01F);
 +                }
 +                buffer.writeInt(42);
 +                assertEquals(new SoundUpdate(Long.MIN_VALUE, EVENTS[tag]), SoundUpdate.TYPE.read(buffer));
@@ -645,15 +631,11 @@ index 000000000..9fb210508
 +    }
 +
 +    @Test
-+    void consumesAllSevenVariantsAndUsesLastValue() {
++    void rejectsMismatchedInnerDiscriminators() {
 +        final var buffer = Unpooled.buffer();
 +        try {
-+            buffer.writeLongLE(1);
-+            for (final var event : EVENTS) {
-+                SoundUpdate.writeEvent(buffer, event);
-+            }
-+            assertEquals(new SoundUpdate(1, EVENTS[6]), SoundUpdate.TYPE.read(buffer));
-+            assertEquals(0, buffer.readableBytes());
++            buffer.writeLongLE(1).writeByte(1).writeByte(2).writeFloatLE(0.3F);
++            assertThrows(IllegalArgumentException.class, () -> SoundUpdate.TYPE.read(buffer));
 +        } finally {
 +            buffer.release();
 +        }
@@ -665,7 +647,7 @@ index 000000000..9fb210508
 +        try {
 +            buffer.writeLongLE(1).writeByte(7);
 +            assertThrows(IllegalArgumentException.class, () -> SoundUpdate.TYPE.read(buffer));
-+            buffer.clear().writeLongLE(1).writeByte(3).writeFloatLE(2);
++            buffer.clear().writeLongLE(1).writeByte(3).writeByte(3).writeFloatLE(2);
 +            assertThrows(IndexOutOfBoundsException.class, () -> SoundUpdate.TYPE.read(buffer));
 +        } finally {
 +            buffer.release();

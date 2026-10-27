@@ -1,28 +1,156 @@
 # Bedrock Edition development sources
 
-Use this reference when changing ViaBedrock, the ViaFabricPlus Bedrock add-on, or their data generators. The links were checked on 2026-09-25. Recheck versions and source branches before using a numeric protocol value.
+Use this reference when changing ViaBedrock, the ViaFabricPlus Bedrock add-on, or their data generators. The target protocol and GDK snapshot were updated on 2026-10-27. Recheck versions and source branches before using a numeric protocol value.
 
 ## Choose the protocol version first
 
-The current StackAnvil ViaBedrock checkout targets Bedrock **1.26.51**, network protocol **2193**. Its source of truth is `BEDROCK_VERSION_NAME` and `BEDROCK_PROTOCOL_VERSION` in [ViaBedrock's `ProtocolConstants.java`](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/src/main/java/net/raphimc/viabedrock/protocol/data/ProtocolConstants.java). Check the same file in `.worktrees/viabedrock` after syncing the stack. A later checkout can target another version.
+The current StackAnvil ViaBedrock checkout targets Bedrock **1.26.60**, network protocol **2225**. The [first upstreamable patch](../patches/viabedrock/upstreamable/0001-update-bedrock-to-1-26-60.patch) contains the update. Check `BEDROCK_VERSION_NAME` and `BEDROCK_PROTOCOL_VERSION` in `.worktrees/viabedrock` after syncing the stack.
 
-Mojang's latest protocol preview at the time of this review is **1.26.60-beta.28**, protocol **2216**. The [1.26.50-beta.26 preview](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/) uses protocol **2192**. These are useful for finding changes, but neither describes protocol 2193 exactly.
+[Mojang's 1.26.60 release metadata](https://github.com/Mojang/bedrock-protocol-docs/releases/tag/v1.26.60) identifies protocol 2225. Its schema version label is `1.26.60-beta.0`. Use the network protocol number to match evidence. A preview for another protocol provides leads but requires wire checks.
 
 For protocol and enum work:
 
 1. Read the target protocol number from the checked-out ViaBedrock source.
-2. Use Mojang's **beta/preview** packet and type pages to investigate field order, conditions, and enum values. The stable protocol pages have shown incorrect enum mappings; do not use them as the sole authority for numeric values.
-3. Select a preview with the same protocol number when one exists. If none exists, treat the closest preview as a lead, then compare the release changelog, current codecs, and a native client or server trace.
+2. Start with Mojang's metadata archive for the target protocol. Use explicit `x-enum-binary-value` values instead of enum declaration order.
+3. Compare matching beta/preview schemas and implementation evidence when release metadata omits values or conflicts with captures. A newer preview can target another protocol.
 4. Check the enum's wire type and encoding as well as its numeric value. Add a focused encode/decode test when a mapping affects packets we send or receive.
-5. Record the game build and network protocol with any capture. Never copy values from protocol 2216 into a protocol 2193 implementation without evidence.
+5. Record the game build and network protocol with any capture. Never copy values from another protocol into the target implementation without matching evidence.
 
 The [preview `TextProcessingEventOrigin` page](https://mojang.github.io/bedrock-protocol-docs/1.26.60-preview.25/types/text-processing-event-origin/) shows a concrete enum renumbering in its **All builds** changelog. Use the changelog to locate a change, then check the schema for the target build.
 
 Preview tables also need wire checks.
-The target protocol 2193 actor-event table lists sequential values that contradict the matching BDS and native client.
-BDS sends rocket explosion 25 and crossbow charge completion 74; the target documentation lists 24 and 54.
+The earlier protocol 2193 actor-event table lists sequential values that contradict the matching BDS and native client.
+BDS sends rocket explosion 25 and crossbow charge completion 74. The old table lists 24 and 54.
+The protocol 2225 metadata now supplies the correct explicit values.
 The [actor-event evidence](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.pr.md) records the discrepancy.
 Keep verified sparse IDs even when a versioned table gives different values.
+
+The 2225 archive resolves the old container-slot and text-origin enum corrections.
+The generator no longer repairs protocol 2193 metadata.
+It supplements `MinecraftPacketIds` from packet schemas because that enum still omits declared packets, including stonecutter and block-passenger packets.
+Schema and enum protocol numbers must match. Conflicting IDs fail generation.
+
+Enum values and Cereal variant indexes are separate wire fields.
+`ResourcePackResponse` uses enum values 1 through 4 and variant indexes 0 through 3.
+Item stack actions retain unused enum values 7 and 8, which the variant list omits.
+Keep these translations in codecs, not generated enums.
+`InventorySourceType.Non_Implemented_Feature_TODO` instead uses `Enum-as-Value`: its wire value is 99999, not declaration index 4.
+Likewise, no-compression sentinels use all bits at their wire width: 65535 for NetworkSettings and 255 for frame headers.
+
+## Protocol 2225 consumers
+
+The packet audit also checks the [official 26.60 changelog](https://feedback.minecraft.net/hc/en-us/articles/49852828563853-Minecraft-Bedrock-Edition-26-60-Changelog).
+A schema update establishes wire compatibility. Each existing feature must also use the new fields or notifications.
+
+| Area | Current handling |
+| --- | --- |
+| Stonecutter selection | Send recipe buttons with packet 354. Apply packet 355 only to the local player's current matching container, without an echo. |
+| Cursor split drags | Send packet 358 Start and Stop around transfers. Screen retirement, invalid phases, recovery, and failed sends end the drag. |
+| Dimension clouds | Retain height and visibility with dimension bounds. Project them through Java environment attributes within the existing Overworld override boundary. |
+| Animation and interaction hands | The updated codecs carry hand fields. Native offhand item restrictions still apply. |
+| Skins and player lists | PlayFab identity comes from player-list entries and reaches Java profile properties. Serialized skin data no longer carries that field. |
+| Sound updates | Decode the new tagged event union through the sound model. |
+| Chunk biomes | Consume the new override flag. Java uses received biome data because it does not run Bedrock's client biome generator. |
+| Block seating and signed audio | Spawn fields are decoded, but seating and signed content playback remain unsupported. |
+| Matchmaking and environment layers | Queue-state UI integration and attribute-layer rendering remain feature gaps. |
+
+The changelog's collision-box JSON arrays do not require a decoder change by themselves.
+Our block renderer consumes the server's normalized `boxes` list, rather than block-authoring JSON.
+Keep legacy authoring support separate from the network shape representation.
+
+The new bitmap atlas layout metadata is a separate rendering gap.
+The current UI font importer handles TrueType declarations, not bitmap atlas layout or extended character mapping.
+Do not claim that the protocol migration implements the changelog's font or Character Creator rendering fixes.
+
+## 26.60 behavior audit
+
+This audit compares the official 26.60 changes with our protocol 2225 stack.
+Packet decoding alone does not establish behavior parity.
+The source checks below identify confirmed handling and remaining gaps.
+They do not replace a native gameplay comparison.
+
+### Confirmed correction
+
+The neighbor-shape patch reconstructed redstone connections after the version
+patch mapped the server's explicit states. This discarded command-authored
+shapes, custom-block connections, and opposite up/down steps.
+`ConnectedBlockShapes` now reconstructs only fences and stairs.
+All 1,296 wire connection/power combinations retain their supplied properties
+without neighbor or conductor queries.
+The regression fails before the correction and passes afterward.
+The [owning patch notes](../patches/viabedrock/upstreamable/0010-render-neighbor-dependent-block-shapes.pr.md#authoritative-redstone-states-in-2660)
+record the evidence and verification limits.
+Chorus and fire connections already use the server's explicit properties.
+No later neighbor reconstruction overrides those properties.
+
+### Existing paths checked
+
+| Change | What the current code establishes | Remaining limit |
+| --- | --- | --- |
+| Resumed weaker effects | `LivingEntity.updateEffect` replaces the active effect, including a lower amplifier, and sends duration and HUD flags. | No new native stronger/shorter versus weaker/longer capture. The server owns the effect stack. |
+| Sneaking at water contact | `PlayerPosture.next` retains requested sneaking in water when the pose fits. | Full movement and collision parity still require native traces. |
+| Sound volume and fade | `BedrockSoundPlayback` multiplies the envelope by sample gain. `BedrockSoundEnvelope` retargets from its current value. Pending controls apply when playback starts. | Native timing for queued fades, pause, and synchronized broadcast remains unverified. |
+| Custom collision arrays | `CustomBlockModel.boxes` reads the server's normalized list of min/max boxes. | Authoring JSON arrays do not prove a different network representation. |
+| Custom dimension clouds | Dimension definitions retain height and visibility and project them through the existing Java environment override. | This does not implement every environment attribute layer. |
+| World clock commands | `WorldClockTracker` applies named clock updates and paused state. | Command validation and rollover belong to BDS. Java can only project registered clocks. |
+| Drowned helmets | Equipped living actors retain Java equipment rendering instead of entering our native body renderer. | The native equipment/model combination still needs a visual comparison. |
+| Strider dismount | The server's new `ExitVehicleLookDirectionSystem` chooses the destination. | Do not duplicate that server system in Java input code. |
+| Fireball ignition, Wind Burst targets, arrows, piston push eligibility, loot functions, and stricter behavior schemas | These changes belong to authoritative server simulation or content loading. | Shared client prediction and visuals can still need native checks. No client rule was added from the changelog alone. |
+
+The bundled resource comparison covers 5,164 old and 5,175 new JSON documents.
+Thirteen new or changed documents include cat and sheep graphs, zombie-villager
+animation bindings, and the drowned model. They introduce no new Molang query names.
+The sheep controller now exits grazing through `any_animation_finished`, with
+separate adult and baby tracks. Our runtime supports that query and persistent
+loop-completion flags. A private probe runs the bundled controller for both
+ages, verifies the adult and baby grazing offsets, and returns both to walking.
+This checks our runtime with actual assets, not native graphical parity.
+The refreshed assets carry these changes; they do not require a second
+hardcoded animal animation.
+The drowned geometry change is in the new `vanilla_1.26.60` overlay.
+Comparing only the old overlay paths would miss it.
+Player and persona controller assets do not establish the engine's new armor masking behavior.
+
+### Work still needed
+
+1. **Select vanilla resources by world version.**
+   `ResourcePackPackets` discards the base-game version in `ResourcePackStack`.
+   `BedrockResourceLibrary` loads every bundled vanilla overlay.
+   Actor and sound loaders also use the global latest library.
+   Microsoft's [base-game version guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/basegameversioning)
+   says older templates must skip later vanilla resources.
+   A complete fix must select metadata, textures, actors, and audio together.
+   Filtering images alone would leave mixed-version resources.
+   A latest-world to older-template transition needs a native comparison.
+2. **Implement held trapdoor placement.**
+   The 26.60 release locks placement direction until the use control is released
+   and suppresses block interactions during that placement.
+   `InteractionPackets` forwards each Java use-on-block independently.
+   `MixinTrapDoorBlock` changes shape only. No placement-session state implements the new rule.
+   Capture direction choice, release, item changes, and interaction suppression
+   before changing outgoing requests or client prediction.
+3. **Implement bitmap font layout.**
+   `UiFonts` imports TrueType metadata. The bundled pack provider skips bitmap atlases and their layout files.
+   The new vanilla `default8.json` requests extended mapping, height 12, and offset -3.
+   Custom atlases without their own metadata must retain legacy layout.
+   Glyph mapping and same-pack metadata ownership both need implementation.
+4. **Verify skin masking and profile changes.**
+   Persona assembly combines piece geometry into shared surfaces.
+   The renderer does not explicitly preserve every clothing category for equipment masking.
+   Account replacement and native LOD texture selection need visual fixtures.
+   Updated assets alone do not prove these engine fixes work here.
+5. **Verify movement and rendering boundaries.**
+   Falls at water/solid boundaries still need native movement traces.
+   Dragon-dependent fog distances, combined blindness/night vision, and changed
+   block picking need visual or native checks.
+   Existing lightmap and collision code cannot establish those fixes by itself.
+6. **Complete remaining content features.**
+   Item-component custom swing, use-start, and durability sounds have no matching
+   component consumer in the current item path.
+   Boolean geometry bone visibility also needs a verified network representation and consumer.
+   Block seating, signed audio, matchmaking UI, and environment layers remain separate gaps.
+   Experimental freezing, Frostbite, and ice features require feature-specific
+   evidence; generated IDs or Java fallbacks do not establish parity.
 
 ## Establish the behavior to port
 
@@ -39,9 +167,7 @@ These links cover packet shape and protocol behavior. A versioned link is a snap
 | Source | Use |
 | --- | --- |
 | [Latest protocol portal](https://mojang.github.io/bedrock-protocol-docs/) | Find the newest preview and its network protocol number. |
-| [1.26.60-beta.28 packet index](https://mojang.github.io/bedrock-protocol-docs/1.26.60-preview.28/) | Inspect packets in the latest checked preview, protocol 2216. |
-| [1.26.60-beta.28 type index](https://mojang.github.io/bedrock-protocol-docs/1.26.60-preview.28/types/) | Find supporting objects, unions, and enums for that preview. |
-| [1.26.50-beta.26 packet index](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/) | Compare a preview near the current ViaBedrock target. |
+| [1.26.60 metadata archive](https://github.com/Mojang/bedrock-protocol-docs/releases/download/v1.26.60/metadata.zip) | Read packet schemas and explicit enum values for protocol 2225. |
 | [Protocol changelog](https://mojang.github.io/bedrock-protocol-docs/changelog/) | Compare stable and preview builds; inspect **All builds** for preview changes. |
 | [Protocol schema releases](https://github.com/Mojang/bedrock-protocol-docs/releases) | Get versioned JSON schema archives and their protocol numbers. |
 | [Protocol docs repository](https://github.com/Mojang/bedrock-protocol-docs) | Inspect schema generation and guide sources. Its site is assembled from releases, not only `main`. |
@@ -75,7 +201,11 @@ For a specific feature, search the local `protocol/packet`, `protocol/types`, an
 ## Versioned Windows GDK reference
 
 The community [Windows GDK archive](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive) publishes unpacked packages and standalone executables as release assets.
-The [1.26.51.1 release](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive/releases/tag/1.26.51.1) matches the current native research target.
+The [1.26.60.5 release](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive/releases/tag/1.26.60.5) supplies the current client resource snapshot.
+Its package SHA-256 is `a36945ad3b28d762d31d4533168a102294b55e8f88fe2c570485493fb3d15f08`.
+Its `Minecraft.Windows.exe` SHA-256 is `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`.
+
+The [1.26.51.1 release](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive/releases/tag/1.26.51.1) remains the historical native reference for earlier comparisons.
 Its `Minecraft.Windows.exe` has SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
 The existing private executable matches that digest and the published file size.
 This provides a reproducible source for the native instruction controls without another executable download.

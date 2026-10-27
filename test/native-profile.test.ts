@@ -10,13 +10,13 @@ afterEach(async () => { for (const path of temporary.splice(0)) await rm(path, {
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "stackanvil-native-profile-")); temporary.push(root);
   const source = join(root, "source"), privateRoot = join(root, "replay"), runtime = join(privateRoot, "native-client");
-  const game = join(source, "games", "release", "1.26.51.1"), proton = join(source, "proton", "engine");
+  const game = join(source, "games", "release", "1.26.60.1"), proton = join(source, "proton", "engine");
   await mkdir(game, { recursive: true }); await mkdir(proton, { recursive: true }); await mkdir(privateRoot);
   const payload = Buffer.from([0x4d, 0x5a, 1, 7, 9]);
   await writeFile(join(game, "Minecraft.Windows.exe"), payload);
   await writeFile(join(proton, "proton"), payload);
   await symlink(game, join(source, "content"), "dir");
-  const settings = { mc_version: "1.26.51.1", game_dir: game, proton, retain: 17 };
+  const settings = { mc_version: "1.26.60.1", game_dir: game, proton, retain: 17 };
   await writeFile(join(source, "settings.json"), JSON.stringify(settings));
   return { root, source, privateRoot, runtime, game, proton, payload, settings };
 }
@@ -123,7 +123,7 @@ test("rejects a cached games link to a foreign interlock", async () => {
 
 test("does not relabel a cached executable when the source selects a different game", async () => {
   const input = await fixture(), first = await prepareNativeProfile(input);
-  const game = join(input.source, "games", "imported", "1.26.51.1");
+  const game = join(input.source, "games", "imported", "1.26.60.1");
   await mkdir(game, { recursive: true });
   const changed = Buffer.from([0x4d, 0x5a, 29]);
   await writeFile(join(game, "Minecraft.Windows.exe"), changed);
