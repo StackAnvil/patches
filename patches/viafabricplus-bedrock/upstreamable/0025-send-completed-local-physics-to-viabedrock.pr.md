@@ -1,5 +1,41 @@
 # Send local player prediction to core
 
+## Native teleport travel filtering, October 27, 2026
+
+The next investigation separates live impulse delivery from travel during the teleport acknowledgement frame.
+Official native journals first acknowledge same-tick teleports at the target with unintegrated velocity.
+Java first acknowledges after movement and decay, and adds one correction in the next-tick control.
+The native client also receives finite corrections in both same-tick controls.
+This does not establish actual pearl/wind-charge behavior or reproduce endless rollback.
+
+Original teleport setup marks `HasTeleportedFlagComponent` through setter `14253c950`.
+The registered travel filter `1431d7890` removes `MobTravelComponent` for matching marked actors.
+Cleanup `146872d30` removes the marker from matching world actors.
+A separate action path records bit 30, which converter `143ca9a90` maps to `HandledTeleport` bit 37.
+Input construction calls that converter and resets the action through `14287a010`.
+
+Seventy-two original native controls cover action conversion, marker lifecycle and travel removal through both view drivers.
+They retain sparse membership and generation checks with current, missing and stale entries.
+Valid stores and cached views are supplied. Registry discovery, generic insertion and virtual erasure are observed boundaries.
+The complete scheduler and native physics do not execute in these controls.
+
+The client now retains an actor-owned marker, filters travel and clears the marker after normal and replay-only physical ticks.
+Typed snapshots preserve its historical phase. Local synchronization, paired corrections and stale connections do not introduce a new marker.
+Four new mandatory regressions cover replay restoration, newer external markers, cleanup and admission.
+
+The full add-on build has 1,265 tests: 1,132 pass and 133 optional tests skip, with no failures or errors.
+All 38 patches replay to the tested source tree, and all 1,259 compiled main classes match the tested artifact.
+Owned BDS controls pass through ViaProxy and direct add-on connections with the same optimized shader modpack.
+Both same-tick acknowledgements match native position, velocity and flags exactly on both routes.
+The first post-teleport frame retains target position and wire velocity, then travel resumes.
+The ordinary impulse retains its first eight physical frames. Both recorders finish normally and saved profile bytes are restored.
+
+The next-tick control still adds one correction relative to native.
+A direct case emits three inputs between wire receipt and actual client application, so comparisons align with the observed physical tick.
+Complete scheduling, mounted behavior and ordinary Java sessions still need separate verification.
+These controls do not reproduce actual pearl/wind-charge use, endless rollback or endless eating.
+The [coverage evidence](../../../docs/bedrock-coverage.md#native-teleport-travel-filtering-october-27-2026) records the functions, type identities and limits.
+
 ## Live motion after teleport, October 27, 2026
 
 A teleport clears physical replay history before the next client frame.

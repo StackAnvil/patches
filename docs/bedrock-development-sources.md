@@ -72,6 +72,18 @@ Read the local generated checkout before changing a patch. The links to `main` h
 
 For a specific feature, search the local `protocol/packet`, `protocol/types`, and `protocol/data` directories. For maps, skins, login, and resource packs, start with `MapPackets`, `SkinType`, `LoginPackets`, and `ResourcePackPackets`. Some of these files are StackAnvil patches and do not exist on upstream `main`.
 
+## Versioned Windows GDK reference
+
+The community [Windows GDK archive](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive) publishes unpacked packages and standalone executables as release assets.
+The [1.26.51.1 release](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive/releases/tag/1.26.51.1) matches the current native research target.
+Its `Minecraft.Windows.exe` has SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+The existing private executable matches that digest and the published file size.
+This provides a reproducible source for the native instruction controls without another executable download.
+
+Build files are release attachments. The Git tags themselves point to README commits.
+Use the target release rather than the newest preview, and verify the executable digest before reusing recorded native addresses.
+Keep downloaded packages, executables and extracted content in private local research storage.
+
 ## Independent protocol implementations
 
 Use these to compare behavior and identify gaps. Match each project's supported protocol before borrowing a packet layout or enum value.
