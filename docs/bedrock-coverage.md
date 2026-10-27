@@ -11446,7 +11446,7 @@ The capture uses the full modpack with Iris 1.11.7 and Complementary Reimagined 
 All nine candidate screenshots received visual review.
 The candidate recorder exits successfully, retires all 49 recorded process identities, and restores its prepared profile.
 
-The large patterned shield remains in the first-person screenshots.
+The large shield remains in the first-person screenshots.
 It disappears with hidden hands and HUD, and it returns after restoring them.
 This query change does not fix that separate rendering issue.
 The live control does not test mounted vehicle matches, remote players, native skin motion equality, or complete emote and equipment behavior.
@@ -11462,3 +11462,33 @@ Build and launcher artifact copies now request filesystem copy-on-write sharing 
 
 The original inventory, locator, rollback, and eating reports remain open.
 The five-area goal, packs, skins, emotes, and niche interactions remain active; crafting stays parked.
+
+
+## Enchanted shield draw attribution, October 27, 2026
+
+A passive draw observer identifies the oversized shield's current rendering path on WildFFA.
+The item carries `viabedrock:attachables/minecraft/shield` as its converted item model.
+It is enchanted, has zero banner patterns, and has no banner base color.
+The presence of an empty pattern component does not establish a patterned shield.
+
+The native player body submits one surface, but the shield submits no native attachable surface.
+The Java item path draws one ordinary model layer with glint and no special shield renderer.
+Across 96 Java draws, the incoming matrix and item display transform remain identical while item use changes.
+The item display transform has zero rotation, zero translation, and uniform scale of about 1.72.
+Actual render state verifies offhand use and decreasing use ticks during the held-input interval.
+The three idle, use, and release screenshots received visual review and retain the oversized shield.
+
+This evidence confirms a split rendering path rather than a missing item-use input.
+Core assigns the converted model after item translation; the equipped renderer skips enchanted hands before native attachable selection.
+The static model does not retain the authored native hand animation or Java's special shield model selection.
+The pinned material library declares glint materials with a second repeated texture sampler.
+The current actor material runtime does not support that material family.
+Native glint and animated equipped rendering still need implementation and comparison; changing shield scale alone does not address the missing behavior.
+
+The first trace control expires in the loading screen and does not attach its draw observer.
+The next recorder reaches WildFFA, but its initial observer attachment uses a path unavailable inside the launcher sandbox.
+Copying the observer into the permitted run directory allows attachment to that same running client.
+The resumed idle, use, and release control passes without restarting the client.
+The recorder exits successfully, all 35 tracked identities retire, and the prepared profile is restored.
+The initial controller failure remains recorded; this is scoped draw attribution, without a full successful control wrapper or native graphical parity claim.
+Private evidence is `.stackanvil/research/shield-draw/attribution.json`.

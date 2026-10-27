@@ -140,3 +140,17 @@ Both first-person and third-person views retain their selected model groups and 
 These controls do not establish native placement or component-lifetime equality.
 
 The [current coverage record](../../../docs/bedrock-coverage.md#per-bone-material-rendering-october-26-2026) records the final build, both live routes, and remaining limits.
+
+
+## Enchanted shield path remains incomplete, October 27, 2026
+
+A passive WildFFA trace confirms that an enchanted shield retains its converted static item model while the native equipped renderer skips it.
+The item has an empty banner-pattern list and no base color; component presence alone does not establish a patterned shield.
+The native body submits one surface, the shield submits no native surface, and Java draws an ordinary model layer with glint.
+Its draw matrix and display transform remain unchanged across actual idle and offhand-use states.
+The [coverage record](../../../docs/bedrock-coverage.md#enchanted-shield-draw-attribution-october-27-2026)
+records the resumed same-client observation, failed initial controls, and verification limits.
+
+The target material library defines glint with a second repeated texture sampler.
+This material family and complete animated enchanted equipment remain unsupported.
+The issue requires native material and animation work; the static fallback does not establish shield parity.

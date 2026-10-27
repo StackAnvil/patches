@@ -2538,6 +2538,6 @@ Complete native equipment transport, nested riding relationships, previews witho
 A direct full-modpack WildFFA control now reports both bindings available and no missing first-person graph queries.
 Seven sampled first-person phases match the actual diamond helmet and unmounted state.
 Nine physical control phases cover HUD visibility, shield use and release, camera modes, and a changed main-hand item.
-All nine screenshots received visual review; the oversized patterned shield remains a separate rendering issue.
+All nine screenshots received visual review; the oversized shield remains a separate rendering issue.
 The recorder exits successfully, retires its owned processes, and restores its prepared profile.
 The live control does not establish mounted matches or native graphical equality.
