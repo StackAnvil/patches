@@ -11871,6 +11871,34 @@ Their registry discovery, generic insertion and virtual erasure remain observed 
 They supply valid stores and cached views without executing native world physics or the complete scheduler.
 Raw executable data, journals and controls remain private.
 
-The production travel filter, its historical replay state and a rebuilt Java comparison remain unfinished.
-A future implementation must preserve the native marker lifecycle and isolate ordinary Java sessions and historical corrections.
-It must also verify actual pearl/wind-charge use, mounts and the remaining gameplay reports separately.
+The following implementation adds this filter while keeping broader scheduling and trajectory verification open.
+Actual pearl/wind-charge use, mounts and the remaining gameplay reports still need separate controls.
+
+## Teleport travel marker integration, October 27, 2026
+
+The movement patch now retains the native teleport marker for the current connected local player.
+Only unpaired positive native teleport positions introduce the marker. Local synchronization and paired historical corrections do not introduce one.
+The client still applies live velocity immediately, but marked actors omit travel during that physical tick.
+Normal and replay-only ticks clear the marker, including exceptional exits.
+Typed physical snapshots retain the marker so historical replay preserves its original frame without suppressing a later ordinary frame.
+
+Four new mandatory regressions cover historical restoration, later external markers, exceptional cleanup and connection admission.
+The full add-on build has 1,265 tests: 1,132 pass and 133 optional tests skip, with no failures or errors.
+All 38 patches replay to the tested source tree. All 1,259 compiled main classes match the tested artifact.
+
+Owned BDS controls run through ViaProxy and a direct add-on connection with the same rebuilt artifact and optimized shader modpack.
+Each route receives one ordinary impulse and three post-teleport impulses.
+Both routes preserve the teleport target and actual wire velocity during the first completed post-teleport frame.
+Both same-tick controls match native acknowledgement position, velocity and input flags exactly.
+Travel resumes in the following frame. The ordinary impulse retains the same first eight physical frames as the previous artifact.
+
+The passive observer changes no game state or packets. Both recorders finish normally with exit code zero.
+After a hostname selector mismatch, the observer attached to the same direct client before the controlled impulses started.
+The original installed artifact and saved profile bytes are restored exactly. Raw journals and captures remain private.
+
+Both routes still receive an additional correction in the next-tick control, while the native reference receives none there.
+Both native same-tick controls also receive finite corrections, so correction counts alone do not establish a regression.
+One direct case emits three input packets between wire receipt and actual client application.
+Comparisons therefore align the input with the observed physical application tick, not merely the first packet after wire receipt.
+Input scheduling, complete trajectories, mounted controls and ordinary Java sessions still need further verification.
+The original rollback and eating reports and the full five-area goal remain open.

@@ -19,8 +19,21 @@ They retain sparse membership and generation checks with current, missing and st
 Valid stores and cached views are supplied. Registry discovery, generic insertion and virtual erasure are observed boundaries.
 The complete scheduler and native physics do not execute in these controls.
 
-The production filter, historical state integration and rebuilt Java comparison remain unfinished.
-This evidence supports the next implementation but does not establish complete frame scheduling.
+The client now retains an actor-owned marker, filters travel and clears the marker after normal and replay-only physical ticks.
+Typed snapshots preserve its historical phase. Local synchronization, paired corrections and stale connections do not introduce a new marker.
+Four new mandatory regressions cover replay restoration, newer external markers, cleanup and admission.
+
+The full add-on build has 1,265 tests: 1,132 pass and 133 optional tests skip, with no failures or errors.
+All 38 patches replay to the tested source tree, and all 1,259 compiled main classes match the tested artifact.
+Owned BDS controls pass through ViaProxy and direct add-on connections with the same optimized shader modpack.
+Both same-tick acknowledgements match native position, velocity and flags exactly on both routes.
+The first post-teleport frame retains target position and wire velocity, then travel resumes.
+The ordinary impulse retains its first eight physical frames. Both recorders finish normally and saved profile bytes are restored.
+
+The next-tick control still adds one correction relative to native.
+A direct case emits three inputs between wire receipt and actual client application, so comparisons align with the observed physical tick.
+Complete scheduling, mounted behavior and ordinary Java sessions still need separate verification.
+These controls do not reproduce actual pearl/wind-charge use, endless rollback or endless eating.
 The [coverage evidence](../../../docs/bedrock-coverage.md#native-teleport-travel-filtering-october-27-2026) records the functions, type identities and limits.
 
 ## Live motion after teleport, October 27, 2026
