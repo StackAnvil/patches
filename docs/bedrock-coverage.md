@@ -11534,7 +11534,7 @@ Its immutable state contains two offsets, two rotations, UV scale, glint tint, a
 Each prepared draw retains its own uniform-buffer slice.
 The storage follows Minecraft's frame reset and GPU-data shutdown.
 GUI conversion retains the state and the existing independent portrait-coverage rule.
-These lifecycle hooks compile, but have not run in a new client session.
+The later plain-client lifecycle check below exercises these hooks with supplied inputs.
 
 The production vertex shader preserves the original base UV and computes both secondary UV pairs.
 The fragment shader adds squared tinted glint after fog and computes absolute alpha without saturation.
@@ -11567,5 +11567,39 @@ The owning material prefix still has earlier dependencies on lightmap metadata a
 
 Production pack admission and the enchanted-equipment fallback remain unchanged.
 Live frame time, settings, UV-scale selection, tile lighting, and Iris integration still need verified connections to this API.
-No new distributable or live client comparison validates this implementation.
+The later supplied-input client check validates the draw API, without validating production admission or native scene equality.
 The oversized enchanted shield remains unresolved, and the five-area goal remains active.
+
+## Native glint draw lifecycle in a plain client, October 27, 2026
+
+A normal add-on build now includes the complete clock sampler and passes all required build tasks.
+Its suite reports 1,108 passed, 141 optional skipped, and no failures.
+Build outputs and test temporary files use RAM storage because home storage and the `/tmp` user quota are nearly full.
+An earlier run hit that quota and failed; the corrected full build passes without skipped tasks.
+
+The candidate JAR has SHA-256 `8c2e1dcea45e5b4c5688465043193817961638d51d822b56f23661750afdb582`.
+It is built from [a186537](https://github.com/StackAnvil/patches/commit/a1865377c64e1700cad644d40c3521bfdd88f601).
+Its embedded dependency contents match the protected previous artifact.
+The CubeConverter archive has different ZIP metadata but identical entry contents.
+
+A private fixture exercises the production glint draw API in a plain Java 26.3 client on the WildMC lobby.
+It supplies two glint states and reuses the primary actor image as the secondary sample image.
+The fixture changes native actor draw selection without changing gameplay or implementing shader arithmetic.
+The actual window is 854 by 480; Iris is absent.
+
+The resumed control passes 636 first-state draws, 591 second-state draws, and 726 interleaved draws.
+All 1,953 prepared draws retain their own live uniform slice, with no recorded mismatches.
+Storage follows 3,633 host frame resets, and all six tracked buffers close after the host GPU-data close.
+The final summary confirms normal client shutdown.
+The corrected fixture returns to the original draw path before exit.
+Five screenshots received visual review; nearby players prevent a clean local-player graphical comparison.
+No shader-compilation, missing-uniform, pipeline, or mixin failures appear in the captured client log.
+
+Earlier readiness, display-selection, and PID-handling failures remain failed controls.
+The corrected control resumes the same second client and passes; both recorders exit successfully.
+This establishes the resumed control's scope, not a passing original control wrapper.
+All 13 recorded identities from the final session retire, and the prepared profile and original artifact are restored.
+
+This validates supplied-input native draw state, shader execution, frame reset, and buffer closure.
+It does not validate native frame-time production, settings or scale selection, tile lighting, Iris, or enchanted equipment admission.
+The reported shield, visible placement, native graphical comparison, and the complete five-area goal remain unfinished.

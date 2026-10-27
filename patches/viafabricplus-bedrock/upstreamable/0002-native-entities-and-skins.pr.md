@@ -727,4 +727,18 @@ The [coverage record](../../../docs/bedrock-coverage.md#native-glint-implementat
 
 Existing pack admission and enchanted-equipment fallback remain unchanged.
 Frame-time production, native settings and scale selection, tile lighting, Iris integration, and live rendering remain unfinished.
-No new distributable or client run validates these lifecycle hooks.
+The later supplied-input plain-client check below validates these lifecycle hooks, with production admission still unchanged.
+
+## Live supplied-input draw lifecycle, October 27, 2026
+
+The complete add-on build passes with 1,108 tests passed, 141 optional skipped, and no failures.
+The candidate runs in a plain Java 26.3 client at 854 by 480 without Iris.
+A private fixture supplies two states and a stand-in secondary image to the production draw API.
+Its 1,953 draws include both states and interleaving, with no prepared-slice mismatches.
+The storage follows 3,633 frame resets, and all six tracked buffers close on normal client shutdown.
+Five screenshots received visual review, and all 13 recorded identities retire with the profile and artifact restored.
+
+Initial harness controls fail; the corrected control passes after resuming the same second client.
+This does not establish a passing original control wrapper or native graphical equality.
+The [coverage record](../../../docs/bedrock-coverage.md#native-glint-draw-lifecycle-in-a-plain-client-october-27-2026) records the artifact, build correction, fixture boundaries, and remaining limits.
+Production frame-time, settings, scale, tile-light inputs, Iris, and enchanted equipment remain unfinished.
