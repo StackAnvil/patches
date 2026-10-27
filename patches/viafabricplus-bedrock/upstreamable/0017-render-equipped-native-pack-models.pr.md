@@ -217,3 +217,8 @@ The Java and native clients use different avatars, so these captures do not esta
 This new live control uses an unenchanted shield. Earlier glint controls retain their separate scope.
 General attachables, main-hand variants, banners and the original server-authored inventory report remain separate verification work.
 Raw captures and process observations remain private.
+
+The physical controls pass all eight phases.
+The private proxy runner needs an explicit stop because its timer waits for a direct-recorder marker.
+That capture does not count as a normal timed-recorder pass.
+The owned client closes through the runner cleanup, and saved profile bytes are restored exactly.

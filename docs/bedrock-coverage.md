@@ -11805,3 +11805,8 @@ These controls do not establish whole-image equality, complete avatar parity or 
 The native and Java clients use different avatars, and the new live control uses an unenchanted shield.
 Main-hand variants, banners, general packs and the original server-authored E-key inventory report still need separate verification.
 The full movement, inventory, screens, camera and rendering goal remains incomplete.
+
+The physical controls pass all eight phases.
+The private proxy runner needs an explicit stop because its timer waits for a direct-recorder marker.
+That capture does not count as a normal timed-recorder pass.
+The owned client closes through the runner cleanup, and saved profile bytes are restored exactly.
