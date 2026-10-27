@@ -8,8 +8,8 @@ Experimental content uses documented Java fallbacks. Block seating and signed au
 
 Validation:
 
-- The standalone patch applies and builds on pinned upstream without StackAnvil setup. Style checks, mapping validation, and 13 targeted tests pass.
-- All 104 core patches and 38 add-on patches replay. Core, add-on, CubeConverter, and ViaProxy builds pass. Relay self-tests pass.
+- The standalone patch applies and builds on pinned upstream without StackAnvil setup. Style checks, mapping validation, and 19 targeted tests pass.
+- All 103 core patches and 38 add-on patches replay. Core, add-on, CubeConverter, and ViaProxy builds pass. Relay self-tests pass.
 - Enum regeneration from the 2225 archive leaves no diff in the standalone and complete core checkouts.
 
 Earlier migration validation used official BDS 1.26.60.6.
@@ -32,3 +32,18 @@ This replaces manual packet additions in the locator and sound patches and the c
 The remaining Cereal action indexes and width-specific compression sentinels describe actual wire fields.
 
 The full stack also removes the inventory-source override; this enum field serializes value 99999 directly.
+
+## Dimension settings on upstream
+
+The version update retains and applies the new cloud fields in upstream's existing dimension path.
+It includes the dimension model, complete packet decoder, Java environment-attribute projection, and six dimension regressions.
+The former dimension-height patch is folded here and removed from the later stack.
+These changes require no deferred inventory implementation.
+
+Read the bounds as minimum Y plus height range. Reject nonpositive ranges and upper-bound overflow.
+An earlier native Bedrock 1.26.51.1 Hive capture establishes the bounds semantics.
+[Mojang's 2225 schema and developer notes](https://github.com/Mojang/bedrock-protocol-docs/releases/tag/v1.26.60) establish cloud synchronization.
+The matching Java 26.3 client uses environment attributes for cloud height and suppresses clouds with zero color alpha.
+Its day timeline multiplies cloud color and preserves that zero alpha. Other authored attributes stay intact.
+
+The separate stonecutter and cursor-drag integrations depend on the deferred inventory implementation and remain outside this standalone patch.
