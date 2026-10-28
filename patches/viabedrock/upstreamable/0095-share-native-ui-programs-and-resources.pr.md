@@ -581,20 +581,30 @@ Adding Japanese text or U+1F00 switches the whole label to the Unicode family.
 The first Latin glyph changes from 40 × 56 pixels to 24 × 40 pixels.
 
 Exported UI programs retain the selected bitmap character map, so remote controllers make the same family choice.
-Unicode pages use eight logical UI units at every texture resolution.
+Ordinary Unicode pages use eight logical UI units at every texture resolution.
+Private-use pages E0 through F8 retain source-pixel size and their centered baseline.
 A separate Unicode font supplies whole-label fallback and keeps its own ordinary-space advance.
 Authored TrueType families retain their independent selection.
 Regression tests cover pack overrides, transported character maps, formatting codes, and texture resolution.
 
-The corrected Java run compares the same four titles with matching resolution and GUI scale.
-All 26 glyph masks match native pixels after their positions are normalized.
-ASCII and extended-map title widths also match.
-Unicode spacing remains too wide: the mixed title spans 48 extra pixels.
-Every title sits five pixels below native at this scale.
-Java's bitmap provider stores integer advances; native Unicode measurements include half-unit advances and different bearing treatment.
-These differences need a native font metric path rather than another atlas scale adjustment.
-Native legacy custom-pack comparison also remains pending.
+The native legacy-pack fixture supplies an unchanged 1.26.51.1 atlas without layout metadata.
+Its Greek forms retain the legacy bitmap layout.
+Modern Latin and Cyrillic text instead selects Unicode for the whole label.
+The winning first atlas now limits the active page count, which excludes stale vanilla extension pages after a legacy replacement.
+The captured pack export contains the same atlas bytes and no layout JSON.
 
-The replayed core stack passes 2,037 tests, with 176 optional skips and no failures or errors.
-The add-on passes 1,270 tests, with 142 optional skips and no failures or errors.
+The add-on applies native fractional advances, bearings, full-width ranges, and Hangul widths.
+It shares Java's texture upload and provider lifetime and keeps colored atlas pixels intact.
+Labels retain rounded line widths and a ten-unit bitmap line advance.
+Native multiline captures confirm an 80-pixel advance at GUI scale 2 with the title's fourfold font scale.
+Private-use icon captures confirm the separate scale and baseline for both 256- and 512-pixel atlases.
+
+The paired renders now match glyph shapes, sizes, and spacing for mixed-language and legacy text.
+A one-pixel vertical title-origin difference remains at the tested scale.
+A private fractional-offset fixture is prepared to isolate layout snapping from font rasterization.
+That fixture remains inactive; it does not establish a correction.
+The font acceptance check stays open until this remaining alignment check passes.
+
+The replayed core stack passes 2,039 tests, with 176 optional skips and no failures or errors.
+The add-on passes 1,274 tests, with 142 optional skips and no failures or errors.
 All four builds and the modpack bundle pass. Core Checkstyle checks pass.

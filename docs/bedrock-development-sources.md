@@ -61,9 +61,10 @@ Keep legacy authoring support separate from the network shape representation.
 
 Bitmap atlas conversion now reads layout metadata and the extended character map.
 Each atlas retains metadata from its own pack, including legacy behavior without metadata.
-Matching native title captures establish whole-label Unicode fallback and eight-unit Unicode cells.
-The corrected run matches all 26 captured glyph masks.
-Unicode advances, title alignment, and custom-pack comparison remain open.
+Matching native captures establish whole-label Unicode fallback, fractional glyph metrics, and ten-unit bitmap line advances.
+Ordinary Unicode cells use eight UI units. Private-use cells retain their source-pixel size.
+The legacy-pack comparison confirms that replacing the first atlas also retires inactive vanilla extension pages.
+Text spacing and colored icons now match; a one-pixel vertical title-origin difference remains.
 The protocol migration alone does not establish font or Character Creator rendering parity.
 
 ## 26.60 behavior audit
@@ -145,9 +146,11 @@ Player and persona controller assets do not establish the engine's new armor mas
    Custom atlases without their own metadata retain legacy layout.
    Tests cover metadata ownership, glyph pages, texture scale, offsets, and server overrides.
    Native 1.26.60.5 title captures establish whole-label fallback for Japanese text and U+1F00.
-   Unicode pages use eight logical UI units, independent of texture resolution.
-   All 26 captured glyph masks now match, but Unicode spacing and title alignment still differ.
-   Legacy-pack comparisons remain pending.
+   Ordinary Unicode pages use eight logical UI units, independent of texture resolution.
+   Private-use pages E0 through F8 retain their source-pixel size.
+   Mixed-language and legacy-pack renders now match glyph shapes, sizes, and spacing.
+   Native multiline and colored private-use captures verify their distinct metrics.
+   A one-pixel vertical title-origin difference remains at the tested scale.
 4. **Verify skin masking and profile changes.**
    Persona assembly combines piece geometry into shared surfaces.
    The renderer does not explicitly preserve every clothing category for equipment masking.

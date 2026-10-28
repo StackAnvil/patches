@@ -493,5 +493,17 @@ The licensed resource provider now retains bitmap atlases and their layout JSON 
 The shared core converter selects each atlas with its own pack metadata.
 The add-on regression exercises this provider through resource storage and font conversion.
 It covers extended native layout, a legacy server texture override, pixel retention, and reuse of the unchanged licensed view.
-The full add-on stack passes 1,270 tests, including this provider-to-conversion regression, with no failures or errors and 142 optional skips.
-Native mixed-language and legacy-pack visual comparisons remain pending.
+The full add-on stack passes 1,274 tests, with no failures or errors and 142 optional skips.
+Matching native 1.26.60.5 captures now cover mixed-language text, a legacy atlas, wide punctuation, multiline labels, and colored private-use icons.
+
+`BedrockUnicodeFont` preserves native fractional advances and bearings while retaining Java's atlas uploads and provider lifetime.
+The native width loader at `0x1415905b0` supplies the full-width ranges and distinct Hangul advance.
+The line-advance method at `0x141590590` and the multiline capture establish ten UI units between bitmap text lines.
+Ordinary Unicode pages use eight logical units; private-use pages E0 through F8 retain source-pixel size and a centered baseline.
+The core converter owns that atlas scale and the winning first atlas's active page count.
+
+Labels measure and align each line with a rounded width while glyph positions retain fractional advances.
+The font layout regressions now live in this shared patch instead of the container consumer.
+Tests cover narrow bearings, wide-range boundaries, Hangul, empty cells, texture resolution, and private-use metrics.
+Paired renders match text spacing and preserve colored icon pixels.
+A one-pixel vertical title-origin difference remains at the tested scale, so font acceptance stays open.
