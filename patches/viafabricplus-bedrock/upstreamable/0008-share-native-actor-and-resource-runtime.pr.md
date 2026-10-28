@@ -2551,3 +2551,25 @@ The deprecated equipped-name query still returns the path.
 The target shield uses namespaced matching during blocking; the missing query previously rejected its native binding evaluation.
 The [equipped check](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) records that failure and the final client observations.
 Hotbar and inventory lookup require their own native inventory owner and remain outside this adapter.
+
+
+## Native tame state, October 28, 2026
+
+The shared actor scope now binds `query.is_tamed` to the native `TAMED` flag.
+The matching 26.60 cat render controller requests this query.
+Without it, both older and current baby-cat definitions select Java fallback.
+A private renderer observation confirms the missing query and the accepted
+older-world cutoff of `1.20.0`.
+
+The existing carrier regression now covers tame state, retirement, and
+immutable earlier samples through the production Molang scope.
+Native 26.60 captures show distinct older/current baby-cat models across
+current/older/current connections in one client process.
+The full dependency build and bundle pass. Core runs 2,054 tests and the
+add-on runs 1,281, with no failures or errors. Optional skips remain unchanged.
+The corrected live draw reports no missing queries, but still selects Java
+fallback: its cached `cat` material result is unsupported. The inherited
+`entity_alphatest_change_color` tint family needs a verified implementation.
+This query correction alone does not establish native cat rendering parity.
+
+Source: [Molang tame query](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions/query_is_tamed).

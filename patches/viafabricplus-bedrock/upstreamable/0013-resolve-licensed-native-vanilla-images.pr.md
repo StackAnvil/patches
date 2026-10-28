@@ -74,4 +74,10 @@ New regressions switch texture bytes, sound definitions, and animation poses
 together across newer/older/newer worlds. They also cover server priority,
 earlier view immutability, cache eviction, absent context, and resource-manager
 reuse with changed archive context. These are runtime/fixture checks.
-Native graphical and audible transition comparisons remain pending.
+Native 26.60 baby-cat captures now establish different geometry and textures
+across current/1.20.0/current connections in one client process. Packet journals
+confirm the world cutoffs. The Java transition uses those same cutoffs, but
+its cat selects fallback rendering. The [shared query correction](0008-share-native-actor-and-resource-runtime.pr.md#native-tame-state-october-28-2026)
+removes one blocker; its inherited tint material remains unsupported.
+Java graphical acceptance, audible comparisons, and native server-priority
+controls remain pending.
