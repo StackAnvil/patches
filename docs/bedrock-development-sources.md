@@ -136,8 +136,14 @@ Player and persona controller assets do not establish the engine's new armor mas
    and suppresses block interactions during that placement.
    `InteractionPackets` forwards each Java use-on-block independently.
    `MixinTrapDoorBlock` changes shape only. No placement-session state implements the new rule.
-   Capture direction choice, release, item changes, and interaction suppression
-   before changing outgoing requests or client prediction.
+   Matching native 1.26.60.5 captures against BDS 1.26.60.6 retain one `StartItemUseOn` action for the complete hold.
+   Repeated transactions use `Simulation_Tick`; release or opening the pause menu sends `StopItemUseOn`.
+   A side placement followed by a bottom-face hit places another closed trapdoor instead of opening the first.
+   Both blocks retain the first placement's facing and upper-half state, including after a 90-degree camera change.
+   Switching from oak to birch during the hold retains that state without restarting the session.
+   A fresh click after release opens the original trapdoor normally.
+   The current translator instead sends a stop action after every block use.
+   Spatial continuation rules, rejected placements, prediction, and correction still need comparison before implementation.
 3. **Verify bitmap font layout against native Bedrock.**
    The importer now converts bitmap atlases, layout metadata, and Unicode fallback pages.
    The licensed provider retains atlas images and layout files.
