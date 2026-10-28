@@ -61,7 +61,9 @@ Keep legacy authoring support separate from the network shape representation.
 
 Bitmap atlas conversion now reads layout metadata and the extended character map.
 Each atlas retains metadata from its own pack, including legacy behavior without metadata.
-Matching native mixed-language and custom-pack visual comparisons remain pending.
+Matching native title captures establish whole-label Unicode fallback and eight-unit Unicode cells.
+The corrected run matches all 26 captured glyph masks.
+Unicode advances, title alignment, and custom-pack comparison remain open.
 The protocol migration alone does not establish font or Character Creator rendering parity.
 
 ## 26.60 behavior audit
@@ -142,7 +144,10 @@ Player and persona controller assets do not establish the engine's new armor mas
    The matching executable selects 449 extended entries or 256 legacy entries.
    Custom atlases without their own metadata retain legacy layout.
    Tests cover metadata ownership, glyph pages, texture scale, offsets, and server overrides.
-   Native mixed-language and legacy-pack visual comparisons remain pending.
+   Native 1.26.60.5 title captures establish whole-label fallback for Japanese text and U+1F00.
+   Unicode pages use eight logical UI units, independent of texture resolution.
+   All 26 captured glyph masks now match, but Unicode spacing and title alignment still differ.
+   Legacy-pack comparisons remain pending.
 4. **Verify skin masking and profile changes.**
    Persona assembly combines piece geometry into shared surfaces.
    The renderer does not explicitly preserve every clothing category for equipment masking.

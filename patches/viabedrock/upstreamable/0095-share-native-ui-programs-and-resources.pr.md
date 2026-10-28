@@ -570,11 +570,31 @@ Java 26.3 otherwise gives a blank bitmap cell a one-unit advance.
 Image dimensions are checked before decoding, and padded atlases retain the image dimension limit.
 The font file budget includes bitmap pages beside TrueType files.
 
-Six focused bitmap regressions and the existing TrueType regressions pass.
-The full core stack also builds and passes its tests and Checkstyle checks.
-These checks establish conversion behavior from matching assets and executable tables.
-Native visual comparison remains pending.
-The initial private launch stopped at a Gaming Services version mismatch: the client requests 7849, and the old engine exposes 6247.
-A verified private launcher 2.2.10 installation supplies the matching native21 engine and passes that startup check.
-The client opens a window but still exits during startup. Native scene comparisons remain pending.
+Matching native Bedrock 1.26.60.5 now runs on an isolated headless Weston display.
+The owned BDS 1.26.60.6 session confirms movement and block placement before font comparison.
+The display uses the Intel GPU and keeps game audio silent.
 The user installation and saved client selection remain unchanged.
+
+Native title captures at 1280 × 720 and GUI scale 2 establish whole-label fallback.
+Latin, Cyrillic, and Greek text from the extended map retains the bitmap family.
+Adding Japanese text or U+1F00 switches the whole label to the Unicode family.
+The first Latin glyph changes from 40 × 56 pixels to 24 × 40 pixels.
+
+Exported UI programs retain the selected bitmap character map, so remote controllers make the same family choice.
+Unicode pages use eight logical UI units at every texture resolution.
+A separate Unicode font supplies whole-label fallback and keeps its own ordinary-space advance.
+Authored TrueType families retain their independent selection.
+Regression tests cover pack overrides, transported character maps, formatting codes, and texture resolution.
+
+The corrected Java run compares the same four titles with matching resolution and GUI scale.
+All 26 glyph masks match native pixels after their positions are normalized.
+ASCII and extended-map title widths also match.
+Unicode spacing remains too wide: the mixed title spans 48 extra pixels.
+Every title sits five pixels below native at this scale.
+Java's bitmap provider stores integer advances; native Unicode measurements include half-unit advances and different bearing treatment.
+These differences need a native font metric path rather than another atlas scale adjustment.
+Native legacy custom-pack comparison also remains pending.
+
+The replayed core stack passes 2,037 tests, with 176 optional skips and no failures or errors.
+The add-on passes 1,270 tests, with 142 optional skips and no failures or errors.
+All four builds and the modpack bundle pass. Core Checkstyle checks pass.
