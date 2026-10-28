@@ -1215,3 +1215,9 @@ Repeated cancellation does not send duplicate Stop packets.
 
 [Mojang's 26.60 developer notes and schemas](https://github.com/Mojang/bedrock-protocol-docs/releases/tag/v1.26.60) define these lifecycles in `us_1660009` and `us1662263`.
 Five packet regressions cover complete wire fields, distribution and ordering, cancellation, failure, server selection scope, and unsigned container IDs.
+
+## Shared legacy request IDs
+
+The inventory owns the even legacy request sequence before deferred inventory translation applies.
+Placements and glide rockets share that sequence. Odd stack requests retain their independent sequence.
+Slot updates suppress unchanged equipment echoes and preserve the existing click-prediction guard.

@@ -1,53 +1,60 @@
-From af53b31ab88613434bd138a93844e9f5a16607bd Mon Sep 17 00:00:00 2001
+From eea803e10bcae60a98de1858bfef930b3367705d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 28 Oct 2026 03:34:25 +0100
 Subject: [PATCH] feat(interaction): retain native held block-use sessions
 
 Native Bedrock 1.26.60.5 retains StartItemUseOn through physical use holds.
-Simulation-triggered repeats suppress ordinary block activation. Transport
-the control lifetime from aware Java clients, stop on release or capability
-withdrawal, and preserve independent uses for ordinary clients.
+Transport that lifetime from aware Java clients, distinguish first input
+from simulation repeats, and stop on release or capability withdrawal.
+Ordinary clients keep independent uses.
 
-Match each local prediction to its concluding Java sequence. Prediction
-format 2 distinguishes placement, interaction and failure and carries the
-native cursor relative to the current target. Native held snapping keeps
-the initial world hit even outside later target cubes. Reject non-finite
-coordinates and stale sequence ownership without clamping valid positions.
-The Java raycast packet remains unchanged for other consumers.
+Prediction format 2 matches placement, interaction, failure and a native
+cursor to the concluding Java sequence. Held trapdoors retain their first
+world hit even outside later target cubes. Reject non-finite coordinates
+and stale sequence ownership without changing the Java raycast packet.
 
-Start the session only after predicted success, retain simulation triggers
-after failed attempts, and send the observed first use-on/use-in-air phases
-with the original held stack. Native Creative and Survival captures use
-empty inventory-action lists. Let the server consume blocks instead of
-submitting duplicate slot deltas.
+Start the session only after predicted success. Native Survival predicts
+one consumed block and sends its remaining stack in the first use-in-air
+phase. Use a legacy request while the predicted stack remains nonempty;
+consuming the last block uses ID zero and skips the empty use-in-air phase.
+Creative placements, failed attempts and ordinary interactions carry no
+placement delta. Retain predicted counts until authoritative correction,
+and do not echo unchanged equipment after confirmation.
 
-Emit native build/interact swings before successful held transactions.
-Java 26.3 uses a local right-click swing, so do not reserve the next PUNCH
-packet for it and suppress a later attack. Dropping build swings in a
-native relay does not change retained placement facing.
+Use one inventory-owned even legacy ID sequence for block placement and
+other legacy transactions. Keep odd stack requests independent. Emit
+native build/interact swings and preserve subsequent Java attack packets:
+Java 26.3 right-click swings stay local and cannot reserve the next PUNCH.
 
-Native and Java Survival both accept server facing corrections when the
-camera update precedes placement. Earlier teleport fixtures placed before
-the native camera update and cannot establish a server direction lock.
-Compare stable-camera ordering rather than forcing an orientation.
+Fresh native fixtures force the client into Survival and verify its item
+predictions. Earlier captures combined a Creative native default with
+server Survival consumption and did not establish Survival inventory
+format. Native camera/use ordering also affects authoritative facing;
+retain server correction instead of forcing the predicted orientation.
 
-Focused tests cover held lifetimes, sequence/result/cursor ownership,
-release, failed attempts, ordinary clients and the native block-item phase.
-Matching native, direct and proxy fixtures verify authoritative placement
-and consumption. Captures and proprietary resources remain private.
+Focused tests cover lifetimes, result/cursor ownership, clock-independent
+sequence handling, failed attempts, native use phases and inventory
+prediction boundaries. Captures and proprietary resources stay private.
+
+The extra first use-in-air phase follows placement, not block activation.
+A fresh trapdoor activation consumes the interaction without calling the
+block item's air use. Failed use-on attempts retain Java's ordinary air
+fallback rather than synthesizing another phase.
 ---
- .../api/model/BlockUsePrediction.java         |  74 +++++++++++++
- .../viabedrock/api/model/PlayerBlockUse.java  |  35 ++++++
+ .../api/model/BlockUsePrediction.java         |  74 ++++++++++
+ .../viabedrock/api/model/PlayerBlockUse.java  |  35 +++++
+ .../container/player/InventoryContainer.java  |   2 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/packet/ClientPlayerPackets.java  |   2 +-
- .../protocol/packet/InteractionPackets.java   | 100 ++++++++++-------
- .../protocol/packet/MultiStatePackets.java    |  33 ++++++
- .../protocol/storage/BlockUseStorage.java     |  82 ++++++++++++++
+ .../protocol/packet/InteractionPackets.java   | 129 ++++++++++++------
+ .../protocol/packet/MultiStatePackets.java    |  33 +++++
+ .../protocol/storage/BlockUseStorage.java     |  82 +++++++++++
+ .../protocol/storage/InventoryTracker.java    |   6 +
  .../protocol/storage/PlayerInputStorage.java  |   4 +-
- .../api/model/BlockUsePredictionTest.java     |  50 +++++++++
- .../packet/BlockItemUseTransactionTest.java   |  34 ++++++
- .../protocol/storage/BlockUseStorageTest.java | 101 ++++++++++++++++++
- 11 files changed, 473 insertions(+), 43 deletions(-)
+ .../api/model/BlockUsePredictionTest.java     |  50 +++++++
+ .../packet/BlockItemUseTransactionTest.java   |  96 +++++++++++++
+ .../protocol/storage/BlockUseStorageTest.java | 101 ++++++++++++++
+ 13 files changed, 569 insertions(+), 46 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/BlockUsePrediction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerBlockUse.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorage.java
@@ -176,6 +183,19 @@ index 000000000..fb688e291
 +    };
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
+index 1d1423dd3..87ccba088 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
+@@ -116,7 +116,7 @@ public class InventoryContainer extends Container {
+     @Override
+     protected void onSlotChanged(final int slot, final BedrockItem oldItem, final BedrockItem newItem) {
+         super.onSlotChanged(slot, oldItem, newItem);
+-        if (slot == this.selectedHotbarSlot) {
++        if (slot == this.selectedHotbarSlot && !oldItem.equals(newItem)) {
+             final PacketWrapper mobEquipment = PacketWrapper.create(ServerboundBedrockPackets.MOB_EQUIPMENT, this.user);
+             this.onSelectedHotbarSlotChanged(oldItem, newItem, mobEquipment);
+             mobEquipment.sendToServer(BedrockProtocol.class);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index 83c7d6b0b..448550a96 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -202,10 +222,26 @@ index cfc1036f8..058f4083b 100644
                  } else {
                      PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryContainer);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index 0acee785b..0bc8bc162 100644
+index 0acee785b..6cec192e4 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-@@ -48,6 +48,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand
+@@ -25,6 +25,7 @@ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
+ import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.BlockUsePrediction;
+ import net.raphimc.viabedrock.api.model.container.Container;
+ import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
+ import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+@@ -33,6 +34,7 @@ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
+ import net.raphimc.viabedrock.protocol.model.inventory.InventoryActionData;
+ import net.raphimc.viabedrock.protocol.model.inventory.InventorySource;
++import net.raphimc.viabedrock.protocol.model.inventory.LegacySetItemSlotData;
+ import net.raphimc.viabedrock.protocol.model.inventory.InventoryTransactionData;
+ import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+@@ -48,6 +50,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
  import net.raphimc.viabedrock.protocol.model.Position3f;
@@ -213,7 +249,7 @@ index 0acee785b..0bc8bc162 100644
  import net.raphimc.viabedrock.protocol.storage.BlockInteractionSoundTracker;
  import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
  import net.raphimc.viabedrock.protocol.storage.EntityTracker;
-@@ -139,7 +140,7 @@ public final class InteractionPackets {
+@@ -139,7 +142,7 @@ public final class InteractionPackets {
      }
  
      public static void sendUseItemOnBlock(final UserConnection user, final BlockPosition position, final int faceInt,
@@ -222,7 +258,7 @@ index 0acee785b..0bc8bc162 100644
          final Direction direction = Direction.getFromVerticalId(faceInt);
          if (direction == null) {
              ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown block face id: " + faceInt);
-@@ -153,52 +154,36 @@ public final class InteractionPackets {
+@@ -153,52 +156,38 @@ public final class InteractionPackets {
          final int slot = inventoryTracker.getInventoryContainer().getSelectedHotbarSlot();
          final BedrockItem usedItem = inventoryTracker.getInventoryContainer().getSelectedHotbarItem();
  
@@ -256,11 +292,13 @@ index 0acee785b..0bc8bc162 100644
 +        if (blockUse.held() && use.successful()) {
 +            sendBlockUseSwing(user, clientPlayer.runtimeId(), use.swingSource());
          }
++        final BlockPlacementPrediction prediction = blockPlacementPrediction(inventoryTracker,
++                clientPlayer.javaGameMode(), use.result(), slot, usedItem);
 +        final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
  
          final BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
-                 0, // legacy request id
-                 null,
+-                0, // legacy request id
+-                null,
 -                List.of(
 -                        new InventoryActionData(
 -                                new InventorySource(InventorySourceType.Container_Inventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySourceFlags.No_Flag),
@@ -269,7 +307,9 @@ index 0acee785b..0bc8bc162 100644
 -                                predictedToItem
 -                        )
 -                ),
-+                List.of(),
++                prediction.requestId(),
++                prediction.slots(),
++                prediction.actions(),
                  ComplexInventoryTransaction_Type.ItemUseTransaction,
                  new InventoryTransactionData.UseItemTransactionData(
                          ItemUseActionType.Place,
@@ -289,7 +329,7 @@ index 0acee785b..0bc8bc162 100644
                          ItemUseClientCooldownState.Off
                  )
          );
-@@ -206,15 +191,48 @@ public final class InteractionPackets {
+@@ -206,15 +195,66 @@ public final class InteractionPackets {
  
          transactionPacket.sendToServer(BedrockProtocol.class);
  
@@ -302,15 +342,33 @@ index 0acee785b..0bc8bc162 100644
 -                new BlockPosition(0, 0, 0),
 -                0
 -        );
-+        if (blockUse.held() && use.trigger() == ItemUseTriggerType.Player_Input && use.successful()
-+                && usedItem.blockRuntimeId() != 0) {
++        if (blockUse.held() && use.trigger() == ItemUseTriggerType.Player_Input && use.result() == BlockUsePrediction.Result.PLACED
++                && usedItem.hasBlockState() && !prediction.remainder().isEmpty()) {
 +            // Native input invokes the block item's ordinary use after its first successful use-on.
 +            final PacketWrapper itemUse = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
 +            itemUse.write(inventoryTransactionRewriter.getInventoryTransactionType(),
-+                    blockItemUseTransaction(slot, usedItem, clientPlayer.position()));
++                    blockItemUseTransaction(slot, prediction.remainder(), clientPlayer.position()));
 +            itemUse.sendToServer(BedrockProtocol.class);
 +        }
++        if (!prediction.actions().isEmpty()) {
++            inventoryTracker.getInventoryContainer().setItem(slot, prediction.remainder().copy());
++        }
 +        sendBlockUseStop(user, blockUse.complete());
++    }
++
++    static BlockPlacementPrediction blockPlacementPrediction(final InventoryTracker inventory, final GameMode mode,
++            final BlockUsePrediction.Result result, final int slot, final BedrockItem item) {
++        if (result != BlockUsePrediction.Result.PLACED || mode == GameMode.CREATIVE || !item.hasBlockState() || item.isEmpty()) {
++            return new BlockPlacementPrediction(0, List.of(), List.of(), item.copy());
++        }
++        final BedrockItem remainder = item.copy();
++        remainder.setAmount(remainder.amount() - 1);
++        final BedrockItem remaining = remainder.amount() > 0 ? remainder : BedrockItem.empty();
++        final int requestId = remaining.isEmpty() ? 0 : inventory.nextLegacyRequestId();
++        return new BlockPlacementPrediction(requestId,
++                requestId == 0 ? List.of() : List.of(new LegacySetItemSlotData(ContainerEnumName.InventoryContainer, new byte[]{(byte) slot})),
++                List.of(new InventoryActionData(new InventorySource(InventorySourceType.Container_Inventory,
++                        ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySourceFlags.No_Flag), slot, item, remaining)), remaining);
 +    }
 +
 +    private static void sendBlockUseSwing(final UserConnection user, final long runtimeId, final ActorSwingSource source) {
@@ -347,7 +405,7 @@ index 0acee785b..0bc8bc162 100644
      }
  
      public static void register(final BedrockProtocol protocol) {
-@@ -305,7 +323,7 @@ public final class InteractionPackets {
+@@ -305,7 +345,7 @@ public final class InteractionPackets {
                  wrapper.user().get(BlockInteractionSoundTracker.class).recordPlacement(position, placedPosition);
              }
              chunkTracker.trackBlockPrediction(sequence, position, placedPosition);
@@ -356,6 +414,14 @@ index 0acee785b..0bc8bc162 100644
          });
          protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_TRANSACTION, null, wrapper -> {
              final InventoryTransactionRewriter inventoryTransactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
+@@ -394,4 +434,7 @@ public final class InteractionPackets {
+                         ItemUsePredictedResult.Failure, ItemUseClientCooldownState.Off));
+     }
+ 
++    record BlockPlacementPrediction(int requestId, List<LegacySetItemSlotData> slots,
++                                    List<InventoryActionData> actions, BedrockItem remainder) { }
++
+ }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 index ae9743070..df24b545b 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
@@ -502,6 +568,30 @@ index 000000000..11fde0354
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
+index 84f976c95..7472880ed 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
+@@ -57,6 +57,7 @@ public class InventoryTracker extends StoredObject {
+     private final HudContainer hudContainer = new HudContainer(this.user());
+     private final Map<FullContainerName, BundleContainer> dynamicContainerRegistry = new HashMap<>();
+ 
++    private int legacyRequestIdCounter = -2;
+     private Container currentContainer = null;
+     private Container pendingCloseContainer = null;
+     private IntObjectPair<Form> currentForm = null;
+@@ -65,6 +66,11 @@ public class InventoryTracker extends StoredObject {
+         super(user);
+     }
+ 
++    public int nextLegacyRequestId() {
++        this.legacyRequestIdCounter = Math.min(this.legacyRequestIdCounter, -2) - 2;
++        return this.legacyRequestIdCounter;
++    }
++
+     public Container getContainerClientbound(final byte containerId, final FullContainerName containerName, final BedrockItem storageItem) {
+         if (containerId == this.inventoryContainer.containerId()) {
+             return this.inventoryContainer;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 index f8bf20f85..e44843834 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
@@ -582,12 +672,17 @@ index 000000000..1b628fbad
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/BlockItemUseTransactionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/BlockItemUseTransactionTest.java
 new file mode 100644
-index 000000000..bf7bb406b
+index 000000000..9b018d438
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/BlockItemUseTransactionTest.java
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,96 @@
 +package net.raphimc.viabedrock.protocol.packet;
 +
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.model.BlockUsePrediction;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUseActionType;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUsePredictedResult;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUseTriggerType;
@@ -597,11 +692,12 @@ index 000000000..bf7bb406b
 +import org.junit.jupiter.api.Test;
 +
 +import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.mock;
 +
 +final class BlockItemUseTransactionTest {
 +
 +    @Test
-+    void followsUseOnWithTheNativeNonPlacementPhaseAndOriginalItemSnapshot() {
++    void followsUseOnWithTheNativeNonPlacementPhaseAndPredictedItemSnapshot() {
 +        final var item = new BedrockItem(96);
 +        item.setAmount(64);
 +        final var position = new Position3f(1, 65.62F, 3);
@@ -617,6 +713,62 @@ index 000000000..bf7bb406b
 +        assertEquals(64, use.itemInHand().amount());
 +        assertEquals(position, use.playerPosition());
 +        assertEquals(new Position3f(0, 0, 0), use.clickPosition());
++    }
++
++    @Test
++    void survivalPlacementPredictsOneItemAndUsesItsRemainderInTheFollowingUsePhase() {
++        final var inventory = new InventoryTracker(mock(UserConnection.class));
++        final var item = new BedrockItem(96);
++        item.setAmount(64);
++        item.setBlockRuntimeId(123);
++        final var prediction = InteractionPackets.blockPlacementPrediction(inventory, GameMode.SURVIVAL,
++                BlockUsePrediction.Result.PLACED, 2, item);
++        assertTrue(prediction.requestId() < -1);
++        assertEquals(0, prediction.requestId() & 1);
++        assertEquals(ContainerEnumName.InventoryContainer, prediction.slots().getFirst().container());
++        assertArrayEquals(new byte[]{2}, prediction.slots().getFirst().slots());
++        assertEquals(1, prediction.actions().size());
++        assertEquals(2, prediction.actions().getFirst().slot());
++        assertEquals(64, prediction.actions().getFirst().fromItem().amount());
++        assertEquals(63, prediction.actions().getFirst().toItem().amount());
++        final var transaction = InteractionPackets.blockItemUseTransaction(2, prediction.remainder(), Position3f.ZERO);
++        assertEquals(63, ((InventoryTransactionData.UseItemTransactionData) transaction.transactionData()).itemInHand().amount());
++        assertTrue(transaction.actions().isEmpty());
++        assertEquals(64, item.amount());
++        final var next = InteractionPackets.blockPlacementPrediction(inventory, GameMode.SURVIVAL,
++                BlockUsePrediction.Result.PLACED, 2, prediction.remainder());
++        assertTrue(next.requestId() < prediction.requestId());
++        assertEquals(62, next.remainder().amount());
++        item.setAmount(1);
++        final var last = InteractionPackets.blockPlacementPrediction(inventory, GameMode.SURVIVAL,
++                BlockUsePrediction.Result.PLACED, 2, item);
++        assertEquals(0, last.requestId());
++        assertTrue(last.slots().isEmpty());
++        assertTrue(last.remainder().isEmpty());
++        assertTrue(last.actions().getFirst().toItem().isEmpty());
++    }
++
++    @Test
++    void creativeInteractionsFailuresAndNonBlockItemsDoNotPredictPlacementConsumption() {
++        final var inventory = new InventoryTracker(mock(UserConnection.class));
++        final var item = new BedrockItem(96);
++        item.setAmount(64);
++        item.setBlockRuntimeId(123);
++        for (final var mode : new GameMode[]{GameMode.CREATIVE, GameMode.SURVIVAL}) {
++            for (final var result : BlockUsePrediction.Result.values()) {
++                if (mode == GameMode.SURVIVAL && result == BlockUsePrediction.Result.PLACED) {
++                    continue;
++                }
++                final var prediction = InteractionPackets.blockPlacementPrediction(inventory, mode, result, 0, item);
++                assertEquals(0, prediction.requestId());
++                assertTrue(prediction.actions().isEmpty());
++                assertTrue(prediction.slots().isEmpty());
++                assertEquals(64, prediction.remainder().amount());
++            }
++        }
++        item.setBlockRuntimeId(null);
++        assertTrue(InteractionPackets.blockPlacementPrediction(inventory, GameMode.SURVIVAL,
++                BlockUsePrediction.Result.PLACED, 0, item).actions().isEmpty());
 +    }
 +
 +}

@@ -5,36 +5,44 @@ Send the physical use lifetime and each local prediction to the core before its 
 Prediction format 2 carries the result and native cursor. Core and add-on consumers require the matching contract.
 Enable the feature only when the server advertises both channels.
 
-After successful trapdoor placement, suppress ordinary block activation.
-Keep the first predicted facing, half, and world hit across camera changes and selected materials.
-Express that world hit relative to each later target, including coordinates outside its unit cube.
+Keep the first predicted facing, half, and world hit until physical release or cancellation.
+Retain this state across trapdoor materials, temporary item-family changes, server correction, and stack exhaustion.
+Apply the snap only while the player holds a trapdoor.
+Other block items use fresh hits and suppress repeated activation. Empty hands restore ordinary interaction.
+Returning to a trapdoor restores the original snap.
+
+Express the retained world hit relative to each later target, including coordinates outside its unit cube.
 Keep the ordinary Java hit packet unchanged for other consumers.
 Retain each new block's water, power, open state, and material properties.
-Continue through other trapdoors or retry the original support. Ignore unrelated targets until release.
-Release and screen cancellation clear the placement state.
+Separate trapdoors and the original support remain valid targets.
 
-Fresh clicks use Java's existing 3/16 trapdoor outline, matching native Bedrock.
-The previous custom outline used an approximate thickness of 0.1825.
+Match the native 300 ms delay after the first attempt and each successful local use.
+Failed repeats do not restart that delay.
+Poll subsequent attempts after input movement, before the next network tick publishes rotation.
+Suppress Java's parallel four-tick repeat path for the active hold.
+Release, screens, and connection replacement clear the timer and placement state.
 
 ## Evidence and validation
 
-Matching native 1.26.60.5 captures against BDS 1.26.60.6 establish the held behavior.
-Seven native continuation placements preserve the initial world hit.
-Separate trapdoors remain valid continuation targets, including differently oriented ones.
-Unrelated floor targets remain inactive during the hold.
-The first failed height-limit attempt emits no start action until placement becomes valid.
+Native 1.26.60.5 fixtures against BDS 1.26.60.6 establish the held behavior.
+Physical camera changes retain facing, upper-half state, and closed state through direct Java and ViaProxy.
+Both routes consume two items, leaving 62 from 64.
+Material changes and fresh activation after release match their native fixtures.
+The original native outline remains correct: native bottom-face hits use approximately 0.8175.
+The earlier 0.8125 attribution came from the Java fixture.
+The outline and occlusion checks now use the active Bedrock connection, including ViaProxy sessions with a local Java protocol target.
+A fresh proxy fixture confirms the 0.8175 hit, placement-only air phase, fresh Stone coordinates, and restored trapdoor snap.
 
-Creative camera changes, material changes, and fresh-click release match their native fixtures.
-Native Survival accepts a changed authoritative facing when BDS receives the new yaw before placement.
-Direct Java and ViaProxy match that controlled fixture, including closed upper-half state and consumption from 64 to 62.
-Earlier teleport fixtures placed before the native camera update and cannot establish a server direction lock.
-
-Native and ViaProxy replace a server-removed trapdoor during the hold and consume the replacement authoritatively.
-Direct Java and ViaProxy pause cancellation stop active sessions before physical release.
-Fresh Java and proxy clicks hit the bottom at 0.8125, matching native geometry.
+Native and direct Java retry one rejected first placement within the same held session.
+Native item-family fixtures retain the snap through Stone selection and restore it on return to a trapdoor.
+The empty-hand fixture uses fresh coordinates and activates existing trapdoors after stack exhaustion.
+Direct Java and ViaProxy pause cancellation stop the active session before physical release.
+Fresh native and ViaProxy sessions match repeated rejection followed by rotation without block consumption.
+After a preceding successful hold, both native and ViaProxy instead place a neighbor and consume one item.
+Matching session history explains the earlier apparent correction mismatch.
+The translator preserves both authoritative outcomes.
 
 All four project builds and the modpack bundle pass.
-The add-on suite passes 1,279 tests with 142 optional skips and no failures/errors.
-Five block-state tests cover orientation, materials, independent properties, target eligibility, frozen world hits, release, and ordinary blocks.
-
-Physical mouse rotation and rejection of the first predicted placement remain open acceptance gates.
+The add-on suite passes 1,281 tests with 142 optional skips and no failures/errors.
+Five block-state tests cover retained orientation, materials, independent properties, targets, frozen hits, release, and ordinary blocks.
+Two timer tests cover successful repeats, failed repeats, cancellation, and clock rollover.

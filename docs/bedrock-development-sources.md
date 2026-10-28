@@ -131,34 +131,26 @@ Player and persona controller assets do not establish the engine's new armor mas
    for an isolated template-marked world with that version.
    Unit tests cover newer/older/newer selection and resource-manager reuse.
    Native graphical and audible world-transition comparisons remain pending.
-2. **Implement held trapdoor placement.**
-   The 26.60 release locks placement direction until the use control is released
-   and suppresses block interactions during that placement.
-   The core now retains the physical use lifetime and matches prediction results to Java sequence numbers.
-   The add-on suppresses block activation and retains the first predicted trapdoor facing, half, and world hit point until release.
-   Prediction format 2 carries the result and target-relative cursor with its Java sequence number.
-   Native continuation can express the original world hit outside the new target's unit cube.
-   Fresh clicks use the native 3/16 trapdoor outline, replacing the old approximate thickness.
-   Matching native 1.26.60.5 captures against BDS 1.26.60.6 retain one `StartItemUseOn` action for the complete hold.
-   Repeated transactions use `Simulation_Tick`; release or opening the pause menu sends `StopItemUseOn`.
-   A side placement followed by a bottom-face hit places another closed trapdoor instead of opening the first.
-   Both blocks retain the first placement's facing and upper-half state, including after a 90-degree camera change.
-   Switching from oak to birch during the hold retains that state without restarting the session.
-   A fresh click after release opens the original trapdoor normally.
-   Native Survival captures also use empty inventory-action lists and consume blocks authoritatively.
-   The first successful input includes a separate use-in-air phase with the original held stack.
-   Controlled relay probes omit the start/stop actions, the use phase, or build swings.
-   The first two probes lose retained facing, but camera packet order prevents a causal conclusion.
-   The build-swing control retains facing. Swings alone do not explain the earlier Survival difference.
-   The corrected Java Creative fixture retains facing, half, and closed state across a 90-degree camera change.
-   Material changes and a fresh click after release also match their native fixtures.
-   A controlled native Survival fixture receives the new camera direction before the next placement.
-   BDS then changes the second trapdoor's facing, matching direct Java and ViaProxy.
-   Earlier native teleports placed before the camera update and cannot establish a server direction lock.
-   Both paths consume two items and retain the closed upper-half state.
-   Native and ViaProxy also replace a server-removed trapdoor during the hold and consume the replacement authoritatively.
-   Direct Java and ViaProxy pause cancellation end active sessions before physical release.
-   Physical mouse rotation and rejection of the first predicted placement remain acceptance gates.
+2. **Held trapdoor placement comparisons.**
+   The core retains physical use lifetime and matches local predictions to Java sequence numbers.
+   Prediction format 2 carries the result and target-relative cursor.
+   The add-on retains the first trapdoor facing, half, and world hit until release or cancellation.
+   Temporary item-family changes preserve that state but apply the snap only to held trapdoors.
+   Empty hands restore ordinary interaction with fresh hits.
+   The existing native outline remains correct. Native bottom-face hits use approximately 0.8175.
+   Physical mouse rotation matches native facing, upper-half state, and closed state through direct Java and ViaProxy.
+   Held repeats use a 300 ms delay after the first attempt and each successful local use.
+   Failed repeats do not restart the delay.
+   Frame polling after camera movement preserves placement order before the next network tick.
+   Fresh forced-Survival native fixtures predict inventory decrements and send the remaining stack in the first placement's air phase.
+   The last block uses request ID zero and omits the empty air phase.
+   Earlier captures combined Creative client state with server Survival consumption and did not establish the Survival inventory format.
+   Native and direct Java retry one rejected first placement within the same session.
+   Direct Java and ViaProxy pause cancellation stop active sessions before physical release.
+   Fresh native and ViaProxy sessions also match repeated rejection followed by rotation without consumption.
+   After a preceding successful hold, both native and ViaProxy instead place a neighbor and consume one item.
+   Matching session history explains the earlier apparent correction mismatch.
+   Native outline and occlusion checks now recognize remote Bedrock connections through ViaProxy.
 3. **Verify bitmap font layout against native Bedrock.**
    The importer now converts bitmap atlases, layout metadata, and Unicode fallback pages.
    The licensed provider retains atlas images and layout files.
@@ -201,7 +193,7 @@ The 26.60 audit above supplies the starting evidence, not completion evidence.
   audio from one immutable world-version context. Preserve server pack priority.
   Compare a newer-world to older-template transition against native Bedrock.
   Check that cached definitions and sounds from the previous world do not leak.
-- [ ] **Held trapdoor placement:** establish how native Bedrock selects and holds
+- [x] **Held trapdoor placement:** establish how native Bedrock selects and holds
   the placement direction. Suppress ordinary block interaction during the held
   placement. Verify release, item changes, cancellation, and server correction.
 - [ ] **Bitmap fonts:** support atlas layout metadata and extended character
