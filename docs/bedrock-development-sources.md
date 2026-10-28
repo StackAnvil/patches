@@ -222,6 +222,9 @@ The 26.60 audit above supplies the starting evidence, not completion evidence.
 - [ ] **Bitmap fonts:** support atlas layout metadata and extended character
   mapping. Resolve metadata from the atlas's own pack. Compare mixed-language
   vanilla text and a legacy custom atlas with no layout metadata.
+  Sixteen legacy-atlas labels now match native glyph positions and pixel masks
+  across four font sizes and quarter-unit offsets at GUI scale 2.
+  Extended-font origins and other viewport scales still need comparison.
 - [ ] **Skins:** compare clothing beneath equipped armor and texture changes
   after profile selection. Cover each affected armor slot, unequip, profile
   replacement, and native LOD selection with matching visual fixtures.

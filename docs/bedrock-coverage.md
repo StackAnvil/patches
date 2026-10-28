@@ -12080,3 +12080,28 @@ Licensed assets, skin data, images, and journals remain private.
 
 The [classic skin notes](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#named-clothing-layers-beneath-armor-october-28-2026)
 and [persona notes](../patches/viafabricplus-bedrock/upstreamable/0006-render-character-creator-geometry-and-face-animations.pr.md#default-persona-replacement-in-2660-october-28-2026) retain the scope and remaining limits.
+
+
+## Bitmap label pixel-grid comparison, October 28, 2026
+
+Native Bedrock 1.26.60.5, protocol 2225, supplies a sixteen-label reference at 1280 × 720 and GUI scale 2.
+The accepted server pack contains a legacy bitmap atlas without layout metadata.
+Four font sizes each use whole, quarter, half, and three-quarter label positions.
+
+The old renderer produces vertical drift and extra ink columns at fractional positions.
+The shared UI renderer now applies the native one-unit vertical inset and snaps each aligned line origin on the font-size pixel grid.
+A final physical-pixel snap also handles the smallest font.
+Glyph advances and authored line spacing retain their fractional values.
+
+All sixteen corrected glyphs match native bounds, ink counts, and normalized pixel masks.
+Both Java recordings reach gameplay and finish normally.
+Connected-component comparison excludes unrelated tutorial text and world pixels.
+The regression uses the sixteen native coordinate cases.
+The full stack build reports 2,057 core cases and 1,294 add-on cases without failures or errors.
+Optional skips total 176 and 145 respectively.
+The fresh bundle includes the corrected implementation.
+
+The reference covers unshadowed legacy bitmap labels at the stated scale.
+Extended-font origins, other viewport scales, and TrueType pixel comparisons remain open.
+Native LOD selection remains a separate open skin requirement.
+Licensed assets and raw evidence remain private.

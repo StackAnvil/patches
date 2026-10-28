@@ -1,4 +1,4 @@
-From 06194264ee37684162cbd5294b173928796bbb1a Mon Sep 17 00:00:00 2001
+From 51004698f4bc24a0df5ae4585e65996d96a93d94 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -509,6 +509,13 @@ alignment retain rounded widths; only glyph advances remain fractional.
 Move the shared font layout regressions out of the container consumer so
 this patch owns its metrics and tests. Native legacy pack checks remain
 separate from these mixed-language captures.
+
+Match the native bitmap label's one-unit vertical inset and snap each
+aligned line origin on its font-size pixel grid. Native 1.26.60.5 at GUI
+scale 2 keeps the same glyph pixels across quarter-unit positions at four
+font sizes, while unsnapped Java glyphs gain columns and drift vertically.
+Snap the line origin after alignment, preserving fractional glyph advances
+and authored line spacing instead of applying a fixed screen-pixel offset.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -553,7 +560,7 @@ separate from these mixed-language captures.
  .../bedrock/screen/ui/NativeUiDimension.java  |  93 ++
  .../bedrock/screen/ui/NativeUiFlipbook.java   |  47 +
  .../bedrock/screen/ui/NativeUiFocus.java      | 329 ++++++
- .../bedrock/screen/ui/NativeUiFont.java       |  47 +
+ .../bedrock/screen/ui/NativeUiFont.java       |  58 ++
  .../bedrock/screen/ui/NativeUiGraphics.java   |  47 +
  .../bedrock/screen/ui/NativeUiImageCache.java | 229 +++++
  .../screen/ui/NativeUiImageRegions.java       | 132 +++
@@ -564,7 +571,7 @@ separate from these mixed-language captures.
  .../screen/ui/NativeUiMultilineInput.java     | 267 +++++
  .../screen/ui/NativeUiPlayerCamera.java       |  72 ++
  .../screen/ui/NativeUiPresentation.java       | 162 +++
- .../bedrock/screen/ui/NativeUiRenderer.java   | 153 +++
+ .../bedrock/screen/ui/NativeUiRenderer.java   | 155 +++
  .../bedrock/screen/ui/NativeUiScene.java      | 107 ++
  .../screen/ui/NativeUiSceneScreen.java        | 823 +++++++++++++++
  .../bedrock/screen/ui/NativeUiScreen.java     |  11 +
@@ -597,7 +604,7 @@ separate from these mixed-language captures.
  .../bedrock/screen/ui/NativeUiButtonTest.java | 127 +++
  .../screen/ui/NativeUiColorAnimationTest.java | 114 +++
  .../bedrock/screen/ui/NativeUiFocusTest.java  | 124 +++
- .../bedrock/screen/ui/NativeUiFontTest.java   | 127 +++
+ .../bedrock/screen/ui/NativeUiFontTest.java   | 146 +++
  .../screen/ui/NativeUiImageCacheTest.java     | 142 +++
  .../screen/ui/NativeUiImageRegionsTest.java   | 217 ++++
  .../bedrock/screen/ui/NativeUiImagesTest.java | 100 ++
@@ -615,7 +622,7 @@ separate from these mixed-language captures.
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |  86 ++
  .../screen/ui/NativeUiViewportTest.java       |  95 ++
- 105 files changed, 11608 insertions(+), 36 deletions(-)
+ 105 files changed, 11640 insertions(+), 36 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -4271,10 +4278,10 @@ index 0000000..0d64363
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java
 new file mode 100644
-index 0000000..b5a3cc0
+index 0000000..26d2a6b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,58 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4297,6 +4304,17 @@ index 0000000..b5a3cc0
 +        if (!Float.isFinite(scale) || scale < 0) throw new IllegalArgumentException("Unsupported native UI font scale");
 +        return scale;
 +    }
++
++    /** Snap the label origin in physical pixels before applying its font-size transform. */
++    public static Origin origin(final float x, final float y, final float fontScale, final int uiScale) {
++        return new Origin(snap(x, fontScale, uiScale), snap(y + 1, fontScale, uiScale));
++    }
++
++    private static float snap(final float coordinate, final float fontScale, final int uiScale) {
++        return (float) Math.floor(Math.floor(coordinate * (double) uiScale / fontScale) * fontScale) / uiScale;
++    }
++
++    public record Origin(float x, float y) { }
 +
 +    public static int wrapWidth(final NativeUiScene.Node node, final float width) {
 +        final float scale = scale(node);
@@ -6306,10 +6324,10 @@ index 0000000..1279cdc
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
 new file mode 100644
-index 0000000..18dbfdb
+index 0000000..bc751be
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,155 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6408,19 +6426,21 @@ index 0000000..18dbfdb
 +        final int width = NativeUiFont.wrapWidth(node, box.bounds().width());
 +        final var lines = this.lines(node, text, width);
 +        final String alignment = node.string("text_alignment", "left");
-+        graphics.pose().pushMatrix();
-+        try {
-+            graphics.pose().translate(box.bounds().x(), box.bounds().y());
-+            graphics.pose().scale(scale, scale);
-+            final float lineHeight = NativeUiFont.lineHeight(node);
-+            for (final var line : lines) {
-+                final int lineWidth = this.font.width(line);
-+                final int x = alignment.equals("center") ? (width - lineWidth) / 2 : alignment.equals("right") ? width - lineWidth : 0;
-+                graphics.text(this.font, line, x, 0, color(node, alpha), node.flag("shadow", false));
-+                graphics.pose().translate(0, lineHeight);
++        final int uiScale = NativeUiViewport.current().scale();
++        float y = box.bounds().y();
++        for (final var line : lines) {
++            final int lineWidth = this.font.width(line);
++            final int x = alignment.equals("center") ? (width - lineWidth) / 2 : alignment.equals("right") ? width - lineWidth : 0;
++            final var origin = NativeUiFont.origin(box.bounds().x() + x * scale, y, scale, uiScale);
++            graphics.pose().pushMatrix();
++            try {
++                graphics.pose().translate(origin.x(), origin.y());
++                graphics.pose().scale(scale, scale);
++                graphics.text(this.font, line, 0, 0, color(node, alpha), node.flag("shadow", false));
++            } finally {
++                graphics.pose().popMatrix();
 +            }
-+        } finally {
-+            graphics.pose().popMatrix();
++            y += NativeUiFont.lineHeight(node) * scale;
 +        }
 +    }
 +
@@ -9893,10 +9913,10 @@ index 0000000..f022766
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java
 new file mode 100644
-index 0000000..af376d8
+index 0000000..2c6d44b
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,146 @@
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.google.gson.JsonArray;
@@ -9918,6 +9938,25 @@ index 0000000..af376d8
 +            return NativeUiFont.constrained(node, width, Math.ceilDiv(60, NativeUiFont.wrapWidth(node, width)));
 +        }
 +    };
++
++    @Test
++    void snapsBitmapLabelOriginsToTheNativeFontPixelGrid() {
++        // Native 1.26.60.5, GUI scale 2, four font sizes and quarter-unit offsets.
++        final float[][] cases = {
++            {45, 35, .5F, 45, 36}, {190.25F, 35.25F, .5F, 190, 36},
++            {335.5F, 35.5F, .5F, 335.5F, 36.5F}, {480.75F, 35.75F, .5F, 480.5F, 36.5F},
++            {45, 95, 1, 45, 96}, {190.25F, 95.25F, 1, 190, 96},
++            {335.5F, 95.5F, 1, 335.5F, 96.5F}, {480.75F, 95.75F, 1, 480.5F, 96.5F},
++            {45, 160, 2, 45, 161}, {190.25F, 160.25F, 2, 190, 161},
++            {335.5F, 160.5F, 2, 335, 161}, {480.75F, 160.75F, 2, 480, 161},
++            {45, 240, 4, 44, 240}, {190.25F, 240.25F, 4, 190, 240},
++            {335.5F, 240.5F, 4, 334, 240}, {480.75F, 240.75F, 4, 480, 240}
++        };
++        for (final float[] sample : cases) {
++            assertEquals(new NativeUiFont.Origin(sample[3], sample[4]),
++                NativeUiFont.origin(sample[0], sample[1], sample[2], 2));
++        }
++    }
 +
 +    @Test
 +    void measuresNativeFontSizesAndAuthoredFactorsThroughWrappedStackLayout() {

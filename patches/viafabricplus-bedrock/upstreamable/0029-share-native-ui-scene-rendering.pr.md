@@ -506,4 +506,26 @@ Labels measure and align each line with a rounded width while glyph positions re
 The font layout regressions now live in this shared patch instead of the container consumer.
 Tests cover narrow bearings, wide-range boundaries, Hangul, empty cells, texture resolution, and private-use metrics.
 Paired renders match text spacing and preserve colored icon pixels.
-A one-pixel vertical title-origin difference remains at the tested scale, so font acceptance stays open.
+The legacy-atlas origin difference is resolved by the native pixel grid rule below.
+Font acceptance remains open for origin comparisons outside that fixture.
+
+### Bitmap label origin comparison, October 28, 2026
+
+Native 1.26.60.5 and the corrected Java add-on render the same legacy atlas at 1280 × 720 and GUI scale 2.
+Sixteen fixed labels cover small, normal, large, and extra-large fonts at whole, quarter, half, and three-quarter positions.
+The old Java renderer drifts vertically and samples extra ink columns at fractional positions.
+All sixteen corrected glyphs match native bounds, ink counts, and normalized pixel masks.
+Both Java recordings reach gameplay and finish normally.
+The comparison isolates the glyph component from unrelated tutorial text and world pixels.
+
+Apply the native one-unit label inset before snapping each aligned line origin to its font-size grid and then whole physical pixels.
+Use the native viewport scale independently of Java's GUI scale.
+Keep glyph advances and authored line spacing fractional.
+The sixteen native coordinate cases form the regression fixture.
+
+The full build reports 2,057 core cases and 1,294 add-on cases, with no failures or errors.
+Optional skips total 176 and 145 respectively.
+The fresh bundle contains the corrected origin implementation.
+This result covers unshadowed legacy bitmap labels at the stated scale.
+Extended-font origins, other viewport scales, and TrueType pixel comparisons remain open.
+Licensed atlases, captures, packet journals, and image hashes remain private.
