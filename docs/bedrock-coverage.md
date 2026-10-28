@@ -11959,3 +11959,47 @@ The bundle also builds successfully.
 A final direct recording activates Iris 1.11.7 and Complementary Reimagined r5.9.3 with the rebuilt add-on.
 The tint and ordinary controls both render. The session reaches spawn and exits normally without missing pipeline overrides or shader compilation errors.
 This verifies runtime admission and binding, while retaining the stated visual and lighting limits.
+
+## Native cat engine variables, October 28, 2026
+
+The native world adapter now binds the cat's engine variables before sampling its authored graph.
+Missing `variable.state` kept the graph in its initial lying state, including the current baby's fixed head roll.
+The matching 26.60 producer selects sneaking, sprinting, sitting, ordinary movement, and resting as states zero through four.
+Flag priority remains sneaking, sprinting, sitting, then resting.
+
+A cat-owned tick state advances body and tail rest values independently of rendering.
+Their native increments are 0.15 and 0.08 when resting, and minus 0.22 and minus 0.13 otherwise.
+Values clamp to their native endpoints. Render sampling interpolates previous/current values without advancing the tick state.
+A new native lifetime clears interpolation. Ordinary Java cats retain their original behavior.
+
+Nearby-player lookup uses the native physical width and height, scaled by actor metadata.
+It expands the resulting float box by two on each axis.
+Authored picking boxes cannot change this animation input. Missing or retired physical dimensions retain fallback.
+Production adapter tests cover sleeping-player detection, dimension ownership, and immutable earlier inputs.
+
+The 1.26.60.5 executable SHA-256 is `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`.
+Producer `142c18730` selects state and render interpolation; `UpdateLieDownAmountSystem` registers tick leaf `146965fd0`.
+Original execution covers all 16 state combinations and 72 bounded tick inputs.
+A 39-tick rest/return history supplies another 156 render samples.
+State selection uses a supplied actor-flag callback. Tick and interpolation controls execute the original arithmetic without substitution.
+These boundaries do not establish native scheduler ordering.
+
+A local relay supplies controlled pose flags to real native and Java clients.
+It preserves the server's actor identity, age, scale, resources, and movement.
+Both current and 1.20.0 worlds receive standing, sneaking, sprinting, sitting, resting, and return controls.
+The sealed journals confirm all five states with the baby flag in all four recordings.
+All 12 direct observations keep native rendering active, without missing queries or material failure.
+The standing head roll clears. Body and tail values reach one during rest and return to zero afterward.
+
+A fresh ViaProxy run uses the final artifact with the physical-dimension correction.
+Its observer confirms width 0.6, height 0.7, native rendering, and body/tail values of zero, one, and zero.
+The recorder exits normally. The owned relay closes and preserves its journal.
+The full build passes 2,056 core tests and 1,293 add-on tests, with 176 and 134 optional skips respectively.
+Neither suite reports failures or errors. All new cat regressions execute, including the native instruction controls.
+The patch stack and bundle also build successfully.
+
+These controls establish the engine-variable binding and resource-dependent pose selection.
+They do not establish natural AI production, exact head-target timing, shadows, or sleeping-player query parity.
+The forced current baby rest clips below the fixture floor on both clients; natural rest positioning needs a separate control.
+One native reference uses a cached font pack that does not re-export. Its wire cutoff and vanilla actor inputs remain recorded.
+Resource-version audio and complete server-pack priority acceptance remain open, alongside the other unfinished goal areas.

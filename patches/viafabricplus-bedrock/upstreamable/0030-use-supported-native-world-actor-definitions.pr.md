@@ -237,3 +237,44 @@ from 0 to 14 to 0, matching each world’s native BYTE metadata.
 The older world’s tamed state does not carry into the return connection.
 Resource selection is verified; complete pose alignment remains open.
 The Java capture shows a head-roll difference from the native reference.
+
+## Native cat animation variables, October 28, 2026
+
+The world adapter now supplies the cat's engine variables before evaluating
+its resource graph. Missing `variable.state` kept both resource views in the
+initial lying state. The current baby clip adds a fixed head roll there.
+Native state priority is sneaking, sprinting, sitting, then resting, with
+ordinary movement as state three.
+
+Body and tail rest values advance on entity ticks, including offscreen
+actors. Render sampling interpolates retained previous/current values.
+Changing the native lifetime clears those values. Nearby-player lookup uses
+scaled physical dimensions, float rounding, and two-unit expansion, rather
+than interactive picking boxes. Missing or retired dimensions retain fallback.
+
+The matching 26.60.5 executable identifies producer `142c18730` and tick leaf
+`146965fd0`. Original instruction controls cover 16 flag combinations,
+72 bounded updates, a 39-tick rest history, and 156 interpolation samples.
+State selection supplies a flag-reader boundary; tick and interpolation
+arithmetic execute unchanged. Licensed binaries and controls remain private.
+
+Loopback metadata controls drive actual native and Java clients through
+standing, sneaking, sprinting, sitting, resting, and return in both current
+and 1.20.0 worlds. The journals confirm every state with the baby flag.
+All 12 direct observations retain native draws without missing queries.
+The persistent head roll clears, and rest interpolation reaches one then
+returns to zero. These are controlled rendering inputs, not natural AI tests.
+
+The final artifact also passes a fresh ViaProxy standing/resting/standing
+run. Read-only observations confirm physical dimensions, native draw
+admission, and body/tail values of zero, one, and zero. The recorder exits
+normally; the owned relay closes with its journal preserved.
+The full build passes 1,293 add-on tests with 134 optional skips and no
+failures or errors. Core remains at 2,056 tests with 176 optional skips.
+All new cat regressions run, including the original native arithmetic controls.
+
+Exact head-target timing, shadows, natural resting positions, and sleeping
+player lookup still need dedicated comparisons. The forced current baby
+rest clips below this fixture's floor in both clients. The native cached
+font pack does not re-export in one reference session; its wire cutoff and
+vanilla cat inputs remain recorded. Resource audio acceptance stays open.
