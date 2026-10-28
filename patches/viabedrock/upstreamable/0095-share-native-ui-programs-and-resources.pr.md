@@ -565,6 +565,10 @@ The converter removes incomplete rows and preserves glyph scale for larger textu
 Offsets that exceed Java's bitmap ascent limit use transparent cell padding.
 Unicode pages follow the ASCII providers, including the final BMP page.
 The conversion cache revision changes with this output.
+Ordinary spaces retain the existing Java space provider.
+Java 26.3 otherwise gives a blank bitmap cell a one-unit advance.
+Image dimensions are checked before decoding, and padded atlases retain the image dimension limit.
+The font file budget includes bitmap pages beside TrueType files.
 
 Six focused bitmap regressions and the existing TrueType regressions pass.
 The full core stack also builds and passes its tests and Checkstyle checks.

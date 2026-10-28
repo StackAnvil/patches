@@ -1,4 +1,4 @@
-From f9e7e776eb5908aea5645414e66138a52511bc0a Mon Sep 17 00:00:00 2001
+From b96257abe493e2672c8f298a8627565832f0e55c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): share bounded native UI programs and resource
@@ -272,14 +272,21 @@ when Java's ascent constraint requires it, preserving glyph pixel scale.
 Resolve Unicode fallback pages in the same ordered layers and export them
 after ASCII providers. Keep the final BMP page and advance the conversion
 cache revision. Matching executable tables, atlas files, and the official
-26.60 changelog establish the input contract; full native visual comparison
-remains pending because the installed WineGDK engine exposes an older
-Gaming Services interface than the target client requires.
+26.60 changelog establish the input contract. Full native visual comparison
+remains pending.
 
 Admit bitmap images, layout metadata, and TrueType files through the
 built-in resource boundary so licensed providers reach the converter.
 Small Unicode pages retain their pixels with cell padding where Java's
 ascent constraint exceeds the original height.
+
+Leave U+0020 to the existing Java space provider in both ASCII and Unicode
+output. Java 26.3 gives an empty bitmap cell a one-unit advance, so importing
+the blank atlas space would narrow text across menus and chat.
+
+Read image dimensions before decoding and bound padded atlas dimensions
+before allocation. Include bitmap pages in the font file budget without
+displacing valid TrueType families or the final Unicode pages.
 ---
  build.gradle                                  |   11 +
  .../api/model/NativeContainerAction.java      |   93 +
@@ -319,7 +326,7 @@ ascent constraint exceeds the original height.
  .../api/resourcepack/ui/ServerFormUi.java     |  253 +++
  .../resourcepack/ui/UiAsepriteMetadata.java   |   95 ++
  .../api/resourcepack/ui/UiBindings.java       |   43 +
- .../api/resourcepack/ui/UiBitmapFonts.java    |  199 +++
+ .../api/resourcepack/ui/UiBitmapFonts.java    |  226 +++
  .../api/resourcepack/ui/UiExpression.java     |  308 ++++
  .../api/resourcepack/ui/UiFonts.java          |  247 +++
  .../api/resourcepack/ui/UiTextures.java       |   94 ++
@@ -362,12 +369,12 @@ ascent constraint exceeds the original height.
  .../ui/ServerFormUiSliderStateTest.java       |  126 ++
  .../api/resourcepack/ui/ServerFormUiTest.java |  427 +++++
  .../ui/UiAsepriteMetadataTest.java            |  112 ++
- .../resourcepack/ui/UiBitmapFontsTest.java    |  174 ++
+ .../resourcepack/ui/UiBitmapFontsTest.java    |  190 +++
  .../api/resourcepack/ui/UiExpressionTest.java |   68 +
  .../api/resourcepack/ui/UiFontsTest.java      |  192 +++
  .../api/resourcepack/ui/UiTexturesTest.java   |  175 ++
  .../generator/SearchUnicodeDataGenerator.java |  126 ++
- 86 files changed, 13351 insertions(+), 59 deletions(-)
+ 86 files changed, 13394 insertions(+), 59 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
@@ -3637,7 +3644,7 @@ index 000000000..4f11b0d3f
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 000000000..00437cf3d
+index 000000000..09d3eae81
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 @@ -0,0 +1,1502 @@
@@ -3726,7 +3733,7 @@ index 000000000..00437cf3d
 +            final Map<String, byte[]> fontFiles = new LinkedHashMap<>();
 +            for (final String path : pack.content().getFilesDeep("font/", "")) {
 +                final byte[] bytes = pack.content().get(path);
-+                if (safePath(path) && bytes != null && bytes.length <= 16 * MAX_FILE_BYTES && fontFiles.size() < 256) {
++                if (safePath(path) && bytes != null && bytes.length <= 16 * MAX_FILE_BYTES && fontFiles.size() < 1024) {
 +                    fontFiles.put(path, bytes);
 +                }
 +            }
@@ -7136,10 +7143,10 @@ index 000000000..ded11b88e
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBitmapFonts.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBitmapFonts.java
 new file mode 100644
-index 000000000..1e14b9f4a
+index 000000000..f4fda847d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBitmapFonts.java
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,226 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7159,6 +7166,7 @@ index 000000000..1e14b9f4a
 +import java.util.LinkedHashMap;
 +import java.util.Map;
 +import javax.imageio.ImageIO;
++import javax.imageio.stream.MemoryCacheImageInputStream;
 +
 +/** Each selected atlas retains the layout supplied by its own resource pack. */
 +final class UiBitmapFonts {
@@ -7200,7 +7208,7 @@ index 000000000..1e14b9f4a
 +                    return;
 +                }
 +                try {
-+                    final BufferedImage source = ImageIO.read(new ByteArrayInputStream(atlas.bytes()));
++                    final BufferedImage source = image(atlas.bytes());
 +                    if (source == null || source.getWidth() < 128 || source.getWidth() > 4096
 +                            || source.getWidth() % 128 != 0 || source.getHeight() > 4096) {
 +                        return;
@@ -7213,7 +7221,11 @@ index 000000000..1e14b9f4a
 +                    }
 +                    // Java divides the entire image by its character grid. Remove native atlas padding.
 +                    final int renderHeight = Math.max(atlas.layout().height(), 7 - atlas.layout().offset());
-+                    final BufferedImage image = new BufferedImage(source.getWidth(), rows * renderHeight * scale, BufferedImage.TYPE_INT_ARGB);
++                    final int outputHeight = rows * renderHeight * scale;
++                    if (outputHeight > 4096) {
++                        return;
++                    }
++                    final BufferedImage image = new BufferedImage(source.getWidth(), outputHeight, BufferedImage.TYPE_INT_ARGB);
 +                    for (int row = 0; row < rows; row++) {
 +                        final int[] pixels = source.getRGB(0, row * cellHeight, source.getWidth(), cellHeight, null, 0, source.getWidth());
 +                        image.setRGB(0, row * renderHeight * scale, source.getWidth(), cellHeight, pixels, 0, source.getWidth());
@@ -7234,7 +7246,9 @@ index 000000000..1e14b9f4a
 +                        final StringBuilder characters = new StringBuilder(COLUMNS);
 +                        for (int column = 0; column < COLUMNS; column++) {
 +                            final int index = first + row * COLUMNS + column;
-+                            characters.append(index < mapping.length() ? mapping.charAt(index) : '\0');
++                            // Java's empty bitmap cell advances one unit. Retain its existing space provider.
++                            final char character = index < mapping.length() ? mapping.charAt(index) : '\0';
++                            characters.append(character == ' ' ? '\0' : character);
 +                        }
 +                        chars.add(characters.toString());
 +                    }
@@ -7247,7 +7261,7 @@ index 000000000..1e14b9f4a
 +            if (family.equals("default8")) {
 +                this.unicode.forEach((path, bytes) -> {
 +                    try {
-+                        final BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
++                        final BufferedImage image = image(bytes);
 +                        if (image == null || image.getHeight() < 16 || image.getHeight() > 4096 || image.getWidth() < 16 || image.getWidth() > 4096
 +                                || image.getWidth() % COLUMNS != 0 || image.getHeight() % COLUMNS != 0) {
 +                            return;
@@ -7278,7 +7292,8 @@ index 000000000..1e14b9f4a
 +                        for (int row = 0; row < COLUMNS; row++) {
 +                            final StringBuilder characters = new StringBuilder(COLUMNS);
 +                            for (int column = 0; column < COLUMNS; column++) {
-+                                characters.append((char) (page * 256 + row * COLUMNS + column));
++                                final int character = page * 256 + row * COLUMNS + column;
++                                characters.append(character == ' ' ? '\0' : (char) character);
 +                            }
 +                            chars.add(characters.toString());
 +                        }
@@ -7297,6 +7312,25 @@ index 000000000..1e14b9f4a
 +            }
 +        }
 +        return Collections.unmodifiableMap(result);
++    }
++
++    private static BufferedImage image(final byte[] bytes) throws IOException {
++        try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
++            final var readers = ImageIO.getImageReaders(input);
++            if (!readers.hasNext()) {
++                return null;
++            }
++            final var reader = readers.next();
++            try {
++                reader.setInput(input, true, true);
++                // Bound dimensions before allocation, including highly compressed optional atlases.
++                final int width = reader.getWidth(0);
++                final int height = reader.getHeight(0);
++                return width > 0 && width <= 4096 && height > 0 && height <= 4096 ? reader.read(0) : null;
++            } finally {
++                reader.dispose();
++            }
++        }
 +    }
 +
 +    private static Layout layout(final byte[] metadata) {
@@ -7655,7 +7689,7 @@ index 000000000..e243e4b7d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFonts.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFonts.java
 new file mode 100644
-index 000000000..827b64845
+index 000000000..7a06985bb
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFonts.java
 @@ -0,0 +1,247 @@
@@ -7680,7 +7714,7 @@ index 000000000..827b64845
 +import java.util.LinkedHashMap;
 +import java.util.Map;
 +
-+/** Acquired native TTF families keep their case-sensitive metadata names and metric units. */
++/** Acquired native fonts retain case-sensitive families and pack-local bitmap metadata. */
 +final class UiFonts {
 +
 +    // The native TrueTypeFont display transform scales both glyph axes after cache normalization.
@@ -14477,10 +14511,10 @@ index 000000000..f191690a6
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBitmapFontsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBitmapFontsTest.java
 new file mode 100644
-index 000000000..ed8329983
+index 000000000..c9777cdd2
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBitmapFontsTest.java
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,190 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -14497,6 +14531,7 @@ index 000000000..ed8329983
 +import java.io.IOException;
 +import java.nio.charset.StandardCharsets;
 +import java.util.Map;
++import java.util.zip.CRC32;
 +import javax.imageio.ImageIO;
 +import org.junit.jupiter.api.Test;
 +import static org.junit.jupiter.api.Assertions.*;
@@ -14522,7 +14557,8 @@ index 000000000..ed8329983
 +            assertEquals(0xFF12AB34, image.getRGB(127, 119));
 +            assertEquals(10, provider.getAsJsonArray("chars").size());
 +        }
-+        assertEquals(32, codePoint(providers, 0, 32));
++        // The existing space provider supplies its advance, not the one-unit empty bitmap cell.
++        assertEquals(0, codePoint(providers, 0, 32));
 +        assertEquals(0x00C0, codePoint(providers, 0, 0));
 +        assertEquals(0x00E1, codePoint(providers, 1, 0));
 +        assertEquals(0x041B, codePoint(providers, 2, 0));
@@ -14587,14 +14623,17 @@ index 000000000..ed8329983
 +    @Test
 +    void retainsUpperUnicodePagesAfterAsciiProvidersIncludingTheLastBmpPage() throws IOException {
 +        final UiBitmapFonts fonts = new UiBitmapFonts();
-+        fonts.load(Map.of("font/default8.png", atlas(1, 0xFFABCDEF), "font/glyph_FF.png", atlas(2, 0xFF123456)));
++        fonts.load(Map.of("font/default8.png", atlas(1, 0xFFABCDEF), "font/glyph_FF.png", atlas(2, 0xFF123456), "font/glyph_00.png", atlas(1, 0)));
 +        fonts.load(Map.of("font/glyph_FF.png", atlas(1, 0xFF654321)));
 +        final Map<String, byte[]> resources = fonts.resources();
 +        final JsonArray providers = providers(resources);
-+        assertEquals(2, providers.size());
-+        final JsonObject unicode = providers.get(1).getAsJsonObject();
-+        assertEquals(0xFF00, codePoint(providers, 1, 0));
-+        assertEquals(0xFFFF, codePoint(providers, 1, 255));
++        assertEquals(3, providers.size());
++        final int lastPage = java.util.stream.IntStream.range(1, providers.size())
++                .filter(page -> codePoint(providers, page, 0) == 0xFF00).findFirst().orElseThrow();
++        final int firstPage = lastPage == 1 ? 2 : 1;
++        assertEquals(0, codePoint(providers, firstPage, 32));
++        final JsonObject unicode = providers.get(lastPage).getAsJsonObject();
++        assertEquals(0xFFFF, codePoint(providers, lastPage, 255));
 +        assertEquals(0xFF654321, image(resources, unicode).getRGB(0, 0));
 +        assertEquals(9, unicode.get("height").getAsInt());
 +        assertEquals(9, unicode.get("ascent").getAsInt());
@@ -14610,8 +14649,19 @@ index 000000000..ed8329983
 +            fonts.load(Map.of("font/default8.json", metadata(true, height, null), "font/default8.png", atlas(1, 0xFFFFFFFF)));
 +            assertEquals(8, providers(fonts.resources()).get(0).getAsJsonObject().get("height").getAsInt());
 +        }
++        final byte[] oversized = atlas(1, 0xFFFFFFFF);
++        java.nio.ByteBuffer.wrap(oversized).putInt(16, 50000);
++        final var checksum = new CRC32();
++        checksum.update(oversized, 12, 17);
++        java.nio.ByteBuffer.wrap(oversized).putInt(29, (int) checksum.getValue());
++        for (final byte[] unusable : new byte[][] {new byte[] {1, 2, 3}, oversized}) {
++            final UiBitmapFonts rejected = new UiBitmapFonts();
++            rejected.load(Map.of("font/default8.png", unusable));
++            assertTrue(rejected.resources().isEmpty());
++        }
 +        final UiBitmapFonts fonts = new UiBitmapFonts();
-+        fonts.load(Map.of("font/default8.png", new byte[] {1, 2, 3}, "font/ascii_sga.png", atlas(1, 0xFFFFFFFF)));
++        fonts.load(Map.of("font/default8.json", metadata(false, 1, -128),
++                "font/default8.png", atlas(1, 0xFFFFFFFF), "font/ascii_sga.png", atlas(1, 0xFFFFFFFF)));
 +        assertFalse(fonts.resources().containsKey("assets/minecraft/font/default.json"));
 +        assertTrue(fonts.resources().containsKey("assets/minecraft/font/alt.json"));
 +    }
