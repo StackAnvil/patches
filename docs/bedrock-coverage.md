@@ -12025,3 +12025,32 @@ Licensed samples, authored fixtures, PCM, packet journals, and client profiles r
 These comparisons establish sample identity, the tested pack priority across formats, and removal of server overrides.
 They do not establish equal gain, attenuation, captions, looping, or broader mixing behavior.
 Complete pose alignment, font sampling, skins, and the remaining movement/rendering comparisons remain open.
+
+## Classic custom skin armor comparison, October 28, 2026
+
+Matching native 1.26.60.5 and direct Java recordings show the same captured classic custom skin on a controlled remote player.
+Both clients receive the same geometry, texture, player identity, position, and equipment descriptors through a private relay.
+Seven phases cover no armor, each armor slot separately, all armor, and removal of all armor.
+
+The helmet covers the floating hat. Chest armor covers the upper jacket and shoulder projections while the lower cuffs remain visible.
+Leggings cover the belt and leg straps; boots cover the orange footwear while upper leg details remain visible.
+Both clients restore the original visible skin layers after removal.
+This fixture shows matching coverage and does not justify a renderer correction.
+
+The clients use different output resolutions and apparent target sizes. Their body yaw also differs.
+These captures establish visible coverage for this classic geometry, not pixel equality or natural movement parity.
+Character Creator categories, profile replacement, and native LOD texture selection remain open.
+Licensed skin data, images, and sealed packet journals remain private.
+
+## Complete 26.60 HUD inventory snapshots, October 28, 2026
+
+BDS 1.26.60.6 sends 57 entries for HUD container 124. The older protocol-2193 fixture sends 54.
+The version patch now accepts the complete update instead of rejecting it.
+A regression retains every slot and accepts later updates to the appended slots.
+The existing cursor snapshot fixture now uses the current count. Armor handling stays unchanged.
+
+The standalone patch passes all 22 tests and checkstyle without setup.
+The full core suite reports 2,057 tests with 176 optional skips; the add-on reports 1,293 with 145 optional skips.
+Neither suite reports failures or errors. CubeConverter passes all 21 tests.
+The rebuilt add-on embeds the same HUD class as the rebuilt core, and the bundle rebuilds successfully.
+A fresh direct Java recording reaches gameplay, receives all 57 entries without a HUD rejection, and exits normally.

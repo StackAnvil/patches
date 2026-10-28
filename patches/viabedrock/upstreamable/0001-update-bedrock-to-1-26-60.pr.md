@@ -87,3 +87,6 @@ Fresh validation passes after the capacity correction:
 - The standalone patch applies without setup and passes all 22 tests and checkstyle.
 - The complete core stack reports 2,057 tests, 176 optional skips, and no failures or errors.
 - CubeConverter passes all 21 tests. The modpack bundle rebuilds successfully.
+
+The rebuilt add-on embeds the corrected core class. A fresh direct recording receives all 57 entries without a HUD rejection and exits normally.
+The add-on suite reports 1,293 tests, 145 optional skips, and no failures or errors.

@@ -833,3 +833,19 @@ r5.9.3 with the rebuilt add-on. The native tint and ordinary controls both
 render. The recording reaches spawn and exits normally without missing
 native pipeline overrides or shader compilation errors. This establishes
 runtime admission and binding, with pack-defined lighting still in effect.
+
+## Classic custom skin armor comparison, October 28, 2026
+
+Matching native 1.26.60.5 and direct Java recordings show the same captured classic custom skin on a controlled remote player.
+Both clients receive the same geometry, texture, player identity, position, and equipment descriptors through a private relay.
+Seven phases cover no armor, each armor slot separately, all armor, and removal of all armor.
+
+The helmet covers the floating hat. Chest armor covers the upper jacket and shoulder projections while the lower cuffs remain visible.
+Leggings cover the belt and leg straps; boots cover the orange footwear while upper leg details remain visible.
+Both clients restore the original visible skin layers after removal.
+This fixture shows matching coverage and does not justify a renderer correction.
+
+The clients use different output resolutions and apparent target sizes. Their body yaw also differs.
+These captures establish visible coverage for this classic geometry, not pixel equality or natural movement parity.
+Character Creator categories, profile replacement, and native LOD texture selection remain open.
+Licensed skin data, images, and sealed packet journals remain private.
