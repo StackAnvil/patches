@@ -224,7 +224,9 @@ The 26.60 audit above supplies the starting evidence, not completion evidence.
   vanilla text and a legacy custom atlas with no layout metadata.
   Sixteen legacy-atlas labels now match native glyph positions and pixel masks
   across four font sizes and quarter-unit offsets at GUI scale 2.
-  Extended-font origins and other viewport scales still need comparison.
+  Current extended-font labels also match at scale 2. Two half-size Unicode
+  labels still differ. Scale-1 controls retain small-label and normal-size
+  Unicode sampling differences, so the font area remains open.
 - [ ] **Skins:** compare clothing beneath equipped armor and texture changes
   after profile selection. Cover each affected armor slot, unequip, profile
   replacement, and native LOD selection with matching visual fixtures.

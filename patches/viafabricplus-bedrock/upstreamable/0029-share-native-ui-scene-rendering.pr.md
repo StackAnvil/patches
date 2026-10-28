@@ -529,3 +529,22 @@ The fresh bundle contains the corrected origin implementation.
 This result covers unshadowed legacy bitmap labels at the stated scale.
 Extended-font origins, other viewport scales, and TrueType pixel comparisons remain open.
 Licensed atlases, captures, packet journals, and image hashes remain private.
+
+### Extended-font and cross-scale follow-up
+
+A pack without font overrides supplies eight current extended-font labels and eight whole-label Unicode fallback labels.
+At native UI scale 2 and 1280 × 720, fourteen label bounds and pixel masks match.
+All extended-font labels match; two half-size Unicode labels retain a horizontal sampling difference.
+
+At scale 1, ten labels match.
+Small labels and normal-size Unicode fallback still differ.
+The native window is 1280 × 720 with GUI offset -1; Java uses 854 × 480 and automatic native scale 1.
+The comparison uses fixed top-left glyphs and makes no whole-frame or world-pose claim.
+Toast-obscured frames and an ignored native resize are excluded.
+
+A private UV candidate passes all sixteen scale-2 labels but leaves the cross-scale rule unresolved.
+It is excluded from this patch and the restored bundle.
+The native glyph writer's edge coordinates alone do not close the rasterization comparison.
+The copied native profile is restored after the controls.
+Both accepted Java comparison recordings finish normally.
+The bitmap-font area stays open.

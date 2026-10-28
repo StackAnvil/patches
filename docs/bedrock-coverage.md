@@ -12105,3 +12105,31 @@ The reference covers unshadowed legacy bitmap labels at the stated scale.
 Extended-font origins, other viewport scales, and TrueType pixel comparisons remain open.
 Native LOD selection remains a separate open skin requirement.
 Licensed assets and raw evidence remain private.
+
+
+## Extended bitmap and Unicode sampling limits, October 28, 2026
+
+A second sixteen-label fixture removes the legacy atlas override and uses the current vanilla font resources.
+Eight labels use `AÀΩ`; eight use `AἀA` to select whole-label Unicode fallback.
+Each text spans four font sizes and two fractional positions.
+The official client is 1.26.60.5, with protocol 2225 and BDS 1.26.60.6.
+
+At native UI scale 2 and 1280 × 720, the accepted add-on matches fourteen label bounds and pixel masks.
+All eight extended-font labels match.
+The two half-size Unicode labels retain a horizontal sampling difference.
+Normal, large, and extra-large Unicode labels match.
+
+At native UI scale 1, ten of sixteen labels match.
+Small labels and normal-size Unicode fallback retain sampling differences.
+The native capture uses 1280 × 720 with GUI offset -1; Java uses 854 × 480 with automatic native scale 1.
+Only fixed top-left label glyphs are compared across these window sizes.
+The comparison covers neither whole frames nor world poses.
+A toast-obscured Java frame and an ignored native window-resize attempt are excluded.
+
+The native Unicode glyph writer starts UVs at the cell edge and insets the upper edge.
+An experimental sampling change matches all sixteen scale-2 labels but leaves the scale-1 differences unresolved.
+That candidate remains private and is excluded from the patch stack and restored bundle.
+Further work must trace the scale-dependent rasterization before changing the shared sampling rule.
+The accepted legacy-atlas position fix remains covered by its sixteen matching scale-2 controls.
+Both accepted Java comparison recordings finish normally.
+Bitmap-font acceptance remains open.
