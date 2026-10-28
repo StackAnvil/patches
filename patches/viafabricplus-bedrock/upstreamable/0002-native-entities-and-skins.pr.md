@@ -849,3 +849,21 @@ The clients use different output resolutions and apparent target sizes. Their bo
 These captures establish visible coverage for this classic geometry, not pixel equality or natural movement parity.
 Character Creator categories, profile replacement, and native LOD texture selection remain open.
 Licensed skin data, images, and sealed packet journals remain private.
+
+## Named clothing layers beneath armor, October 28, 2026
+
+A captured classic custom model now has eleven private colored markers on the native clothing bones.
+The markers sit outside armor geometry, so their disappearance establishes hiding rather than opaque coverage.
+Native 1.26.60.5 and direct Java match all 77 bone/state conditions across seven equipment phases.
+
+Head armor hides `helmet`. Chest armor hides `bodyArmor` and both arm armor bones.
+Leggings hide both legging bones; boots hide both boot bones.
+Either leggings or boots hide both sock bones. Either chest armor or leggings hide `belt`.
+All markers disappear with full armor, and removal restores every marker.
+These results agree with the shipped armor `parent_setup` scripts and player render-controller conditions.
+The existing shared runtime supplies this behavior; this comparison requires no renderer correction.
+
+The journals contain matching serialized skins. The Java recorder confirms 2,243 submissions through `BedrockPlayerRenderer` and no rejected skins.
+The recording reaches gameplay and exits normally. Licensed skin data and images remain private.
+Different resolutions, apparent sizes, and body yaw limit pixel comparisons.
+The synthetic persona markers never established a visible unarmored baseline, so they supply no persona masking acceptance.

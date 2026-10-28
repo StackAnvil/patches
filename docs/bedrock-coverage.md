@@ -12054,3 +12054,29 @@ The full core suite reports 2,057 tests with 176 optional skips; the add-on repo
 Neither suite reports failures or errors. CubeConverter passes all 21 tests.
 The rebuilt add-on embeds the same HUD class as the rebuilt core, and the bundle rebuilds successfully.
 A fresh direct Java recording reaches gameplay, receives all 57 entries without a HUD rejection, and exits normally.
+
+## Native clothing-layer and default persona controls, October 28, 2026
+
+Eleven colored markers extend beyond a classic custom model's armor bounds.
+Native and direct Java match all 77 visibility conditions across no armor, each slot, full armor, and removal.
+The markers establish actual hiding, including the combined sock and belt conditions.
+The existing armor `parent_setup` scripts and player render-controller rules produce the matching result.
+The Java recorder confirms 2,243 native player renderer submissions, matching serialized skin data, and no rejected skins.
+Its 90-second recording exits normally.
+
+Default Alex and Steve use production-assembled 26.60 assets and distinct recipe hashes.
+Native and direct Java show Alex/Steve/Alex at 5, 20, and 40 blocks, then replace the near texture correctly.
+Pixel measurements distinguish green and cyan shirts at each distance.
+The recorder confirms 6,948 native player renderer submissions and matching installed skin hashes.
+Its 300-second recording exits normally. Seven armor phases also show matching coverage and restoration.
+These default coverage images alone do not establish individual clothing-layer hiding.
+
+No runtime correction follows from the passing cases.
+The custom persona marker attempts never supplied a visible unarmored baseline, so their masking result remains unproven.
+Native LOD selection and texture bindings also remain unverified.
+Different resolutions, apparent sizes, and body yaw limit frame comparisons.
+The original native options file remains unchanged; test clients and relays stop after recording.
+Licensed assets, skin data, images, and journals remain private.
+
+The [classic skin notes](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#named-clothing-layers-beneath-armor-october-28-2026)
+and [persona notes](../patches/viafabricplus-bedrock/upstreamable/0006-render-character-creator-geometry-and-face-animations.pr.md#default-persona-replacement-in-2660-october-28-2026) retain the scope and remaining limits.

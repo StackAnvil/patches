@@ -227,7 +227,9 @@ The 26.60 audit above supplies the starting evidence, not completion evidence.
   replacement, and native LOD selection with matching visual fixtures.
   Native and direct Java captures now show matching visible armor coverage
   and restoration across seven phases for one classic custom geometry.
-  Character Creator categories and profile/LOD changes remain unverified.
+  Eleven classic clothing-bone markers now match all 77 armor visibility conditions.
+  Default Alex/Steve replacement also matches at 5, 20, and 40 blocks.
+  Native LOD selection and a valid custom persona geometry baseline remain unverified.
 - [ ] **Movement and rendering:** compare falls at water/solid boundaries,
   dragon-dependent fog, combined blindness/night vision, and block/entity
   picking. Trace the responsible client or server path before changing it.
