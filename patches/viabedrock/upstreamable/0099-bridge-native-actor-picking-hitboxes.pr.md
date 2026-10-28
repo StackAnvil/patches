@@ -25,6 +25,23 @@ part dimensions separately for clients that support both native actor and
 picking capabilities; ordinary Java retains enclosing Interaction widths.
 Invalid or missing data never creates a guessed native picking rectangle.
 
+Ordinary entity clicks use the displayed Java base position before conversion
+to Bedrock world coordinates. Bedrock's boat hull and player eye origins
+must not shift the target-relative Java hit.
+Two regression tests cover boat movement and player origins.
+The existing proxy test retains the separate alias origin.
+
+Matching protocol 2225 captures use native 1.26.60.5 and BDS 1.26.60.6.
+A boat interaction at player position (-497.5, 64, -115.5), yaw 0 and pitch 30,
+hits native Y64.555. The old Java conversion reports Y64.93747.
+The correction removes the 0.375 hull-origin offset.
+A separate difference of approximately 0.0075 remains in the picked hull surface.
+This comparison does not establish exact hull geometry parity or attack hit positions.
+Fresh direct and ViaProxy recordings report corrected Y64.56247 and receive
+the server's boarding acknowledgment. Both recordings finish without a packet failure.
+The complete core suite passes 2,054 tests, with 176 optional skips.
+The focused interaction suite passes all ten tests.
+
 
 Validation: replay the complete stack and run metadata, property index, pose, hitbox and interaction tests. Upstream PR #456 supplies the metadata foundation; closed PR #327 is not an active owner.
 

@@ -1,4 +1,4 @@
-From d9788dd87abaf1d0f39b531ad9bf720d1709cdbd Mon Sep 17 00:00:00 2001
+From 921d995fdeaa14fce5f65608c5a2c56e0f26cd98 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(entities): bridge authoritative native picking hitboxes
@@ -27,18 +27,27 @@ preserving the target-relative click position. Negotiate exact rectangular
 part dimensions separately for clients that support both native actor and
 picking capabilities; ordinary Java retains enclosing Interaction widths.
 Invalid or missing data never creates a guessed native picking rectangle.
+
+Ordinary Java entity hits are relative to the displayed entity base, not
+Bedrock's actor origin. Convert them through javaPosition so boats and
+players do not add their hull/eye offsets to outgoing world hits.
+Protocol 2225 captures from native 1.26.60.5 and BDS 1.26.60.6 show a boat
+hit at Y64.555, while the old Java path reports Y64.93747. Removing the
+0.375 origin offset leaves a separate hull-picking difference of about
+0.0075; this change does not establish exact hull geometry parity.
+Regression tests cover boat movement, player origins, and proxy aliases.
 ---
  .../api/model/NativeActorHitboxes.java        |  91 ++++++
- .../api/model/NativeActorPickingMessage.java  | 111 ++++++++
+ .../api/model/NativeActorPickingMessage.java  | 111 +++++++
  .../viabedrock/api/model/entity/Entity.java   |  13 +
  .../protocol/packet/ClientPlayerPackets.java  |   2 +-
  .../protocol/packet/MultiStatePackets.java    |   6 +
  .../protocol/storage/EntityTracker.java       |  74 +++++
- .../storage/InteractionHitboxProxies.java     | 171 ++++++++++++
+ .../storage/InteractionHitboxProxies.java     | 171 +++++++++++
  .../api/model/NativeActorHitboxesTest.java    | 101 +++++++
- .../model/NativeActorPickingMessageTest.java  |  79 ++++++
- .../storage/InteractionHitboxProxiesTest.java | 258 ++++++++++++++++++
- 10 files changed, 905 insertions(+), 1 deletion(-)
+ .../model/NativeActorPickingMessageTest.java  |  79 +++++
+ .../storage/InteractionHitboxProxiesTest.java | 286 ++++++++++++++++++
+ 10 files changed, 933 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxies.java
@@ -306,10 +315,10 @@ index 4f04f8619..136dfb3ed 100644
  
      public final NativeActorMessage.Snapshot nativeActorSnapshot() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index e4b65084e..abe574edb 100644
+index 71d436b50..b45af43c9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-@@ -565,7 +565,7 @@ public final class ClientPlayerPackets {
+@@ -592,7 +592,7 @@ public final class ClientPlayerPackets {
              wrapper.write(wrapper.user().get(ItemRewriter.class).newItemType(), inventoryContainer.getSelectedHotbarItem()); // held item
              wrapper.write(BedrockTypes.POSITION_3F, entityTracker.getClientPlayer().position()); // player position
              final Vector3d location = wrapper.read(Types.LOW_PRECISION_VECTOR); // location
@@ -319,7 +328,7 @@ index e4b65084e..abe574edb 100644
          });
          protocol.registerServerbound(ServerboundPackets26_3.MOVE_PLAYER_STATUS_ONLY, null, wrapper -> {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index d4d77f843..4c741fa2f 100644
+index 1cacdb359..dd71079b7 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 @@ -50,6 +50,7 @@ import net.raphimc.viabedrock.api.model.EmoteAction;
@@ -330,7 +339,7 @@ index d4d77f843..4c741fa2f 100644
  import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
  import net.raphimc.viabedrock.api.model.PlayerInput;
  import net.raphimc.viabedrock.api.model.PlayerPrediction;
-@@ -262,6 +263,7 @@ public final class MultiStatePackets {
+@@ -264,6 +265,7 @@ public final class MultiStatePackets {
              if (NativeActorMessage.hasStateChannel(channels::contains)
                      && wrapper.user().has(EntityTracker.class)) {
                  wrapper.user().get(EntityTracker.class).sendNativeActorSnapshots();
@@ -338,7 +347,7 @@ index d4d77f843..4c741fa2f 100644
              }
              return;
          }
-@@ -317,6 +319,10 @@ public final class MultiStatePackets {
+@@ -319,6 +321,10 @@ public final class MultiStatePackets {
                      || channels.contains(ActorSpatialCommand.CHANNEL)) && wrapper.user().has(EntityTracker.class)) {
                  wrapper.user().get(EntityTracker.class).sendNativeActorSnapshots();
              }
@@ -350,7 +359,7 @@ index d4d77f843..4c741fa2f 100644
                      && wrapper.user().has(EntityTracker.class)) {
                  wrapper.user().get(EntityTracker.class).sendNativeCustomEntitySnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-index 817633947..b9634281e 100644
+index 817633947..67ae6cfe4 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 @@ -41,6 +41,8 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
@@ -492,7 +501,7 @@ index 817633947..b9634281e 100644
 +        if (entity == null) {
 +            throw new IllegalArgumentException("Unknown interaction target");
 +        }
-+        return entity.position().add((float) relative.x(), (float) relative.y(), (float) relative.z());
++        return entity.javaPosition().add((float) relative.x(), (float) relative.y(), (float) relative.z());
 +    }
 +
      public ItemFrame getItemFrameByJid(final int javaId) {
@@ -869,10 +878,10 @@ index 000000000..5f5c2427e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java
 new file mode 100644
-index 000000000..dab32713b
+index 000000000..34ce4d40a
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,286 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -888,6 +897,8 @@ index 000000000..dab32713b
 +import net.raphimc.viabedrock.api.model.NativeActorPickingMessage;
 +import com.viaversion.viaversion.api.protocol.packet.State;
 +import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.api.model.entity.BoatEntity;
++import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
 +import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
@@ -1005,6 +1016,32 @@ index 000000000..dab32713b
 +        tracker.removeEntity(actor);
 +        assertNull(tracker.getEntityByJid(alias.javaId()));
 +        assertNull(proxies.alias(alias.javaId()));
++    }
++
++    @Test
++    void ordinaryBoatHitUsesTheDisplayedHullOriginAfterMovement() {
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
++        final var tracker = new EntityTracker(user);
++        final var boat = tracker.addEntity(new BoatEntity(user, 7, 42, "minecraft:boat",
++                tracker.getNextJavaEntityId(), UUID.randomUUID(), EntityTypes26_3.OAK_BOAT), false);
++        boat.setPosition(new Position3f(-497.5F, 64.375F, -113.5F));
++        final var relative = new Vector3d(0D, .5625D, -.125D);
++        assertEquals(new Position3f(-497.5F, 64.5625F, -113.625F), tracker.interactionClickPosition(boat.javaId(), relative));
++        boat.setPosition(new Position3f(-493.5F, 65.375F, -110.5F));
++        assertEquals(new Position3f(-493.5F, 65.5625F, -110.625F), tracker.interactionClickPosition(boat.javaId(), relative));
++    }
++
++    @Test
++    void ordinaryPlayerHitUsesFeetInsteadOfTheBedrockEyeOrigin() {
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
++        final var tracker = new EntityTracker(user);
++        final var player = tracker.addEntity(new PlayerEntity(user, 42, tracker.getNextJavaEntityId(), UUID.randomUUID(),
++                new PlayerAbilities(7, (byte) 0, (byte) 0, new HashMap<>())), false);
++        player.setPosition(new Position3f(10F, 65.62001F, 30F));
++        assertEquals(new Position3f(10.25F, 65F, 29.75F),
++                tracker.interactionClickPosition(player.javaId(), new Vector3d(.25D, 1D, -.25D)));
 +    }
 +
 +    @Test

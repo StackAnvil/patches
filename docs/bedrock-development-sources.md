@@ -172,15 +172,21 @@ Player and persona controller assets do not establish the engine's new armor mas
    Account replacement and native LOD texture selection need visual fixtures.
    Updated assets alone do not prove these engine fixes work here.
 5. **Verify movement and rendering boundaries.**
-   Falls at water/solid boundaries still need native movement traces.
-   Dragon-dependent fog distances, combined blindness/night vision, and changed
-   block picking need visual or native checks.
+   Native and direct Java Survival captures now cover falls onto solid ground, both sides of a water boundary, and fully inside water.
+   Both take landing damage while the body overlaps the solid block, including when the center is over water.
+   The water control takes no landing damage. These cases do not establish complete movement parity.
+   Native recordings show the sky fading back during blindness's final second while night vision remains active.
+   The matching Java recording instead jumps to bright fog during that second. The color calculation still needs correction.
+   Dragon-dependent fog distances and changed block picking still need focused native checks.
    Existing lightmap and collision code cannot establish those fixes by itself.
    A live actor-picking fixture exposed missing hand fields in actor-use transactions and the explicit attack swing.
    The protocol patch now supplies both fields and shares outgoing swings through one factory.
    Native boat interaction and attack captures establish field order.
    Fresh direct and ViaProxy recordings confirm boarding and the native hurt countdown, without malformed-packet disconnects.
-   A matching boat hit-point comparison also exposes a vertical difference that still needs investigation.
+   Boat and player clicks now use the displayed Java base before conversion to Bedrock world coordinates.
+   The native boat comparison identified a 0.375 hull-origin error in the old conversion.
+   A separate hull-surface difference of approximately 0.0075 remains under investigation.
+   Fresh direct and ViaProxy recordings confirm the corrected world hit and receive the boarding acknowledgment.
 6. **Complete remaining content features.**
    Item-component custom swing, use-start, and durability sounds have no matching
    component consumer in the current item path.
