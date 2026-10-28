@@ -176,8 +176,12 @@ Player and persona controller assets do not establish the engine's new armor mas
    Both take landing damage while the body overlaps the solid block, including when the center is over water.
    The water control takes no landing damage. These cases do not establish complete movement parity.
    Native recordings show the sky fading back during blindness's final second while night vision remains active.
-   The matching Java recording instead jumps to bright fog during that second. The color calculation still needs correction.
+   Java normalized already dimmed RGB and jumped to bright fog on the first nonzero frame.
+   The add-on now applies that dimming after night-vision normalization for Overworld air fog.
+   Fresh direct Java and ViaProxy day/night controls fade gradually and preserve immediate restoration after forced cancellation.
+   Native night fog brightness and the precise fade curve still differ.
    Dragon-dependent fog distances and changed block picking still need focused native checks.
+   Core currently cancels `PLAYER_FOG`, so fog commands also need a native stack consumer before the dragon comparison can pass.
    Existing lightmap and collision code cannot establish those fixes by itself.
    A live actor-picking fixture exposed missing hand fields in actor-use transactions and the explicit attack swing.
    The protocol patch now supplies both fields and shares outgoing swings through one factory.

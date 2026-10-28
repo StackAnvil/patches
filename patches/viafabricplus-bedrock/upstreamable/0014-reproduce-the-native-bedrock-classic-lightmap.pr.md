@@ -26,6 +26,21 @@ Complete loopback replays preserve the original Hive scene payload SHA-256. The 
 
 The corrected terrain is much closer to the official reference. The sky still differs, and held-item sampling and directional shading remain incomplete. The final Java compass color is explained by its measured block light and quad normal. A brightness gain cannot resolve these separate inputs. Native assets, decompiler output, recordings, and screenshots remain private.
 
+The 26.60 combined-vision comparison exposes a separate fog-color ordering error.
+Java normalizes RGB after blindness dimming, which cancels the fade when a channel first becomes nonzero.
+Defer that dimming until after night-vision normalization for supported Overworld air fog.
+Reuse the existing darkness factor and preserve alpha.
+Other dimensions, fog media, and the Darkness effect retain their existing paths.
+
+Five complete native 1.26.60.5 / BDS 1.26.60.6 controls cover natural blindness expiry
+with and without night vision in daylight and darkness, plus forced cancellation.
+Native restores the sky gradually during natural expiry and immediately after forced cancellation.
+Fresh direct Java and ViaProxy controls confirm that the correction removes the bright-fog jump and preserves cancellation.
+The original Java recording jumps from black to a blue value of 254 on its first visible fade frame.
+Native and corrected Java recordings begin at values from 1 through 3 instead.
+Native fog brightness and the precise fade curve still differ, especially at night.
+These results establish the ordering correction, not complete native fog parity.
+
 The final ViaProxy comparison measures the same 12,039 pixels across three aligned terrain regions. Encoded RGB errors fall from 33.9 to 6.1 on the left masonry, 41.6 to 11.6 on the castle, and 36.1 to 10.0 on the pavement. Their weighted error drops 73.7%. This is a result for those regions, not an overall pixel parity score. Pavement edge alignment is validated locally but lies outside the building feature hull. Sky gradients and clouds remain different. The separate core fog patch corrects inherited air color without claiming a complete sky port.
 
 A reload keeps the accepted metadata active during preparation. This prevents a temporary return to Java rendering or physics in ViaProxy sessions. Removal becomes effective when the replacement resources apply. Central local disconnect also clears this metadata when Minecraft removes server packs. Reconfiguration that retains those packs keeps its context. Targeted tests cover retained state during preparation, removal at apply, and stale completion after cleanup.
