@@ -67,3 +67,23 @@ BDS confirms boarding through its actor link and confirms damage through the boa
 The native fixture produces the same hurt countdown.
 The full stack passes 2,052 core tests, 1,281 add-on tests, 21 CubeConverter tests, and four ViaProxy tests.
 No suite reports failures or errors. Core skips 176 optional tests and the add-on skips 142.
+
+## Player UI inventory capacity
+
+BDS 1.26.60.6 sends 57 entries for player UI container 124.
+The sealed native protocol-2225 capture and the direct Java join agree.
+The earlier protocol-2193 fixture contains 54 entries.
+The old capacity rejected the complete update, including cursor and crafting state.
+The version patch now accepts all 57 entries and retains the existing slot projections.
+The regression covers complete-array retention and later updates to the appended slots.
+It fails before the capacity change and passes afterward.
+
+Armor container 120 already sent five entries in the older fixture.
+Its subcontainer reader retains the first four armor entries, so no armor resize belongs in this fix.
+This capacity change does not implement new UI controls or establish new slot meanings.
+
+Fresh validation passes after the capacity correction:
+
+- The standalone patch applies without setup and passes all 22 tests and checkstyle.
+- The complete core stack reports 2,057 tests, 176 optional skips, and no failures or errors.
+- CubeConverter passes all 21 tests. The modpack bundle rebuilds successfully.

@@ -1,4 +1,4 @@
-From 49219ba1505fb639593996d9952b3542c39b3cdd Mon Sep 17 00:00:00 2001
+From 5931209444c6da20842410eff551af7837ad1fa4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 27 Oct 2026 19:53:57 +0100
 Subject: [PATCH] feat(protocol): update Bedrock to 1.26.60
@@ -69,11 +69,19 @@ BDS disconnect after actor interaction was repaired. Share the outgoing
 swing layout between ordinary punches, explicit attacks and later held
 use consumers so these writers cannot disagree. A protocol-2225 native
 attack payload and source/hand framing controls cover this boundary.
+
+Accept all 57 player UI inventory entries sent by BDS 1.26.60.6.
+The previous 54-entry capacity rejected the complete update, including
+cursor and crafting state. A sealed native protocol-2225 journal confirms
+the new count; the older protocol-2193 fixture contains 54 entries.
+Retain the existing slot projections and test complete-array retention
+and subsequent updates to the appended slots. Armor handling is unchanged.
 ---
  Data Asset Sources.md                         |   23 +-
  build.gradle                                  |   11 +
  .../chunk/blockstate/BlockStateUpgrader.java  |    1 +
  .../ConnectionBlockStateUpgradeSchema.java    |   51 +
+ .../model/container/player/HudContainer.java  |    2 +-
  .../api/model/entity/ClientPlayerEntity.java  |    8 +-
  .../viabedrock/netty/CompressionCodec.java    |    5 +-
  .../protocol/ActorSwingPacketFactory.java     |   39 +
@@ -143,6 +151,7 @@ attack payload and source/hand framing controls cover this boundary.
  .../resource_packs/vanilla_1.26.51.mcpack     |  Bin 676 -> 0 bytes
  .../resource_packs/vanilla_1.26.60.mcpack     |  Bin 0 -> 676 bytes
  ...ConnectionBlockStateUpgradeSchemaTest.java |   64 +
+ .../container/player/HudContainerTest.java    |   34 +
  .../netty/CompressionCodecTest.java           |   59 +
  .../protocol/ActorSwingPacketFactoryTest.java |   61 +
  .../data/JavaDimensionRegistryTest.java       |   55 +
@@ -153,7 +162,7 @@ attack payload and source/hand framing controls cover this boundary.
  .../types/model/PassengerOfBlockTypeTest.java |   69 +
  .../BedrockDataEnumGeneratorTest.java         |   73 +
  .../generator/BedrockDataEnumGenerator.java   |   55 +-
- 83 files changed, 3865 insertions(+), 431 deletions(-)
+ 85 files changed, 3900 insertions(+), 432 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/ConnectionBlockStateUpgradeSchema.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/ActorSwingPacketFactory.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/AudioContentPlaybackType.java
@@ -170,6 +179,7 @@ attack payload and source/hand framing controls cover this boundary.
  delete mode 100644 src/main/resources/assets/viabedrock/resource_packs/vanilla_1.26.51.mcpack
  create mode 100644 src/main/resources/assets/viabedrock/resource_packs/vanilla_1.26.60.mcpack
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/ConnectionBlockStateUpgradeSchemaTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/player/HudContainerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/netty/CompressionCodecTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/ActorSwingPacketFactoryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/JavaDimensionRegistryTest.java
@@ -316,6 +326,19 @@ index 000000000..03119b0e4
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/player/HudContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/player/HudContainer.java
+index 5ec975db5..5e0a3d15d 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/container/player/HudContainer.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/player/HudContainer.java
+@@ -25,7 +25,7 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ public class HudContainer extends InventoryRedirectContainer {
+ 
+     public HudContainer(final UserConnection user) {
+-        super(user, (byte) ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue(), ContainerType.HUD, 54);
++        super(user, (byte) ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue(), ContainerType.HUD, 57);
+     }
+ 
+     @Override
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 index 57e75bd5f..7ba22030f 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
@@ -26141,6 +26164,46 @@ index 000000000..ac5b91efe
 +            assertEquals(name.equals("minecraft:chorus_plant"), states.contains("minecraft:connection_down"));
 +            assertEquals((byte) 0, states.getByteTag("minecraft:connection_north").asByte());
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/player/HudContainerTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/player/HudContainerTest.java
+new file mode 100644
+index 000000000..195ea4a81
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/container/player/HudContainerTest.java
+@@ -0,0 +1,34 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container.player;
++
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class HudContainerTest {
++
++    @Test
++    void acceptsTheCompleteProtocol2225InventoryAndRetainsEverySlot() {
++        final var container = new HudContainer(null);
++        final BedrockItem[] items = BedrockItem.emptyArray(57);
++        for (final int slot : new int[]{0, 28, 29, 30, 31, 50, 54, 55, 56}) {
++            items[slot] = new BedrockItem(slot + 1, (short) 0, (byte) 3);
++        }
++        assertTrue(container.setItems(items));
++        for (int slot = 0; slot < items.length; slot++) {
++            assertSame(items[slot], container.getItem(slot));
++        }
++        for (int slot = 28; slot <= 31; slot++) {
++            assertEquals(slot - 27, container.javaSlot(slot));
++        }
++        final var replacement = new BedrockItem(42);
++        container.setItem(56, replacement);
++        assertSame(replacement, container.getItem(56));
 +    }
 +
 +}
