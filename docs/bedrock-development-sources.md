@@ -186,7 +186,7 @@ Player and persona controller assets do not establish the engine's new armor mas
    The add-on now applies that dimming after night-vision normalization for Overworld air fog.
    Fresh direct Java and ViaProxy day/night controls fade gradually and preserve immediate restoration after forced cancellation.
    Native night fog brightness and the precise fade curve still differ.
-   Dragon-dependent fog distances and changed block picking still need focused native checks.
+   Dragon-dependent fog distances now have native controls, described below. Changed block picking still needs focused native checks.
    Core currently cancels `PLAYER_FOG`, so fog commands also need a native stack consumer before the dragon comparison can pass.
    Existing lightmap and collision code cannot establish those fixes by itself.
    A live actor-picking fixture exposed missing hand fields in actor-use transactions and the explicit attack swing.
@@ -204,6 +204,39 @@ Player and persona controller assets do not establish the engine's new armor mas
    Block seating, signed audio, matchmaking UI, and environment layers remain separate gaps.
    Experimental freezing, Frostbite, and ice features require feature-specific
    evidence; generated IDs or Java fallbacks do not establish parity.
+
+### Native fog controls in 26.60
+
+Native 1.26.60.5 and BDS 1.26.60.6 use protocol 2225 for these controls.
+The client uses Fancy graphics, a 1280 × 720 window, and GUI scale 2.
+The private journal contains 32 complete `PLAYER_FOG` snapshots.
+Each payload contains an unsigned variable-length count followed by UTF-8 strings with unsigned variable-length lengths.
+Removing the final command entry sends an empty stack.
+
+In dry Overworld air, a white 16-block fog overrides a lower 128-block fog.
+A water-only entry above that air entry preserves the air result.
+A red air entry above both changes the visible air fog.
+Removing it restores the lower air entry.
+These controls establish stack priority and fallback between media. They do not establish inheritance between individual fields.
+Captures after roughly two seconds still contain transitions; the steady controls wait at least twelve seconds.
+
+The End fixture places black distance markers on a quartz floor at player foot height 65.
+With no living dragon, the 16-block fog hides the nearest marker. The 128-block control leaves it visible.
+A living dragon roughly 24 blocks away overrides the 16-block distance while the white fog color remains visible.
+Killing the dragon restores the command distance in the same view.
+The [26.60 changelog](https://feedback.minecraft.net/hc/en-us/articles/49852828563853-Minecraft-Bedrock-Edition-26-60-Changelog)
+describes this nearby-dragon override and the dead or distant cases.
+
+After a fresh connection, a living dragon roughly 345 blocks away does not override the 16-block command distance.
+Moving a previously nearby dragon 512 blocks away removes its boss bar but retains the distance override in the earlier session.
+These results distinguish connection history from distance. They do not establish the exact threshold or the rule that clears retained fog state.
+Raised-platform captures, unsettled transitions, and frames with the inactivity overlay are excluded from the distance comparison.
+The separate resource-pack override of the vanilla End fog identifier remains unverified.
+
+The Java implementation still cancels `PLAYER_FOG` and retains only fog colors from resource definitions.
+Its boss-bar packets also set all Java flags to zero.
+The native evidence therefore does not establish Java parity or justify a boss-bar-only distance rule.
+Command stack transport, distance definitions, rendering, and the distant-dragon lifecycle remain open.
 
 ## Current implementation goal
 
