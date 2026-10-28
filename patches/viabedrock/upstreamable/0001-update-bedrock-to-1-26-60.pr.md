@@ -8,8 +8,8 @@ Experimental content uses documented Java fallbacks. Block seating and signed au
 
 Validation:
 
-- The standalone patch applies and builds on pinned upstream without StackAnvil setup. Style checks, mapping validation, and 19 targeted tests pass.
-- All 103 core patches and 38 add-on patches replay. Core, add-on, CubeConverter, and ViaProxy builds pass. Relay self-tests pass.
+- The standalone patch applies and builds on pinned upstream without StackAnvil setup. Style checks, mapping validation, and 21 targeted tests pass.
+- All 104 core patches and 39 add-on patches replay. Core, add-on, CubeConverter, and ViaProxy builds pass. Relay self-tests pass.
 - Enum regeneration from the 2225 archive leaves no diff in the standalone and complete core checkouts.
 
 Earlier migration validation used official BDS 1.26.60.6.
@@ -47,3 +47,23 @@ The matching Java 26.3 client uses environment attributes for cloud height and s
 Its day timeline multiplies cloud color and preserves that zero alpha. Other authored attributes stay intact.
 
 The separate stonecutter and cursor-drag integrations depend on the deferred inventory implementation and remain outside this standalone patch.
+
+## Actor interaction hand field
+
+Protocol 2225 puts the actor transaction's hand before its held item descriptor.
+The shared codec included this field, but the direct attack and interaction writers omitted it.
+Both writers now include the main-hand byte.
+A live BDS session rejected the previous interaction packet as an invalid enum and terminated the connection.
+Native 1.26.60.5 boat interaction and attack captures confirm the field order with both empty and nonempty hands.
+The matching schemas define the same order in `ItemUseOnActorInventoryTransaction`.
+
+The explicit attack helper also omitted the trailing hand from `Animate`.
+BDS accepted the repaired interaction, then rejected the old attack swing as an invalid numeric value.
+Ordinary punches and explicit attacks now share `ActorSwingPacketFactory` with held-use swings.
+Two wire regressions compare the native attack payload and retain packet boundaries across sources and hands.
+
+Fresh direct and ViaProxy recordings complete normally after boat interaction and attack.
+BDS confirms boarding through its actor link and confirms damage through the boat's hurt countdown from nine to zero.
+The native fixture produces the same hurt countdown.
+The full stack passes 2,052 core tests, 1,281 add-on tests, 21 CubeConverter tests, and four ViaProxy tests.
+No suite reports failures or errors. Core skips 176 optional tests and the add-on skips 142.

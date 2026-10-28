@@ -20,6 +20,7 @@ The last block uses request ID zero and omits the empty use-in-air phase.
 Creative placements and ordinary interactions carry no placement delta.
 The inventory owns one even legacy ID sequence for placements and other legacy transactions, independently of odd stack requests.
 Authoritative responses correct predicted counts without duplicate equipment echoes.
+Held-use swings share the target protocol factory with ordinary punches and explicit attacks, including the required hand byte.
 
 ## Evidence and validation
 
@@ -47,7 +48,7 @@ Matching session history explains the earlier apparent correction mismatch.
 The translator preserves both authoritative outcomes.
 
 All four project builds and the modpack bundle pass.
-Core: 2,050 tests, zero failures/errors, 176 optional skips.
+Core: 2,052 tests, zero failures/errors, 176 optional skips.
 Add-on: 1,281 tests, zero failures/errors, 142 optional skips.
 CubeConverter: 21 tests. ViaProxy: four tests. Neither reports failures or errors.
 Focused tests cover held state, sequence ownership, cursor validation, use phases, inventory prediction, and independent request IDs.

@@ -164,6 +164,8 @@ Player and persona controller assets do not establish the engine's new armor mas
    Mixed-language and legacy-pack renders now match glyph shapes, sizes, and spacing.
    Native multiline and colored private-use captures verify their distinct metrics.
    A one-pixel vertical title-origin difference remains at the tested scale.
+   Fixed anchor controls also expose fractional sampling differences: normal labels sit one pixel high, while extra-large fixed-height labels sit one pixel low.
+   Fractional X positions add an extra Java ink column. These native controls reject a universal origin adjustment.
 4. **Verify skin masking and profile changes.**
    Persona assembly combines piece geometry into shared surfaces.
    The renderer does not explicitly preserve every clothing category for equipment masking.
@@ -174,6 +176,11 @@ Player and persona controller assets do not establish the engine's new armor mas
    Dragon-dependent fog distances, combined blindness/night vision, and changed
    block picking need visual or native checks.
    Existing lightmap and collision code cannot establish those fixes by itself.
+   A live actor-picking fixture exposed missing hand fields in actor-use transactions and the explicit attack swing.
+   The protocol patch now supplies both fields and shares outgoing swings through one factory.
+   Native boat interaction and attack captures establish field order.
+   Fresh direct and ViaProxy recordings confirm boarding and the native hurt countdown, without malformed-packet disconnects.
+   A matching boat hit-point comparison also exposes a vertical difference that still needs investigation.
 6. **Complete remaining content features.**
    Item-component custom swing, use-start, and durability sounds have no matching
    component consumer in the current item path.
