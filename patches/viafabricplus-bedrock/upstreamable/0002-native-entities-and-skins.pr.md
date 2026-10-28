@@ -790,3 +790,46 @@ Ordinary actor and GUI lookup still rejects glint without those inputs.
 The same cached definition supports both lookup domains without a rejected lookup hiding the held material.
 World held draws retain the Iris program and native buffer ownership verified in the preceding shader work.
 The [equipped check](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) records the tested artifact, actual enchanted shield, and remaining limits.
+
+
+## Native color-mask families, October 28, 2026
+
+ColorMask and AlphaTestColorMask now accept an explicit immutable tint for
+each prepared draw. Texture alpha controls RGB tint strength and multiplies
+output alpha. The alpha-test family discards only zero texture alpha before
+tinting. Ordinary cutout materials retain their 0.5 threshold.
+The native cat material also disables alpha writes. Preserve that state as
+an RGB-only color target and include it in the pipeline cache key.
+
+Matching 26.60 shader execution supplies 1,344 fragment controls.
+The GPU tests draw each control with RGBA and RGB-only write masks, covering
+partial alpha, zero tint alpha, overlay, lighting, fog, and depth.
+All 32 focused material, GPU, palette, and world-appearance tests pass without skips.
+These controls complement the native unlit palette and alpha-band captures.
+
+The native palette uses pure white for index zero. Missing versioned color
+context and unverified indices retain fallback. Tint combined with glint,
+emission, or masked multitexture remains unsupported. Existing GUI coverage
+keeps its separate pipeline policy. This work does not establish skin armor
+masking, Character Creator tint behavior, or native GUI tint parity.
+
+Iris receives sampled tint from the current prepared draw before binding its
+replacement program. Primary texture wrappers preserve sampler-helper
+identity and use the native source beneath pack sampler overrides.
+Source-alpha coverage remains separate from tint alpha. Nested Java draws
+and failed draws restore the previous context.
+Transformed pack and fallback programs each pass 672 original native
+fragment controls. All 38 focused tests pass without skips.
+The [coverage record](../../../docs/bedrock-coverage.md#native-actor-palette-inputs-and-versioned-cat-draws-october-28-2026)
+records live swatch measurements and the remaining acceptance limits.
+
+The final full add-on build passes 1,288 tests, with 134 optional skips and
+no failures or errors. Core passes 2,056 tests with 176 optional skips.
+The focused run executes all 38 selected tests without skips, including
+the licensed bundled-cat regression and native fragment comparisons.
+
+A final live direct session activates Iris 1.11.7 and Complementary Reimagined
+r5.9.3 with the rebuilt add-on. The native tint and ordinary controls both
+render. The recording reaches spawn and exits normally without missing
+native pipeline overrides or shader compilation errors. This establishes
+runtime admission and binding, with pack-defined lighting still in effect.

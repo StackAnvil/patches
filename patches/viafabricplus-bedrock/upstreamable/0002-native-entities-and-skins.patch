@@ -1,4 +1,4 @@
-From c2e3accf4e51922b29693e5f42a31c1ec57f48cc Mon Sep 17 00:00:00 2001
+From b5bf853799bfc02596c570332f700fa2581d9202 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -724,14 +724,51 @@ variable.is_enchanted and lists texture.default followed by
 texture.enchanted. Bedrock 1.26.51.1 shield.entity.json selects
 entity_alphatest_glint with textures/misc/enchanted_item_glint. Preserve
 that authored selection rather than manufacturing a Java foil overlay.
+
+Model the native ColorMask and AlphaTestColorMask shader families with
+an explicit immutable per-draw tint. Preserve texture alpha as the tint
+weight and output-alpha input. AlphaTestColorMask discards only texture
+alpha zero before tinting; ordinary cutout shading keeps its 0.5 cutoff.
+Keep overlay, lighting, and fog order from the matching 26.60 shader.
+Prepared draw uniforms retain their tint through queued rendering.
+
+Native 26.60.5 captures verify all 16 palette colors on an unlit cat
+fixture against BDS 26.60.6. Index zero is pure white. Missing palette
+context and unsupported indices remain unavailable, rather than using
+a Java dye color. Callers must supply verified tint inputs before the
+material can be admitted. Glint, emission, and masked-texture combinations
+with tint still require separate native evidence.
+
+Private original shader execution supplies 1,344 fragment controls for
+GPU regression coverage, including partial alpha, zero tint alpha,
+lighting, overlay, fog, and depth. Licensed shader binaries stay private.
+
+Preserve DisableAlphaWrite as an RGB-only color target. The native cat
+material inherits this state, so ignoring it would still fail material
+admission or overwrite framebuffer alpha. Color-write policy belongs to
+the pipeline cache key. GPU controls exercise each tint fragment with
+both RGBA and RGB-only writes; GUI coverage keeps its existing override.
+
+Scope the immutable tint to each prepared draw so Iris replacement programs
+receive the same native color input. Compose primary texture samples before
+pack shading, including sampler helper functions and pack sampler overrides.
+Keep source-alpha coverage independent of tint alpha, and restore ordinary
+Java state after nested draws or failures. Vanilla draws retain the typed
+native tint buffer. Iris uses per-program uniform locations and per-draw
+values instead of assuming that it binds unknown uniform blocks.
+
+Compare transformed pack and fallback programs against 672 original 26.60
+fragment controls each, in addition to the native shader GPU controls.
+Shader-pack lighting remains pack-defined; these controls establish material
+composition rather than complete shader-pack visual parity.
 ---
  build.gradle.kts                              |   6 +
  settings.gradle.kts                           |   3 +
  .../bedrock/ViaFabricPlusBedrock.java         |  23 ++
  .../bedrock/injection/BedrockMixinPlugin.java |  32 ++
- .../access/IBedrockActorDynamicData.java      |  13 +
- .../IBedrockActorPreparedRenderType.java      |  12 +
- .../access/IBedrockActorRenderType.java       |  17 +
+ .../access/IBedrockActorDynamicData.java      |  16 +
+ .../IBedrockActorPreparedRenderType.java      |  15 +
+ .../access/IBedrockActorRenderType.java       |  20 +
  .../access/IBedrockDynamicTexture.java        |  10 +
  .../access/IBedrockShaderPipeline.java        |  10 +
  .../mixin/compat/emf/MixinEmfModelRoots.java  |  24 ++
@@ -742,23 +779,23 @@ that authored selection rather than manufacturing a Java foil overlay.
  .../compat/iris/MixinIrisEmissionLookup.java  |  36 ++
  .../iris/MixinIrisEmissionPrograms.java       |  76 ++++
  .../compat/iris/MixinIrisFallbackAlpha.java   |  56 +++
- .../iris/MixinIrisFallbackTransform.java      |  40 +++
+ .../iris/MixinIrisFallbackTransform.java      |  40 ++
  .../compat/iris/MixinIrisGlintLookup.java     |  33 ++
- .../compat/iris/MixinIrisGlintPrograms.java   |  77 +++++
+ .../compat/iris/MixinIrisGlintPrograms.java   |  77 ++++
  .../compat/iris/MixinIrisGlintTransform.java  |  27 ++
  .../compat/iris/MixinIrisJavaAlphaTest.java   |  29 ++
- .../compat/iris/MixinIrisMaterialAlpha.java   |  40 +++
- .../iris/MixinIrisNativeMaterialBinding.java  |  44 +++
+ .../compat/iris/MixinIrisMaterialAlpha.java   |  40 ++
+ .../iris/MixinIrisNativeMaterialBinding.java  |  44 ++
  .../MixinIrisNativeSamplerReservation.java    |  30 ++
  .../mixin/compat/iris/MixinIrisPipelines.java |  23 ++
  .../compat/iris/MixinNativeShaderBinding.java |  34 ++
  .../iris/MixinNativeShaderCompilation.java    |  29 ++
  .../render/MixinAbstractClientPlayer.java     |  38 ++
- .../render/MixinBedrockActorDynamicData.java  |  46 +++
+ .../render/MixinBedrockActorDynamicData.java  |  64 +++
  .../render/MixinBedrockActorGlintFrame.java   |  33 ++
  .../render/MixinBedrockActorPipelines.java    |  27 ++
- .../MixinBedrockActorPreparedRenderType.java  |  35 ++
- .../render/MixinBedrockActorRenderType.java   |  70 ++++
+ .../MixinBedrockActorPreparedRenderType.java  |  58 +++
+ .../render/MixinBedrockActorRenderType.java   |  81 ++++
  .../render/MixinBedrockActorSubmission.java   |  33 ++
  .../render/MixinBedrockDynamicTexture.java    |  29 ++
  .../render/MixinBedrockNameTagMetadata.java   |  33 ++
@@ -767,79 +804,83 @@ that authored selection rather than manufacturing a Java foil overlay.
  .../render/MixinBedrockRidingMetadata.java    |  38 ++
  .../render/MixinBedrockRidingPosition.java    |  27 ++
  .../render/MixinEntityRenderDispatcher.java   |  93 +++++
- .../render/MixinMinecraftSkinLifecycle.java   |  41 +++
+ .../render/MixinMinecraftSkinLifecycle.java   |  41 ++
  .../features/render/MixinPlayerInfoSkin.java  |  24 ++
  .../render/MixinPlayerSkinRenderCache.java    |  55 +++
  .../render/MixinPlayerSkinWidget.java         |  28 ++
- .../render/MixinPlayerTabOverlay.java         |  22 ++
+ .../render/MixinPlayerTabOverlay.java         |  22 +
  .../render/BedrockAcceptedResources.java      |  53 +++
  .../bedrock/render/BedrockActorDepth.java     |  52 +++
- .../bedrock/render/BedrockActorGlint.java     |  42 +++
+ .../bedrock/render/BedrockActorGlint.java     |  42 ++
  .../render/BedrockActorGlintFrames.java       |  37 ++
- .../BedrockActorMaterialDefinitions.java      | 193 +++++++++++
+ .../BedrockActorMaterialDefinitions.java      | 211 ++++++++++
  .../bedrock/render/BedrockActorMaterials.java |  56 +++
- .../render/BedrockActorRenderTypes.java       | 169 +++++++++
- .../bedrock/render/BedrockActorResources.java |  43 +++
+ .../render/BedrockActorRenderTypes.java       | 180 ++++++++
+ .../bedrock/render/BedrockActorResources.java |  43 ++
+ .../bedrock/render/BedrockActorTint.java      |  34 ++
  .../render/BedrockActorUvTransform.java       |  18 +
  .../bedrock/render/BedrockEmissiveMask.java   |  27 ++
- .../bedrock/render/BedrockEntityRenderer.java | 195 +++++++++++
- .../bedrock/render/BedrockGeometry.java       | 227 ++++++++++++
+ .../bedrock/render/BedrockEntityRenderer.java | 195 +++++++++
+ .../bedrock/render/BedrockGeometry.java       | 227 ++++++++++
  .../bedrock/render/BedrockModelCube.java      |  35 ++
  .../bedrock/render/BedrockNameTagAnchors.java |  75 ++++
  .../bedrock/render/BedrockNameTags.java       |  76 ++++
  .../render/BedrockPlayerLayerModels.java      |  57 +++
  .../bedrock/render/BedrockPlayerRenderer.java |  53 +++
- .../bedrock/render/BedrockPlayerSkins.java    | 289 ++++++++++++++++
+ .../bedrock/render/BedrockPlayerSkins.java    | 289 +++++++++++++
  .../render/BedrockRenderSnapshotCache.java    |  48 +++
  .../bedrock/render/BedrockRidingAnchors.java  |  73 ++++
- .../bedrock/render/BedrockShaderAlpha.java    |  43 +++
- .../bedrock/render/BedrockShaderEmission.java | 206 +++++++++++
+ .../bedrock/render/BedrockShaderAlpha.java    |  43 ++
+ .../bedrock/render/BedrockShaderEmission.java | 206 +++++++++
  .../render/BedrockShaderPipelines.java        |  55 +++
- .../bedrock/render/BedrockSkinImages.java     | 113 ++++++
+ .../bedrock/render/BedrockShaderTint.java     |  26 ++
+ .../bedrock/render/BedrockSkinImages.java     | 113 +++++
  .../render/CustomEntityRenderStore.java       |  71 ++++
  .../render/NativeCustomEntityPayload.java     |  24 ++
  .../NativeCustomEntitySamplerPayload.java     |  24 ++
- .../bedrock/render/NativeSkinPayload.java     |  22 ++
+ .../bedrock/render/NativeSkinPayload.java     |  22 +
  .../render/compat/iris/BedrockIrisAlpha.java  |  69 ++++
- .../compat/iris/BedrockIrisAlphaUniforms.java |  40 +++
+ .../compat/iris/BedrockIrisAlphaUniforms.java |  48 +++
  .../compat/iris/BedrockIrisEmission.java      |  16 +
- .../render/compat/iris/BedrockIrisGlint.java  | 143 ++++++++
+ .../render/compat/iris/BedrockIrisGlint.java  | 143 +++++++
  .../compat/iris/BedrockIrisGlintPrograms.java |  16 +
- .../compat/iris/BedrockIrisMaskedTexture.java | 144 ++++++++
+ .../compat/iris/BedrockIrisMaskedTexture.java | 153 +++++++
  .../compat/iris/BedrockIrisSamplers.java      |  18 +
- .../shaders/core/bedrock_actor.fsh            |  78 +++++
+ .../shaders/core/bedrock_actor.fsh            |  92 +++++
  .../shaders/core/bedrock_actor.vsh            |  69 ++++
  .../shaders/include/bedrock_glint.glsl        |  14 +
  .../viafabricplus-bedrock.accesswidener       |   6 +
- .../viafabricplus-bedrock.mixins.json         |  39 +++
- .../render/BedrockAcceptedResourcesTest.java  | 118 +++++++
- .../render/BedrockActorDepthGpuTest.java      | 123 +++++++
- .../render/BedrockActorGlintFramesTest.java   |  41 +++
- .../render/BedrockActorGlintGpuTest.java      | 327 ++++++++++++++++++
- .../bedrock/render/BedrockActorGlintTest.java |  42 +++
- .../BedrockActorMaterialDefinitionsTest.java  | 281 +++++++++++++++
- .../render/BedrockActorMaterialsGpuTest.java  | 185 ++++++++++
+ .../viafabricplus-bedrock.mixins.json         |  39 ++
+ .../render/BedrockAcceptedResourcesTest.java  | 118 ++++++
+ .../render/BedrockActorDepthGpuTest.java      | 123 ++++++
+ .../render/BedrockActorGlintFramesTest.java   |  41 ++
+ .../render/BedrockActorGlintGpuTest.java      | 327 +++++++++++++++
+ .../bedrock/render/BedrockActorGlintTest.java |  42 ++
+ .../BedrockActorMaterialDefinitionsTest.java  | 307 ++++++++++++++
+ .../render/BedrockActorMaterialsGpuTest.java  | 211 ++++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 +++
+ .../bedrock/render/BedrockActorTintTest.java  |  32 ++
  .../render/BedrockActorUvTransformTest.java   |  27 ++
- .../bedrock/render/BedrockCubeFacesTest.java  | 182 ++++++++++
+ .../bedrock/render/BedrockCubeFacesTest.java  | 182 ++++++++
  .../render/BedrockEmissiveMaskTest.java       |  36 ++
  .../render/BedrockEntityRendererTest.java     |  50 +++
- .../bedrock/render/BedrockFaceUvsTest.java    | 100 ++++++
+ .../bedrock/render/BedrockFaceUvsTest.java    | 100 +++++
  .../bedrock/render/BedrockModelCubeTest.java  |  47 +++
- .../render/BedrockNameTagAnchorsTest.java     | 120 +++++++
- .../bedrock/render/BedrockNameTagsTest.java   | 127 +++++++
- .../render/BedrockPlayerLayerModelsTest.java  | 103 ++++++
- .../render/BedrockPlayerMaterialsTest.java    |  42 +++
- .../BedrockRenderSnapshotCacheTest.java       | 123 +++++++
- .../render/BedrockRidingAnchorsTest.java      | 149 ++++++++
+ .../render/BedrockNameTagAnchorsTest.java     | 120 ++++++
+ .../bedrock/render/BedrockNameTagsTest.java   | 127 ++++++
+ .../render/BedrockPlayerLayerModelsTest.java  | 103 +++++
+ .../render/BedrockPlayerMaterialsTest.java    |  42 ++
+ .../BedrockRenderSnapshotCacheTest.java       | 123 ++++++
+ .../render/BedrockRidingAnchorsTest.java      | 149 +++++++
  .../render/BedrockShaderAlphaTest.java        |  38 ++
- .../render/BedrockShaderPipelinesTest.java    | 119 +++++++
- .../bedrock/render/BedrockSkinImagesTest.java |  82 +++++
- .../render/CustomEntityRenderStoreTest.java   |  84 +++++
+ .../render/BedrockShaderPipelinesTest.java    | 119 ++++++
+ .../bedrock/render/BedrockShaderTintTest.java |  31 ++
+ .../bedrock/render/BedrockSkinImagesTest.java |  82 ++++
+ .../render/CustomEntityRenderStoreTest.java   |  84 ++++
  .../bedrock/render/EglTestContext.java        |  52 +++
- .../compat/iris/BedrockIrisAlphaGpuTest.java  | 306 ++++++++++++++++
- .../compat/iris/BedrockIrisGlintGpuTest.java  | 253 ++++++++++++++
- 114 files changed, 7870 insertions(+)
+ .../compat/iris/BedrockIrisAlphaGpuTest.java  | 391 ++++++++++++++++++
+ .../compat/iris/BedrockIrisGlintGpuTest.java  | 253 ++++++++++++
+ 118 files changed, 8251 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/BedrockMixinPlugin.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorDynamicData.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorPreparedRenderType.java
@@ -892,6 +933,7 @@ that authored selection rather than manufacturing a Java foil overlay.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterials.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorTint.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransform.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEmissiveMask.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
@@ -907,6 +949,7 @@ that authored selection rather than manufacturing a Java foil overlay.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderAlpha.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderEmission.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelines.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderTint.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImages.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeCustomEntityPayload.java
@@ -930,6 +973,7 @@ that authored selection rather than manufacturing a Java foil overlay.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsGpuTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorTintTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransformTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEmissiveMaskTest.java
@@ -944,6 +988,7 @@ that authored selection rather than manufacturing a Java foil overlay.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchorsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderAlphaTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderPipelinesTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderTintTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImagesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/EglTestContext.java
@@ -1062,10 +1107,10 @@ index 0000000..3155d70
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorDynamicData.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorDynamicData.java
 new file mode 100644
-index 0000000..562dc94
+index 0000000..4e17e3b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorDynamicData.java
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,16 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1075,16 +1120,19 @@ index 0000000..562dc94
 +
 +import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorGlint;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorTint;
 +
 +public interface IBedrockActorDynamicData {
 +    GpuBufferSlice bedrock$writeGlint(BedrockActorGlint glint);
++
++    GpuBufferSlice bedrock$writeTint(BedrockActorTint tint);
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorPreparedRenderType.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorPreparedRenderType.java
 new file mode 100644
-index 0000000..6205e49
+index 0000000..d259c3a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorPreparedRenderType.java
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,15 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1093,16 +1141,19 @@ index 0000000..6205e49
 +package com.viaversion.viafabricplus.bedrock.injection.access;
 +
 +import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorTint;
 +
 +public interface IBedrockActorPreparedRenderType {
 +    void bedrock$glint(GpuBufferSlice slice);
++
++    void bedrock$tint(GpuBufferSlice slice, BedrockActorTint tint);
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
 new file mode 100644
-index 0000000..dccad14
+index 0000000..a55f1b3
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,20 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1111,6 +1162,7 @@ index 0000000..dccad14
 +package com.viaversion.viafabricplus.bedrock.injection.access;
 +
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorGlint;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorTint;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorUvTransform;
 +
 +public interface IBedrockActorRenderType {
@@ -1119,6 +1171,8 @@ index 0000000..dccad14
 +    void bedrock$uvTransform(BedrockActorUvTransform transform);
 +
 +    void bedrock$glint(BedrockActorGlint glint);
++
++    void bedrock$tint(BedrockActorTint tint);
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockDynamicTexture.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockDynamicTexture.java
 new file mode 100644
@@ -2023,10 +2077,10 @@ index 0000000..13cd684
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorDynamicData.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorDynamicData.java
 new file mode 100644
-index 0000000..0fa5852
+index 0000000..8c98d3d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorDynamicData.java
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,64 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2038,6 +2092,7 @@ index 0000000..0fa5852
 +import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockActorDynamicData;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorGlint;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorTint;
 +import net.minecraft.client.renderer.DynamicGpuData;
 +import net.minecraft.client.renderer.DynamicGpuDataStorageMapped;
 +import org.spongepowered.asm.mixin.Mixin;
@@ -2051,6 +2106,18 @@ index 0000000..0fa5852
 +    @Unique
 +    private DynamicGpuDataStorageMapped<BedrockActorGlint> bedrock$glint;
 +
++    @Unique
++    private DynamicGpuDataStorageMapped<BedrockActorTint> bedrock$tint;
++
++    @Override
++    public GpuBufferSlice bedrock$writeTint(final BedrockActorTint tint) {
++        if (this.bedrock$tint == null) {
++            this.bedrock$tint = new DynamicGpuDataStorageMapped<>("Bedrock actor tint", BedrockActorTint.UNIFORM_SIZE,
++                    GpuBuffer.USAGE_UNIFORM, 2);
++        }
++        return this.bedrock$tint.writeData(tint);
++    }
++
 +    @Override
 +    public GpuBufferSlice bedrock$writeGlint(final BedrockActorGlint glint) {
 +        if (this.bedrock$glint == null) {
@@ -2063,10 +2130,15 @@ index 0000000..0fa5852
 +    @Inject(method = "reset", at = @At("RETURN"))
 +    private void bedrock$endFrame(final CallbackInfo ci) {
 +        if (this.bedrock$glint != null) this.bedrock$glint.endFrame();
++        if (this.bedrock$tint != null) this.bedrock$tint.endFrame();
 +    }
 +
 +    @Inject(method = "close", at = @At("RETURN"))
 +    private void bedrock$close(final CallbackInfo ci) {
++        if (this.bedrock$tint != null) {
++            this.bedrock$tint.close();
++            this.bedrock$tint = null;
++        }
 +        if (this.bedrock$glint != null) {
 +            this.bedrock$glint.close();
 +            this.bedrock$glint = null;
@@ -2147,10 +2219,10 @@ index 0000000..63ca5f9
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPreparedRenderType.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPreparedRenderType.java
 new file mode 100644
-index 0000000..e0390af
+index 0000000..0515889
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPreparedRenderType.java
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,58 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2158,10 +2230,14 @@ index 0000000..e0390af
 + */
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
 +
++import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 +import com.mojang.renderpearl.api.commands.RenderPass;
 +import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockActorPreparedRenderType;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorTint;
++import com.viaversion.viafabricplus.bedrock.render.BedrockShaderTint;
 +import net.minecraft.client.renderer.StagedVertexBuffer;
 +import net.minecraft.client.renderer.rendertype.PreparedRenderType;
 +import org.spongepowered.asm.mixin.Mixin;
@@ -2175,23 +2251,42 @@ index 0000000..e0390af
 +    @Unique
 +    private GpuBufferSlice bedrock$glint;
 +
++    @Unique
++    private GpuBufferSlice bedrock$tint;
++
++    @Unique
++    private BedrockActorTint bedrock$sampledTint;
++
++    @Override
++    public void bedrock$tint(final GpuBufferSlice slice, final BedrockActorTint tint) {
++        this.bedrock$tint = slice;
++        this.bedrock$sampledTint = tint;
++    }
++
++    @WrapMethod(method = "draw")
++    private void bedrock$scopeTint(final StagedVertexBuffer.ExecuteInfo info, final RenderPass pass,
++                                  final RenderPipeline pipeline, final Operation<Void> original) {
++        BedrockShaderTint.bind(this.bedrock$sampledTint, () -> original.call(info, pass, pipeline));
++    }
++
 +    @Override
 +    public void bedrock$glint(final GpuBufferSlice slice) {
 +        this.bedrock$glint = slice;
 +    }
 +
 +    @Inject(method = "draw", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;bindDefaultUniforms(Lcom/mojang/renderpearl/api/commands/RenderPass;)V", shift = At.Shift.AFTER))
-+    private void bedrock$bindGlint(final StagedVertexBuffer.ExecuteInfo info, final RenderPass pass,
++    private void bedrock$bindMaterialUniforms(final StagedVertexBuffer.ExecuteInfo info, final RenderPass pass,
 +                                  final RenderPipeline pipeline, final CallbackInfo ci) {
 +        if (this.bedrock$glint != null) pass.setUniform("BedrockGlintInfo", this.bedrock$glint);
++        if (this.bedrock$tint != null) pass.setUniform("BedrockTintInfo", this.bedrock$tint);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorRenderType.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorRenderType.java
 new file mode 100644
-index 0000000..44fc579
+index 0000000..c021af8
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorRenderType.java
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,81 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2207,6 +2302,7 @@ index 0000000..44fc579
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockActorPreparedRenderType;
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockActorRenderType;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorGlint;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorTint;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorUvTransform;
 +import net.minecraft.client.renderer.DynamicGpuData;
 +import net.minecraft.client.renderer.rendertype.PreparedRenderType;
@@ -2231,13 +2327,23 @@ index 0000000..44fc579
 +    @Unique
 +    private BedrockActorGlint bedrock$glint;
 +
++    @Unique
++    private BedrockActorTint bedrock$tint;
++
++    @Override
++    public void bedrock$tint(final BedrockActorTint tint) { this.bedrock$tint = tint; }
++
 +    @Override
 +    public void bedrock$glint(final BedrockActorGlint glint) {
 +        this.bedrock$glint = glint;
 +    }
 +
 +    @Inject(method = "prepare", at = @At("RETURN"))
-+    private void bedrock$prepareGlint(final CallbackInfoReturnable<PreparedRenderType> cir) {
++    private void bedrock$prepareMaterialUniforms(final CallbackInfoReturnable<PreparedRenderType> cir) {
++        if (this.bedrock$tint != null) {
++            final var slice = ((IBedrockActorDynamicData) RenderSystem.getDynamicUniforms()).bedrock$writeTint(this.bedrock$tint);
++            ((IBedrockActorPreparedRenderType) (Object) cir.getReturnValue()).bedrock$tint(slice, this.bedrock$tint);
++        }
 +        if (this.bedrock$glint != null) {
 +            final var slice = ((IBedrockActorDynamicData) RenderSystem.getDynamicUniforms()).bedrock$writeGlint(this.bedrock$glint);
 +            ((IBedrockActorPreparedRenderType) (Object) cir.getReturnValue()).bedrock$glint(slice);
@@ -3101,10 +3207,10 @@ index 0000000..f8df41f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
 new file mode 100644
-index 0000000..e3229cd
+index 0000000..e851321
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,211 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3187,12 +3293,17 @@ index 0000000..e3229cd
 +
 +    /** Ordinary actors do not supply the verified held-item glint scale and frame inputs. */
 +    public Optional<Material> material(final String name) {
-+        return this.classify(name).filter(material -> !material.glint());
++        return this.material(name, null);
++    }
++
++    /** Color-mask families require a native per-draw tint instead of an assumed white value. */
++    public Optional<Material> material(final String name, final BedrockActorTint tint) {
++        return this.classify(name).filter(material -> !material.glint() && (!material.colorMask() || tint != null));
 +    }
 +
 +    /** Held-item callers provide their extraction frame and native item UV scale. */
 +    public Optional<Material> heldItemMaterial(final String name) {
-+        return this.classify(name);
++        return this.classify(name).filter(material -> !material.colorMask());
 +    }
 +
 +    private Optional<Material> classify(final String name) {
@@ -3207,19 +3318,21 @@ index 0000000..e3229cd
 +                || !"shaders/entity.vertex".equals(effective.vertexShader)
 +                || !"shaders/entity.fragment".equals(effective.fragmentShader)
 +                || !shaderDefines.contains("USE_OVERLAY")
-+                || !Set.of("USE_OVERLAY", "ALPHA_TEST", "USE_EMISSIVE", "MASKED_MULTITEXTURE", "GLINT").containsAll(shaderDefines)
-+                || !Set.of("DisableCulling", "DisableDepthTest", "DisableDepthWrite").containsAll(effective.states)) {
++                || !Set.of("USE_OVERLAY", "ALPHA_TEST", "USE_EMISSIVE", "MASKED_MULTITEXTURE", "GLINT", "USE_COLOR_MASK").containsAll(shaderDefines)
++                || !Set.of("DisableCulling", "DisableDepthTest", "DisableDepthWrite", "DisableAlphaWrite").containsAll(effective.states)) {
 +                return Optional.empty();
 +            }
 +            final var depth = BedrockActorDepth.read(effective.depthFunction, effective.states);
 +            if (depth.isEmpty() || effective.defines.contains("USE_EMISSIVE") && !depth.get().repeatable()) return Optional.empty();
 +            final boolean masked = effective.defines.contains("MASKED_MULTITEXTURE");
 +            final boolean glint = effective.defines.contains("GLINT");
++            final boolean colorMask = effective.defines.contains("USE_COLOR_MASK");
++            if (colorMask && (masked || glint || effective.defines.contains("USE_EMISSIVE"))) return Optional.empty();
 +            if (glint && (masked || effective.defines.contains("USE_EMISSIVE"))) return Optional.empty();
 +            if (masked && (!effective.defines.contains("ALPHA_TEST") || effective.defines.contains("USE_EMISSIVE"))) {
 +                return Optional.empty();
 +            }
-+            return Optional.of(new Material(effective.defines.contains("ALPHA_TEST"), !effective.states.contains("DisableCulling"), effective.defines.contains("USE_EMISSIVE"), effective.defines.contains("USE_UV_ANIM"), masked, glint, depth.get()));
++            return Optional.of(new Material(effective.defines.contains("ALPHA_TEST"), !effective.states.contains("DisableCulling"), effective.defines.contains("USE_EMISSIVE"), effective.defines.contains("USE_UV_ANIM"), masked, glint, depth.get(), colorMask, !effective.states.contains("DisableAlphaWrite")));
 +        });
 +    }
 +
@@ -3281,18 +3394,29 @@ index 0000000..e3229cd
 +        return result;
 +    }
 +
-+    public record Material(boolean alphaTest, boolean cull, boolean emissive, boolean uvAnimation, boolean masked, boolean glint, BedrockActorDepth depth) {
++    public record Material(boolean alphaTest, boolean cull, boolean emissive, boolean uvAnimation, boolean masked, boolean glint, BedrockActorDepth depth, boolean colorMask, boolean alphaWrite) {
 +        public static final Material CUTOUT = new Material(true, false, false, false, false, false, BedrockActorDepth.DEFAULT);
++
++        public Material(final boolean alphaTest, final boolean cull, final boolean emissive, final boolean uvAnimation,
++                        final boolean masked, final boolean glint, final BedrockActorDepth depth) {
++            this(alphaTest, cull, emissive, uvAnimation, masked, glint, depth, false, true);
++        }
++
++        public Material(final boolean alphaTest, final boolean cull, final boolean emissive, final boolean uvAnimation,
++                        final boolean masked, final boolean glint, final BedrockActorDepth depth, final boolean colorMask) {
++            this(alphaTest, cull, emissive, uvAnimation, masked, glint, depth, colorMask, true);
++        }
 +
 +        public Material {
 +            Objects.requireNonNull(depth);
++            if (colorMask && (emissive || masked || glint)) throw new IllegalArgumentException("Unsupported native tint material family");
 +            if (emissive && !depth.repeatable()) throw new IllegalArgumentException("Unsupported split-emission depth predicate");
 +            if (glint && (emissive || masked)) throw new IllegalArgumentException("Unsupported native glint material family");
 +            if (masked && (!alphaTest || emissive)) throw new IllegalArgumentException("Unsupported masked material family");
 +        }
 +
 +        public int textureCount() { return this.masked || this.glint ? 2 : 1; }
-+        public Material withoutEmission() { return new Material(this.alphaTest, this.cull, false, this.uvAnimation, this.masked, this.glint, this.depth); }
++        public Material withoutEmission() { return new Material(this.alphaTest, this.cull, false, this.uvAnimation, this.masked, this.glint, this.depth, this.colorMask, this.alphaWrite); }
 +    }
 +    private record Definition(String parent, JsonObject fields) {}
 +    private record Effective(String vertexShader, String fragmentShader, String depthFunction, Set<String> defines,
@@ -3362,10 +3486,10 @@ index 0000000..8e46c00
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
 new file mode 100644
-index 0000000..46e1573
+index 0000000..db83832
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,180 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3405,7 +3529,7 @@ index 0000000..46e1573
 +                        for (final boolean nether : new boolean[] {false, true})
 +                            for (final boolean masked : new boolean[] {false, true}) {
 +                            if (unlit && nether || masked && (!alphaTest || emissive)) continue;
-+                            final var key = new PipelineKey(alphaTest, cull, unlit, emissive, nether, masked, GlintLighting.NONE, BedrockActorDepth.DEFAULT);
++                            final var key = new PipelineKey(alphaTest, cull, unlit, emissive, nether, masked, false, GlintLighting.NONE, BedrockActorDepth.DEFAULT, true);
 +                            result.put(key, pipeline(key));
 +                        }
 +        return result;
@@ -3413,13 +3537,16 @@ index 0000000..46e1573
 +
 +    private static RenderPipeline pipeline(final PipelineKey key) {
 +        final var builder = RenderPipeline.builder(RenderPipelines.ENTITY_SNIPPET)
-+            .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/actor_" + key.alphaTest + "_" + key.cull + "_" + key.unlit + "_" + key.emissive + "_" + key.nether + (key.masked ? "_masked" : "") + (key.glint == GlintLighting.NONE ? "" : key.glint == GlintLighting.LIGHTMAP ? "_glint_lightmap" : "_glint") + (key.depth.equals(BedrockActorDepth.DEFAULT) ? "" : "_depth_" + key.depth.suffix())))
++            .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/actor_" + key.alphaTest + "_" + key.cull + "_" + key.unlit + "_" + key.emissive + "_" + key.nether + (key.masked ? "_masked" : "") + (key.colorMask ? "_tint" : "") + (key.alphaWrite ? "" : "_no_alpha") + (key.glint == GlintLighting.NONE ? "" : key.glint == GlintLighting.LIGHTMAP ? "_glint_lightmap" : "_glint") + (key.depth.equals(BedrockActorDepth.DEFAULT) ? "" : "_depth_" + key.depth.suffix())))
 +            .withVertexShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_actor"))
 +            .withFragmentShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_actor"))
 +            .withBindGroupLayout(BindGroupLayouts.SAMPLER1)
-+            .withColorTargetState(ColorTargetState.DEFAULT)
++            .withColorTargetState(new ColorTargetState(ColorTargetState.DEFAULT.blendFunction(),
++                ColorTargetState.DEFAULT.format(), key.alphaWrite ? ColorTargetState.WRITE_ALL : ColorTargetState.WRITE_COLOR))
 +            .withCull(key.cull)
 +            .withDepthStencilState(key.depth.state());
++        if (key.colorMask) builder.withShaderDefine("COLOR_MASK")
++            .withBindGroupLayout(BindGroupLayout.builder().withUniform("BedrockTintInfo", UniformType.UNIFORM_BUFFER).build());
 +        if (key.masked) builder.withShaderDefine("MASKED_MULTITEXTURE")
 +            .withBindGroupLayout(BindGroupLayout.builder().withUniform("BedrockMaskTexture", UniformType.COMBINED_IMAGE_SAMPLER).build());
 +        if (key.glint != GlintLighting.NONE) builder.withShaderDefine("GLINT")
@@ -3436,7 +3563,7 @@ index 0000000..46e1573
 +            : key.unlit ? RenderPipelines.ENTITY_CUTOUT_Z_OFFSET
 +            : key.cull ? RenderPipelines.ENTITY_CUTOUT_CULL : RenderPipelines.ENTITY_CUTOUT;
 +        return BedrockShaderPipelines.register(builder.build(), shaderPipeline,
-+                !key.alphaTest ? BedrockShaderAlpha.OPAQUE_REFERENCE : !key.emissive ? 0.5F : Float.NaN);
++                !key.alphaTest ? BedrockShaderAlpha.OPAQUE_REFERENCE : !key.emissive ? key.colorMask ? 0F : 0.5F : Float.NaN);
 +    }
 +
 +    public static int lightCoords(final int light, final boolean ignoreLighting) {
@@ -3454,14 +3581,20 @@ index 0000000..46e1573
 +    }
 +
 +    public static RenderType create(final List<Identifier> textures, final BedrockActorMaterialDefinitions.Material material, final boolean ignoreLighting, final float multiplier, final BedrockActorUvTransform uv, final boolean netherLighting) {
-+        return create(textures, material, ignoreLighting, multiplier, uv, netherLighting, null, GlintLighting.NONE);
++        return create(textures, material, ignoreLighting, multiplier, uv, netherLighting, null, GlintLighting.NONE, null);
++    }
++
++    public static RenderType create(final List<Identifier> textures, final BedrockActorMaterialDefinitions.Material material,
++            final boolean ignoreLighting, final float multiplier, final BedrockActorUvTransform uv,
++            final boolean netherLighting, final BedrockActorTint tint) {
++        return create(textures, material, ignoreLighting, multiplier, uv, netherLighting, null, GlintLighting.NONE, tint);
 +    }
 +
 +    /** Draws the verified glint family with explicit native inputs; callers own clock and lighting production. */
 +    public static RenderType createGlint(final List<Identifier> textures, final BedrockActorMaterialDefinitions.Material material,
 +            final boolean ignoreLighting, final float multiplier, final BedrockActorGlint glint, final boolean netherLighting) {
 +        return create(textures, material, ignoreLighting, multiplier, BedrockActorUvTransform.IDENTITY, netherLighting,
-+                java.util.Objects.requireNonNull(glint), GlintLighting.EXPLICIT);
++                java.util.Objects.requireNonNull(glint), GlintLighting.EXPLICIT, null);
 +    }
 +
 +    /** Uses one captured clock/options frame and each submitted vertex's own lightmap input. */
@@ -3469,12 +3602,13 @@ index 0000000..46e1573
 +            final boolean ignoreLighting, final float multiplier, final BedrockActorGlintFrames.Frame frame,
 +            final float scaleU, final float scaleV, final boolean netherLighting) {
 +        return create(textures, material, ignoreLighting, multiplier, BedrockActorUvTransform.IDENTITY, netherLighting,
-+                java.util.Objects.requireNonNull(frame).sample(netherLighting, scaleU, scaleV), GlintLighting.LIGHTMAP);
++                java.util.Objects.requireNonNull(frame).sample(netherLighting, scaleU, scaleV), GlintLighting.LIGHTMAP, null);
 +    }
 +
 +    private static RenderType create(final List<Identifier> textures, final BedrockActorMaterialDefinitions.Material material,
 +            final boolean ignoreLighting, final float multiplier, final BedrockActorUvTransform uv,
-+            final boolean netherLighting, final BedrockActorGlint glint, final GlintLighting lighting) {
++            final boolean netherLighting, final BedrockActorGlint glint, final GlintLighting lighting, final BedrockActorTint tint) {
++        if (material.colorMask() && tint == null) throw new IllegalArgumentException("Native tint input is unavailable");
 +        final var pipeline = glint == null ? selectPipeline(material, ignoreLighting, netherLighting)
 +                : selectGlintPipeline(material, ignoreLighting, netherLighting, lighting);
 +        final var setup = textures(RenderSetup.builder(pipeline), textures, material);
@@ -3486,6 +3620,7 @@ index 0000000..46e1573
 +        ((IBedrockActorRenderType) type).bedrock$lightColorMultiplier(multiplier);
 +        ((IBedrockActorRenderType) type).bedrock$uvTransform(uv);
 +        ((IBedrockActorRenderType) type).bedrock$glint(glint);
++        ((IBedrockActorRenderType) type).bedrock$tint(material.colorMask() ? tint : null);
 +        if (material.emissive()) BedrockShaderEmission.register(type, textures.getFirst(), material, ignoreLighting, multiplier, uv, netherLighting);
 +        return type;
 +    }
@@ -3494,15 +3629,15 @@ index 0000000..46e1573
 +                                         final boolean ignoreLighting, final boolean netherLighting) {
 +        if (material.glint()) throw new IllegalArgumentException("Native glint requires caller-owned frame inputs");
 +        return MATERIAL_PIPELINES.computeIfAbsent(new PipelineKey(material.alphaTest(), material.cull(), ignoreLighting,
-+                material.emissive(), netherLighting && !ignoreLighting, material.masked(), GlintLighting.NONE, material.depth()), BedrockActorRenderTypes::pipeline);
++                material.emissive(), netherLighting && !ignoreLighting, material.masked(), material.colorMask(), GlintLighting.NONE, material.depth(), material.alphaWrite()), BedrockActorRenderTypes::pipeline);
 +    }
 +
 +    static RenderPipeline selectGlintPipeline(final BedrockActorMaterialDefinitions.Material material,
 +            final boolean ignoreLighting, final boolean netherLighting, final GlintLighting lighting) {
 +        if (lighting == GlintLighting.NONE) throw new IllegalArgumentException("Missing native glint lighting source");
-+        if (material.emissive() || material.masked()) throw new IllegalArgumentException("Unsupported native glint material combination");
++        if (material.emissive() || material.masked() || material.colorMask()) throw new IllegalArgumentException("Unsupported native glint material combination");
 +        return MATERIAL_PIPELINES.computeIfAbsent(new PipelineKey(material.alphaTest(), material.cull(), ignoreLighting,
-+                false, netherLighting && !ignoreLighting, false, lighting, material.depth()), BedrockActorRenderTypes::pipeline);
++                false, netherLighting && !ignoreLighting, false, false, lighting, material.depth(), material.alphaWrite()), BedrockActorRenderTypes::pipeline);
 +    }
 +
 +    private static com.mojang.renderpearl.api.textures.GpuSampler repeatedSampler(final Identifier texture) {
@@ -3533,7 +3668,7 @@ index 0000000..46e1573
 +
 +    enum GlintLighting { NONE, EXPLICIT, LIGHTMAP }
 +
-+    private record PipelineKey(boolean alphaTest, boolean cull, boolean unlit, boolean emissive, boolean nether, boolean masked, GlintLighting glint, BedrockActorDepth depth) {}
++    private record PipelineKey(boolean alphaTest, boolean cull, boolean unlit, boolean emissive, boolean nether, boolean masked, boolean colorMask, GlintLighting glint, BedrockActorDepth depth, boolean alphaWrite) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
 new file mode 100644
@@ -3583,6 +3718,46 @@ index 0000000..da726c2
 +        packs = null;
 +    }
 +
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorTint.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorTint.java
+new file mode 100644
+index 0000000..2e3b5c5
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorTint.java
+@@ -0,0 +1,34 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.mojang.blaze3d.buffers.Std140Builder;
++import java.nio.ByteBuffer;
++import java.util.Optional;
++import net.minecraft.client.renderer.DynamicGpuDataStorage;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
++
++/** Immutable native color-mask input for one prepared actor draw. */
++public record BedrockActorTint(float red, float green, float blue, float alpha)
++        implements DynamicGpuDataStorage.DynamicGpuData {
++    public static final int UNIFORM_SIZE = 16;
++    private static final int[] PALETTE = {
++        0xFFFFFF, 0xF9801D, 0xC74EBD, 0x3AB3DA, 0xFED83D, 0x80C71F, 0xF38BAA, 0x474F52,
++        0x9D9D97, 0x169C9C, 0x8932B8, 0x3C44AA, 0x835432, 0x5E7C16, 0xB02E26, 0x1D1D21
++    };
++
++    public static Optional<BedrockActorTint> palette(final NativeActorMessage.Colors colors) {
++        if (colors == null || colors.primary() >= PALETTE.length) return Optional.empty();
++        final int rgb = PALETTE[colors.primary()];
++        return Optional.of(new BedrockActorTint(((rgb >>> 16) & 255) / 255F,
++                ((rgb >>> 8) & 255) / 255F, (rgb & 255) / 255F, 1F));
++    }
++
++    @Override
++    public void write(final ByteBuffer buffer) {
++        Std140Builder.intoBuffer(buffer).putVec4(this.red, this.green, this.blue, this.alpha);
++    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransform.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransform.java
 new file mode 100644
@@ -5151,6 +5326,38 @@ index 0000000..122cb02
 +
 +    private record Material(RenderPipeline pipeline, float alphaReference) {}
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderTint.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderTint.java
+new file mode 100644
+index 0000000..642bbc3
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderTint.java
+@@ -0,0 +1,26 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++/** Scopes immutable sampled tint to the prepared draw that binds a shared shader program. */
++public final class BedrockShaderTint {
++    private static final ThreadLocal<BedrockActorTint> CURRENT = new ThreadLocal<>();
++
++    private BedrockShaderTint() {}
++
++    public static BedrockActorTint current() { return CURRENT.get(); }
++
++    public static void bind(final BedrockActorTint tint, final Runnable draw) {
++        final BedrockActorTint previous = CURRENT.get();
++        if (tint == null) CURRENT.remove();
++        else CURRENT.set(tint);
++        try { draw.run(); }
++        finally {
++            if (previous == null) CURRENT.remove();
++            else CURRENT.set(previous);
++        }
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImages.java
 new file mode 100644
 index 0000000..a06cf65
@@ -5512,10 +5719,10 @@ index 0000000..21560be
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaUniforms.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaUniforms.java
 new file mode 100644
-index 0000000..9df540f
+index 0000000..4a0ccce
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaUniforms.java
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,48 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5524,6 +5731,7 @@ index 0000000..9df540f
 +package com.viaversion.viafabricplus.bedrock.render.compat.iris;
 +
 +import com.viaversion.viafabricplus.bedrock.render.BedrockShaderAlpha;
++import com.viaversion.viafabricplus.bedrock.render.BedrockShaderTint;
 +import org.lwjgl.opengl.GL46C;
 +
 +/** Locations belong to one program; values belong to each pipeline bind. */
@@ -5534,6 +5742,8 @@ index 0000000..9df540f
 +    private final int opaque;
 +    private final int masked;
 +    private final int maskSampler;
++    private final int tintEnabled;
++    private final int tint;
 +
 +    public BedrockIrisAlphaUniforms(final int program) {
 +        this.enabled = GL46C.glGetUniformLocation(program, BedrockIrisAlpha.ENABLED);
@@ -5542,6 +5752,8 @@ index 0000000..9df540f
 +        this.opaque = GL46C.glGetUniformLocation(program, BedrockIrisMaskedTexture.OPAQUE);
 +        this.masked = GL46C.glGetUniformLocation(program, BedrockIrisMaskedTexture.ENABLED);
 +        this.maskSampler = GL46C.glGetUniformLocation(program, BedrockIrisMaskedTexture.SAMPLER);
++        this.tintEnabled = GL46C.glGetUniformLocation(program, BedrockIrisMaskedTexture.TINT_ENABLED);
++        this.tint = GL46C.glGetUniformLocation(program, BedrockIrisMaskedTexture.TINT);
 +    }
 +
 +    /** Call after Iris updates uniforms and samplers, while this program is current. */
@@ -5554,6 +5766,9 @@ index 0000000..9df540f
 +        GL46C.glUniform1i(this.sampler, 0);
 +        GL46C.glUniform1i(this.masked, BedrockShaderAlpha.masked() ? 1 : 0);
 +        GL46C.glUniform1i(this.maskSampler, BedrockIrisMaskedTexture.UNIT);
++        final var tint = BedrockShaderTint.current();
++        GL46C.glUniform1i(this.tintEnabled, tint == null ? 0 : 1);
++        if (tint != null) GL46C.glUniform4f(this.tint, tint.red(), tint.green(), tint.blue(), tint.alpha());
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisEmission.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisEmission.java
@@ -5751,10 +5966,10 @@ index 0000000..2835207
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisMaskedTexture.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisMaskedTexture.java
 new file mode 100644
-index 0000000..e9132e8
+index 0000000..fc0042a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisMaskedTexture.java
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,153 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5788,6 +6003,8 @@ index 0000000..e9132e8
 +/** Compose native images and material coverage before a shader pack applies its shading. */
 +public final class BedrockIrisMaskedTexture {
 +    public static final String ENABLED = "iris_bedrock_Masked";
++    public static final String TINT_ENABLED = "iris_bedrock_TintEnabled";
++    public static final String TINT = "iris_bedrock_Tint";
 +    public static final String OPAQUE = "iris_bedrock_OpaqueInput";
 +    public static final String SAMPLER = "BedrockMaskTexture";
 +    // Iris reserves 0/1/2 for the primary image, overlay and lightmap. Reserve this separately.
@@ -5840,6 +6057,8 @@ index 0000000..e9132e8
 +        final List<String> declarations = new ArrayList<>();
 +        declarations.add("uniform int " + ENABLED + ";");
 +        declarations.add("uniform int " + OPAQUE + ";");
++        declarations.add("uniform int " + TINT_ENABLED + ";");
++        declarations.add("uniform vec4 " + TINT + ";");
 +        declarations.add("uniform sampler2D " + SAMPLER + ";");
 +        declarations.add("""
 +                vec4 iris_bedrock_Compose(vec4 base, vec4 mask) {
@@ -5892,9 +6111,14 @@ index 0000000..e9132e8
 +                    + "if (actor && " + ENABLED + " != 0) color = iris_bedrock_Compose("
 +                    + this.function + "(" + BedrockIrisAlpha.SAMPLER + ", uv" + this.arguments + "), "
 +                    + this.function + "(" + SAMPLER + ", uv" + this.arguments + "));\n"
++                    + "else if (actor && " + TINT_ENABLED + " != 0) color = " + this.function
++                    + "(" + BedrockIrisAlpha.SAMPLER + ", uv" + this.arguments + ");\n"
 +                    + "else color = " + this.function + "(image, uv" + this.arguments + ");\n"
++                    + "if (actor && " + TINT_ENABLED + " != 0) {\n"
++                    + "color.rgb = mix(color.rgb, color.rgb * " + TINT + ".rgb, color.a);\n"
++                    + "color.a *= " + TINT + ".a;\n}\n"
 +                    // Coverage is independent of source alpha for native opaque materials.
-+                    + "if (actor && " + OPAQUE + " != 0) color.a = 1.0;\n"
++                    + "if (actor && " + OPAQUE + " != 0 && " + TINT_ENABLED + " == 0) color.a = 1.0;\n"
 +                    + "return color;\n}";
 +        }
 +    }
@@ -5925,10 +6149,10 @@ index 0000000..c6a7061
 +}
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
 new file mode 100644
-index 0000000..8b41dc8
+index 0000000..88f77b0
 --- /dev/null
 +++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,92 @@
 +#version 330
 +#extension GL_ARB_separate_shader_objects : require
 +
@@ -5944,6 +6168,11 @@ index 0000000..8b41dc8
 +#endif
 +#endif
 +
++#ifdef COLOR_MASK
++layout(std140) uniform BedrockTintInfo {
++    vec4 BedrockTint;
++};
++#endif
 +uniform sampler2D Sampler0;
 +#ifdef MASKED_MULTITEXTURE
 +uniform sampler2D BedrockMaskTexture;
@@ -5960,6 +6189,15 @@ index 0000000..8b41dc8
 +
 +void main() {
 +    vec4 color = texture(Sampler0, texCoord0);
++#ifdef COLOR_MASK
++#ifdef ALPHA_TEST
++    if (color.a <= 0.0) {
++        discard;
++    }
++#endif
++    color.rgb = mix(color.rgb, color.rgb * BedrockTint.rgb, color.a);
++    color.a *= BedrockTint.a;
++#endif
 +#ifdef MASKED_MULTITEXTURE
 +    vec4 mask = texture(BedrockMaskTexture, texCoord0);
 +    float keepBase = clamp(ceil((mask.r + mask.g + mask.b) * (1.0 - mask.a)), 0.0, 1.0);
@@ -5981,7 +6219,7 @@ index 0000000..8b41dc8
 +    color.rgb *= mix(vec3(1.0), lighting, color.a);
 +#else
 +    // Native ENTITY survives only when alpha is strictly above DiscardValue.x.
-+#ifdef ALPHA_TEST
++#if defined(ALPHA_TEST) && !defined(COLOR_MASK)
 +    if (color.a <= 0.5) {
 +        discard;
 +    }
@@ -6860,10 +7098,10 @@ index 0000000..ca3478d
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
 new file mode 100644
-index 0000000..933c9cd
+index 0000000..8d3a452
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
-@@ -0,0 +1,281 @@
+@@ -0,0 +1,307 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6879,6 +7117,32 @@ index 0000000..933c9cd
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class BedrockActorMaterialDefinitionsTest {
++    @Test
++    void admitsColorMasksOnlyWithNativeTintAndWithoutUnsupportedMaterialCombinations() {
++        final var materials = read("""
++            {"tinted:entity_alphatest":{"+defines":["USE_COLOR_MASK"],"+states":["DisableAlphaWrite"]},
++             "masked:tinted":{"+defines":["MASKED_MULTITEXTURE"]},
++             "emissive:tinted":{"+defines":["USE_EMISSIVE"]},
++             "glint:tinted":{"+defines":["GLINT"]}}
++            """);
++        final var tint = new BedrockActorTint(.2F, .7F, .4F, .8F);
++        assertTrue(materials.material("tinted").isEmpty());
++        final var admitted = materials.material("tinted", tint).orElseThrow();
++        assertTrue(admitted.colorMask());
++        assertFalse(admitted.alphaWrite());
++        final var pipeline = BedrockActorRenderTypes.selectPipeline(admitted, true, false);
++        final var writes = pipeline.getColorTargetStates().getFirst();
++        assertTrue(writes.writeRed() && writes.writeGreen() && writes.writeBlue());
++        assertFalse(writes.writeAlpha());
++        assertEquals(1, admitted.textureCount());
++        assertEquals(admitted, admitted.withoutEmission());
++        assertTrue(materials.material("tinted").isEmpty());
++        assertTrue(materials.heldItemMaterial("tinted").isEmpty());
++        for (final String name : List.of("masked", "emissive", "glint")) {
++            assertTrue(materials.material(name, tint).isEmpty());
++        }
++    }
++
 +    @Test
 +    void admitsHeldGlintWithoutChangingOrdinaryActorCapabilitiesOrPoisoningTheCache() {
 +        final var materials = read("""
@@ -7147,10 +7411,10 @@ index 0000000..933c9cd
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsGpuTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsGpuTest.java
 new file mode 100644
-index 0000000..b92b535
+index 0000000..3f42496
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsGpuTest.java
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,211 @@
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import com.google.gson.JsonObject;
@@ -7190,10 +7454,27 @@ index 0000000..b92b535
 +        EglTestContext.run(() -> verify(cases));
 +    }
 +
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_TINT_MATERIALS", matches = ".+")
++    void matchesNativeColorMaskAlphaTintLightingFogAndDepth() throws IOException {
++        final var reference = JsonParser.parseString(Files.readString(
++                Path.of(System.getenv("STACKANVIL_NATIVE_TINT_MATERIALS")))).getAsJsonObject();
++        final var cases = reference.getAsJsonArray("cases");
++        assertEquals(1344, cases.size());
++        final var writes = new com.google.gson.JsonArray();
++        for (final var sample : cases) {
++            writes.add(sample);
++            final var noAlpha = sample.getAsJsonObject().deepCopy();
++            noAlpha.addProperty("alphaWrite", false);
++            writes.add(noAlpha);
++        }
++        EglTestContext.run(() -> verify(writes));
++    }
++
 +    private static void verify(final com.google.gson.JsonArray cases) {
 +        final int vao = glGenVertexArrays(), framebuffer = glGenFramebuffers();
 +        final int color = glGenTextures(), depth = glGenTextures(), source = glGenTextures(), secondary = glGenTextures();
-+        final int fog = glGenBuffers(), dynamic = glGenBuffers();
++        final int fog = glGenBuffers(), dynamic = glGenBuffers(), tint = glGenBuffers();
 +        final var programs = new HashMap<com.mojang.renderpearl.api.pipeline.RenderPipeline, Integer>();
 +        try {
 +            glBindVertexArray(vao);
@@ -7214,7 +7495,8 @@ index 0000000..b92b535
 +                final var control = element.getAsJsonObject();
 +                final boolean masked = control.has("secondary");
 +                final var material = new BedrockActorMaterialDefinitions.Material(masked || control.get("alphaTest").getAsBoolean(),
-+                        false, !masked && control.get("emissive").getAsBoolean(), false, masked, false, BedrockActorDepth.DEFAULT);
++                        false, !masked && control.get("emissive").getAsBoolean(), false, masked, false, BedrockActorDepth.DEFAULT, control.has("tint"),
++                        !control.has("alphaWrite") || control.get("alphaWrite").getAsBoolean());
 +                final var pipeline = BedrockActorRenderTypes.selectPipeline(material,
 +                        !masked && control.get("ignoreLighting").getAsBoolean(), false);
 +                final int program = programs.computeIfAbsent(pipeline, BedrockActorMaterialsGpuTest::program);
@@ -7232,6 +7514,9 @@ index 0000000..b92b535
 +                    final var dynamicBytes = stack.callocFloat(40);
 +                    for (int i = 0; i < 4; i++) dynamicBytes.put(32 + i, modulator[i]);
 +                    buffer(program, "DynamicTransforms", dynamic, 1, dynamicBytes);
++                    if (control.has("tint")) {
++                        buffer(program, "BedrockTintInfo", tint, 2, stack.floats(floats(control, "tint")));
++                    }
 +                    glActiveTexture(GL_TEXTURE0);
 +                    glBindTexture(GL_TEXTURE_2D, source);
 +                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -7248,9 +7533,12 @@ index 0000000..b92b535
 +                                stack.floats(floats(control, "secondary")));
 +                        glUniform1i(glGetUniformLocation(program, "BedrockMaskTexture"), 1);
 +                    }
++                    glColorMask(true, true, true, true);
 +                    glClearColor(.8F, .6F, .4F, 1F);
 +                    glClearDepth(1);
 +                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
++                    final var writeMask = pipeline.getColorTargetStates().getFirst();
++                    glColorMask(writeMask.writeRed(), writeMask.writeGreen(), writeMask.writeBlue(), writeMask.writeAlpha());
 +                    glDrawArrays(GL_TRIANGLES, 0, 3);
 +                    final var pixel = stack.mallocFloat(4);
 +                    final var depthPixel = stack.mallocFloat(1);
@@ -7258,17 +7546,19 @@ index 0000000..b92b535
 +                    glReadPixels(0, 0, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, depthPixel);
 +                    final boolean discarded = control.get("discarded").getAsBoolean();
 +                    final float[] expected = discarded ? new float[] {.8F, .6F, .4F, 1F} : floats(control, "expected");
++                    if (!writeMask.writeAlpha()) expected[3] = 1F;
 +                    for (int i = 0; i < 4; i++) assertEquals(expected[i], pixel.get(i), .000001F, control::toString);
 +                    assertEquals(discarded ? 1F : .5F, depthPixel.get(0), .000001F, control::toString);
 +                }
 +            }
 +        } finally {
++            glColorMask(true, true, true, true);
 +            glUseProgram(0);
 +            programs.values().forEach(program -> glDeleteProgram(program));
 +            glBindFramebuffer(GL_FRAMEBUFFER, 0);
 +            glDeleteFramebuffers(framebuffer);
 +            glDeleteTextures(color); glDeleteTextures(depth); glDeleteTextures(source); glDeleteTextures(secondary);
-+            glDeleteBuffers(fog); glDeleteBuffers(dynamic); glDeleteVertexArrays(vao);
++            glDeleteBuffers(fog); glDeleteBuffers(dynamic); glDeleteBuffers(tint); glDeleteVertexArrays(vao);
 +        }
 +    }
 +
@@ -7388,6 +7678,44 @@ index 0000000..865c89a
 +        assertTrue(light.hasChild("cube_0"));
 +        assertEquals(-6F, light.y);
 +        assertEquals((float) Math.PI / 6F, body.zRot, 0.000001F);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorTintTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorTintTest.java
+new file mode 100644
+index 0000000..0724253
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorTintTest.java
+@@ -0,0 +1,32 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockActorTintTest {
++    @Test
++    void retainsNativePaletteInputsAndWritesPreparedDrawsInRgbaOrder() {
++        final var red = BedrockActorTint.palette(new NativeActorMessage.Colors(14, 0)).orElseThrow();
++        final var white = BedrockActorTint.palette(new NativeActorMessage.Colors(0, 15)).orElseThrow();
++        assertEquals(new BedrockActorTint(1, 1, 1, 1), white);
++        assertEquals(new BedrockActorTint(176 / 255F, 46 / 255F, 38 / 255F, 1), red);
++        assertTrue(BedrockActorTint.palette(null).isEmpty());
++        assertTrue(BedrockActorTint.palette(new NativeActorMessage.Colors(255, 0)).isEmpty());
++        final var buffer = ByteBuffer.allocate(BedrockActorTint.UNIFORM_SIZE).order(ByteOrder.nativeOrder());
++        for (final var tint : new BedrockActorTint[]{red, white, new BedrockActorTint(.2F, .7F, .4F, .8F), red}) {
++            tint.write(buffer.clear());
++            assertEquals(tint.red(), buffer.getFloat(0));
++            assertEquals(tint.green(), buffer.getFloat(4));
++            assertEquals(tint.blue(), buffer.getFloat(8));
++            assertEquals(tint.alpha(), buffer.getFloat(12));
++        }
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransformTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransformTest.java
@@ -8737,6 +9065,43 @@ index 0000000..934021b
 +        assertSame(RenderPipelines.EYES, BedrockShaderPipelines.equivalent(custom));
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderTintTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderTintTest.java
+new file mode 100644
+index 0000000..71f5936
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockShaderTintTest.java
+@@ -0,0 +1,31 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.util.concurrent.CompletableFuture;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockShaderTintTest {
++    @Test
++    void scopesPreparedTintAcrossNestedJavaDrawsThreadsAndFailure() {
++        final var tint = new BedrockActorTint(.2F, .7F, .4F, 0F);
++        final var failure = new IllegalStateException();
++        assertNull(BedrockShaderTint.current());
++        BedrockShaderTint.bind(tint, () -> {
++            assertSame(tint, BedrockShaderTint.current());
++            assertNull(CompletableFuture.supplyAsync(BedrockShaderTint::current).join());
++            assertSame(failure, assertThrows(IllegalStateException.class,
++                () -> BedrockShaderTint.bind(null, () -> {
++                    assertNull(BedrockShaderTint.current());
++                    throw failure;
++                })));
++            assertSame(tint, BedrockShaderTint.current());
++        });
++        assertNull(BedrockShaderTint.current());
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImagesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinImagesTest.java
 new file mode 100644
 index 0000000..354e25d
@@ -8975,10 +9340,10 @@ index 0000000..fbb2ce7
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaGpuTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaGpuTest.java
 new file mode 100644
-index 0000000..c01c6a1
+index 0000000..2c066e8
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/compat/iris/BedrockIrisAlphaGpuTest.java
-@@ -0,0 +1,306 @@
+@@ -0,0 +1,391 @@
 +package com.viaversion.viafabricplus.bedrock.render.compat.iris;
 +
 +import com.viaversion.viafabricplus.bedrock.render.BedrockShaderAlpha;
@@ -9147,6 +9512,91 @@ index 0000000..c01c6a1
 +                }
 +            } finally { glDeleteTextures(source);glDeleteVertexArrays(vao); }
 +        });
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_TINT_MATERIALS", matches = ".+")
++    void matchesNativeColorMaskFragmentsThroughSharedPackAndFallbackPrograms() throws Exception {
++        final var controls = com.google.gson.JsonParser.parseString(java.nio.file.Files.readString(
++            java.nio.file.Path.of(System.getenv("STACKANVIL_NATIVE_TINT_MATERIALS")))).getAsJsonObject().getAsJsonArray("cases");
++        com.viaversion.viafabricplus.bedrock.render.EglTestContext.run(() -> {
++            final int vao = glGenVertexArrays(), source = glGenTextures(), override = glGenTextures();
++            glBindVertexArray(vao);
++            glVertexAttrib2f(0, .5F, .5F);
++            glViewport(0, 0, 1, 1);
++            glDisable(GL_BLEND);
++            glDisable(GL_DEPTH_TEST);
++            try {
++                for (final boolean fallback : new boolean[] {false, true}) {
++                    final String attribute = fallback ? "UV0" : "iris_UV0";
++                    final int vertex = shader(GL_VERTEX_SHADER, transformed("""
++                        #version 330 core
++                        layout(location=0) in vec2 %s;
++                        void main() {
++                            vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);
++                            gl_Position=vec4(p*2.0-1.0,0.0,1.0);
++                        }
++                        """.formatted(attribute), PatchShaderType.VERTEX, fallback));
++                    final int fragment = shader(GL_FRAGMENT_SHADER, transformed("""
++                        #version 330 core
++                        uniform sampler2D gtexture;
++                        uniform vec4 testOverlay, testVertex, testLightmap, testModulator, testFog;
++                        uniform int unlit;
++                        out vec4 fragColor;
++                        vec4 readImage(sampler2D image, vec2 uv) { return texture(image,uv); }
++                        void main() {
++                            vec4 color=readImage(gtexture,vec2(.5));
++                            color.rgb=mix(testOverlay.rgb,color.rgb,testOverlay.a);
++                            color.rgb*=testVertex.rgb*testModulator.rgb;
++                            if(unlit==0) color.rgb*=testLightmap.rgb;
++                            color.rgb=mix(color.rgb,testFog.rgb,testFog.a);
++                            fragColor=color;
++                        }
++                        """, PatchShaderType.FRAGMENT, fallback));
++                    final int program = glCreateProgram();
++                    try {
++                        glAttachShader(program, vertex); glAttachShader(program, fragment); glLinkProgram(program);
++                        assertEquals(GL_TRUE, glGetProgrami(program, GL_LINK_STATUS), glGetProgramInfoLog(program));
++                        glUseProgram(program);
++                        glUniform1i(glGetUniformLocation(program,"gtexture"),1);
++                        pixel(1,override,new float[] {1,0,1,1});
++                        final var uniforms = new BedrockIrisAlphaUniforms(program);
++                        int checked = 0;
++                        for (final var entry : controls) {
++                            final var control = entry.getAsJsonObject();
++                            if (!control.get("alphaTest").getAsBoolean()) continue;
++                            final float[] texture = array(control,"texture"), tint = array(control,"tint");
++                            pixel(0,source,texture);
++                            for (final String name : new String[] {"overlay","vertex","lightmap","modulator","fog"}) {
++                                final var value = array(control,name);
++                                glUniform4f(glGetUniformLocation(program,"test"+Character.toUpperCase(name.charAt(0))+name.substring(1)),
++                                    value[0],value[1],value[2],value[3]);
++                            }
++                            glUniform1i(glGetUniformLocation(program,"unlit"),control.get("ignoreLighting").getAsBoolean()?1:0);
++                            final var sampled = new com.viaversion.viafabricplus.bedrock.render.BedrockActorTint(tint[0],tint[1],tint[2],tint[3]);
++                            com.viaversion.viafabricplus.bedrock.render.BedrockShaderTint.bind(sampled,
++                                () -> BedrockShaderAlpha.bind(0F,uniforms::bind));
++                            glClearColor(1,1,0,1); glClear(GL_COLOR_BUFFER_BIT); glDrawArrays(GL_TRIANGLES,0,3);
++                            final float[] expected = control.get("discarded").getAsBoolean() ? new float[] {1,1,0,1} : array(control,"expected");
++                            try (var stack=MemoryStack.stackPush()) {
++                                final var value=stack.malloc(4); glReadPixels(0,0,1,1,GL_RGBA,GL_UNSIGNED_BYTE,value);
++                                for (int channel=0;channel<4;channel++) assertEquals(Math.round(Math.clamp(expected[channel],0F,1F)*255),
++                                    Byte.toUnsignedInt(value.get(channel)),1,"case="+checked+" channel="+channel);
++                            }
++                            checked++;
++                        }
++                        assertEquals(672,checked);
++                    } finally { glUseProgram(0); glDeleteProgram(program); glDeleteShader(vertex); glDeleteShader(fragment); }
++                }
++            } finally { glDeleteTextures(source); glDeleteTextures(override); glDeleteVertexArrays(vao); }
++        });
++    }
++
++    private static float[] array(final com.google.gson.JsonObject value, final String name) {
++        final var elements = value.getAsJsonArray(name);
++        final float[] result = new float[elements.size()];
++        for (int i=0;i<result.length;i++) result[i]=elements.get(i).getAsFloat();
++        return result;
 +    }
 +
 +    private static void verifyPrograms() {

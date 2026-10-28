@@ -1,4 +1,4 @@
-From 612dcda6552c5eb37d30b13f701dfc8d8aedfdfd Mon Sep 17 00:00:00 2001
+From 46a2e760bbabae2e77463e7484ddf5a76121f634 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -345,32 +345,45 @@ Molang effects, and move each repeated pattern to its final declaration
 position so downstream partitioning preserves last-match precedence. The
 wire snapshot can retain unique patterns after evaluation without losing
 these semantics. Preserve the existing immutable snapshot contract.
+
+Carry native primary and secondary palette indices in actor-state v6.
+These values occupy BYTE metadata slots, so the existing typed INT view
+cannot represent them. Keep their unsigned range separate instead of
+changing the meaning of the v5 metadata contract. Older revisions retain
+their wire layout and report unavailable color context.
+
+Native 26.60.5 captures against BDS 26.60.6 confirm all 16 cat palette
+changes, including pure white at index zero. The matching color-mask
+shader uses texture alpha to select tint strength, unlike ordinary
+cutout shading. Transport supplies raw inputs, not frontend dye colors;
+shader and visible rendering acceptance remain separate work.
 ---
  .../api/model/NativeActorBoundsMessage.java   |  75 ++++
  .../api/model/NativeActorIntegerQueries.java  |  36 ++
- .../api/model/NativeActorMessage.java         | 281 +++++++++++++++
- .../api/model/NativeActorStates.java          | 121 +++++++
- .../api/model/NativeCustomEntityMessage.java  | 178 ++++++++++
+ .../api/model/NativeActorMessage.java         | 309 +++++++++++++++
+ .../api/model/NativeActorStates.java          | 121 ++++++
+ .../api/model/NativeCustomEntityMessage.java  | 178 +++++++++
  .../api/model/NativeHandItemState.java        |  29 ++
  .../api/model/NativeShieldBlockingState.java  |  45 +++
- .../api/model/entity/CustomEntity.java        | 121 ++++++-
- .../viabedrock/api/model/entity/Entity.java   | 128 +++++++
+ .../api/model/entity/CustomEntity.java        | 121 +++++-
+ .../viabedrock/api/model/entity/Entity.java   | 139 +++++++
  .../protocol/packet/JoinPackets.java          |   2 +
  .../protocol/packet/MultiStatePackets.java    |  17 +
  .../protocol/packet/WorldPackets.java         |   1 +
  .../protocol/storage/EntityTracker.java       |  25 ++
- .../model/NativeActorBoundsMessageTest.java   |  82 +++++
- .../api/model/NativeActorEntityTest.java      | 118 +++++++
+ .../model/NativeActorBoundsMessageTest.java   |  82 ++++
+ .../api/model/NativeActorEntityTest.java      | 118 ++++++
  .../model/NativeActorIntegerQueriesTest.java  |  30 ++
- .../api/model/NativeActorMessageTest.java     | 326 ++++++++++++++++++
- .../api/model/NativeActorStatesTest.java      | 162 +++++++++
- .../model/NativeCustomEntityMessageTest.java  | 225 ++++++++++++
+ .../api/model/NativeActorMessageTest.java     | 371 ++++++++++++++++++
+ .../api/model/NativeActorStatesTest.java      | 162 ++++++++
+ .../model/NativeCustomEntityMessageTest.java  | 225 +++++++++++
  .../api/model/NativeHandItemStateTest.java    |  71 ++++
  .../model/NativeShieldBlockingStateTest.java  |  91 +++++
- .../CustomEntityMaterialSelectionTest.java    |  98 ++++++
+ .../CustomEntityMaterialSelectionTest.java    |  98 +++++
  .../CustomEntityModelSelectionTest.java       |  15 +-
- .../api/model/entity/EntityScaleTest.java     | 178 ++++++++++
- 24 files changed, 2440 insertions(+), 15 deletions(-)
+ .../api/model/entity/EntityColorsTest.java    |  36 ++
+ .../api/model/entity/EntityScaleTest.java     | 178 +++++++++
+ 25 files changed, 2560 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorIntegerQueries.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
@@ -387,6 +400,7 @@ these semantics. Preserve the existing immutable snapshot contract.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeHandItemStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeShieldBlockingStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityColorsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessage.java
@@ -514,10 +528,10 @@ index 000000000..324bc6b48
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
 new file mode 100644
-index 000000000..39f63a6a8
+index 000000000..982e59be6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
-@@ -0,0 +1,281 @@
+@@ -0,0 +1,309 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -550,6 +564,7 @@ index 000000000..39f63a6a8
 +    String CURRENT_CHANNEL = "viabedrock:actor_state_v3";
 +    String QUERY_CHANNEL = "viabedrock:actor_state_v4";
 +    String METADATA_CHANNEL = "viabedrock:actor_state_v5";
++    String COLOR_CHANNEL = "viabedrock:actor_state_v6";
 +    int MAX_PAYLOAD_BYTES = 1 << 20;
 +    int MAX_PROPERTIES = 4096;
 +    StringType STRING = new StringType(4096);
@@ -558,7 +573,8 @@ index 000000000..39f63a6a8
 +    Type<NativeActorMessage> QUERY_TYPE = codec(4);
 +
 +    Type<NativeActorMessage> METADATA_TYPE = codec(5);
-+    List<String> CHANNELS = List.of(METADATA_CHANNEL, QUERY_CHANNEL, CURRENT_CHANNEL, CHANNEL);
++    Type<NativeActorMessage> COLOR_TYPE = codec(6);
++    List<String> CHANNELS = List.of(COLOR_CHANNEL, METADATA_CHANNEL, QUERY_CHANNEL, CURRENT_CHANNEL, CHANNEL);
 +
 +    static String preferredChannel(final Predicate<String> registered) {
 +        for (final String channel : CHANNELS) {
@@ -580,6 +596,7 @@ index 000000000..39f63a6a8
 +
 +    static Type<NativeActorMessage> type(final String channel) {
 +        return switch (channel) {
++            case COLOR_CHANNEL -> COLOR_TYPE;
 +            case METADATA_CHANNEL -> METADATA_TYPE;
 +            case QUERY_CHANNEL -> QUERY_TYPE;
 +            case CURRENT_CHANNEL -> CURRENT_TYPE;
@@ -650,7 +667,8 @@ index 000000000..39f63a6a8
 +                    } else {
 +                        integerMetadata = null;
 +                    }
-+                    message = new Snapshot(uuid, lifetime, local, runtimeId, identifier, actorName, scale, flags, variant, markVariant, spellColor, properties, uniqueId, targetId, integerMetadata);
++                    final Colors colors = revision >= 6 ? new Colors(buffer.readUnsignedByte(), buffer.readUnsignedByte()) : null;
++                    message = new Snapshot(uuid, lifetime, local, runtimeId, identifier, actorName, scale, flags, variant, markVariant, spellColor, properties, uniqueId, targetId, integerMetadata, colors);
 +                } else if (kind == 1) {
 +                    message = new Remove(uuid, lifetime, local);
 +                } else {
@@ -672,6 +690,9 @@ index 000000000..39f63a6a8
 +                }
 +                if (revision >= 5 && message instanceof Snapshot snapshot && snapshot.integerMetadata == null) {
 +                    throw new IllegalArgumentException("Missing native actor integer metadata");
++                }
++                if (revision >= 6 && message instanceof Snapshot snapshot && snapshot.colors == null) {
++                    throw new IllegalArgumentException("Native actor color metadata is unavailable");
 +                }
 +                final int start = buffer.writerIndex();
 +                Types.VAR_INT.writePrimitive(buffer, revision);
@@ -728,6 +749,9 @@ index 000000000..39f63a6a8
 +                            checkSize(buffer, start);
 +                        }
 +                    }
++                    if (revision >= 6) {
++                        buffer.writeByte(snapshot.colors.primary).writeByte(snapshot.colors.secondary);
++                    }
 +                }
 +                checkSize(buffer, start);
 +            }
@@ -757,12 +781,12 @@ index 000000000..39f63a6a8
 +    record Snapshot(UUID uuid, UUID lifetime, boolean localPlayer, long runtimeId, String identifier, String name,
 +                    float scale, Set<ActorFlags> flags, int variant, int markVariant, Integer spellColor,
 +                    Map<String, Object> properties, Long uniqueId, Long targetId,
-+                    Map<ActorDataIds, Integer> integerMetadata) implements NativeActorMessage {
++                    Map<ActorDataIds, Integer> integerMetadata, Colors colors) implements NativeActorMessage {
 +        /** Legacy snapshots have no native unique ID association. */
 +        public Snapshot(final UUID uuid, final UUID lifetime, final boolean localPlayer, final long runtimeId,
 +                        final String identifier, final String name, final float scale, final Set<ActorFlags> flags,
 +                        final int variant, final int markVariant, final Integer spellColor, final Map<String, Object> properties) {
-+            this(uuid, lifetime, localPlayer, runtimeId, identifier, name, scale, flags, variant, markVariant, spellColor, properties, null, null, null);
++            this(uuid, lifetime, localPlayer, runtimeId, identifier, name, scale, flags, variant, markVariant, spellColor, properties, null, null, null, null);
 +        }
 +
 +        /** Identity-only snapshots do not carry native query metadata. */
@@ -770,7 +794,7 @@ index 000000000..39f63a6a8
 +                        final String identifier, final String name, final float scale, final Set<ActorFlags> flags,
 +                        final int variant, final int markVariant, final Integer spellColor, final Map<String, Object> properties,
 +                        final Long uniqueId) {
-+            this(uuid, lifetime, localPlayer, runtimeId, identifier, name, scale, flags, variant, markVariant, spellColor, properties, uniqueId, null, null);
++            this(uuid, lifetime, localPlayer, runtimeId, identifier, name, scale, flags, variant, markVariant, spellColor, properties, uniqueId, null, null, null);
 +        }
 +
 +        /** Target-aware legacy snapshots have no typed integer metadata view. */
@@ -779,7 +803,16 @@ index 000000000..39f63a6a8
 +                        final int variant, final int markVariant, final Integer spellColor, final Map<String, Object> properties,
 +                        final Long uniqueId, final Long targetId) {
 +            this(uuid, lifetime, localPlayer, runtimeId, identifier, name, scale, flags, variant, markVariant,
-+                    spellColor, properties, uniqueId, targetId, null);
++                    spellColor, properties, uniqueId, targetId, null, null);
++        }
++
++        /** Integer-metadata snapshots predate native byte-sized palette indices. */
++        public Snapshot(final UUID uuid, final UUID lifetime, final boolean localPlayer, final long runtimeId,
++                        final String identifier, final String name, final float scale, final Set<ActorFlags> flags,
++                        final int variant, final int markVariant, final Integer spellColor, final Map<String, Object> properties,
++                        final Long uniqueId, final Long targetId, final Map<ActorDataIds, Integer> integerMetadata) {
++            this(uuid, lifetime, localPlayer, runtimeId, identifier, name, scale, flags, variant, markVariant,
++                    spellColor, properties, uniqueId, targetId, integerMetadata, null);
 +        }
 +
 +        public Snapshot {
@@ -791,6 +824,15 @@ index 000000000..39f63a6a8
 +                        || value instanceof Long || value instanceof Float || value instanceof Double)) {
 +                    throw new IllegalArgumentException("Unsupported native actor property type");
 +                }
++            }
++        }
++    }
++
++    /** Raw unsigned native palette indices, independent of frontend dye colors. */
++    record Colors(int primary, int secondary) {
++        public Colors {
++            if (primary < 0 || primary > 255 || secondary < 0 || secondary > 255) {
++                throw new IllegalArgumentException("Native actor palette index must fit an unsigned byte");
 +            }
 +        }
 +    }
@@ -1454,7 +1496,7 @@ index bf3919338..4e87e6acb 100644
  
      private class ItemDisplayEntity extends Entity {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 767c62d66..fcea5e9b3 100644
+index 767c62d66..c1d364d28 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -21,6 +21,11 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -1517,7 +1559,7 @@ index 767c62d66..fcea5e9b3 100644
          if (this.hasBossBar) {
              this.hasBossBar = false;
              final PacketWrapper bossEvent = PacketWrapper.create(ClientboundPackets26_3.BOSS_EVENT, this.user);
-@@ -339,6 +373,100 @@ public class Entity {
+@@ -339,6 +373,111 @@ public class Entity {
      }
  
      protected void onEntityDataChanged() {
@@ -1533,7 +1575,7 @@ index 767c62d66..fcea5e9b3 100644
 +                && spell.value() instanceof Integer color ? color : null;
 +        return new NativeActorMessage.Snapshot(this.javaUuid(), this.nativeLifetime, this instanceof ClientPlayerEntity,
 +                this.runtimeId(), this.type == null ? "" : this.type, nativeName, this.scale(), this.entityFlags(),
-+                this.nativeMetadataInt(ActorDataIds.VARIANT), this.nativeMetadataInt(ActorDataIds.MARK_VARIANT), spellColor, this.entityProperties(), this.uniqueId(), this.nativeTargetId(), this.nativeIntegerMetadata());
++                this.nativeMetadataInt(ActorDataIds.VARIANT), this.nativeMetadataInt(ActorDataIds.MARK_VARIANT), spellColor, this.entityProperties(), this.uniqueId(), this.nativeTargetId(), this.nativeIntegerMetadata(), this.nativeColors());
 +    }
 +
 +    public final void sendNativeActorSnapshot() {
@@ -1604,6 +1646,17 @@ index 767c62d66..fcea5e9b3 100644
 +        return java.util.Map.copyOf(values);
 +    }
 +
++    protected final NativeActorMessage.Colors nativeColors() {
++        return new NativeActorMessage.Colors(this.nativePaletteIndex(ActorDataIds.COLOR_INDEX),
++                this.nativePaletteIndex(ActorDataIds.COLOR_2_INDEX));
++    }
++
++    private int nativePaletteIndex(final ActorDataIds id) {
++        final var data = this.entityData.get(id);
++        return data != null && data.dataType() == EntityDataTypesBedrock.BYTE && data.value() instanceof Byte value
++                ? Byte.toUnsignedInt(value) : 0;
++    }
++
 +    private int nativeMetadataInt(final ActorDataIds id) {
 +        final var value = this.entityData.get(id);
 +        return value != null && value.value() instanceof Number number ? number.intValue() : 0;
@@ -1619,10 +1672,10 @@ index 767c62d66..fcea5e9b3 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 22924c897..b5b852d32 100644
+index bfb30d389..727ae985f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-@@ -572,6 +572,8 @@ public final class JoinPackets {
+@@ -568,6 +568,8 @@ public final class JoinPackets {
          joinGame.send(BedrockProtocol.class);
          user.get(PlayerWaypointTracker.class).markJoined();
          user.get(NativeSkinStorage.class).markJoined();
@@ -1681,7 +1734,7 @@ index ec472a623..954469d80 100644
                      && wrapper.user().has(ChunkTracker.class)) {
                  wrapper.user().get(ChunkTracker.class).sendNativeBlockSnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
-index e2edc0782..32e376343 100644
+index ee6015a34..20b72f14c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 @@ -197,6 +197,7 @@ public final class WorldPackets {
@@ -1992,10 +2045,10 @@ index 000000000..8479d8f0a
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeActorMessageTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorMessageTest.java
 new file mode 100644
-index 000000000..34f73ce90
+index 000000000..81afe3c9f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorMessageTest.java
-@@ -0,0 +1,326 @@
+@@ -0,0 +1,371 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2019,6 +2072,51 @@ index 000000000..34f73ce90
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class NativeActorMessageTest {
++
++    @Test
++    void colorCodecRetainsUnsignedIndicesAndPreservesOlderStateBytes() {
++        for (final int primary : new int[]{0, 15, 128, 255}) {
++            final var snapshot = new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), false, 91,
++                    "minecraft:cat", "", .4F, Set.of(ActorFlags.BABY), 0, 0, null, Map.of(), -7L, 0L,
++                    Map.of(ActorDataIds.SKIN_ID, 3), new NativeActorMessage.Colors(primary, 255 - primary));
++            final var bytes = Unpooled.buffer();
++            try {
++                NativeActorMessage.COLOR_TYPE.write(bytes, snapshot);
++                assertEquals(snapshot, NativeActorMessage.COLOR_TYPE.read(bytes));
++                final int size = bytes.writerIndex();
++                for (final int length : new int[]{size - 2, size - 1}) {
++                    final var truncated = bytes.copy(0, length);
++                    try {
++                        assertThrows(RuntimeException.class, () -> NativeActorMessage.COLOR_TYPE.read(truncated));
++                    } finally {
++                        truncated.release();
++                    }
++                }
++                for (final var legacy : List.of(NativeActorMessage.TYPE, NativeActorMessage.CURRENT_TYPE,
++                        NativeActorMessage.QUERY_TYPE, NativeActorMessage.METADATA_TYPE)) {
++                    bytes.clear();
++                    legacy.write(bytes, snapshot);
++                    final var previous = (NativeActorMessage.Snapshot) legacy.read(bytes);
++                    assertNull(previous.colors());
++                    final var original = bytes.copy(0, bytes.writerIndex());
++                    try {
++                        bytes.clear();
++                        legacy.write(bytes, previous);
++                        assertEquals(original, bytes);
++                    } finally {
++                        original.release();
++                    }
++                    bytes.clear();
++                    assertThrows(IllegalArgumentException.class, () -> NativeActorMessage.COLOR_TYPE.write(bytes, previous));
++                    assertEquals(0, bytes.writerIndex());
++                }
++            } finally {
++                bytes.release();
++            }
++        }
++        assertThrows(IllegalArgumentException.class, () -> new NativeActorMessage.Colors(-1, 0));
++        assertThrows(IllegalArgumentException.class, () -> new NativeActorMessage.Colors(0, 256));
++    }
 +
 +    @Test
 +    void metadataCodecRetainsRawIntegersAndLegacyAvailabilityWithoutChangingLegacyBytes() {
@@ -3027,6 +3125,48 @@ index 2ae7687e2..0170dc542 100644
          final List<CustomEntity.EvaluatedModel> current = new ArrayList<>(List.of(model));
  
          assertTrue(CustomEntity.replaceModels(current, List.of()));
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityColorsTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityColorsTest.java
+new file mode 100644
+index 000000000..eb2f7712e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityColorsTest.java
+@@ -0,0 +1,36 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.entity;
++
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import java.util.UUID;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class EntityColorsTest {
++
++    @Test
++    void capturesTypedNativeColorBytesWithoutReusingIntegersOrStaleValues() {
++        final var entity = new Entity(null, 1, 2, "minecraft:cat", 3, UUID.randomUUID(), EntityTypes26_3.CAT);
++        assertEquals(new NativeActorMessage.Colors(0, 0), entity.nativeColors());
++        for (final int primary : new int[]{0, 15, 128, 255}) {
++            entity.entityData().put(ActorDataIds.COLOR_INDEX, new EntityData(3, EntityDataTypesBedrock.BYTE, (byte) primary));
++            entity.entityData().put(ActorDataIds.COLOR_2_INDEX, new EntityData(82, EntityDataTypesBedrock.BYTE, (byte) (255 - primary)));
++            final var captured = entity.nativeColors();
++            assertEquals(new NativeActorMessage.Colors(primary, 255 - primary), captured);
++            entity.entityData().put(ActorDataIds.COLOR_INDEX, new EntityData(3, EntityDataTypesBedrock.INT, 14));
++            entity.entityData().remove(ActorDataIds.COLOR_2_INDEX);
++            assertEquals(new NativeActorMessage.Colors(0, 0), entity.nativeColors());
++            assertEquals(new NativeActorMessage.Colors(primary, 255 - primary), captured);
++            assertFalse(entity.nativeIntegerMetadata().containsKey(ActorDataIds.COLOR_2_INDEX));
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java
 new file mode 100644
 index 000000000..af9c8e804

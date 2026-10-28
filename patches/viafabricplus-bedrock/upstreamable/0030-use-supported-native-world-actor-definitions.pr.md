@@ -215,3 +215,25 @@ Unknown equipment or native vehicle metadata remains unavailable instead of rece
 The [shared runtime notes](0008-share-native-actor-and-resource-runtime.pr.md#head-equipment-and-native-vehicle-queries-october-27-2026)
 record the semantics, regression controls, and verification limits.
 Living world actors also derive `query.is_riding` from their current passenger state.
+
+
+## Versioned cat geometry and palette draws, October 28, 2026
+
+World playback now receives native actor-state v6 palette inputs.
+Each draw retains its sampled tint. Material cache keys include that tint,
+so metadata changes cannot reuse a previous color. Changed snapshots also
+invalidate frame reuse at the same animation clock. Unavailable legacy
+context clears the tint and restores fallback.
+
+The bundled-cat regression samples current, 1.20.0, and current resource
+views through the production graph. It checks baby geometry selection,
+script scale, palette replacement, earlier draw immutability, retirement,
+unsupported indices, and recovery. The real-resource test passes without skips.
+Native palette controls and current/older/current reference captures are private.
+A live direct client reconnects through current, 1.20.0, and current worlds.
+All three graphs select native draws without missing queries or material failure.
+Script scales change from 2.5 to 1 to 2.5. Primary palette indices change
+from 0 to 14 to 0, matching each world’s native BYTE metadata.
+The older world’s tamed state does not carry into the return connection.
+Resource selection is verified; complete pose alignment remains open.
+The Java capture shows a head-roll difference from the native reference.

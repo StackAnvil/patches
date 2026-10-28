@@ -11902,3 +11902,60 @@ One direct case emits three input packets between wire receipt and actual client
 Comparisons therefore align the input with the observed physical application tick, not merely the first packet after wire receipt.
 Input scheduling, complete trajectories, mounted controls and ordinary Java sessions still need further verification.
 The original rollback and eating reports and the full five-area goal remain open.
+
+## Native actor palette inputs and versioned cat draws, October 28, 2026
+
+Actor-state v6 carries the native primary and secondary palette indices.
+These BYTE fields stay separate from the existing INT metadata view.
+Older payload revisions preserve their wire layout and expose unavailable color context.
+The frontend registers the v6 Fabric payload and receiver before selecting this revision.
+A real v5-only session retains Java fallback, as intended.
+
+The renderer accepts the verified ColorMask and AlphaTestColorMask families with an explicit sampled tint.
+Texture alpha controls RGB tint strength and multiplies output alpha.
+The alpha-test family discards zero texture alpha before applying tint.
+Ordinary cutouts retain their 0.5 threshold.
+Native `DisableAlphaWrite` becomes an RGB-only write mask.
+Each prepared draw owns its tint and buffer slice; material caches include the sampled tint.
+
+Native 26.60.5 and BDS 26.60.6 controls verify all 16 primary palette values on protocol 2225.
+Index zero is pure white.
+Original target shader execution supplies 1,344 fragment controls.
+GPU checks repeat these controls with RGBA and RGB-only writes, including zero tint alpha, low texture alpha, overlay, lighting, fog, and depth.
+The native material SHA-256 is `ac39dc5bf532073e54cfae29e0d5f720f27b152004ea1b60d3883a6d20f22ac6`.
+Licensed assets, packet journals, screenshots, and execution fixtures remain private.
+
+Live direct and ViaProxy sessions display the native tint fixture through the new payload revision.
+The paired native ordinary-cutout and tint controls establish matching material inputs.
+ViaProxy's opaque red sample is `(145, 38, 32)`; the native sample is `(145, 38, 31)`.
+The direct sample also measures `(145, 38, 32)`.
+The original palette sweep has a different unresolved brightness state, so it does not justify a directional-lighting change.
+These comparisons preserve the existing vertex shader.
+
+A direct session reconnects through current, 1.20.0, and current resource views in one client process.
+All three cat graphs select native draws without missing queries or material failure.
+Their script scales are 2.5, 1, and 2.5; the native actor scale remains 0.4.
+Their primary palette indices are 0, 14, and 0, matching each world's native metadata.
+The newer worlds contain an untamed cat; the older world contains a tamed cat.
+The return connection restores the current baby geometry and clears the older palette context.
+This confirms resource and material selection across sessions.
+Full pose alignment remains open: the Java cat capture shows a head-roll difference from the native reference.
+
+Iris replacement programs also compose the sampled primary tint before shader-pack shading.
+Sampler helpers retain actor identity, and pack sampler overrides do not replace the native source image.
+Source-alpha coverage stays independent of tint alpha.
+Prepared draws scope the tint across nested Java draws and restore it after failure.
+Transformed pack and fallback programs each pass 672 original native fragment controls.
+All 38 focused tests pass without skips.
+These checks establish material composition; shader-pack lighting remains pack-defined.
+
+Secondary-color visuals, authored controller colors, GUI tint parity, and tint combined with glint, emission, or masked multitexture remain unverified.
+The resource-version area still needs audio acceptance and complete server-pack priority comparisons.
+Skin armor masking, profile/LOD fixtures, font sampling differences, and the remaining movement/rendering comparisons stay open.
+
+The full build passes with 2,056 core tests and 1,288 add-on tests, including the new Iris composition controls.
+Core skips 176 optional tests; the add-on skips 134. Neither suite reports failures or errors.
+The bundle also builds successfully.
+A final direct recording activates Iris 1.11.7 and Complementary Reimagined r5.9.3 with the rebuilt add-on.
+The tint and ordinary controls both render. The session reaches spawn and exits normally without missing pipeline overrides or shader compilation errors.
+This verifies runtime admission and binding, while retaining the stated visual and lighting limits.

@@ -50,7 +50,7 @@ A schema update establishes wire compatibility. Each existing feature must also 
 | Animation and interaction hands | The updated codecs carry hand fields. Native offhand item restrictions still apply. |
 | Skins and player lists | PlayFab identity comes from player-list entries and reaches Java profile properties. Serialized skin data no longer carries that field. |
 | Sound updates | Decode the new tagged event union through the sound model. |
-| Vanilla resources | Apply the advertised world cutoff to metadata and native libraries. Archive format 2 carries it through ViaProxy. Native current/older/current cat references are captured. Java cat tint-material support and audio acceptance remain pending. |
+| Vanilla resources | Apply the advertised world cutoff to metadata and native libraries. Archive format 2 carries it through ViaProxy. Native and direct Java current/older/current cat controls verify resource selection. Tint materials now render through v6 actor state. Pose alignment and audio acceptance remain pending. |
 | Chunk biomes | Consume the new override flag. Java uses received biome data because it does not run Bedrock's client biome generator. |
 | Block seating and signed audio | Spawn fields are decoded, but seating and signed content playback remain unsupported. |
 | Matchmaking and environment layers | Queue-state UI integration and attribute-layer rendering remain feature gaps. |

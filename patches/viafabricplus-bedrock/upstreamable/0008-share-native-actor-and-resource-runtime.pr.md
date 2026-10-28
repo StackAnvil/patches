@@ -2573,3 +2573,14 @@ fallback: its cached `cat` material result is unsupported. The inherited
 This query correction alone does not establish native cat rendering parity.
 
 Source: [Molang tame query](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions/query_is_tamed).
+
+
+## Versioned color receiver, October 28, 2026
+
+Register the Fabric payload codec and connection receiver for actor-state v6.
+The decoded snapshot retains native byte-sized palette indices. A frontend
+regression sends v6 and v5 payloads through the real codec and state store,
+verifying that older payloads clear color context and later v6 restores it.
+The v5-only live control correctly keeps Java fallback without a native tint.
+The core channel contract and palette evidence are recorded in the
+[metadata patch](../../viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#native-palette-indices-october-28-2026).
