@@ -1,33 +1,53 @@
-From 263d603dd3d145b0a38d2cd9512ff45ee5692148 Mon Sep 17 00:00:00 2001
+From 47e1697decef25223b31db4e01ead172b65f3bf1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 28 Oct 2026 03:36:18 +0100
 Subject: [PATCH] feat(interaction): predict held trapdoor placement
 
-Native Bedrock 1.26.60.5 keeps trapdoor facing and half during held placement, including camera rotation and switching trapdoor materials. Repeated placement adds closed neighbors rather than toggling the previous block; releasing the control restores ordinary interaction.
+Native Bedrock 1.26.60.5 retains the first locally predicted trapdoor
+facing, half and world hit during held placement, including camera and
+material changes. Repeated placement adds closed neighbors instead of
+toggling the previous block. Release restores ordinary interaction.
 
-Send the physical use-control lifetime through the shared block-use channel and retire it on release, screens, disconnect, and connection replacement. Suppress local block activation after a successful trapdoor placement and reuse its orientation while preserving water, power, and material properties. Keep this state until the control ends rather than resetting on selected-item changes or server teleports.
+Send physical use lifetimes through the shared channel and retire them
+on release, screens, disconnect and connection replacement. Suppress block
+activation after successful trapdoor placement and preserve independent
+water, power and material properties. Separate trapdoors and the original
+support remain eligible; unrelated non-trapdoor targets do not.
 
-Real block-state tests cover material changes, orientation retention, independent placement properties, release, and ordinary blocks. Native captures and a failing Java baseline establish the intended behavior; spatial continuation and correction comparisons remain acceptance gates.
+Prediction format 2 carries placement/interaction/failure and the native
+cursor immediately before the concluding Java sequence. Native snapping
+expresses the original world hit relative to each later target, even
+outside its unit cube. Keep that cursor separate from the Java raycast
+packet and clear it with the held placement state. Failed height-limit
+attempts do not capture a placement until prediction succeeds.
 
-Native spatial captures permit continued placement from separate trapdoors,
-including differently oriented ones, while unrelated floor targets remain
-inactive. Keep the original support eligible for retries and suppress
-other non-trapdoor targets until release. Send the actual prediction result
-immediately before its concluding Java packet so failed repeats do not
-reset server placement state or predict item consumption.
+Use the existing Java 3/16 trapdoor outline for fresh clicks instead of
+the approximate 0.1825 custom outline. Native and Java bottom-face hits
+then agree at 0.8125.
+
+Native, direct Java and ViaProxy Survival fixtures accept the same server
+facing correction when the new camera direction precedes placement.
+Earlier teleport fixtures placed before the native camera update and
+did not establish a server direction lock. Preserve authoritative states
+instead of forcing the locally predicted facing back onto the world.
+
+Real block-state tests cover orientation, materials, independent
+properties, target eligibility, frozen world hits, release and ordinary
+blocks. Matching native evidence also covers item consumption, pause
+cancellation and replacement after server removal. Captures stay private.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |  2 +
- .../features/block/MixinTrapDoorBlock.java    | 11 +++
- .../features/input/MixinBlockUseControl.java  | 27 ++++++
- .../inventory/MixinHeldBlockPlacement.java    | 28 ++++++
- .../features/inventory/MixinHeldBlockUse.java | 54 +++++++++++
- .../bedrock/input/BedrockBlockUse.java        | 95 +++++++++++++++++++
- .../bedrock/input/BlockUsePayload.java        | 24 +++++
- .../input/BlockUsePredictionPayload.java      | 24 +++++
- .../bedrock/inventory/TrapdoorPlacement.java  | 46 +++++++++
- .../viafabricplus-bedrock.mixins.json         |  3 +
- .../inventory/TrapdoorPlacementTest.java      | 76 +++++++++++++++
- 11 files changed, 390 insertions(+)
+ .../bedrock/ViaFabricPlusBedrock.java         |   2 +
+ .../features/block/MixinTrapDoorBlock.java    |  27 ++--
+ .../features/input/MixinBlockUseControl.java  |  27 ++++
+ .../inventory/MixinHeldBlockPlacement.java    |  28 +++++
+ .../features/inventory/MixinHeldBlockUse.java |  61 ++++++++++
+ .../bedrock/input/BedrockBlockUse.java        | 115 ++++++++++++++++++
+ .../bedrock/input/BlockUsePayload.java        |  24 ++++
+ .../input/BlockUsePredictionPayload.java      |  24 ++++
+ .../bedrock/inventory/TrapdoorPlacement.java  |  55 +++++++++
+ .../viafabricplus-bedrock.mixins.json         |   3 +
+ .../inventory/TrapdoorPlacementTest.java      |  96 +++++++++++++++
+ 11 files changed, 443 insertions(+), 19 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinBlockUseControl.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java
@@ -58,7 +78,7 @@ index 18e8825..fbc7db1 100644
          BedrockCommandBlockScreen.register();
          PayloadTypeRegistry.serverboundPlay().register(PlayerPredictionPayload.TYPE, PlayerPredictionPayload.CODEC);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinTrapDoorBlock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinTrapDoorBlock.java
-index c9866b0..e71e150 100644
+index c9866b0..561f01c 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinTrapDoorBlock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinTrapDoorBlock.java
 @@ -22,6 +22,10 @@
@@ -72,20 +92,55 @@ index c9866b0..e71e150 100644
  import java.util.Map;
  import net.minecraft.core.Direction;
  import net.minecraft.world.level.block.HorizontalDirectionalBlock;
-@@ -79,6 +83,13 @@ public abstract class MixinTrapDoorBlock extends HorizontalDirectionalBlock {
-         return SHAPES;
+@@ -30,31 +34,17 @@ import net.minecraft.world.level.block.state.BlockState;
+ import net.minecraft.world.level.block.state.properties.BooleanProperty;
+ import net.minecraft.world.level.block.state.properties.EnumProperty;
+ import net.minecraft.world.level.block.state.properties.Half;
+-import net.minecraft.world.phys.shapes.Shapes;
+ import net.minecraft.world.phys.shapes.VoxelShape;
+ import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+ import org.jspecify.annotations.NonNull;
+-import org.objectweb.asm.Opcodes;
+ import org.spongepowered.asm.mixin.Final;
+ import org.spongepowered.asm.mixin.Mixin;
+ import org.spongepowered.asm.mixin.Shadow;
+-import org.spongepowered.asm.mixin.Unique;
+ import org.spongepowered.asm.mixin.injection.At;
+-import org.spongepowered.asm.mixin.injection.Redirect;
+ 
+ @Mixin(TrapDoorBlock.class)
+ public abstract class MixinTrapDoorBlock extends HorizontalDirectionalBlock {
+ 
+-    @Unique
+-    private static final Map<Direction, VoxelShape> viaFabricPlusBedrock$shapes = Map.of(
+-        Direction.NORTH, Shapes.box(0, 0, 0.8175, 1, 1, 1),
+-        Direction.SOUTH, Shapes.box(0, 0, 0, 1, 1, 0.1825),
+-        Direction.WEST, Shapes.box(0.8175, 0, 0, 1, 1, 1),
+-        Direction.EAST, Shapes.box(0, 0, 0, 0.1825, 1, 1),
+-        Direction.DOWN, Shapes.box(0, 0.8175, 0, 1, 1, 1),
+-        Direction.UP, Shapes.box(0, 0, 0, 1, 0.1825, 1)
+-    );
+-
+     @Shadow
+     @Final
+     private static Map<Direction, VoxelShape> SHAPES;
+@@ -71,12 +61,11 @@ public abstract class MixinTrapDoorBlock extends HorizontalDirectionalBlock {
+         super(settings);
      }
  
+-    @Redirect(method = "getShape", at = @At(value = "FIELD", target = "Lnet/minecraft/world/level/block/TrapDoorBlock;SHAPES:Ljava/util/Map;", opcode = Opcodes.GETSTATIC))
+-    private Map<Direction, VoxelShape> changeOutlineShape() {
+-        if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
+-            return viaFabricPlusBedrock$shapes;
 +    @Inject(method = "getStateForPlacement", at = @At("RETURN"), cancellable = true)
 +    private void retainHeldPlacement(final BlockPlaceContext context, final CallbackInfoReturnable<BlockState> cir) {
 +        if (cir.getReturnValue() != null) {
 +            cir.setReturnValue(BedrockBlockUse.placement(cir.getReturnValue()));
-+        }
-+    }
-+
+         }
+-        return SHAPES;
+     }
+ 
      @Override
-     public @NonNull VoxelShape getOcclusionShape(final @NonNull BlockState state) {
-         if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinBlockUseControl.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinBlockUseControl.java
 new file mode 100644
 index 0000000..6491a8e
@@ -121,7 +176,7 @@ index 0000000..6491a8e
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
 new file mode 100644
-index 0000000..2cc6797
+index 0000000..10e5793
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
 @@ -0,0 +1,28 @@
@@ -149,16 +204,16 @@ index 0000000..2cc6797
 +        if (cir.getReturnValue().consumesAction() && context.getPlayer() == Minecraft.getInstance().player) {
 +            final var support = context.replacingClickedOnBlock() ? context.getClickedPos()
 +                : context.getClickedPos().relative(context.getClickedFace().getOpposite());
-+            BedrockBlockUse.placed(context.getLevel().getBlockState(context.getClickedPos()), support);
++            BedrockBlockUse.placed(context.getLevel().getBlockState(context.getClickedPos()), support, context.getClickLocation());
 +        }
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java
 new file mode 100644
-index 0000000..d77ab23
+index 0000000..e44f1d9
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,61 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -189,12 +244,19 @@ index 0000000..d77ab23
 +    private boolean suppressBlockInteraction(final LocalPlayer player, final Operation<Boolean> original) {
 +        return BedrockBlockUse.suppressInteraction() || original.call(player);
 +    }
++
 +    @Inject(method = "useItemOn", at = @At("HEAD"), cancellable = true)
 +    private void restrictSnappedTargets(final LocalPlayer player, final InteractionHand hand, final BlockHitResult hit,
 +                                       final CallbackInfoReturnable<InteractionResult> cir) {
 +        if (!BedrockBlockUse.allows(hit.getBlockPos(), player.level().getBlockState(hit.getBlockPos()))) {
 +            cir.setReturnValue(InteractionResult.FAIL);
 +        }
++    }
++
++    @Inject(method = "performUseItemOn", at = @At("HEAD"))
++    private void beginLocalPrediction(final LocalPlayer player, final InteractionHand hand, final BlockHitResult hit,
++                                      final CallbackInfoReturnable<InteractionResult> cir) {
++        BedrockBlockUse.beginPrediction(hit);
 +    }
 +
 +    @Inject(method = "performUseItemOn", at = @At("RETURN"))
@@ -215,10 +277,10 @@ index 0000000..d77ab23
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockBlockUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockBlockUse.java
 new file mode 100644
-index 0000000..eb8662f
+index 0000000..c3fbd39
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockBlockUse.java
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,115 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -235,12 +297,17 @@ index 0000000..eb8662f
 +import net.minecraft.core.BlockPos;
 +import net.raphimc.viabedrock.api.model.BlockUsePrediction;
 +import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.phys.BlockHitResult;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.protocol.model.Position3f;
 +import net.raphimc.viabedrock.api.model.PlayerBlockUse;
 +
 +public final class BedrockBlockUse {
 +    private static final TrapdoorPlacement PLACEMENT = new TrapdoorPlacement();
 +    private static boolean held;
-+    private static boolean predictedSuccess;
++    private static boolean placedBlock;
++    private static Position3f cursor;
++    private static BlockUsePrediction.Result predictedResult = BlockUsePrediction.Result.FAILED;
 +
 +    private BedrockBlockUse() {}
 +
@@ -286,22 +353,37 @@ index 0000000..eb8662f
 +        return !held || PLACEMENT.allows(target, state);
 +    }
 +
-+    public static void placed(final BlockState state, final BlockPos support) {
++    public static void placed(final BlockState state, final BlockPos support, final Vec3 hit) {
++        placedBlock = true;
 +        if (held) {
-+            PLACEMENT.remember(state, support);
++            PLACEMENT.remember(state, support, hit);
 +        }
++    }
++
++    public static void beginPrediction(final BlockHitResult hit) {
++        clearPrediction();
++        final Vec3 relative = held ? PLACEMENT.clickPosition(hit.getBlockPos(), hit.getLocation())
++            : hit.getLocation().subtract(Vec3.atLowerCornerOf(hit.getBlockPos()));
++        cursor = new Position3f((float) relative.x, (float) relative.y, (float) relative.z);
++    }
++
++    private static void clearPrediction() {
++        cursor = null;
++        placedBlock = false;
++        predictedResult = BlockUsePrediction.Result.FAILED;
 +    }
 +
 +    public static void predicted(final boolean success) {
-+        predictedSuccess = success;
++        predictedResult = !success ? BlockUsePrediction.Result.FAILED
++            : placedBlock ? BlockUsePrediction.Result.PLACED : BlockUsePrediction.Result.INTERACTED;
 +    }
 +
 +    public static void sendPrediction(final int sequence) {
-+        if (BedrockInputPermissions.isBedrockConnection() && Minecraft.getInstance().getConnection() != null
++        if (cursor != null && BedrockInputPermissions.isBedrockConnection() && Minecraft.getInstance().getConnection() != null
 +                && ClientPlayNetworking.canSend(BlockUsePredictionPayload.TYPE)) {
-+            ClientPlayNetworking.send(new BlockUsePredictionPayload(new BlockUsePrediction(sequence, predictedSuccess)));
++            ClientPlayNetworking.send(new BlockUsePredictionPayload(new BlockUsePrediction(sequence, predictedResult, cursor)));
 +        }
-+        predictedSuccess = false;
++        clearPrediction();
 +    }
 +
 +    public static BlockState placement(final BlockState state) {
@@ -310,7 +392,7 @@ index 0000000..eb8662f
 +
 +    private static void reset() {
 +        held = false;
-+        predictedSuccess = false;
++        clearPrediction();
 +        PLACEMENT.clear();
 +    }
 +}
@@ -376,10 +458,10 @@ index 0000000..a98d448
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacement.java
 new file mode 100644
-index 0000000..34c2e08
+index 0000000..7a2e793
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacement.java
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,55 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -390,6 +472,7 @@ index 0000000..34c2e08
 +import net.minecraft.core.Direction;
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.world.level.block.TrapDoorBlock;
++import net.minecraft.world.phys.Vec3;
 +import net.minecraft.world.level.block.state.BlockState;
 +import net.minecraft.world.level.block.state.properties.Half;
 +
@@ -398,16 +481,18 @@ index 0000000..34c2e08
 +    private Direction facing;
 +    private Half half;
 +    private BlockPos support;
++    private Vec3 initialHit;
 +
 +    public boolean active() {
 +        return this.facing != null;
 +    }
 +
-+    public void remember(final BlockState state, final BlockPos support) {
++    public void remember(final BlockState state, final BlockPos support, final Vec3 hit) {
 +        if (!this.active() && state.getBlock() instanceof TrapDoorBlock) {
 +            this.facing = state.getValue(TrapDoorBlock.FACING);
 +            this.half = state.getValue(TrapDoorBlock.HALF);
 +            this.support = support.immutable();
++            this.initialHit = hit;
 +        }
 +    }
 +
@@ -420,10 +505,16 @@ index 0000000..34c2e08
 +            ? state.setValue(TrapDoorBlock.FACING, this.facing).setValue(TrapDoorBlock.HALF, this.half) : state;
 +    }
 +
++    // Native held snapping reuses the first world hit, even outside the current target cube.
++    public Vec3 clickPosition(final BlockPos target, final Vec3 hit) {
++        return (this.active() ? this.initialHit : hit).subtract(Vec3.atLowerCornerOf(target));
++    }
++
 +    public void clear() {
 +        this.facing = null;
 +        this.half = null;
 +        this.support = null;
++        this.initialHit = null;
 +    }
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
@@ -442,10 +533,10 @@ index 7e1d5bb..a9376b3 100644
      "features.creative.MixinCreativeModeTabs",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacementTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacementTest.java
 new file mode 100644
-index 0000000..71b548b
+index 0000000..5a504c7
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacementTest.java
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,96 @@
 +package com.viaversion.viafabricplus.bedrock.inventory;
 +
 +import net.minecraft.SharedConstants;
@@ -454,6 +545,7 @@ index 0000000..71b548b
 +import net.minecraft.server.Bootstrap;
 +import net.minecraft.world.level.block.Blocks;
 +import net.minecraft.world.level.block.TrapDoorBlock;
++import net.minecraft.world.phys.Vec3;
 +import net.minecraft.world.level.block.state.properties.Half;
 +import org.junit.jupiter.api.BeforeAll;
 +import org.junit.jupiter.api.Test;
@@ -471,11 +563,11 @@ index 0000000..71b548b
 +    void preservesTheFirstFacingAndHalfAcrossMaterialsWithoutReplacingOtherProperties() {
 +        final var placement = new TrapdoorPlacement();
 +        placement.remember(Blocks.OAK_TRAPDOOR.defaultBlockState()
-+            .setValue(TrapDoorBlock.FACING, Direction.SOUTH).setValue(TrapDoorBlock.HALF, Half.TOP), BlockPos.ZERO);
++            .setValue(TrapDoorBlock.FACING, Direction.SOUTH).setValue(TrapDoorBlock.HALF, Half.TOP), BlockPos.ZERO, Vec3.ZERO);
 +        final var birch = Blocks.BIRCH_TRAPDOOR.defaultBlockState()
 +            .setValue(TrapDoorBlock.FACING, Direction.WEST).setValue(TrapDoorBlock.HALF, Half.BOTTOM)
 +            .setValue(TrapDoorBlock.WATERLOGGED, true).setValue(TrapDoorBlock.POWERED, true).setValue(TrapDoorBlock.OPEN, true);
-+        placement.remember(birch, BlockPos.ZERO);
++        placement.remember(birch, BlockPos.ZERO, Vec3.ZERO);
 +        final var result = placement.apply(birch);
 +        assertTrue(result.is(Blocks.BIRCH_TRAPDOOR));
 +        assertEquals(Direction.SOUTH, result.getValue(TrapDoorBlock.FACING));
@@ -488,13 +580,13 @@ index 0000000..71b548b
 +    @Test
 +    void releaseAllowsTheNextPlacementToChooseItsOwnOrientation() {
 +        final var placement = new TrapdoorPlacement();
-+        placement.remember(Blocks.OAK_TRAPDOOR.defaultBlockState(), BlockPos.ZERO);
++        placement.remember(Blocks.OAK_TRAPDOOR.defaultBlockState(), BlockPos.ZERO, Vec3.ZERO);
 +        placement.clear();
 +        final var next = Blocks.BIRCH_TRAPDOOR.defaultBlockState()
 +            .setValue(TrapDoorBlock.FACING, Direction.EAST).setValue(TrapDoorBlock.HALF, Half.TOP);
 +        assertFalse(placement.active());
 +        assertSame(next, placement.apply(next));
-+        placement.remember(next, BlockPos.ZERO);
++        placement.remember(next, BlockPos.ZERO, Vec3.ZERO);
 +        assertEquals(Direction.EAST, placement.apply(Blocks.OAK_TRAPDOOR.defaultBlockState()).getValue(TrapDoorBlock.FACING));
 +    }
 +
@@ -502,9 +594,9 @@ index 0000000..71b548b
 +    void ordinaryBlocksNeitherStartNorInheritTrapdoorOrientation() {
 +        final var placement = new TrapdoorPlacement();
 +        final var stone = Blocks.STONE.defaultBlockState();
-+        placement.remember(stone, BlockPos.ZERO);
++        placement.remember(stone, BlockPos.ZERO, Vec3.ZERO);
 +        assertFalse(placement.active());
-+        placement.remember(Blocks.OAK_TRAPDOOR.defaultBlockState(), BlockPos.ZERO);
++        placement.remember(Blocks.OAK_TRAPDOOR.defaultBlockState(), BlockPos.ZERO, Vec3.ZERO);
 +        assertSame(stone, placement.apply(stone));
 +    }
 +    @Test
@@ -512,13 +604,32 @@ index 0000000..71b548b
 +        final var placement = new TrapdoorPlacement();
 +        final var support = new BlockPos(2, 65, 4);
 +        final var other = new BlockPos(5, 64, 8);
-+        placement.remember(Blocks.OAK_TRAPDOOR.defaultBlockState(), support);
++        placement.remember(Blocks.OAK_TRAPDOOR.defaultBlockState(), support, Vec3.atLowerCornerOf(support));
 +        assertTrue(placement.allows(support, Blocks.STONE.defaultBlockState()));
 +        assertTrue(placement.allows(other, Blocks.BIRCH_TRAPDOOR.defaultBlockState()));
 +        assertFalse(placement.allows(other, Blocks.STONE.defaultBlockState()));
 +        assertFalse(placement.allows(other, Blocks.CHEST.defaultBlockState()));
 +        placement.clear();
 +        assertTrue(placement.allows(other, Blocks.CHEST.defaultBlockState()));
++    }
++
++    @Test
++    void continuationKeepsTheInitialWorldHitEvenOutsideTheNewTargetsCube() {
++        final var placement = new TrapdoorPlacement();
++        final var support = new BlockPos(2, 65, 4);
++        final var firstHit = new Vec3(2.5, 65.625, 4);
++        final var nextTarget = new BlockPos(2, 65, 3);
++        final var laterHit = new Vec3(2.25, 65.8125, 3.5);
++        assertEquals(new Vec3(0.25, 0.8125, 0.5), placement.clickPosition(nextTarget, laterHit));
++        placement.remember(Blocks.OAK_TRAPDOOR.defaultBlockState(), support, firstHit);
++        assertEquals(new Vec3(0.5, 0.625, 1), placement.clickPosition(nextTarget, laterHit));
++        placement.remember(Blocks.BIRCH_TRAPDOOR.defaultBlockState(), nextTarget, laterHit);
++        assertEquals(new Vec3(2.5, 0.625, 1), placement.clickPosition(new BlockPos(0, 65, 3), laterHit));
++        placement.clear();
++        final var released = placement.clickPosition(nextTarget, laterHit);
++        assertEquals(0.25, released.x);
++        assertEquals(0.8125, released.y);
++        assertEquals(0.5, released.z);
 +    }
 +
 +}

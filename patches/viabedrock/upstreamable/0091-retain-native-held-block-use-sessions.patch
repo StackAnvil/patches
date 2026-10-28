@@ -1,51 +1,66 @@
-From 7d45806cbaafb714fe9fd09bcbaa300750fddcd1 Mon Sep 17 00:00:00 2001
+From af53b31ab88613434bd138a93844e9f5a16607bd Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 28 Oct 2026 03:34:25 +0100
 Subject: [PATCH] feat(interaction): retain native held block-use sessions
 
-Bedrock 1.26.60.5 holds StartItemUseOn across repeated block uses and sends StopItemUseOn only on physical release or cancellation. Simulation-triggered repeats suppress ordinary block interaction; the retained start action preserves trapdoor facing and half across camera and item changes.
+Native Bedrock 1.26.60.5 retains StartItemUseOn through physical use holds.
+Simulation-triggered repeats suppress ordinary block activation. Transport
+the control lifetime from aware Java clients, stop on release or capability
+withdrawal, and preserve independent uses for ordinary clients.
 
-Transport the physical control lifetime from aware Java clients for direct and ViaProxy sessions. Keep first input and simulation repeats distinct, stop at the final result position, and preserve independent uses for ordinary Java clients. A controlled native relay probe without start/stop actions retains interaction suppression but loses the original facing, establishing that both boundaries matter.
+Match each local prediction to its concluding Java sequence. Prediction
+format 2 distinguishes placement, interaction and failure and carries the
+native cursor relative to the current target. Native held snapping keeps
+the initial world hit even outside later target cubes. Reject non-finite
+coordinates and stale sequence ownership without clamping valid positions.
+The Java raycast packet remains unchanged for other consumers.
 
-Focused state tests cover repeated targets, duplicate held snapshots, cancellation before use, idempotent release, and ordinary client behavior. Spatial continuation and client prediction require matching add-on verification; private captures and proprietary resources stay outside the patch.
+Start the session only after predicted success, retain simulation triggers
+after failed attempts, and send the observed first use-on/use-in-air phases
+with the original held stack. Native Creative and Survival captures use
+empty inventory-action lists. Let the server consume blocks instead of
+submitting duplicate slot deltas.
 
-Match each local block-use result to its Java prediction sequence. Native
-height-limit captures emit no start action until placement becomes valid;
-failed repeats report failure and carry no inventory delta. Defer the
-start action until predicted success, retain simulation triggers after
-failed attempts, and omit unchanged creative inventory actions. Mismatched
-sequence metadata cannot leak into a later use.
+Emit native build/interact swings before successful held transactions.
+Java 26.3 uses a local right-click swing, so do not reserve the next PUNCH
+packet for it and suppress a later attack. Dropping build swings in a
+native relay does not change retained placement facing.
 
-Native input also follows the first successful block use-on with a normal
-use-in-air phase using the original held snapshot. Removing only this
-phase in a controlled native relay loses retained facing. Mirror it for
-aware held block use. Matching Survival captures use empty inventory-action
-lists and consume blocks authoritatively, so remove guessed placement
-slot deltas instead of submitting duplicate inventory predictions.
+Native and Java Survival both accept server facing corrections when the
+camera update precedes placement. Earlier teleport fixtures placed before
+the native camera update and cannot establish a server direction lock.
+Compare stable-camera ordering rather than forcing an orientation.
+
+Focused tests cover held lifetimes, sequence/result/cursor ownership,
+release, failed attempts, ordinary clients and the native block-item phase.
+Matching native, direct and proxy fixtures verify authoritative placement
+and consumption. Captures and proprietary resources remain private.
 ---
- .../api/model/BlockUsePrediction.java         | 42 +++++++++
- .../viabedrock/api/model/PlayerBlockUse.java  | 35 ++++++++
- .../viabedrock/protocol/BedrockProtocol.java  |  1 +
- .../protocol/packet/ClientPlayerPackets.java  |  2 +-
- .../protocol/packet/InteractionPackets.java   | 85 ++++++++++---------
- .../protocol/packet/MultiStatePackets.java    | 32 +++++++
- .../protocol/storage/BlockUseStorage.java     | 64 ++++++++++++++
- .../protocol/storage/PlayerInputStorage.java  |  4 +-
- .../packet/BlockItemUseTransactionTest.java   | 34 ++++++++
- .../protocol/storage/BlockUseStorageTest.java | 74 ++++++++++++++++
- 10 files changed, 331 insertions(+), 42 deletions(-)
+ .../api/model/BlockUsePrediction.java         |  74 +++++++++++++
+ .../viabedrock/api/model/PlayerBlockUse.java  |  35 ++++++
+ .../viabedrock/protocol/BedrockProtocol.java  |   1 +
+ .../protocol/packet/ClientPlayerPackets.java  |   2 +-
+ .../protocol/packet/InteractionPackets.java   | 100 ++++++++++-------
+ .../protocol/packet/MultiStatePackets.java    |  33 ++++++
+ .../protocol/storage/BlockUseStorage.java     |  82 ++++++++++++++
+ .../protocol/storage/PlayerInputStorage.java  |   4 +-
+ .../api/model/BlockUsePredictionTest.java     |  50 +++++++++
+ .../packet/BlockItemUseTransactionTest.java   |  34 ++++++
+ .../protocol/storage/BlockUseStorageTest.java | 101 ++++++++++++++++++
+ 11 files changed, 473 insertions(+), 43 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/BlockUsePrediction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerBlockUse.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/BlockUsePredictionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/BlockItemUseTransactionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorageTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/BlockUsePrediction.java b/src/main/java/net/raphimc/viabedrock/api/model/BlockUsePrediction.java
 new file mode 100644
-index 000000000..bebc5b258
+index 000000000..580ded14a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/BlockUsePrediction.java
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,74 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -57,34 +72,66 @@ index 000000000..bebc5b258
 +import com.viaversion.viaversion.api.type.Types;
 +import io.netty.buffer.ByteBuf;
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.util.Objects;
 +
 +/** Local result matched to the concluding Java prediction sequence. */
-+public record BlockUsePrediction(int sequence, boolean successful) {
++public record BlockUsePrediction(int sequence, Result result, Position3f cursor) {
 +
 +    public static final String CHANNEL = "viabedrock:block_use_prediction";
 +    public static final Type<BlockUsePrediction> TYPE = new Type<>(BlockUsePrediction.class) {
 +        @Override
 +        public BlockUsePrediction read(final ByteBuf buffer) {
-+            if (Types.VAR_INT.readPrimitive(buffer) != 1
++            if (Types.VAR_INT.readPrimitive(buffer) != 2
 +                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
 +                throw new IllegalArgumentException("Unsupported player block use");
 +            }
-+            return new BlockUsePrediction(Types.VAR_INT.readPrimitive(buffer), buffer.readBoolean());
++            return new BlockUsePrediction(Types.VAR_INT.readPrimitive(buffer), Result.read(buffer.readUnsignedByte()), BedrockTypes.POSITION_3F.read(buffer));
 +        }
 +
 +        @Override
 +        public void write(final ByteBuf buffer, final BlockUsePrediction value) {
-+            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, 2);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            Types.VAR_INT.writePrimitive(buffer, value.sequence());
-+            buffer.writeBoolean(value.successful());
++            buffer.writeByte(value.result().id);
++            BedrockTypes.POSITION_3F.write(buffer, value.cursor());
 +        }
 +    };
 +
 +    public BlockUsePrediction {
++        Objects.requireNonNull(result);
++        Objects.requireNonNull(cursor);
++        if (!Float.isFinite(cursor.x()) || !Float.isFinite(cursor.y()) || !Float.isFinite(cursor.z())) {
++            throw new IllegalArgumentException("Non-finite block-use cursor");
++        }
 +        if (sequence < 0) {
 +            throw new IllegalArgumentException("Negative block-use prediction sequence");
 +        }
++    }
++
++    public enum Result {
++        FAILED(0),
++        INTERACTED(1),
++        PLACED(2);
++
++        private final int id;
++
++        Result(final int id) {
++            this.id = id;
++        }
++
++        static Result read(final int id) {
++            return switch (id) {
++                case 0 -> FAILED;
++                case 1 -> INTERACTED;
++                case 2 -> PLACED;
++                default -> throw new IllegalArgumentException("Unknown block-use prediction result");
++            };
++        }
++
 +    }
 +
 +}
@@ -155,7 +202,7 @@ index cfc1036f8..058f4083b 100644
                  } else {
                      PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryContainer);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index 0acee785b..89e590f3d 100644
+index 0acee785b..0bc8bc162 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 @@ -48,6 +48,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand
@@ -175,7 +222,7 @@ index 0acee785b..89e590f3d 100644
          final Direction direction = Direction.getFromVerticalId(faceInt);
          if (direction == null) {
              ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown block face id: " + faceInt);
-@@ -153,43 +154,24 @@ public final class InteractionPackets {
+@@ -153,52 +154,36 @@ public final class InteractionPackets {
          final int slot = inventoryTracker.getInventoryContainer().getSelectedHotbarSlot();
          final BedrockItem usedItem = inventoryTracker.getInventoryContainer().getSelectedHotbarItem();
  
@@ -188,26 +235,29 @@ index 0acee785b..89e590f3d 100644
 -                insideBlock ? position : position.getRelative(face),
 -                faceInt
 -        );
-+        final BlockUseStorage blockUse = user.get(BlockUseStorage.class);
-+        final BlockUseStorage.Use use = blockUse.begin(sequence, insideBlock ? position : position.getRelative(face));
-+        if (use.start()) {
-+            PlayerActionPacketFactory.sendBedrockPlayerAction(
-+                    user, clientPlayer.runtimeId(), PlayerActionType.StartItemUseOn,
-+                    position, insideBlock ? position : position.getRelative(face), faceInt);
-+        }
- 
+-
 -        // This is the main packet that the bedrock client use to interact with block.The rest of the
-         final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
- 
+-        final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
+-
 -        BedrockItem predictedToItem = usedItem.copy();
 -        // This is not entirely correct, but at least it's more accurate than not sending actions or sending the original item data.
 -        if (predictedToItem.blockRuntimeId() != 0 && clientPlayer.javaGameMode() != GameMode.CREATIVE) {
 -            predictedToItem.setAmount(predictedToItem.amount() - 1);
--        }
++        final BlockUseStorage blockUse = user.get(BlockUseStorage.class);
++        final BlockUseStorage.Use use = blockUse.begin(sequence, insideBlock ? position : position.getRelative(face), clickPosition);
++        if (use.start()) {
++            PlayerActionPacketFactory.sendBedrockPlayerAction(
++                    user, clientPlayer.runtimeId(), PlayerActionType.StartItemUseOn,
++                    position, insideBlock ? position : position.getRelative(face), faceInt);
+         }
 -        if (predictedToItem.amount() <= 0) {
 -            predictedToItem = BedrockItem.empty();
--        }
--
++
++        if (blockUse.held() && use.successful()) {
++            sendBlockUseSwing(user, clientPlayer.runtimeId(), use.swingSource());
+         }
++        final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
+ 
          final BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
                  0, // legacy request id
                  null,
@@ -228,16 +278,18 @@ index 0acee785b..89e590f3d 100644
                          position,
                          faceInt,
                          slot,
-@@ -198,7 +180,7 @@ public final class InteractionPackets {
+                         HandSlot.Mainhand,
+                         usedItem,
                          clientPlayer.position(),
-                         clickPosition,
+-                        clickPosition,
++                        use.cursor(),
                          chunkTracker.getBlockState(position),
 -                        ItemUsePredictedResult.Success,
 +                        use.successful() ? ItemUsePredictedResult.Success : ItemUsePredictedResult.Failure,
                          ItemUseClientCooldownState.Off
                  )
          );
-@@ -206,15 +188,38 @@ public final class InteractionPackets {
+@@ -206,15 +191,48 @@ public final class InteractionPackets {
  
          transactionPacket.sendToServer(BedrockProtocol.class);
  
@@ -259,6 +311,16 @@ index 0acee785b..89e590f3d 100644
 +            itemUse.sendToServer(BedrockProtocol.class);
 +        }
 +        sendBlockUseStop(user, blockUse.complete());
++    }
++
++    private static void sendBlockUseSwing(final UserConnection user, final long runtimeId, final ActorSwingSource source) {
++        final PacketWrapper swing = PacketWrapper.create(ServerboundBedrockPackets.ANIMATE, user);
++        swing.write(Types.UNSIGNED_BYTE, (short) AnimatePacketPayload_Action.Swing.getValue());
++        swing.write(BedrockTypes.UNSIGNED_VAR_LONG, runtimeId);
++        swing.write(BedrockTypes.FLOAT_LE, 0F);
++        swing.write(BedrockTypes.OPTIONAL_STRING, source.name().toLowerCase(java.util.Locale.ROOT));
++        swing.write(Types.UNSIGNED_BYTE, (short) HandSlot.Mainhand.getValue());
++        swing.sendToServer(BedrockProtocol.class);
 +    }
 +
 +    static BedrockInventoryTransaction blockItemUseTransaction(final int slot, final BedrockItem item, final Position3f position) {
@@ -285,7 +347,7 @@ index 0acee785b..89e590f3d 100644
      }
  
      public static void register(final BedrockProtocol protocol) {
-@@ -305,7 +310,7 @@ public final class InteractionPackets {
+@@ -305,7 +323,7 @@ public final class InteractionPackets {
                  wrapper.user().get(BlockInteractionSoundTracker.class).recordPlacement(position, placedPosition);
              }
              chunkTracker.trackBlockPrediction(sequence, position, placedPosition);
@@ -295,7 +357,7 @@ index 0acee785b..89e590f3d 100644
          protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_TRANSACTION, null, wrapper -> {
              final InventoryTransactionRewriter inventoryTransactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index ae9743070..5de309be7 100644
+index ae9743070..df24b545b 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 @@ -52,6 +52,9 @@ import net.raphimc.viabedrock.api.model.NativeActorBoundsMessage;
@@ -308,17 +370,18 @@ index ae9743070..5de309be7 100644
  import net.raphimc.viabedrock.api.model.PlayerPrediction;
  import net.raphimc.viabedrock.api.model.VehiclePrediction;
  import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
-@@ -239,6 +242,9 @@ public final class MultiStatePackets {
+@@ -239,6 +242,10 @@ public final class MultiStatePackets {
          if (channel.equals("minecraft:unregister")) {
              final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
              wrapper.user().get(ChannelStorage.class).removeChannels(channels);
-+            if (channels.contains(PlayerBlockUse.CHANNEL) || channels.contains(PlayerInputPermissions.CHANNEL)) {
++            if (channels.contains(PlayerBlockUse.CHANNEL) || channels.contains(BlockUsePrediction.CHANNEL)
++                    || channels.contains(PlayerInputPermissions.CHANNEL)) {
 +                InteractionPackets.stopBlockUse(wrapper.user());
 +            }
              if (channels.contains(NativeSkinFragment.CHANNEL) || channels.contains(NativeSkinChange.Result.CHANNEL)) {
                  SkinChangeStorage.refreshCapability(wrapper.user());
              }
-@@ -289,6 +295,32 @@ public final class MultiStatePackets {
+@@ -289,6 +296,32 @@ public final class MultiStatePackets {
              }
              return;
          }
@@ -353,10 +416,10 @@ index ae9743070..5de309be7 100644
                      && wrapper.user().get(ChannelStorage.class).hasChannel(PlayerInputPermissions.CHANNEL)) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorage.java
 new file mode 100644
-index 000000000..c6c6860c4
+index 000000000..11fde0354
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorage.java
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,82 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -368,6 +431,8 @@ index 000000000..c6c6860c4
 +import com.viaversion.viaversion.api.minecraft.BlockPosition;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUseTriggerType;
 +import net.raphimc.viabedrock.api.model.BlockUsePrediction;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorSwingSource;
 +
 +/** A held control can span targets, selected items, and authoritative corrections. */
 +public final class BlockUseStorage implements StorableObject {
@@ -390,8 +455,11 @@ index 000000000..c6c6860c4
 +        this.prediction = prediction;
 +    }
 +
-+    public Use begin(final int sequence, final BlockPosition resultPosition) {
-+        final boolean success = this.prediction == null || this.prediction.sequence() != sequence || this.prediction.successful();
++    public Use begin(final int sequence, final BlockPosition resultPosition, final Position3f cursor) {
++        final boolean matched = this.prediction != null && this.prediction.sequence() == sequence;
++        final BlockUsePrediction.Result result = matched ? this.prediction.result() : BlockUsePrediction.Result.INTERACTED;
++        final Position3f nativeCursor = matched ? this.prediction.cursor() : cursor;
++        final boolean success = result != BlockUsePrediction.Result.FAILED;
 +        this.prediction = null;
 +        final ItemUseTriggerType trigger = this.used ? ItemUseTriggerType.Simulation_Tick : ItemUseTriggerType.Player_Input;
 +        this.used = true;
@@ -400,7 +468,7 @@ index 000000000..c6c6860c4
 +        if (this.active) {
 +            this.resultPosition = resultPosition;
 +        }
-+        return new Use(trigger, start, success);
++        return new Use(trigger, start, result, nativeCursor);
 +    }
 +
 +    public BlockPosition complete() {
@@ -417,7 +485,20 @@ index 000000000..c6c6860c4
 +        return result;
 +    }
 +
-+    public record Use(ItemUseTriggerType trigger, boolean start, boolean successful) {
++    public record Use(ItemUseTriggerType trigger, boolean start, BlockUsePrediction.Result result, Position3f cursor) {
++
++        public boolean successful() {
++            return this.result != BlockUsePrediction.Result.FAILED;
++        }
++
++        public ActorSwingSource swingSource() {
++            return switch (this.result) {
++                case FAILED -> ActorSwingSource.None;
++                case INTERACTED -> ActorSwingSource.Interact;
++                case PLACED -> ActorSwingSource.Build;
++            };
++        }
++
 +    }
 +
 +}
@@ -443,6 +524,62 @@ index f8bf20f85..e44843834 100644
          register.send(BedrockProtocol.class);
          final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
          packet.write(Types.STRING, PlayerInputPermissions.CHANNEL);
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/BlockUsePredictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/BlockUsePredictionTest.java
+new file mode 100644
+index 000000000..1b628fbad
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/BlockUsePredictionTest.java
+@@ -0,0 +1,50 @@
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import org.junit.jupiter.api.Test;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BlockUsePredictionTest {
++
++    @Test
++    void preservesEveryActionAndSequenceBoundaryAcrossTheWire() {
++        for (final var result : BlockUsePrediction.Result.values()) {
++            for (final int sequence : new int[] {0, Integer.MAX_VALUE}) {
++                final var buffer = Unpooled.buffer();
++                try {
++                    final var value = new BlockUsePrediction(sequence, result, new Position3f(0.5F, 0.625F, 1F));
++                    BlockUsePrediction.TYPE.write(buffer, value);
++                    assertEquals(value, BlockUsePrediction.TYPE.read(buffer));
++                    assertFalse(buffer.isReadable());
++                    final var outside = new BlockUsePrediction(sequence, result, new Position3f(2.5F, -0.5F, 1F));
++                    BlockUsePrediction.TYPE.write(buffer, outside);
++                    assertEquals(outside, BlockUsePrediction.TYPE.read(buffer));
++                } finally {
++                    buffer.release();
++                }
++            }
++        }
++    }
++
++    @Test
++    void rejectsUnknownActionsAndNegativeSequences() {
++        final var buffer = Unpooled.buffer();
++        try {
++            Types.VAR_INT.writePrimitive(buffer, 2);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.VAR_INT.writePrimitive(buffer, 0);
++            buffer.writeByte(3);
++            assertThrows(IllegalArgumentException.class, () -> BlockUsePrediction.TYPE.read(buffer));
++            assertThrows(IllegalArgumentException.class, () -> new BlockUsePrediction(-1, BlockUsePrediction.Result.PLACED, new Position3f(0.5F, 0.625F, 1F)));
++            assertThrows(IllegalArgumentException.class,
++                    () -> new BlockUsePrediction(1, BlockUsePrediction.Result.PLACED, new Position3f(Float.NaN, 0F, 0F)));
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/BlockItemUseTransactionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/BlockItemUseTransactionTest.java
 new file mode 100644
 index 000000000..bf7bb406b
@@ -485,16 +622,18 @@ index 000000000..bf7bb406b
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorageTest.java
 new file mode 100644
-index 000000000..b2bb9a1ca
+index 000000000..d2dd9cf6c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorageTest.java
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,101 @@
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.viaversion.viaversion.api.minecraft.BlockPosition;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUseTriggerType;
 +import org.junit.jupiter.api.Test;
++import net.raphimc.viabedrock.protocol.model.Position3f;
 +import net.raphimc.viabedrock.api.model.BlockUsePrediction;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorSwingSource;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -506,15 +645,15 @@ index 000000000..b2bb9a1ca
 +        final var first = new BlockPosition(2, 65, 4);
 +        final var next = new BlockPosition(2, 64, 4);
 +        use.hold();
-+        assertEquals(ItemUseTriggerType.Player_Input, use.begin(0, first).trigger());
++        assertEquals(ItemUseTriggerType.Player_Input, use.begin(0, first, new Position3f(0.5F, 0.625F, 1F)).trigger());
 +        assertNull(use.complete());
 +        use.hold();
-+        assertEquals(ItemUseTriggerType.Simulation_Tick, use.begin(0, next).trigger());
++        assertEquals(ItemUseTriggerType.Simulation_Tick, use.begin(0, next, new Position3f(0.5F, 0.625F, 1F)).trigger());
 +        assertNull(use.complete());
 +        assertEquals(next, use.release());
 +        assertNull(use.release());
 +        use.hold();
-+        assertEquals(ItemUseTriggerType.Player_Input, use.begin(0, first).trigger());
++        assertEquals(ItemUseTriggerType.Player_Input, use.begin(0, first, new Position3f(0.5F, 0.625F, 1F)).trigger());
 +    }
 +
 +    @Test
@@ -522,7 +661,7 @@ index 000000000..b2bb9a1ca
 +        final var use = new BlockUseStorage();
 +        final var result = new BlockPosition(4, 8, -2);
 +        for (int click = 0; click < 3; click++) {
-+            assertEquals(ItemUseTriggerType.Player_Input, use.begin(0, result).trigger());
++            assertEquals(ItemUseTriggerType.Player_Input, use.begin(0, result, new Position3f(0.5F, 0.625F, 1F)).trigger());
 +            assertEquals(result, use.complete());
 +            assertNull(use.release());
 +        }
@@ -534,7 +673,7 @@ index 000000000..b2bb9a1ca
 +        use.hold();
 +        assertNull(use.release());
 +        final var result = new BlockPosition(-2, -3, -4);
-+        assertEquals(ItemUseTriggerType.Player_Input, use.begin(0, result).trigger());
++        assertEquals(ItemUseTriggerType.Player_Input, use.begin(0, result, new Position3f(0.5F, 0.625F, 1F)).trigger());
 +        assertEquals(result, use.complete());
 +    }
 +
@@ -543,23 +682,48 @@ index 000000000..b2bb9a1ca
 +        final var use = new BlockUseStorage();
 +        final var position = new BlockPosition(0, 320, 0);
 +        use.hold();
-+        use.predict(new BlockUsePrediction(1, false));
-+        final var failure = use.begin(1, position);
++        use.predict(new BlockUsePrediction(1, BlockUsePrediction.Result.FAILED, new Position3f(0.5F, 0.625F, 1F)));
++        final var failure = use.begin(1, position, new Position3f(0.5F, 0.625F, 1F));
 +        assertFalse(failure.start());
 +        assertFalse(failure.successful());
 +        assertNull(use.complete());
-+        use.predict(new BlockUsePrediction(2, true));
-+        final var valid = use.begin(2, new BlockPosition(0, 64, 0));
++        use.predict(new BlockUsePrediction(2, BlockUsePrediction.Result.PLACED, new Position3f(0.5F, 0.625F, 1F)));
++        final var valid = use.begin(2, new BlockPosition(0, 64, 0), new Position3f(0.5F, 0.625F, 1F));
 +        assertTrue(valid.start());
 +        assertEquals(ItemUseTriggerType.Simulation_Tick, valid.trigger());
 +        assertEquals(new BlockPosition(0, 64, 0), use.release());
-+        use.predict(new BlockUsePrediction(3, false));
-+        assertTrue(use.begin(4, position).successful());
++        use.predict(new BlockUsePrediction(3, BlockUsePrediction.Result.FAILED, new Position3f(0.5F, 0.625F, 1F)));
++        assertTrue(use.begin(4, position, new Position3f(0.5F, 0.625F, 1F)).successful());
 +        assertEquals(position, use.complete());
 +        use.hold();
-+        use.predict(new BlockUsePrediction(5, false));
-+        use.begin(5, position);
++        use.predict(new BlockUsePrediction(5, BlockUsePrediction.Result.FAILED, new Position3f(0.5F, 0.625F, 1F)));
++        use.begin(5, position, new Position3f(0.5F, 0.625F, 1F));
 +        assertNull(use.release());
++    }
++
++    @Test
++    void usesThePredictedActionForNativeSwingsWithoutClassifyingFailuresAsBuilds() {
++        final var use = new BlockUseStorage();
++        final var position = new BlockPosition(2, 65, 4);
++        use.hold();
++        use.predict(new BlockUsePrediction(1, BlockUsePrediction.Result.PLACED, new Position3f(0.5F, 0.625F, 1F)));
++        assertEquals(ActorSwingSource.Build, use.begin(1, position, new Position3f(0.5F, 0.625F, 1F)).swingSource());
++        use.predict(new BlockUsePrediction(2, BlockUsePrediction.Result.INTERACTED, new Position3f(0.5F, 0.625F, 1F)));
++        assertEquals(ActorSwingSource.Interact, use.begin(2, position, new Position3f(0.5F, 0.625F, 1F)).swingSource());
++        use.predict(new BlockUsePrediction(3, BlockUsePrediction.Result.FAILED, new Position3f(0.5F, 0.625F, 1F)));
++        assertEquals(ActorSwingSource.None, use.begin(3, position, new Position3f(0.5F, 0.625F, 1F)).swingSource());
++    }
++
++    @Test
++    void keepsNativeCursorCoordinatesOutsideTheTargetCubeAndRejectsStaleCursorOwnership() {
++        final var use = new BlockUseStorage();
++        final var position = new BlockPosition(-500, 65, -113);
++        final var actual = new Position3f(0.3F, 0.8125F, 0.5F);
++        final var locked = new Position3f(2.5F, 0.625F, 1F);
++        use.predict(new BlockUsePrediction(1, BlockUsePrediction.Result.PLACED, locked));
++        assertEquals(locked, use.begin(1, position, actual).cursor());
++        use.predict(new BlockUsePrediction(2, BlockUsePrediction.Result.PLACED, locked));
++        assertEquals(actual, use.begin(3, position, actual).cursor());
 +    }
 +
 +}

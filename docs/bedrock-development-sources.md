@@ -135,7 +135,10 @@ Player and persona controller assets do not establish the engine's new armor mas
    The 26.60 release locks placement direction until the use control is released
    and suppresses block interactions during that placement.
    The core now retains the physical use lifetime and matches prediction results to Java sequence numbers.
-   The add-on suppresses block activation and retains the first predicted trapdoor facing and half until release.
+   The add-on suppresses block activation and retains the first predicted trapdoor facing, half, and world hit point until release.
+   Prediction format 2 carries the result and target-relative cursor with its Java sequence number.
+   Native continuation can express the original world hit outside the new target's unit cube.
+   Fresh clicks use the native 3/16 trapdoor outline, replacing the old approximate thickness.
    Matching native 1.26.60.5 captures against BDS 1.26.60.6 retain one `StartItemUseOn` action for the complete hold.
    Repeated transactions use `Simulation_Tick`; release or opening the pause menu sends `StopItemUseOn`.
    A side placement followed by a bottom-face hit places another closed trapdoor instead of opening the first.
@@ -144,11 +147,18 @@ Player and persona controller assets do not establish the engine's new armor mas
    A fresh click after release opens the original trapdoor normally.
    Native Survival captures also use empty inventory-action lists and consume blocks authoritatively.
    The first successful input includes a separate use-in-air phase with the original held stack.
-   Controlled relay probes show that removing either the start/stop actions or that use phase loses retained facing.
+   Controlled relay probes omit the start/stop actions, the use phase, or build swings.
+   The first two probes lose retained facing, but camera packet order prevents a causal conclusion.
+   The build-swing control retains facing. Swings alone do not explain the earlier Survival difference.
    The corrected Java Creative fixture retains facing, half, and closed state across a 90-degree camera change.
    Material changes and a fresh click after release also match their native fixtures.
-   Survival consumes two blocks correctly, but its authoritative facing still follows the changed camera direction.
-   Survival facing, rejected-placement correction, cancellation, and proxy comparisons remain acceptance gates.
+   A controlled native Survival fixture receives the new camera direction before the next placement.
+   BDS then changes the second trapdoor's facing, matching direct Java and ViaProxy.
+   Earlier native teleports placed before the camera update and cannot establish a server direction lock.
+   Both paths consume two items and retain the closed upper-half state.
+   Native and ViaProxy also replace a server-removed trapdoor during the hold and consume the replacement authoritatively.
+   Direct Java and ViaProxy pause cancellation end active sessions before physical release.
+   Physical mouse rotation and rejection of the first predicted placement remain acceptance gates.
 3. **Verify bitmap font layout against native Bedrock.**
    The importer now converts bitmap atlases, layout metadata, and Unicode fallback pages.
    The licensed provider retains atlas images and layout files.
