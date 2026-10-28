@@ -134,16 +134,21 @@ Player and persona controller assets do not establish the engine's new armor mas
 2. **Implement held trapdoor placement.**
    The 26.60 release locks placement direction until the use control is released
    and suppresses block interactions during that placement.
-   `InteractionPackets` forwards each Java use-on-block independently.
-   `MixinTrapDoorBlock` changes shape only. No placement-session state implements the new rule.
+   The core now retains the physical use lifetime and matches prediction results to Java sequence numbers.
+   The add-on suppresses block activation and retains the first predicted trapdoor facing and half until release.
    Matching native 1.26.60.5 captures against BDS 1.26.60.6 retain one `StartItemUseOn` action for the complete hold.
    Repeated transactions use `Simulation_Tick`; release or opening the pause menu sends `StopItemUseOn`.
    A side placement followed by a bottom-face hit places another closed trapdoor instead of opening the first.
    Both blocks retain the first placement's facing and upper-half state, including after a 90-degree camera change.
    Switching from oak to birch during the hold retains that state without restarting the session.
    A fresh click after release opens the original trapdoor normally.
-   The current translator instead sends a stop action after every block use.
-   Spatial continuation rules, rejected placements, prediction, and correction still need comparison before implementation.
+   Native Survival captures also use empty inventory-action lists and consume blocks authoritatively.
+   The first successful input includes a separate use-in-air phase with the original held stack.
+   Controlled relay probes show that removing either the start/stop actions or that use phase loses retained facing.
+   The corrected Java Creative fixture retains facing, half, and closed state across a 90-degree camera change.
+   Material changes and a fresh click after release also match their native fixtures.
+   Survival consumes two blocks correctly, but its authoritative facing still follows the changed camera direction.
+   Survival facing, rejected-placement correction, cancellation, and proxy comparisons remain acceptance gates.
 3. **Verify bitmap font layout against native Bedrock.**
    The importer now converts bitmap atlases, layout metadata, and Unicode fallback pages.
    The licensed provider retains atlas images and layout files.

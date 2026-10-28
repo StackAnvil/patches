@@ -1,0 +1,526 @@
+From 263d603dd3d145b0a38d2cd9512ff45ee5692148 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 03:36:18 +0100
+Subject: [PATCH] feat(interaction): predict held trapdoor placement
+
+Native Bedrock 1.26.60.5 keeps trapdoor facing and half during held placement, including camera rotation and switching trapdoor materials. Repeated placement adds closed neighbors rather than toggling the previous block; releasing the control restores ordinary interaction.
+
+Send the physical use-control lifetime through the shared block-use channel and retire it on release, screens, disconnect, and connection replacement. Suppress local block activation after a successful trapdoor placement and reuse its orientation while preserving water, power, and material properties. Keep this state until the control ends rather than resetting on selected-item changes or server teleports.
+
+Real block-state tests cover material changes, orientation retention, independent placement properties, release, and ordinary blocks. Native captures and a failing Java baseline establish the intended behavior; spatial continuation and correction comparisons remain acceptance gates.
+
+Native spatial captures permit continued placement from separate trapdoors,
+including differently oriented ones, while unrelated floor targets remain
+inactive. Keep the original support eligible for retries and suppress
+other non-trapdoor targets until release. Send the actual prediction result
+immediately before its concluding Java packet so failed repeats do not
+reset server placement state or predict item consumption.
+---
+ .../bedrock/ViaFabricPlusBedrock.java         |  2 +
+ .../features/block/MixinTrapDoorBlock.java    | 11 +++
+ .../features/input/MixinBlockUseControl.java  | 27 ++++++
+ .../inventory/MixinHeldBlockPlacement.java    | 28 ++++++
+ .../features/inventory/MixinHeldBlockUse.java | 54 +++++++++++
+ .../bedrock/input/BedrockBlockUse.java        | 95 +++++++++++++++++++
+ .../bedrock/input/BlockUsePayload.java        | 24 +++++
+ .../input/BlockUsePredictionPayload.java      | 24 +++++
+ .../bedrock/inventory/TrapdoorPlacement.java  | 46 +++++++++
+ .../viafabricplus-bedrock.mixins.json         |  3 +
+ .../inventory/TrapdoorPlacementTest.java      | 76 +++++++++++++++
+ 11 files changed, 390 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinBlockUseControl.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockBlockUse.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockUsePayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockUsePredictionPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacement.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacementTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index 18e8825..fbc7db1 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -74,6 +74,7 @@ import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
+ import com.viaversion.viafabricplus.bedrock.hud.BedrockLocatorBar;
+ import com.viaversion.viafabricplus.bedrock.hud.LocatorBarPayload;
+ import com.viaversion.viafabricplus.bedrock.input.RawInputPayload;
++import com.viaversion.viafabricplus.bedrock.input.BedrockBlockUse;
+ import com.viaversion.viafabricplus.bedrock.input.PlayerPredictionPayload;
+ import com.viaversion.viafabricplus.bedrock.input.BedrockPlayerCorrections;
+ import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
+@@ -195,6 +196,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+         ClientPlayNetworking.registerGlobalReceiver(NativeParticlePlaybackPayload.TYPE,
+                 (payload, context) -> BedrockServerParticles.accept(payload.message()));
+         PayloadTypeRegistry.serverboundPlay().register(RawInputPayload.TYPE, RawInputPayload.CODEC);
++        BedrockBlockUse.register();
+         PayloadTypeRegistry.serverboundPlay().register(CommandBlockEditPayload.TYPE, CommandBlockEditPayload.CODEC);
+         BedrockCommandBlockScreen.register();
+         PayloadTypeRegistry.serverboundPlay().register(PlayerPredictionPayload.TYPE, PlayerPredictionPayload.CODEC);
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinTrapDoorBlock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinTrapDoorBlock.java
+index c9866b0..e71e150 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinTrapDoorBlock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinTrapDoorBlock.java
+@@ -22,6 +22,10 @@
+ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
+ 
+ import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.input.BedrockBlockUse;
++import net.minecraft.world.item.context.BlockPlaceContext;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+ import java.util.Map;
+ import net.minecraft.core.Direction;
+ import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+@@ -79,6 +83,13 @@ public abstract class MixinTrapDoorBlock extends HorizontalDirectionalBlock {
+         return SHAPES;
+     }
+ 
++    @Inject(method = "getStateForPlacement", at = @At("RETURN"), cancellable = true)
++    private void retainHeldPlacement(final BlockPlaceContext context, final CallbackInfoReturnable<BlockState> cir) {
++        if (cir.getReturnValue() != null) {
++            cir.setReturnValue(BedrockBlockUse.placement(cir.getReturnValue()));
++        }
++    }
++
+     @Override
+     public @NonNull VoxelShape getOcclusionShape(final @NonNull BlockState state) {
+         if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinBlockUseControl.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinBlockUseControl.java
+new file mode 100644
+index 0000000..6491a8e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinBlockUseControl.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.input;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockBlockUse;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.screens.Screen;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(Minecraft.class)
++public abstract class MixinBlockUseControl {
++    @Inject(method = "startUseItem", at = @At("HEAD"))
++    private void beginBlockUse(final CallbackInfo ci) {
++        BedrockBlockUse.begin();
++    }
++
++    @Inject(method = "disconnect(Lnet/minecraft/client/gui/screens/Screen;ZZ)V", at = @At("HEAD"))
++    private void releaseBeforeDisconnect(final Screen screen, final boolean transferring, final boolean skipSaving, final CallbackInfo ci) {
++        BedrockBlockUse.release();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
+new file mode 100644
+index 0000000..2cc6797
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
+@@ -0,0 +1,28 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.inventory;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockBlockUse;
++import net.minecraft.client.Minecraft;
++import net.minecraft.world.InteractionResult;
++import net.minecraft.world.item.BlockItem;
++import net.minecraft.world.item.context.BlockPlaceContext;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++@Mixin(BlockItem.class)
++public abstract class MixinHeldBlockPlacement {
++    @Inject(method = "place", at = @At("RETURN"))
++    private void retainTrapdoorOrientation(final BlockPlaceContext context, final CallbackInfoReturnable<InteractionResult> cir) {
++        if (cir.getReturnValue().consumesAction() && context.getPlayer() == Minecraft.getInstance().player) {
++            final var support = context.replacingClickedOnBlock() ? context.getClickedPos()
++                : context.getClickedPos().relative(context.getClickedFace().getOpposite());
++            BedrockBlockUse.placed(context.getLevel().getBlockState(context.getClickedPos()), support);
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java
+new file mode 100644
+index 0000000..d77ab23
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java
+@@ -0,0 +1,54 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.inventory;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.viaversion.viafabricplus.bedrock.input.BedrockBlockUse;
++import net.minecraft.client.multiplayer.MultiPlayerGameMode;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.world.InteractionHand;
++import net.minecraft.world.InteractionResult;
++import net.minecraft.world.phys.BlockHitResult;
++import net.minecraft.network.protocol.Packet;
++import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++import net.minecraft.client.player.LocalPlayer;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(MultiPlayerGameMode.class)
++public abstract class MixinHeldBlockUse {
++    @WrapOperation(method = "performUseItemOn", at = @At(value = "INVOKE",
++        target = "Lnet/minecraft/client/player/LocalPlayer;isSecondaryUseActive()Z"))
++    private boolean suppressBlockInteraction(final LocalPlayer player, final Operation<Boolean> original) {
++        return BedrockBlockUse.suppressInteraction() || original.call(player);
++    }
++    @Inject(method = "useItemOn", at = @At("HEAD"), cancellable = true)
++    private void restrictSnappedTargets(final LocalPlayer player, final InteractionHand hand, final BlockHitResult hit,
++                                       final CallbackInfoReturnable<InteractionResult> cir) {
++        if (!BedrockBlockUse.allows(hit.getBlockPos(), player.level().getBlockState(hit.getBlockPos()))) {
++            cir.setReturnValue(InteractionResult.FAIL);
++        }
++    }
++
++    @Inject(method = "performUseItemOn", at = @At("RETURN"))
++    private void retainLocalResult(final LocalPlayer player, final InteractionHand hand, final BlockHitResult hit,
++                                  final CallbackInfoReturnable<InteractionResult> cir) {
++        BedrockBlockUse.predicted(cir.getReturnValue().consumesAction());
++    }
++
++    @WrapOperation(method = "startPrediction", at = @At(value = "INVOKE",
++        target = "Lnet/minecraft/client/multiplayer/ClientPacketListener;send(Lnet/minecraft/network/protocol/Packet;)V"))
++    private void sendBlockUsePrediction(final ClientPacketListener connection, final Packet<?> packet, final Operation<Void> original) {
++        if (packet instanceof ServerboundUseItemOnPacket use) {
++            BedrockBlockUse.sendPrediction(use.sequence());
++        }
++        original.call(connection, packet);
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockBlockUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockBlockUse.java
+new file mode 100644
+index 0000000..eb8662f
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockBlockUse.java
+@@ -0,0 +1,95 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import com.viaversion.viafabricplus.bedrock.inventory.TrapdoorPlacement;
++import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
++import net.minecraft.client.Minecraft;
++import net.minecraft.core.BlockPos;
++import net.raphimc.viabedrock.api.model.BlockUsePrediction;
++import net.minecraft.world.level.block.state.BlockState;
++import net.raphimc.viabedrock.api.model.PlayerBlockUse;
++
++public final class BedrockBlockUse {
++    private static final TrapdoorPlacement PLACEMENT = new TrapdoorPlacement();
++    private static boolean held;
++    private static boolean predictedSuccess;
++
++    private BedrockBlockUse() {}
++
++    public static void register() {
++        PayloadTypeRegistry.serverboundPlay().register(BlockUsePayload.TYPE, BlockUsePayload.CODEC);
++        PayloadTypeRegistry.serverboundPlay().register(BlockUsePredictionPayload.TYPE, BlockUsePredictionPayload.CODEC);
++        ClientTickEvents.START_CLIENT_TICK.register(client -> update(
++            client.player != null && client.gui.screen() == null && client.gui.overlay() == null
++                && !client.player.isSpectator() && client.options.keyUse.isDown()));
++        ClientPlayConnectionEvents.INIT.register((listener, client) -> reset());
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> reset());
++    }
++
++    public static void begin() {
++        update(true);
++    }
++
++    public static void release() {
++        update(false);
++    }
++
++    private static void update(final boolean value) {
++        if (!BedrockInputPermissions.isBedrockConnection() || Minecraft.getInstance().getConnection() == null
++                || !ClientPlayNetworking.canSend(BlockUsePayload.TYPE)
++                || !ClientPlayNetworking.canSend(BlockUsePredictionPayload.TYPE)) {
++            reset();
++            return;
++        }
++        if (held != value) {
++            held = value;
++            ClientPlayNetworking.send(new BlockUsePayload(new PlayerBlockUse(value)));
++        }
++        if (!value) {
++            PLACEMENT.clear();
++        }
++    }
++
++    public static boolean suppressInteraction() {
++        return held && PLACEMENT.active();
++    }
++
++    public static boolean allows(final BlockPos target, final BlockState state) {
++        return !held || PLACEMENT.allows(target, state);
++    }
++
++    public static void placed(final BlockState state, final BlockPos support) {
++        if (held) {
++            PLACEMENT.remember(state, support);
++        }
++    }
++
++    public static void predicted(final boolean success) {
++        predictedSuccess = success;
++    }
++
++    public static void sendPrediction(final int sequence) {
++        if (BedrockInputPermissions.isBedrockConnection() && Minecraft.getInstance().getConnection() != null
++                && ClientPlayNetworking.canSend(BlockUsePredictionPayload.TYPE)) {
++            ClientPlayNetworking.send(new BlockUsePredictionPayload(new BlockUsePrediction(sequence, predictedSuccess)));
++        }
++        predictedSuccess = false;
++    }
++
++    public static BlockState placement(final BlockState state) {
++        return held ? PLACEMENT.apply(state) : state;
++    }
++
++    private static void reset() {
++        held = false;
++        predictedSuccess = false;
++        PLACEMENT.clear();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockUsePayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockUsePayload.java
+new file mode 100644
+index 0000000..52df66b
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockUsePayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.PlayerBlockUse;
++
++public record BlockUsePayload(PlayerBlockUse use) implements CustomPacketPayload {
++    public static final Type<BlockUsePayload> TYPE = new Type<>(Identifier.parse(PlayerBlockUse.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, BlockUsePayload> CODEC = CustomPacketPayload.codec(
++        (payload, buffer) -> PlayerBlockUse.TYPE.write(buffer, payload.use),
++        buffer -> new BlockUsePayload(PlayerBlockUse.TYPE.read(buffer)));
++
++    @Override
++    public Type<BlockUsePayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockUsePredictionPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockUsePredictionPayload.java
+new file mode 100644
+index 0000000..a98d448
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockUsePredictionPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.BlockUsePrediction;
++
++public record BlockUsePredictionPayload(BlockUsePrediction use) implements CustomPacketPayload {
++    public static final Type<BlockUsePredictionPayload> TYPE = new Type<>(Identifier.parse(BlockUsePrediction.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, BlockUsePredictionPayload> CODEC = CustomPacketPayload.codec(
++        (payload, buffer) -> BlockUsePrediction.TYPE.write(buffer, payload.use),
++        buffer -> new BlockUsePredictionPayload(BlockUsePrediction.TYPE.read(buffer)));
++
++    @Override
++    public Type<BlockUsePredictionPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacement.java
+new file mode 100644
+index 0000000..34c2e08
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacement.java
+@@ -0,0 +1,46 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.inventory;
++
++import net.minecraft.core.Direction;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.block.TrapDoorBlock;
++import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.level.block.state.properties.Half;
++
++/** Placement orientation survives changes to the hit face and selected trapdoor material. */
++public final class TrapdoorPlacement {
++    private Direction facing;
++    private Half half;
++    private BlockPos support;
++
++    public boolean active() {
++        return this.facing != null;
++    }
++
++    public void remember(final BlockState state, final BlockPos support) {
++        if (!this.active() && state.getBlock() instanceof TrapDoorBlock) {
++            this.facing = state.getValue(TrapDoorBlock.FACING);
++            this.half = state.getValue(TrapDoorBlock.HALF);
++            this.support = support.immutable();
++        }
++    }
++
++    public boolean allows(final BlockPos target, final BlockState state) {
++        return !this.active() || state.getBlock() instanceof TrapDoorBlock || target.equals(this.support);
++    }
++
++    public BlockState apply(final BlockState state) {
++        return this.active() && state.getBlock() instanceof TrapDoorBlock
++            ? state.setValue(TrapDoorBlock.FACING, this.facing).setValue(TrapDoorBlock.HALF, this.half) : state;
++    }
++
++    public void clear() {
++        this.facing = null;
++        this.half = null;
++        this.support = null;
++    }
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 7e1d5bb..a9376b3 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -92,6 +92,9 @@
+     "features.block.MixinRedstoneWireBlock",
+     "features.block.MixinSeaPickleBlock",
+     "features.block.MixinTrapDoorBlock",
++    "features.input.MixinBlockUseControl",
++    "features.inventory.MixinHeldBlockUse",
++    "features.inventory.MixinHeldBlockPlacement",
+     "features.creative.MixinCreativeModeInventoryScreen",
+     "features.creative.MixinCreativeModeTab_ItemDisplayBuilder",
+     "features.creative.MixinCreativeModeTabs",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacementTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacementTest.java
+new file mode 100644
+index 0000000..71b548b
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacementTest.java
+@@ -0,0 +1,76 @@
++package com.viaversion.viafabricplus.bedrock.inventory;
++
++import net.minecraft.SharedConstants;
++import net.minecraft.core.Direction;
++import net.minecraft.core.BlockPos;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.level.block.Blocks;
++import net.minecraft.world.level.block.TrapDoorBlock;
++import net.minecraft.world.level.block.state.properties.Half;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class TrapdoorPlacementTest {
++    @BeforeAll
++    static void initializeBlocks() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void preservesTheFirstFacingAndHalfAcrossMaterialsWithoutReplacingOtherProperties() {
++        final var placement = new TrapdoorPlacement();
++        placement.remember(Blocks.OAK_TRAPDOOR.defaultBlockState()
++            .setValue(TrapDoorBlock.FACING, Direction.SOUTH).setValue(TrapDoorBlock.HALF, Half.TOP), BlockPos.ZERO);
++        final var birch = Blocks.BIRCH_TRAPDOOR.defaultBlockState()
++            .setValue(TrapDoorBlock.FACING, Direction.WEST).setValue(TrapDoorBlock.HALF, Half.BOTTOM)
++            .setValue(TrapDoorBlock.WATERLOGGED, true).setValue(TrapDoorBlock.POWERED, true).setValue(TrapDoorBlock.OPEN, true);
++        placement.remember(birch, BlockPos.ZERO);
++        final var result = placement.apply(birch);
++        assertTrue(result.is(Blocks.BIRCH_TRAPDOOR));
++        assertEquals(Direction.SOUTH, result.getValue(TrapDoorBlock.FACING));
++        assertEquals(Half.TOP, result.getValue(TrapDoorBlock.HALF));
++        assertTrue(result.getValue(TrapDoorBlock.WATERLOGGED));
++        assertTrue(result.getValue(TrapDoorBlock.POWERED));
++        assertTrue(result.getValue(TrapDoorBlock.OPEN));
++    }
++
++    @Test
++    void releaseAllowsTheNextPlacementToChooseItsOwnOrientation() {
++        final var placement = new TrapdoorPlacement();
++        placement.remember(Blocks.OAK_TRAPDOOR.defaultBlockState(), BlockPos.ZERO);
++        placement.clear();
++        final var next = Blocks.BIRCH_TRAPDOOR.defaultBlockState()
++            .setValue(TrapDoorBlock.FACING, Direction.EAST).setValue(TrapDoorBlock.HALF, Half.TOP);
++        assertFalse(placement.active());
++        assertSame(next, placement.apply(next));
++        placement.remember(next, BlockPos.ZERO);
++        assertEquals(Direction.EAST, placement.apply(Blocks.OAK_TRAPDOOR.defaultBlockState()).getValue(TrapDoorBlock.FACING));
++    }
++
++    @Test
++    void ordinaryBlocksNeitherStartNorInheritTrapdoorOrientation() {
++        final var placement = new TrapdoorPlacement();
++        final var stone = Blocks.STONE.defaultBlockState();
++        placement.remember(stone, BlockPos.ZERO);
++        assertFalse(placement.active());
++        placement.remember(Blocks.OAK_TRAPDOOR.defaultBlockState(), BlockPos.ZERO);
++        assertSame(stone, placement.apply(stone));
++    }
++    @Test
++    void continuationUsesTrapdoorsOrTheOriginalSupportUntilRelease() {
++        final var placement = new TrapdoorPlacement();
++        final var support = new BlockPos(2, 65, 4);
++        final var other = new BlockPos(5, 64, 8);
++        placement.remember(Blocks.OAK_TRAPDOOR.defaultBlockState(), support);
++        assertTrue(placement.allows(support, Blocks.STONE.defaultBlockState()));
++        assertTrue(placement.allows(other, Blocks.BIRCH_TRAPDOOR.defaultBlockState()));
++        assertFalse(placement.allows(other, Blocks.STONE.defaultBlockState()));
++        assertFalse(placement.allows(other, Blocks.CHEST.defaultBlockState()));
++        placement.clear();
++        assertTrue(placement.allows(other, Blocks.CHEST.defaultBlockState()));
++    }
++
++}
+-- 
+2.56.0
