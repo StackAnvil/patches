@@ -130,7 +130,13 @@ Player and persona controller assets do not establish the engine's new armor mas
    BDS 1.26.60.6 captures confirm `*` for an ordinary world and `1.20.0`
    for an isolated template-marked world with that version.
    Unit tests cover newer/older/newer selection and resource-manager reuse.
-   Native graphical and audible world-transition comparisons remain pending.
+   Native and direct Java controls now select matching cat resources across current/1.20.0/current connections.
+   Captured PCM confirms splash/explosion/splash sample selection through those transitions.
+   Native and direct controls retain server WAV priority above vanilla FSB resources in both versions.
+   ViaProxy accepts the older context and selects the same server WAV.
+   Native and direct reconnects without the sound packs restore the vanilla sample.
+   The [resource notes](../patches/viafabricplus-bedrock/upstreamable/0013-resolve-licensed-native-vanilla-images.pr.md#world-version-resource-selection)
+   retain the evidence scope. Complete pose alignment and broader audio comparisons remain open.
 2. **Held trapdoor placement comparisons.**
    The core retains physical use lifetime and matches local predictions to Java sequence numbers.
    Prediction format 2 carries the result and target-relative cursor.

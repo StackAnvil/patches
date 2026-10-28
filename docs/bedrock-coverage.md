@@ -11950,7 +11950,7 @@ All 38 focused tests pass without skips.
 These checks establish material composition; shader-pack lighting remains pack-defined.
 
 Secondary-color visuals, authored controller colors, GUI tint parity, and tint combined with glint, emission, or masked multitexture remain unverified.
-The resource-version area still needs audio acceptance and complete server-pack priority comparisons.
+The world-version audio comparisons below establish sample selection and the tested server-pack priority paths. Broader resource and audio comparisons remain open.
 Skin armor masking, profile/LOD fixtures, font sampling differences, and the remaining movement/rendering comparisons stay open.
 
 The full build passes with 2,056 core tests and 1,288 add-on tests, including the new Iris composition controls.
@@ -12002,4 +12002,26 @@ These controls establish the engine-variable binding and resource-dependent pose
 They do not establish natural AI production, exact head-target timing, shadows, or sleeping-player query parity.
 The forced current baby rest clips below the fixture floor on both clients; natural rest positioning needs a separate control.
 One native reference uses a cached font pack that does not re-export. Its wire cutoff and vanilla actor inputs remain recorded.
-Resource-version audio and complete server-pack priority acceptance remain open, alongside the other unfinished goal areas.
+The world-version audio comparisons below cover sample selection, server WAV priority, and override retirement. The other unfinished goal areas remain open.
+
+## World-version audio selection, October 28, 2026
+
+Native 1.26.60.5 and direct Java captures select splash/explosion/splash samples across current/1.20.0/current connections in one process per client.
+The event remains `cauldron.explode`; the world cutoff changes its vanilla sound definition.
+Correlations exceed 0.995 against decoded bundled samples. Sealed connection journals retain the cutoffs and requests.
+This establishes actual PCM selection beyond the earlier resource-library probes.
+
+Two server packs supply 500 Hz and 1320 Hz WAV files at `sounds/random/splash`.
+Both override the sound definition, and the matching vanilla resource uses FSB.
+Native and direct Java select the first pack's 500 Hz WAV in current and older worlds.
+ViaProxy accepts the 1.20.0 archive context and selects the same sample.
+Native and direct reconnects without those packs restore the vanilla splash sample.
+All four Java acceptance recordings finish normally.
+
+The private PipeWire graph contains one null sink and no hardware devices or discovery modules.
+Only copied client profiles enable playback. The original native profile remains unchanged and muted.
+Licensed samples, authored fixtures, PCM, packet journals, and client profiles remain private.
+
+These comparisons establish sample identity, the tested pack priority across formats, and removal of server overrides.
+They do not establish equal gain, attenuation, captions, looping, or broader mixing behavior.
+Complete pose alignment, font sampling, skins, and the remaining movement/rendering comparisons remain open.

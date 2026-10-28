@@ -74,10 +74,22 @@ New regressions switch texture bytes, sound definitions, and animation poses
 together across newer/older/newer worlds. They also cover server priority,
 earlier view immutability, cache eviction, absent context, and resource-manager
 reuse with changed archive context. These are runtime/fixture checks.
-Native 26.60 baby-cat captures now establish different geometry and textures
-across current/1.20.0/current connections in one client process. Packet journals
-confirm the world cutoffs. The Java transition uses those same cutoffs, but
-its cat selects fallback rendering. The [shared query correction](0008-share-native-actor-and-resource-runtime.pr.md#native-tame-state-october-28-2026)
-removes one blocker; its inherited tint material remains unsupported.
-Java graphical acceptance, audible comparisons, and native server-priority
-controls remain pending.
+Native and direct Java current/1.20.0/current controls now select matching baby-cat geometry, textures, script scales, and palette state.
+The [world renderer](0030-use-supported-native-world-actor-definitions.pr.md) supplies the missing cat engine variables and verified tint materials.
+Exact pose timing, shadows, and natural AI positioning remain separate acceptance work.
+
+Native 1.26.60.5 and direct Java PCM captures establish sound selection across the same resource transitions.
+`cauldron.explode` selects the current splash sample, an older explosion sample, then the splash sample again.
+Normalized waveform correlations exceed 0.995 against the decoded bundled samples.
+Sealed journals retain each connection's cutoff and sound request.
+
+Two server packs supply different WAV files at the same vanilla sound path.
+Native and direct Java select the first pack's 500 Hz sample in current and 1.20.0 worlds.
+The second pack's 1320 Hz sample and the lower vanilla FSB do not win.
+ViaProxy accepts the 1.20.0 context and selects the same first-pack WAV.
+Native and direct reconnects without these packs restore the vanilla splash sample.
+
+These captures use copied client profiles and a private PipeWire server with only a null sink.
+They establish sample selection, server priority across formats, and retirement of server overrides.
+They do not establish equal gain, attenuation, captions, looping, or broader mixing behavior.
+PCM, licensed samples, pack fixtures, and journals remain private.

@@ -83,8 +83,10 @@ Malformed archive context fails decoding instead of selecting current assets.
 Targeted tests cover numeric ordering, newer/older/newer selection, retained
 server priority, archive/storage context, and identical-byte cache separation.
 The full core build and tests pass with the repository's packaged UI and images.
-The matching add-on integration and native graphical/audio world-transition
-comparisons are still in progress. This area is not complete.
+Native and direct Java comparisons now establish resource-dependent cat draws and current/1.20.0/current sound selection.
+Two conflicting server WAV packs retain native priority above vanilla FSB resources on direct and ViaProxy connections.
+The [add-on evidence](../../viafabricplus-bedrock/upstreamable/0013-resolve-licensed-native-vanilla-images.pr.md#world-version-resource-selection) records PCM comparisons, override retirement, and remaining visual/audio limits.
+The full resource-version acceptance area remains incomplete.
 
 All 55 versioned vanilla manifests in the matching client snapshot and
 generated core metadata have minimum engine versions equal to their numeric
