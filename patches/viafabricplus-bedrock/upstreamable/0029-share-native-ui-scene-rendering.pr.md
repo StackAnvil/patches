@@ -548,3 +548,25 @@ The native glyph writer's edge coordinates alone do not close the rasterization 
 The copied native profile is restored after the controls.
 Both accepted Java comparison recordings finish normally.
 The bitmap-font area stays open.
+
+### Matching viewport and atlas controls, October 29, 2026
+
+The accepted add-on still matches ten of sixteen labels at native UI scale 1 when both clients use 1280 × 720.
+The earlier window-size difference does not explain the remaining sampling differences.
+An explicit native UI scale keeps this comparison separate from Java GUI scale.
+The fixture retains the same labels and supplies no font overrides.
+
+A private UV adjustment matches ten labels at native UI scale 1 and fourteen at scale 2.
+Java GUI scales 1 and 2 produce the same results at each native UI scale.
+A second private probe retains the original atlas coordinates, dimensions, and upper-edge inset instead of Java's repacked atlas.
+With the existing origin rule, that probe matches eleven labels at scale 1 and all sixteen at scale 2.
+Five scale-1 labels still differ.
+Five alternative origin rules reduce the match count at both scales.
+Three repeated captures at each scale retain the same result.
+The final 180-second Java recording reaches gameplay and finishes normally.
+
+The original glyph writer retains fractional positions, with upper-edge insets of 0.001 source pixels for bitmap cells and 0.01 for Unicode cells.
+The native tessellator stores float positions and UVs.
+These instructions do not establish the complete label transform or final rasterization rule.
+Neither private rendering probe enters this patch or the bundle.
+Bitmap-font acceptance remains open.

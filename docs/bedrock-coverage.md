@@ -12133,3 +12133,29 @@ Further work must trace the scale-dependent rasterization before changing the sh
 The accepted legacy-atlas position fix remains covered by its sixteen matching scale-2 controls.
 Both accepted Java comparison recordings finish normally.
 Bitmap-font acceptance remains open.
+
+### Matching viewport and atlas controls, October 29, 2026
+
+The follow-up uses 1280 × 720 for both clients and an explicit native UI scale of 1.
+The accepted add-on still matches ten of sixteen labels.
+The earlier window-size difference does not explain the remaining sampling differences.
+The fixture contains the same HUD labels and no font overrides.
+
+A private UV adjustment retains ten matches at native UI scale 1 and fourteen at scale 2.
+Java GUI scales 1 and 2 produce the same results at each native UI scale.
+The UV adjustment alone does not resolve the differences.
+
+Another private probe preserves the original atlas coordinates, dimensions, and upper-edge inset instead of repacking glyphs into Java's font atlas.
+With the existing origin rule, it matches eleven labels at native UI scale 1 and all sixteen at scale 2.
+Five scale-1 labels still differ.
+Five alternative origin rules reduce the match count at both native UI scales.
+These controls cover glyph bounds and exact pixel masks, rather than whole frames.
+Three repeated captures at each scale retain the same result.
+The final 180-second Java recording reaches gameplay and finishes normally.
+
+The original native glyph writer retains fractional positions and uses different upper-edge insets for bitmap and Unicode cells.
+The native tessellator stores float positions and UVs.
+Those instructions do not establish the complete label transform or final rasterization rule.
+Both private rendering probes remain excluded from the patch stack and bundle.
+The world pack list and source settings return to their original bytes after the controls.
+The bitmap-font area remains open.
