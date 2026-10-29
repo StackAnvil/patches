@@ -1,0 +1,131 @@
+package net.pistonmaster.stackanvil.replay;
+
+import com.viaversion.viaversion.api.type.Types;
+import com.viaversion.nbt.tag.CompoundTag;
+import com.viaversion.viaversion.libs.gson.Gson;
+import com.viaversion.viaversion.util.Key;
+import io.netty.buffer.*;
+import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+import net.raphimc.viabedrock.api.model.NativeSkinFragment;
+import net.raphimc.viabedrock.protocol.model.SkinData;
+import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
+import java.nio.file.Path;
+import java.nio.file.Files;
+import java.security.MessageDigest;
+import java.util.*;
+
+/** Appearance expectations derived from incoming packets, independent of the client renderer. */
+public final class SceneFeatures {
+    public static void main(String[] args) throws Exception {
+        if (args.length == 3 && args[0].equals("--self-identity")) {
+            Optional<UUID> identity = selfIdentity(PacketJournal.read(Path.of(args[1]), ProtocolConstants.BEDROCK_PROTOCOL_VERSION));
+            if (identity.isEmpty()) return;
+            Path output = Path.of(args[2]);
+            try (var stream = PrivateFiles.newOutputStream(output)) {
+                stream.write(identity.get().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            return;
+        }
+        System.out.println(new Gson().toJson(features(PacketJournal.read(Path.of(args[0]), ProtocolConstants.BEDROCK_PROTOCOL_VERSION))));
+    }
+
+    static Map<String, Object> features(List<PacketJournal.Entry> entries) throws Exception {
+        Set<String> textures = new TreeSet<>(), actors = new TreeSet<>(), registered = new HashSet<>();
+        Map<String, Integer> fullSkinRecords = new TreeMap<>();
+        Optional<UUID> local = selfIdentity(entries);
+        int skins = 0, geometrySkins = 0, localGeometrySkins = 0;
+        boolean started = false, hasRegistry = false;
+        for (PacketJournal.Entry entry : entries) {
+            if (!entry.clientbound()) continue;
+            if (entry.id() == 11) { started = true; continue; }
+            if (!Set.of(13, 63, 93, 119).contains(entry.id())) continue;
+            ByteBuf input = Unpooled.wrappedBuffer(entry.payload());
+            try {
+                int id = Types.VAR_INT.readPrimitive(input);
+                if (id == 119) {
+                    if (!started) continue;
+                    CompoundTag registry = (CompoundTag) BedrockTypes.NETWORK_TAG.read(input);
+                    for (CompoundTag actor : registry.getListTag("idlist", CompoundTag.class)) {
+                        String identifier = actor.getString("id");
+                        if (identifier != null) registered.add(Key.namespaced(identifier));
+                    }
+                    hasRegistry = true;
+                } else if (id == 13) {
+                    BedrockTypes.VAR_LONG.readPrimitive(input); BedrockTypes.UNSIGNED_VAR_LONG.readPrimitive(input);
+                    String identifier = Key.namespaced(BedrockTypes.STRING.read(input));
+                    if (!identifier.startsWith("minecraft:")) actors.add(identifier);
+                } else if (id == 93) {
+                    UUID uuid = BedrockTypes.UUID.read(input);
+                    int geometry = skin(textures, fullSkinRecords, BedrockTypes.SKIN.read(input));
+                    geometrySkins += geometry; skins++;
+                    if (local.filter(uuid::equals).isPresent()) localGeometrySkins += geometry;
+                } else {
+                    int count = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(input);
+                    if (count > 4096) throw new IllegalArgumentException("Unbounded player list");
+                    for (int i = 0; i < count; i++) {
+                        int action = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(input);
+                        input.readUnsignedByte(); UUID uuid = BedrockTypes.UUID.read(input);
+                        if (action != 1) continue;
+                        BedrockTypes.VAR_LONG.readPrimitive(input);
+                        int geometry = skin(textures, fullSkinRecords, playerListSkin(input));
+                        geometrySkins += geometry; skins++;
+                        if (local.filter(uuid::equals).isPresent()) localGeometrySkins += geometry;
+                    }
+                }
+            } finally { input.release(); }
+        }
+        Set<String> unregistered = new TreeSet<>();
+        if (hasRegistry) for (String actor : actors) if (!registered.contains(actor)) unregistered.add(actor);
+        actors.removeAll(unregistered);
+        return Map.of("skinUpdates", skins, "geometrySkinUpdates", geometrySkins, "localGeometrySkinUpdates", localGeometrySkins, "skinTextures", textures,
+                "fullSkinRecords", fullSkinRecords, "customActorIdentifiers", actors, "unregisteredActorIdentifiers", unregistered);
+    }
+
+    static Optional<UUID> selfIdentity(List<PacketJournal.Entry> entries) {
+        PacketJournal.Entry start = entries.stream().filter(entry -> entry.clientbound() && entry.id() == 11).findFirst().orElseThrow();
+        long self;
+        ByteBuf first = Unpooled.wrappedBuffer(start.payload());
+        try { Types.VAR_INT.readPrimitive(first); self = BedrockTypes.VAR_LONG.readPrimitive(first); }
+        finally { first.release(); }
+        Set<UUID> matches = new HashSet<>();
+        for (PacketJournal.Entry entry : entries) {
+            if (!entry.clientbound() || entry.id() != 63) continue;
+            ByteBuf input = Unpooled.wrappedBuffer(entry.payload());
+            try {
+                Types.VAR_INT.readPrimitive(input);
+                int count = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(input);
+                if (count > 4096) throw new IllegalArgumentException("Unbounded player list");
+                for (int index = 0; index < count; index++) {
+                    int action = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(input);
+                    input.readUnsignedByte();
+                    UUID uuid = BedrockTypes.UUID.read(input);
+                    if (action != 1) continue;
+                    long uniqueId = BedrockTypes.VAR_LONG.readPrimitive(input);
+                    if (uniqueId == self) matches.add(uuid);
+                    playerListSkin(input);
+                }
+            } finally { input.release(); }
+        }
+        if (matches.size() > 1) throw new IllegalArgumentException("The recording identifies multiple local players for scene rendering");
+        return matches.stream().findFirst();
+    }
+
+    private static SkinData playerListSkin(ByteBuf input) {
+        // Name, XUID, PlayFab ID, and platform online ID precede the device OS and skin.
+        for (int field = 0; field < 4; field++) BedrockTypes.STRING.read(input);
+        input.readIntLE();
+        SkinData skin = BedrockTypes.SKIN.read(input);
+        input.skipBytes(7); // teacher, host, subclient, ARGB color
+        return skin;
+    }
+
+    private static int skin(Set<String> textures, Map<String, Integer> records, SkinData skin) throws Exception {
+        if (skin.skinData() == null) throw new IllegalArgumentException("Missing recorded skin image");
+        String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(ImageType.getImageData(skin.skinData())));
+        textures.add(skin.skinData().getWidth() + "x" + skin.skinData().getHeight() + ":" + hash);
+        records.merge(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(NativeSkinFragment.encode(skin))), 1, Integer::sum);
+        if (skin.geometryData() == null || skin.geometryData().isBlank()) return 0;
+        return skin.geometryData().matches("[ \\t\\r\\n]*null[ \\t\\r\\n]*") ? 0 : 1;
+    }
+}

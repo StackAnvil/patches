@@ -16,11 +16,11 @@ test.skipIf(!built)("observes clipped form controls with inherited visibility an
   try {
     const jar = await artifact("viaproxy");
     await execute("javac", ["-cp", jar, "-d", directory,
-      join(root, "src/replay/java/com/enderdash/agent/replay/PrivateFiles.java"),
-      join(root, "src/replay/fabric/com/enderdash/agent/replay/fabric/NativeFormAudit.java"),
+      join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/PrivateFiles.java"),
+      join(root, "src/replay/fabric/net/pistonmaster/stackanvil/replay/fabric/NativeFormAudit.java"),
       join(root, "test/fixtures/NativeFormAuditSelfTest.java")]);
     const result = await execute("java", ["-cp", `${directory}${delimiter}${jar}`,
-      "com.enderdash.agent.replay.fabric.NativeFormAuditSelfTest", directory], { cwd: directory });
+      "net.pistonmaster.stackanvil.replay.fabric.NativeFormAuditSelfTest", directory], { cwd: directory });
     expect(result.stderr).toBeEmpty();
   } finally {
     await rm(directory, { recursive: true, force: true });

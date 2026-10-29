@@ -1,4 +1,4 @@
-package com.enderdash.agent.replay.fabric;
+package net.pistonmaster.stackanvil.replay.fabric;
 
 import com.viaversion.viaversion.libs.gson.JsonParser;
 import java.nio.file.Files;

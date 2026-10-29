@@ -18,11 +18,11 @@ test.skipIf(!built)("observes retained camera state after decoder ownership ends
     const logging = join(directory, "log4j2.xml");
     await writeFile(logging, '<Configuration status="ERROR"><Loggers><Root level="off"/></Loggers></Configuration>');
     await execute("javac", ["-cp", jar, "-d", directory,
-      join(root, "src/replay/java/com/enderdash/agent/replay/PrivateFiles.java"),
-      join(root, "src/replay/java/com/enderdash/agent/replay/CameraPresetAudit.java"),
+      join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/PrivateFiles.java"),
+      join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/CameraPresetAudit.java"),
       join(root, "test/fixtures/CameraPresetAuditSelfTest.java")]);
     const result = await execute("java", [`-Dlog4j2.configurationFile=${logging}`, "-cp", `${directory}${delimiter}${jar}`,
-      "com.enderdash.agent.replay.CameraPresetAuditSelfTest", directory]);
+      "net.pistonmaster.stackanvil.replay.CameraPresetAuditSelfTest", directory]);
     expect(result.stderr).toBeEmpty();
   } finally {
     await rm(directory, { recursive: true, force: true });

@@ -142,14 +142,14 @@ async function buildPlugin(
   temporaryBuilds.push(build);
   const classes = join(build, "classes");
   await mkdir(classes, { recursive: true, mode: 0o700 });
-  const source = join(root, "src/replay/java/com/enderdash/agent/replay");
+  const source = join(root, "src/replay/java/net/pistonmaster/stackanvil/replay");
   const files = (await readdir(source))
     .filter((name) => name.endsWith(".java"))
     .map((name) => join(source, name));
   await execute("javac", ["-cp", jar, "-d", classes, ...files]);
   await writeFile(
     join(classes, "viaproxy.yml"),
-    "name: StackAnvilRecorder\nauthor: StackAnvil\nversion: 1\nmain: com.enderdash.agent.replay.RecordingPlugin\n",
+    "name: StackAnvilRecorder\nauthor: StackAnvil\nversion: 1\nmain: net.pistonmaster.stackanvil.replay.RecordingPlugin\n",
     { mode: 0o600 },
   );
   const plugin = join(build, "recorder.jar");
@@ -160,11 +160,17 @@ async function buildPlugin(
     { mode: 0o600 },
   );
   const manifest = join(build, "controller-observer.mf");
-  await writeFile(manifest, "Premain-Class: com.enderdash.agent.replay.ControllerAuditAgent\n", {
-    mode: 0o600,
-  });
+  await writeFile(
+    manifest,
+    "Premain-Class: net.pistonmaster.stackanvil.replay.ControllerAuditAgent\n",
+    {
+      mode: 0o600,
+    },
+  );
   const observer = join(build, "controller-observer.jar");
-  const observerClasses = (await readdir(join(classes, "com/enderdash/agent/replay"))).filter(
+  const observerClasses = (
+    await readdir(join(classes, "net/pistonmaster/stackanvil/replay"))
+  ).filter(
     (name) =>
       name === "ControllerAuditAgent.class" ||
       name.startsWith("ControllerAuditAgent$") ||
@@ -176,7 +182,11 @@ async function buildPlugin(
     observer,
     "--manifest",
     manifest,
-    ...observerClasses.flatMap((name) => ["-C", classes, `com/enderdash/agent/replay/${name}`]),
+    ...observerClasses.flatMap((name) => [
+      "-C",
+      classes,
+      `net/pistonmaster/stackanvil/replay/${name}`,
+    ]),
   ]);
   return { classes, plugin, build, observer };
 }
@@ -204,7 +214,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
   const mixin = join(libraries, version, `sponge-mixin-${version}.jar`);
   const classes = join(build, "fabric-classes");
   await mkdir(classes, { recursive: true, mode: 0o700 });
-  const source = join(root, "src/replay/fabric/com/enderdash/agent/replay/fabric");
+  const source = join(root, "src/replay/fabric/net/pistonmaster/stackanvil/replay/fabric");
   const files = [...new Bun.Glob("**/*.java").scanSync(source)].map((file) => join(source, file));
   await execute("javac", [
     "-proc:none",
@@ -212,10 +222,10 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
     `${jar}${delimiter}${mixin}`,
     "-d",
     classes,
-    join(root, "src/replay/java/com/enderdash/agent/replay/PrivateFiles.java"),
-    join(root, "src/replay/java/com/enderdash/agent/replay/PacketJournal.java"),
-    join(root, "src/replay/java/com/enderdash/agent/replay/CameraPresetAudit.java"),
-    join(root, "src/replay/java/com/enderdash/agent/replay/RecordingConnections.java"),
+    join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/PrivateFiles.java"),
+    join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/PacketJournal.java"),
+    join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/CameraPresetAudit.java"),
+    join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/RecordingConnections.java"),
     ...files,
   ]);
   await writeFile(
@@ -235,7 +245,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
     join(classes, "stackanvil-recorder.mixins.json"),
     JSON.stringify({
       required: true,
-      package: "com.enderdash.agent.replay.fabric.mixin",
+      package: "net.pistonmaster.stackanvil.replay.fabric.mixin",
       compatibilityLevel: "JAVA_25",
       client: [
         "MixinPacketCodec",
@@ -649,7 +659,7 @@ Live add-on recordings accept --allow-transfers to save each connection separate
       const { stdout } = await execute("java", [
         "-cp",
         `${classes}${delimiter}${jar}`,
-        `com.enderdash.agent.replay.${test}`,
+        `net.pistonmaster.stackanvil.replay.${test}`,
       ]);
       console.log(stdout.trim());
     }
@@ -788,7 +798,7 @@ Live add-on recordings accept --allow-transfers to save each connection separate
           `-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`,
           "-cp",
           `${classes}${delimiter}${jar}`,
-          "com.enderdash.agent.replay.SceneFeatures",
+          "net.pistonmaster.stackanvil.replay.SceneFeatures",
           join(recording, "packets.sbr"),
         ]);
         const features = JSON.parse(stdout) as SceneFeatures;
@@ -799,7 +809,7 @@ Live add-on recordings accept --allow-transfers to save each connection separate
             `-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`,
             "-cp",
             `${classes}${delimiter}${jar}`,
-            "com.enderdash.agent.replay.SceneFeatures",
+            "net.pistonmaster.stackanvil.replay.SceneFeatures",
             "--self-identity",
             join(recording, "packets.sbr"),
             join(directory, "replay-self-uuid.txt"),
@@ -813,7 +823,7 @@ Live add-on recordings accept --allow-transfers to save each connection separate
           `-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`,
           "-cp",
           `${classes}${delimiter}${jar}`,
-          "com.enderdash.agent.replay.ReplayServer",
+          "net.pistonmaster.stackanvil.replay.ReplayServer",
           recording,
           String(udp),
         ],
@@ -871,7 +881,7 @@ Live add-on recordings accept --allow-transfers to save each connection separate
           `-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`,
           "-cp",
           `${classes}${delimiter}${jar}`,
-          "com.enderdash.agent.replay.NativeCaptureProxy",
+          "net.pistonmaster.stackanvil.replay.NativeCaptureProxy",
           directory,
           String(bind),
           destination.slice(0, separator),
@@ -1130,7 +1140,7 @@ Live add-on recordings accept --allow-transfers to save each connection separate
       `-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`,
       "-cp",
       `${classes}${delimiter}${jar}`,
-      "com.enderdash.agent.replay.SceneFeatures",
+      "net.pistonmaster.stackanvil.replay.SceneFeatures",
       join(resolve(input), "packets.sbr"),
     ]);
     const expected = JSON.parse(stdout) as SceneFeatures;
