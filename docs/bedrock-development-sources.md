@@ -203,6 +203,11 @@ Player and persona controller assets do not establish the engine's new armor mas
    Boat and player clicks now use the displayed Java base before conversion to Bedrock world coordinates.
    The native boat comparison identified a 0.375 hull-origin error in the old conversion.
    A separate hull-surface difference of approximately 0.0075 remains under investigation.
+   Native attacks also carry the picked world position, which Java's attack packet omits.
+   A negotiated atomic attack message now preserves the actual client pick and current actor lifetime.
+   Direct and matching ViaProxy controls cover actor replacement, block occlusion, exact hit transport, and native hurt countdowns.
+   Ordinary Java attacks remain available without that capability.
+   This does not close the hull-surface or broader block-outline comparisons.
    Fresh direct and ViaProxy recordings confirm the corrected world hit and receive the boarding acknowledgment.
 6. **Complete remaining content features.**
    Item-component custom swing, use-start, and durability sounds have no matching

@@ -12233,3 +12233,29 @@ It reduces scale-1 matches from eleven to ten and scale-2 matches from sixteen t
 The 150-second recording finishes normally.
 The probe remains excluded from the patch stack and bundle.
 A complete comparison still needs the native vertex inputs and clamp behavior.
+
+## Atomic native actor attacks, October 29, 2026
+
+The matching native 1.26.60.5 capture carries a world hit in actor attacks.
+Java 26.3 supplies only an entity ID, and the previous translation sends zero coordinates.
+Supporting clients now send one negotiated attack message with the actual world pick and current actor lifetime.
+Core validates the published owner and lifetime before using the shared transaction writer.
+Proxy targets resolve to their authoritative owner without adding hull or eye offsets.
+Ordinary Java attacks remain available when the capability or matching client pick is absent.
+
+Four core regressions cover the codec, malformed frames, finite coordinates, owner identity, actor lifetime, alias removal, and capability loss.
+Three client regressions cover exact world hits, proxy ownership, unrelated picks, and absent lifetimes.
+The full builds pass 2,075 core cases and 1,309 add-on cases, with no failures or errors.
+Optional skips remain 176 and 145 respectively.
+CubeConverter passes 21 cases, ViaProxy passes four, and the bundle includes matching distributions.
+
+Each direct and matching ViaProxy control attacks an original boat, adds an occluding block, and replaces the boat at another position.
+Both routes send exactly two attacks with hits equal to their observed client picks after float conversion.
+The intervening block produces no entity attack.
+Both boats receive the native nine-to-zero hurt countdown on each route.
+An older proxy build lacks the new capability and retains the ordinary zero-hit fallback.
+
+These controls establish attack hit transport and lifetime handling.
+The separate hull-surface difference of approximately 0.0075 blocks remains open, along with broader picking geometry and block-outline comparisons.
+The full five-area implementation goal remains unfinished.
+Captures, runtime class hashes, packet journals, and licensed assets remain private.

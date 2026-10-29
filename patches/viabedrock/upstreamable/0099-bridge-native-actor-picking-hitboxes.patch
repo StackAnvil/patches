@@ -1,4 +1,4 @@
-From 921d995fdeaa14fce5f65608c5a2c56e0f26cd98 Mon Sep 17 00:00:00 2001
+From d7baf478f3fda690c71f186818cfb4b4e533c4bb Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(entities): bridge authoritative native picking hitboxes
@@ -36,25 +36,100 @@ hit at Y64.555, while the old Java path reports Y64.93747. Removing the
 0.375 origin offset leaves a separate hull-picking difference of about
 0.0075; this change does not establish exact hull geometry parity.
 Regression tests cover boat movement, player origins, and proxy aliases.
+
+Native 1.26.60.5 protocol2225 captures include the picked world position
+in actor attacks. Java's attack packet omits that position, so an optional
+negotiated payload replaces it atomically for supporting frontends.
+Validate the published owner and lifetime, including multipart aliases,
+before forwarding the actual pick through the shared attack writer.
+Keep ordinary Java attacks available when that capability is absent.
+No pending hit survives to another attack, target, or actor lifetime.
 ---
- .../api/model/NativeActorHitboxes.java        |  91 ++++++
- .../api/model/NativeActorPickingMessage.java  | 111 +++++++
+ .../api/model/NativeActorAttack.java          |  57 +++
+ .../api/model/NativeActorHitboxes.java        |  91 +++++
+ .../api/model/NativeActorPickingMessage.java  | 111 ++++++
  .../viabedrock/api/model/entity/Entity.java   |  13 +
- .../protocol/packet/ClientPlayerPackets.java  |   2 +-
- .../protocol/packet/MultiStatePackets.java    |   6 +
- .../protocol/storage/EntityTracker.java       |  74 +++++
- .../storage/InteractionHitboxProxies.java     | 171 +++++++++++
- .../api/model/NativeActorHitboxesTest.java    | 101 +++++++
- .../model/NativeActorPickingMessageTest.java  |  79 +++++
- .../storage/InteractionHitboxProxiesTest.java | 286 ++++++++++++++++++
- 10 files changed, 933 insertions(+), 1 deletion(-)
+ .../protocol/packet/ClientPlayerPackets.java  |  49 ++-
+ .../protocol/packet/MultiStatePackets.java    |  17 +
+ .../protocol/storage/EntityTracker.java       |  97 +++++
+ .../storage/InteractionHitboxProxies.java     | 171 +++++++++
+ .../api/model/NativeActorAttackTest.java      |  65 ++++
+ .../api/model/NativeActorHitboxesTest.java    | 101 ++++++
+ .../model/NativeActorPickingMessageTest.java  |  79 ++++
+ .../storage/InteractionHitboxProxiesTest.java | 336 ++++++++++++++++++
+ 12 files changed, 1171 insertions(+), 16 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorAttack.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxies.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorAttackTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorHitboxesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorAttack.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorAttack.java
+new file mode 100644
+index 000000000..5776e7e50
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorAttack.java
+@@ -0,0 +1,57 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.util.Objects;
++import java.util.UUID;
++
++/** One complete attack, including the frontend's picked world position and actor lifetime. */
++public record NativeActorAttack(int target, UUID owner, UUID lifetime, Position3f position) {
++
++    public static final String CHANNEL = "viabedrock:actor_attack";
++    public static final Type<NativeActorAttack> TYPE = new Type<>(NativeActorAttack.class) {
++        @Override
++        public NativeActorAttack read(final ByteBuf buffer) {
++            if (buffer.readableBytes() > 56 || Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported native actor attack");
++            }
++            final var attack = new NativeActorAttack(Types.VAR_INT.readPrimitive(buffer), Types.UUID.read(buffer),
++                    Types.UUID.read(buffer), BedrockTypes.POSITION_3F.read(buffer));
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Trailing native actor attack data");
++            }
++            return attack;
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final NativeActorAttack attack) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.VAR_INT.writePrimitive(buffer, attack.target());
++            Types.UUID.write(buffer, attack.owner());
++            Types.UUID.write(buffer, attack.lifetime());
++            BedrockTypes.POSITION_3F.write(buffer, attack.position());
++        }
++    };
++
++    public NativeActorAttack {
++        Objects.requireNonNull(owner);
++        Objects.requireNonNull(lifetime);
++        Objects.requireNonNull(position);
++        if (target < 0 || !Float.isFinite(position.x()) || !Float.isFinite(position.y()) || !Float.isFinite(position.z())) {
++            throw new IllegalArgumentException("Invalid native actor attack");
++        }
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java
 new file mode 100644
 index 000000000..cfcdec365
@@ -270,7 +345,7 @@ index 000000000..466dff8b3
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 4f04f8619..136dfb3ed 100644
+index 4c89abb22..b47f5471e 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -30,6 +30,7 @@ import net.raphimc.viabedrock.ViaBedrock;
@@ -315,10 +390,92 @@ index 4f04f8619..136dfb3ed 100644
  
      public final NativeActorMessage.Snapshot nativeActorSnapshot() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index 71d436b50..b45af43c9 100644
+index 71d436b50..17b377f80 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-@@ -592,7 +592,7 @@ public final class ClientPlayerPackets {
+@@ -17,6 +17,7 @@
+  */
+ package net.raphimc.viabedrock.protocol.packet;
+ 
++import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.Via;
+ import com.viaversion.viaversion.api.minecraft.BlockPosition;
+ import com.viaversion.viaversion.api.minecraft.Vector3d;
+@@ -31,6 +32,7 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets
+ import com.viaversion.viaversion.util.Pair;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
++import net.raphimc.viabedrock.api.model.NativeActorAttack;
+ import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+ import net.raphimc.viabedrock.api.model.entity.Entity;
+ import net.raphimc.viabedrock.api.util.BitSets;
+@@ -140,6 +142,35 @@ public final class ClientPlayerPackets {
+         return vehicle;
+     }
+ 
++    static void handleNativeActorAttack(final UserConnection user, final NativeActorAttack attack) {
++        final Entity entity = user.get(EntityTracker.class).nativeAttackTarget(attack);
++        if (entity == null) {
++            return;
++        }
++        final PacketWrapper packet = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
++        writeActorAttack(packet, entity, attack.position());
++        packet.sendToServer(BedrockProtocol.class);
++    }
++
++    private static void writeActorAttack(final PacketWrapper wrapper, final Entity entity, final Position3f hit) {
++        final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
++        final InventoryContainer inventoryContainer = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
++        wrapper.write(BedrockTypes.VAR_INT, 0); // legacy request id
++        wrapper.write(Types.BOOLEAN, false); // has legacy data
++        wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ComplexInventoryTransaction_Type.ItemUseOnEntityTransaction.getValue()); // transaction type
++        wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, 0); // actions count
++        wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, entity.runtimeId()); // entity runtime id
++        wrapper.write(BedrockTypes.VAR_INT, ItemUseOnActorActionType.Attack.getValue()); // action type
++        wrapper.write(BedrockTypes.VAR_INT, (int) inventoryContainer.getSelectedHotbarSlot()); // hotbar slot
++        wrapper.write(Types.UNSIGNED_BYTE, (short) HandSlot.Mainhand.getValue()); // hand
++        wrapper.write(wrapper.user().get(ItemRewriter.class).newItemType(), inventoryContainer.getSelectedHotbarItem()); // held item
++        wrapper.write(BedrockTypes.POSITION_3F, entityTracker.getClientPlayer().position()); // player position
++        wrapper.write(BedrockTypes.POSITION_3F, hit); // click position
++
++        entityTracker.getClientPlayer().sendSwingPacketToServer();
++        entityTracker.getClientPlayer().cancelNextSwingPacket();
++    }
++
+     public static void register(final BedrockProtocol protocol) {
+         protocol.registerClientbound(ClientboundBedrockPackets.RESPAWN, ClientboundPackets26_3.RESPAWN, wrapper -> {
+             final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
+@@ -524,7 +555,6 @@ public final class ClientPlayerPackets {
+         });
+         protocol.registerServerbound(ServerboundPackets26_3.ATTACK, ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper -> {
+             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+-            final InventoryContainer inventoryContainer = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
+             final int entityId = wrapper.read(Types.VAR_INT); // entity id
+             final Entity entity = entityTracker.getEntityByJid(entityId);
+             if (entity == null) {
+@@ -532,20 +562,7 @@ public final class ClientPlayerPackets {
+                 return;
+             }
+ 
+-            wrapper.write(BedrockTypes.VAR_INT, 0); // legacy request id
+-            wrapper.write(Types.BOOLEAN, false); // has legacy data
+-            wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ComplexInventoryTransaction_Type.ItemUseOnEntityTransaction.getValue()); // transaction type
+-            wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, 0); // actions count
+-            wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, entity.runtimeId()); // entity runtime id
+-            wrapper.write(BedrockTypes.VAR_INT, ItemUseOnActorActionType.Attack.getValue()); // action type
+-            wrapper.write(BedrockTypes.VAR_INT, (int) inventoryContainer.getSelectedHotbarSlot()); // hotbar slot
+-            wrapper.write(Types.UNSIGNED_BYTE, (short) HandSlot.Mainhand.getValue()); // hand
+-            wrapper.write(wrapper.user().get(ItemRewriter.class).newItemType(), inventoryContainer.getSelectedHotbarItem()); // held item
+-            wrapper.write(BedrockTypes.POSITION_3F, entityTracker.getClientPlayer().position()); // player position
+-            wrapper.write(BedrockTypes.POSITION_3F, Position3f.ZERO); // click position
+-
+-            entityTracker.getClientPlayer().sendSwingPacketToServer();
+-            entityTracker.getClientPlayer().cancelNextSwingPacket();
++            writeActorAttack(wrapper, entity, Position3f.ZERO);
+         });
+         protocol.registerServerbound(ServerboundPackets26_3.INTERACT, ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper -> {
+             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+@@ -592,7 +609,7 @@ public final class ClientPlayerPackets {
              wrapper.write(wrapper.user().get(ItemRewriter.class).newItemType(), inventoryContainer.getSelectedHotbarItem()); // held item
              wrapper.write(BedrockTypes.POSITION_3F, entityTracker.getClientPlayer().position()); // player position
              final Vector3d location = wrapper.read(Types.LOW_PRECISION_VECTOR); // location
@@ -328,18 +485,36 @@ index 71d436b50..b45af43c9 100644
          });
          protocol.registerServerbound(ServerboundPackets26_3.MOVE_PLAYER_STATUS_ONLY, null, wrapper -> {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index 1cacdb359..dd71079b7 100644
+index 1cacdb359..41e73dded 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-@@ -50,6 +50,7 @@ import net.raphimc.viabedrock.api.model.EmoteAction;
+@@ -50,6 +50,8 @@ import net.raphimc.viabedrock.api.model.EmoteAction;
  import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
  import net.raphimc.viabedrock.api.model.ActorSpatialCommand;
  import net.raphimc.viabedrock.api.model.NativeActorBoundsMessage;
 +import net.raphimc.viabedrock.api.model.NativeActorPickingMessage;
++import net.raphimc.viabedrock.api.model.NativeActorAttack;
  import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
  import net.raphimc.viabedrock.api.model.PlayerInput;
  import net.raphimc.viabedrock.api.model.PlayerPrediction;
-@@ -264,6 +265,7 @@ public final class MultiStatePackets {
+@@ -205,6 +207,16 @@ public final class MultiStatePackets {
+             }
+             return;
+         }
++        if (channel.equals(NativeActorAttack.CHANNEL)) {
++            if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY) {
++                try {
++                    ClientPlayerPackets.handleNativeActorAttack(wrapper.user(), wrapper.read(NativeActorAttack.TYPE));
++                } catch (final IllegalArgumentException | IndexOutOfBoundsException malformed) {
++                    // Invalid coordinates or identities never become a Bedrock attack.
++                }
++            }
++            return;
++        }
+         if (channel.equals(CommandBlockEdit.CHANNEL)) {
+             if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY) {
+                 try {
+@@ -264,6 +276,7 @@ public final class MultiStatePackets {
              if (NativeActorMessage.hasStateChannel(channels::contains)
                      && wrapper.user().has(EntityTracker.class)) {
                  wrapper.user().get(EntityTracker.class).sendNativeActorSnapshots();
@@ -347,7 +522,7 @@ index 1cacdb359..dd71079b7 100644
              }
              return;
          }
-@@ -319,6 +321,10 @@ public final class MultiStatePackets {
+@@ -319,6 +332,10 @@ public final class MultiStatePackets {
                      || channels.contains(ActorSpatialCommand.CHANNEL)) && wrapper.user().has(EntityTracker.class)) {
                  wrapper.user().get(EntityTracker.class).sendNativeActorSnapshots();
              }
@@ -359,32 +534,34 @@ index 1cacdb359..dd71079b7 100644
                      && wrapper.user().has(EntityTracker.class)) {
                  wrapper.user().get(EntityTracker.class).sendNativeCustomEntitySnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-index 817633947..67ae6cfe4 100644
+index 817633947..f6697e13a 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-@@ -41,6 +41,8 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
+@@ -41,6 +41,9 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
  import net.raphimc.viabedrock.ViaBedrock;
  import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
  import net.raphimc.viabedrock.api.model.BlockState;
 +import net.raphimc.viabedrock.api.model.NativeActorMessage;
 +import net.raphimc.viabedrock.api.model.NativeActorPickingMessage;
++import net.raphimc.viabedrock.api.model.NativeActorAttack;
  import net.raphimc.viabedrock.api.model.entity.*;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
-@@ -48,10 +50,12 @@ import net.raphimc.viabedrock.protocol.packet.NpcDialoguePackets;
+@@ -48,10 +51,13 @@ import net.raphimc.viabedrock.protocol.packet.NpcDialoguePackets;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorLinkType;
  import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
  import net.raphimc.viabedrock.protocol.model.EntityLink;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
  import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
  
++import java.nio.charset.StandardCharsets;
  import java.util.ArrayList;
  import java.util.Iterator;
 +import java.util.HashMap;
  import java.util.LinkedHashMap;
  import java.util.LinkedHashSet;
  import java.util.List;
-@@ -66,7 +70,9 @@ public class EntityTracker extends StoredObject {
+@@ -66,8 +72,11 @@ public class EntityTracker extends StoredObject {
      private final EntityReferenceTracker references = new EntityReferenceTracker(this::getEntityByUid);
  
      private final AtomicInteger idCounter = new AtomicInteger(2);
@@ -392,9 +569,11 @@ index 817633947..67ae6cfe4 100644
  
 +    private final Map<Long, NativeActorPickingMessage.Snapshot> publishedPicking = new HashMap<>();
      private boolean nativeActorsJoined;
++    private boolean nativeAttackAdvertised;
      private ClientPlayerEntity clientPlayerEntity = null;
      private final Long2ObjectMap<Entity> entities = new Long2ObjectOpenHashMap<>();
-@@ -79,6 +85,8 @@ public class EntityTracker extends StoredObject {
+     private final Long2ObjectMap<Long> runtimeIdToUniqueId = new Long2ObjectOpenHashMap<>();
+@@ -79,6 +88,8 @@ public class EntityTracker extends StoredObject {
  
      public EntityTracker(final UserConnection user) {
          super(user);
@@ -403,7 +582,7 @@ index 817633947..67ae6cfe4 100644
      }
  
      public Entity addEntity(final long uniqueId, final long runtimeId, final String type, final EntityTypes26_3 javaType) {
-@@ -336,6 +344,7 @@ public class EntityTracker extends StoredObject {
+@@ -336,6 +347,7 @@ public class EntityTracker extends StoredObject {
      public void markNativeActorsJoined() {
          this.nativeActorsJoined = true;
          this.sendNativeActorSnapshots();
@@ -411,7 +590,7 @@ index 817633947..67ae6cfe4 100644
          this.sendMovementEffectSnapshots();
          this.sendUnderwaterMovementSnapshots();
          this.sendFlightMovementSnapshot();
-@@ -355,6 +364,40 @@ public class EntityTracker extends StoredObject {
+@@ -355,6 +367,47 @@ public class EntityTracker extends StoredObject {
          this.entities.values().forEach(entity -> entity.sendNativeActorSnapshot(true));
      }
  
@@ -429,6 +608,13 @@ index 817633947..67ae6cfe4 100644
 +    private void sendNativePickingSnapshot(final Entity entity, final boolean force) {
 +        if (entity instanceof ClientPlayerEntity || !this.nativePickingAvailable()) {
 +            return;
++        }
++        if (!this.nativeAttackAdvertised) {
++            final PacketWrapper register = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++            register.write(Types.STRING, "minecraft:register");
++            register.write(Types.REMAINING_BYTES, NativeActorAttack.CHANNEL.getBytes(StandardCharsets.UTF_8));
++            register.send(BedrockProtocol.class);
++            this.nativeAttackAdvertised = true;
 +        }
 +        final var actor = entity.nativeActorSnapshot();
 +        final var parts = this.pickingHitboxes.parts(entity.uniqueId()).stream().map(proxy -> {
@@ -452,7 +638,7 @@ index 817633947..67ae6cfe4 100644
      public void sendMovementEffectSnapshots() {
          if (this.nativeActorsJoined) {
              this.entities.values().forEach(Entity::sendMovementEffectSnapshot);
-@@ -407,12 +450,26 @@ public class EntityTracker extends StoredObject {
+@@ -407,12 +460,26 @@ public class EntityTracker extends StoredObject {
  
      public void entitySpawned(final Entity entity) {
          EntityReferenceTracker.sendUpdates(this.user(), this.references.actorSpawned(entity));
@@ -479,7 +665,7 @@ index 817633947..67ae6cfe4 100644
                  EntityReferenceTracker.sendUpdates(user, tracker.references.actorRemoved(entity));
              }
          }
-@@ -423,10 +480,27 @@ public class EntityTracker extends StoredObject {
+@@ -423,10 +490,40 @@ public class EntityTracker extends StoredObject {
      }
  
      public Entity getEntityByJid(final int javaId) {
@@ -491,6 +677,19 @@ index 817633947..67ae6cfe4 100644
          return uniqueId == null ? null : this.entities.get(uniqueId.longValue());
      }
  
++    /** Resolve the clicked proxy or owner only while its published actor lifetime is current. */
++    public Entity nativeAttackTarget(final NativeActorAttack attack) {
++        if (!this.nativeAttackAdvertised || !this.nativePickingAvailable()) {
++            return null;
++        }
++        final Entity entity = this.getEntityByJid(attack.target());
++        if (entity == null || entity instanceof ClientPlayerEntity || !entity.javaUuid().equals(attack.owner())) {
++            return null;
++        }
++        final var published = this.publishedPicking.get(entity.uniqueId());
++        return published != null && published.lifetime().equals(attack.lifetime()) ? entity : null;
++    }
++
 +    /** Java interaction coordinates are relative to the clicked frontend target. */
 +    public Position3f interactionClickPosition(final int javaId, final Vector3d relative) {
 +        final var proxy = this.pickingHitboxes.alias(javaId);
@@ -681,6 +880,77 @@ index 000000000..30afffd72
 +    }
 +
 +    public record Remove(List<Proxy> proxies) implements Change {
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeActorAttackTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorAttackTest.java
+new file mode 100644
+index 000000000..98b0a49ba
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorAttackTest.java
+@@ -0,0 +1,65 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeActorAttackTest {
++
++    @Test
++    void preservesWorldHitAndActorIdentityWithoutOriginOffsets() {
++        final var attack = new NativeActorAttack(42, UUID.randomUUID(), UUID.randomUUID(),
++                new Position3f(-497.5F, 64.555F, -113.65531F));
++        final var buffer = Unpooled.buffer();
++        try {
++            NativeActorAttack.TYPE.write(buffer, attack);
++            assertEquals(attack, NativeActorAttack.TYPE.read(buffer));
++            assertFalse(buffer.isReadable());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void rejectsIncompleteTrailingAndUnsupportedFrames() {
++        final var buffer = Unpooled.buffer();
++        try {
++            NativeActorAttack.TYPE.write(buffer, new NativeActorAttack(42, UUID.randomUUID(), UUID.randomUUID(), Position3f.ZERO));
++            for (int length = 0; length < buffer.readableBytes(); length++) {
++                final var truncated = buffer.copy(0, length);
++                try {
++                    assertThrows(RuntimeException.class, () -> NativeActorAttack.TYPE.read(truncated));
++                } finally {
++                    truncated.release();
++                }
++            }
++            buffer.setByte(0, 2);
++            assertThrows(IllegalArgumentException.class, () -> NativeActorAttack.TYPE.read(buffer));
++            buffer.readerIndex(0).setByte(0, 1).setByte(1, 0);
++            assertThrows(IllegalArgumentException.class, () -> NativeActorAttack.TYPE.read(buffer));
++            buffer.readerIndex(0).setByte(1, 0xB1).writeByte(0);
++            assertThrows(IllegalArgumentException.class, () -> NativeActorAttack.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void rejectsInvalidTargetsAndNonfiniteWorldCoordinates() {
++        final UUID owner = UUID.randomUUID();
++        final UUID lifetime = UUID.randomUUID();
++        assertThrows(IllegalArgumentException.class, () -> new NativeActorAttack(-1, owner, lifetime, Position3f.ZERO));
++        assertThrows(IllegalArgumentException.class, () -> new NativeActorAttack(1, owner, lifetime, new Position3f(Float.NaN, 1F, 2F)));
++        assertThrows(IllegalArgumentException.class, () -> new NativeActorAttack(1, owner, lifetime, new Position3f(1F, Float.POSITIVE_INFINITY, 2F)));
 +    }
 +
 +}
@@ -878,10 +1148,10 @@ index 000000000..5f5c2427e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java
 new file mode 100644
-index 000000000..34ce4d40a
+index 000000000..1cad3ab78
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,336 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -895,6 +1165,7 @@ index 000000000..34ce4d40a
 +import net.raphimc.viabedrock.api.model.NativeActorHitboxes;
 +import net.raphimc.viabedrock.api.model.NativeActorMessage;
 +import net.raphimc.viabedrock.api.model.NativeActorPickingMessage;
++import net.raphimc.viabedrock.api.model.NativeActorAttack;
 +import com.viaversion.viaversion.api.protocol.packet.State;
 +import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 +import net.raphimc.viabedrock.api.model.entity.BoatEntity;
@@ -1161,6 +1432,55 @@ index 000000000..34ce4d40a
 +        state.set(State.PLAY);
 +        joined.setBoolean(tracker, false);
 +        assertEquals(false, available.invoke(tracker));
++    }
++
++    @Test
++    void nativeAttackRequiresTheCurrentPublishedOwnerAndLifetimeForBothOwnersAndAliases() throws Exception {
++        final var protocolInfoType = UserConnection.class.getMethod("getProtocolInfo").getReturnType();
++        final Object protocolInfo = Proxy.newProxyInstance(protocolInfoType.getClassLoader(), new Class<?>[]{protocolInfoType},
++                (proxy, method, args) -> method.getName().equals("getServerState") ? State.PLAY : null);
++        final var channels = new ChannelStorage();
++        channels.addChannels(List.of(NativeActorMessage.CHANNEL, NativeActorPickingMessage.CHANNEL));
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> switch (method.getName()) {
++                    case "getProtocolInfo" -> protocolInfo;
++                    case "has" -> args[0] == ChannelStorage.class;
++                    case "get" -> args[0] == ChannelStorage.class ? channels : null;
++                    default -> null;
++                });
++        final var tracker = new EntityTracker(user);
++        for (String field : List.of("nativeActorsJoined", "nativeAttackAdvertised")) {
++            final var flag = EntityTracker.class.getDeclaredField(field);
++            flag.setAccessible(true);
++            flag.setBoolean(tracker, true);
++        }
++        final var boat = tracker.addEntity(new BoatEntity(user, 7, 42, "minecraft:boat",
++                tracker.getNextJavaEntityId(), UUID.randomUUID(), EntityTypes26_3.OAK_BOAT), false);
++        final UUID lifetime = UUID.randomUUID();
++        final var publishedField = EntityTracker.class.getDeclaredField("publishedPicking");
++        publishedField.setAccessible(true);
++        @SuppressWarnings("unchecked")
++        final var published = (Map<Long, NativeActorPickingMessage.Snapshot>) publishedField.get(tracker);
++        published.put(boat.uniqueId(), new NativeActorPickingMessage.Snapshot(boat.javaUuid(), lifetime, List.of()));
++        final var attack = new NativeActorAttack(boat.javaId(), boat.javaUuid(), lifetime, new Position3f(10F, 20F, 30F));
++        assertSame(boat, tracker.nativeAttackTarget(attack));
++        assertNull(tracker.nativeAttackTarget(new NativeActorAttack(boat.javaId(), UUID.randomUUID(), lifetime, attack.position())));
++        assertNull(tracker.nativeAttackTarget(new NativeActorAttack(boat.javaId(), boat.javaUuid(), UUID.randomUUID(), attack.position())));
++        final var proxies = new InteractionHitboxProxies(tracker::getNextJavaEntityId, change -> { });
++        final var proxiesField = EntityTracker.class.getDeclaredField("pickingHitboxes");
++        proxiesField.setAccessible(true);
++        proxiesField.set(tracker, proxies);
++        proxies.spawn(boat.uniqueId(), Position3f.ZERO, List.of(box(Position3f.ZERO, new Position3f(1F, 2F, 1F))));
++        final int alias = proxies.parts(boat.uniqueId()).getFirst().javaId();
++        final var aliasAttack = new NativeActorAttack(alias, boat.javaUuid(), lifetime, attack.position());
++        assertSame(boat, tracker.nativeAttackTarget(aliasAttack));
++        proxies.remove(boat.uniqueId());
++        assertNull(tracker.nativeAttackTarget(aliasAttack));
++        published.remove(boat.uniqueId());
++        assertNull(tracker.nativeAttackTarget(attack));
++        published.put(boat.uniqueId(), new NativeActorPickingMessage.Snapshot(boat.javaUuid(), lifetime, List.of()));
++        channels.removeChannels(List.of(NativeActorPickingMessage.CHANNEL));
++        assertNull(tracker.nativeAttackTarget(attack));
 +    }
 +
 +    private static NativeActorHitboxes.Box box(final Position3f pivot, final Position3f dimensions) {

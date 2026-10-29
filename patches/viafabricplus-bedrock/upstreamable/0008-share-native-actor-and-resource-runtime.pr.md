@@ -2584,3 +2584,22 @@ verifying that older payloads clear color context and later v6 restores it.
 The v5-only live control correctly keeps Java fallback without a native tint.
 The core channel contract and palette evidence are recorded in the
 [metadata patch](../../viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#native-palette-indices-october-28-2026).
+
+## Native attack hit transport, October 29, 2026
+
+Supporting backends advertise the negotiated actor-attack channel after publishing a remote actor.
+The client replaces Java's coordinate-free attack with one message containing the actual world pick and current owner lifetime.
+Proxy targets retain their clicked ID while using the authoritative owner's identity.
+A mismatched pick, absent lifetime, or unavailable capability retains the ordinary attack path.
+The message replaces the attack atomically, so no separate hit remains pending.
+
+Three client regressions cover world coordinates, proxy ownership, unrelated picks, and absent lifetimes.
+Direct and matching ViaProxy controls each cover an original boat, block occlusion, and a replacement boat at another position.
+Both routes send two attacks with hits equal to the observed client picks and receive native nine-to-zero hurt countdowns.
+The intervening block produces no entity attack.
+The older proxy build retains the ordinary fallback because it lacks the new contract.
+
+The complete add-on build passes 1,309 cases, with 145 optional skips and no failures or errors.
+Core passes 2,075 cases, CubeConverter passes 21, and ViaProxy passes four.
+The bundle includes matching distributions.
+The native hull-surface difference of approximately 0.0075 blocks and broader picking geometry remain open.

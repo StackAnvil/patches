@@ -48,3 +48,31 @@ Validation: replay the complete stack and run metadata, property index, pose, hi
 ## Upstream prerequisites
 
 - [viabedrock patch](../../viabedrock/upstreamable/0002-preserve-sparse-properties-and-composed-metadata.pr.md): Land retained metadata and actor bounds before native picking integration.
+
+## Atomic native attack hits, October 29, 2026
+
+Native 1.26.60.5 protocol-2225 captures include the picked world position in actor attacks.
+Java 26.3 sends only the attacked entity ID, so the translated transaction previously carried a zero hit.
+Supporting clients now replace that packet with one negotiated message containing the target, owner, lifetime, and world hit.
+Core accepts only the current published owner and lifetime, including proxy aliases.
+The shared attack writer retains the selected item, main hand, and explicit swing.
+Unavailable capabilities retain ordinary Java attacks.
+No pending hit state carries coordinates into another attack.
+
+Four core regressions cover the codec, malformed input, finite coordinates, current ownership, alias removal, and capability loss.
+Three client regressions cover exact world coordinates, proxy ownership, unrelated picks, and absent lifetimes.
+Full builds pass 2,075 core cases and 1,309 add-on cases, with no failures or errors.
+Core and add-on optional skips remain 176 and 145.
+CubeConverter passes 21 cases, and ViaProxy passes four.
+
+Direct and matching ViaProxy controls each attack the original boat and its replacement exactly once.
+Both transmitted hits equal the read-only client pick after float conversion.
+Neither applies a hull or eye offset, and an intervening block prevents an entity attack.
+Both boats receive the native nine-to-zero hurt countdown on each route.
+The older proxy build lacks the capability and retains its ordinary zero-hit fallback.
+Matching core, proxy, and add-on builds are required for native attack hits.
+
+These controls establish hit transport and target lifetime handling.
+The separate hull-surface difference of approximately 0.0075 blocks remains open.
+Broader block-outline and picking geometry comparisons also remain open.
+Captures, runtime class hashes, and licensed assets remain private.
