@@ -330,6 +330,9 @@ The 26.60 audit above supplies the starting evidence, not completion evidence.
   Captured Alex renders at 20 and 40 blocks; Alex/Steve/Alex replacement matches at 40 blocks.
   Complete incoming skin records match the installed renderer records on both routes, with no rejected skins.
   Body yaw, lighting, shadows, and idle phases differ. Hidden-layer masking and native LOD texture selection remain open.
+  Native GPU captures now identify the actual body and face bindings through seven armor phases and 20/40-block distance controls.
+  Alex/Steve/Alex replacement at 40 blocks selects each matching atlas, with no stale profile binding.
+  These default personas show no LOD texture switch. Distinct LOD resources and wardrobe-specific masking remain open.
   The synthetic custom persona markers remain excluded.
 - [ ] **Movement and rendering:** compare falls at water/solid boundaries,
   dragon-dependent fog, combined blindness/night vision, and block/entity

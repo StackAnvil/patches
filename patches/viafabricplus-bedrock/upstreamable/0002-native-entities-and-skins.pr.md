@@ -910,3 +910,25 @@ Body yaw, lighting, shadows, and idle phases differ, so these captures do not es
 Opaque armor coverage does not independently prove hidden-layer masking.
 The native resource patch still supplies no `persona_lod` binding; distance controls do not establish a native LOD texture switch.
 Early spawn timing and floating-position fixtures remain excluded. Licensed inputs, journals, and images remain private.
+
+## Native persona texture bindings, October 29, 2026
+
+Native 1.26.60.5 GPU captures now identify the textures used by the remote player.
+A real Java player supplies the captured persona through the public skin-change transport.
+BDS supplies the player identity and spawn.
+
+All seven Alex armor phases bind the original 256 × 256 body atlas and 32 × 64 face atlas.
+Four body draws contain 360 indices. Two face draws contain 72 indices.
+The same bindings remain at 20 and 40 blocks.
+At 40 blocks, Alex/Steve/Alex replacement selects the matching body and face textures for each profile.
+The selected textures each have one mip level. These controls show no stale profile binding.
+
+The fixture uses a range of server UDP ports so both real clients remain connected.
+This fixture configuration does not establish a production transport correction.
+Cached capture notifications initially selected older frames.
+The corrected reader accepts only a newly created capture, and the earlier metadata remains excluded.
+
+Draw counts alone do not establish hidden-layer masking.
+These default personas contain no authored `persona_lod` binding and show no distance-dependent texture switch in this range.
+Wardrobe-specific masking and personas with distinct LOD resources still require matching native fixtures.
+No skin renderer change follows from these controls. Licensed inputs and GPU captures remain private.
