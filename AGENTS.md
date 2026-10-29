@@ -71,3 +71,8 @@ If `stack sync` stops at a conflict, resolve it in the generated checkout, stage
 - Use small, explicit fixtures. Do not generate large expected outputs from the same algorithm under test.
 - Run checks appropriate to the change. Do not add redundant tests for mechanical renames or documentation edits.
 - Apply Google's guidance on [behavior tests](https://testing.googleblog.com/2014/04/testing-on-toilet-test-behaviors-not.html), [change detectors](https://testing.googleblog.com/2015/01/testing-on-toilet-change-detector-tests.html), and [coverage](https://testing.googleblog.com/2020/08/code-coverage-best-practices.html).
+
+## Java conventions
+
+- Import Java types instead of using fully qualified class names in code.
+- Use PascalCase for Java class names. Preserve the existing package roots.
