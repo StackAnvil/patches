@@ -333,6 +333,9 @@ The 26.60 audit above supplies the starting evidence, not completion evidence.
   Native GPU captures now identify the actual body and face bindings through seven armor phases and 20/40-block distance controls.
   Alex/Steve/Alex replacement at 40 blocks selects each matching atlas, with no stale profile binding.
   These default personas show no LOD texture switch. Distinct LOD resources and wardrobe-specific masking remain open.
+  A real owned outerwear pendant now hides beneath a chestplate and restores after removal on native and direct Java.
+  Native GPU vertices collapse while hidden. Thirty settled Java samples verify the actual cube visibility across the three phases.
+  The canonical incoming persona record matches the installed renderer record. Other wardrobe categories and distinct LOD resources remain open.
   The synthetic custom persona markers remain excluded.
 - [ ] **Movement and rendering:** compare falls at water/solid boundaries,
   dragon-dependent fog, combined blindness/night vision, and block/entity

@@ -932,3 +932,24 @@ Draw counts alone do not establish hidden-layer masking.
 These default personas contain no authored `persona_lod` binding and show no distance-dependent texture switch in this range.
 Wardrobe-specific masking and personas with distinct LOD resources still require matching native fixtures.
 No skin renderer change follows from these controls. Licensed inputs and GPU captures remain private.
+
+## Real outerwear masking beneath a chestplate, October 29, 2026
+
+A native Dressing Room fixture now equips an owned Coin Pendant outerwear piece on Alex.
+Its transmitted persona contains one cube on `bodyarmor`, alongside the existing body and animated-face geometry.
+Native 1.26.60.5 GPU captures establish hiding rather than opaque armor coverage.
+All 24 pendant vertices have positive clip-space W without armor, zero W with an iron chestplate, and positive W after removal.
+The source atlas remains bound throughout these phases.
+
+Direct Java renders the same native persona record.
+A read-only observer samples the actual rendered model after production setup.
+Ten settled samples per phase show the pendant cube visible, hidden, and visible again.
+The canonical incoming skin record matches the installed renderer record, with zero rejected skins and 7,391 remote-player submissions.
+The 300-second recording finishes normally. This outerwear case requires no renderer correction.
+
+The local fixture forwards BDS discovery replies to the native client's discovery port.
+It preserves those replies and subsequent signaling bytes. Gameplay packets remain unchanged.
+A failed external-server attempt supplies no acceptance evidence.
+An early Java capture during shutdown and phase labels across transitions remain excluded.
+Projection, lighting, and idle poses differ, so these controls do not establish pixel equality.
+Other wardrobe categories and distinct LOD resources remain open. Licensed assets and observations remain private.
