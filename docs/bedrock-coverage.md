@@ -12259,3 +12259,34 @@ These controls establish attack hit transport and lifetime handling.
 The separate hull-surface difference of approximately 0.0075 blocks remains open, along with broader picking geometry and block-outline comparisons.
 The full five-area implementation goal remains unfinished.
 Captures, runtime class hashes, packet journals, and licensed assets remain private.
+
+## Native physical fallback picking, October 29, 2026
+
+Five fresh native 1.26.60.5 controls cover boat top/front/side hits and armor-stand front/side hits on protocol 2225.
+Both actors use their physical box with 0.1 blocks of picking padding on each face.
+The boat metadata reports width 1.4 and height 0.455.
+Its selected top reaches Y64.555, while Java's vanilla hull reaches Y64.5625.
+
+Supporting clients now receive this fallback through the existing nonphysical picking aliases.
+The calculation uses retained scaled dimensions and the actor's native origin offset.
+Authored picking boxes retain priority, and missing dimensions retain the previous fallback.
+Physical collision remains separate.
+Capability replay updates existing actors, while clients without the native geometry capability keep their existing path.
+
+Two new model regressions cover the captured planes and invalid dimensions.
+The capability fixture also covers missing metadata, authored priority, negotiation, and unchanged physical dimensions.
+All builds and the matching bundle pass.
+Core reports 2,077 cases, the add-on reports 1,309, CubeConverter reports 21, and ViaProxy reports four.
+Core and add-on optional skips remain 176 and 145, with no failures or errors.
+
+Direct and ViaProxy recordings each send five attacks through the picking aliases.
+All five selected planes match native within 0.0001 blocks on both routes.
+The other hit components differ by up to 0.000184 blocks, so exact view-ray arithmetic remains unverified.
+Both routes preserve block occlusion.
+A separate direct control loads an existing actor, blocks its ray with stone, and restores a valid hit after removing the stone.
+Both main recordings finish normally after 150 seconds.
+
+The native pack-export observer fails during shutdown, but the sealed journal contains 14,258 complete records and all five native hit controls.
+These measurements use actor metadata and hit transactions.
+Broader picking and block-outline comparisons remain open, alongside the other five-area goal limits.
+Captures, runtime artifacts, and journals remain private.

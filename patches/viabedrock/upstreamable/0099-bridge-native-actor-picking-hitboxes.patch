@@ -1,4 +1,4 @@
-From d7baf478f3fda690c71f186818cfb4b4e533c4bb Mon Sep 17 00:00:00 2001
+From f297b72524b1fcef1ae8ba6acf12cc296951b8e5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(entities): bridge authoritative native picking hitboxes
@@ -44,20 +44,28 @@ Validate the published owner and lifetime, including multipart aliases,
 before forwarding the actual pick through the shared attack writer.
 Keep ordinary Java attacks available when that capability is absent.
 No pending hit survives to another attack, target, or actor lifetime.
+
+Matching 1.26.60.5 boat top/front/side hits and armor-stand front/side
+hits establish physical fallback picking as the scaled collision box
+expanded by 0.1 blocks on each face. Java's vanilla hull instead changes
+the selected plane. Reuse the nonphysical picking proxies when the native
+geometry bridge is negotiated, retain authored hitboxes as the first
+choice, and leave physical dimensions and ordinary Java fallback intact.
+Replay existing actors when the capability arrives after their spawn.
 ---
  .../api/model/NativeActorAttack.java          |  57 +++
- .../api/model/NativeActorHitboxes.java        |  91 +++++
+ .../api/model/NativeActorHitboxes.java        | 104 +++++
  .../api/model/NativeActorPickingMessage.java  | 111 ++++++
  .../viabedrock/api/model/entity/Entity.java   |  13 +
  .../protocol/packet/ClientPlayerPackets.java  |  49 ++-
  .../protocol/packet/MultiStatePackets.java    |  17 +
- .../protocol/storage/EntityTracker.java       |  97 +++++
+ .../protocol/storage/EntityTracker.java       | 115 ++++++
  .../storage/InteractionHitboxProxies.java     | 171 +++++++++
  .../api/model/NativeActorAttackTest.java      |  65 ++++
- .../api/model/NativeActorHitboxesTest.java    | 101 ++++++
+ .../api/model/NativeActorHitboxesTest.java    | 123 ++++++
  .../model/NativeActorPickingMessageTest.java  |  79 ++++
- .../storage/InteractionHitboxProxiesTest.java | 336 ++++++++++++++++++
- 12 files changed, 1171 insertions(+), 16 deletions(-)
+ .../storage/InteractionHitboxProxiesTest.java | 356 ++++++++++++++++++
+ 12 files changed, 1244 insertions(+), 16 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorAttack.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessage.java
@@ -132,10 +140,10 @@ index 000000000..5776e7e50
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java
 new file mode 100644
-index 000000000..cfcdec365
+index 000000000..deaab8335
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,104 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -184,6 +192,19 @@ index 000000000..cfcdec365
 +                    new Position3f(Math.max(first.x(), second.x()), Math.max(first.y(), second.y()), Math.max(first.z(), second.z()))));
 +        }
 +        return List.copyOf(result);
++    }
++
++    /** Native physical fallback picking expands the scaled collision box by 0.1 blocks on every face. */
++    public static Box physical(final float width, final float height, final float originOffset) {
++        if (!Float.isFinite(width) || !Float.isFinite(height) || !Float.isFinite(originOffset)
++                || width < 0 || height < 0) {
++            throw new IllegalArgumentException("Invalid physical picking dimensions");
++        }
++        final float radius = width * 0.5F + 0.1F;
++        final float halfHeight = height * 0.5F;
++        return new Box(new Position3f(0F, halfHeight - originOffset, 0F),
++                new Position3f(-radius, -halfHeight - 0.1F, -radius),
++                new Position3f(radius, halfHeight + 0.1F, radius));
 +    }
 +
 +    private static Position3f vector(final CompoundTag tag, final String prefix) {
@@ -534,20 +555,21 @@ index 1cacdb359..41e73dded 100644
                      && wrapper.user().has(EntityTracker.class)) {
                  wrapper.user().get(EntityTracker.class).sendNativeCustomEntitySnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-index 817633947..f6697e13a 100644
+index 817633947..74ce93526 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-@@ -41,6 +41,9 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
+@@ -41,6 +41,10 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
  import net.raphimc.viabedrock.ViaBedrock;
  import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
  import net.raphimc.viabedrock.api.model.BlockState;
 +import net.raphimc.viabedrock.api.model.NativeActorMessage;
 +import net.raphimc.viabedrock.api.model.NativeActorPickingMessage;
++import net.raphimc.viabedrock.api.model.NativeActorHitboxes;
 +import net.raphimc.viabedrock.api.model.NativeActorAttack;
  import net.raphimc.viabedrock.api.model.entity.*;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
-@@ -48,10 +51,13 @@ import net.raphimc.viabedrock.protocol.packet.NpcDialoguePackets;
+@@ -48,10 +52,13 @@ import net.raphimc.viabedrock.protocol.packet.NpcDialoguePackets;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorLinkType;
  import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
  import net.raphimc.viabedrock.protocol.model.EntityLink;
@@ -561,7 +583,7 @@ index 817633947..f6697e13a 100644
  import java.util.LinkedHashMap;
  import java.util.LinkedHashSet;
  import java.util.List;
-@@ -66,8 +72,11 @@ public class EntityTracker extends StoredObject {
+@@ -66,8 +73,11 @@ public class EntityTracker extends StoredObject {
      private final EntityReferenceTracker references = new EntityReferenceTracker(this::getEntityByUid);
  
      private final AtomicInteger idCounter = new AtomicInteger(2);
@@ -573,7 +595,7 @@ index 817633947..f6697e13a 100644
      private ClientPlayerEntity clientPlayerEntity = null;
      private final Long2ObjectMap<Entity> entities = new Long2ObjectOpenHashMap<>();
      private final Long2ObjectMap<Long> runtimeIdToUniqueId = new Long2ObjectOpenHashMap<>();
-@@ -79,6 +88,8 @@ public class EntityTracker extends StoredObject {
+@@ -79,6 +89,8 @@ public class EntityTracker extends StoredObject {
  
      public EntityTracker(final UserConnection user) {
          super(user);
@@ -582,7 +604,7 @@ index 817633947..f6697e13a 100644
      }
  
      public Entity addEntity(final long uniqueId, final long runtimeId, final String type, final EntityTypes26_3 javaType) {
-@@ -336,6 +347,7 @@ public class EntityTracker extends StoredObject {
+@@ -336,6 +348,7 @@ public class EntityTracker extends StoredObject {
      public void markNativeActorsJoined() {
          this.nativeActorsJoined = true;
          this.sendNativeActorSnapshots();
@@ -590,12 +612,17 @@ index 817633947..f6697e13a 100644
          this.sendMovementEffectSnapshots();
          this.sendUnderwaterMovementSnapshots();
          this.sendFlightMovementSnapshot();
-@@ -355,6 +367,47 @@ public class EntityTracker extends StoredObject {
+@@ -355,6 +368,52 @@ public class EntityTracker extends StoredObject {
          this.entities.values().forEach(entity -> entity.sendNativeActorSnapshot(true));
      }
  
 +    public void sendNativePickingSnapshots() {
-+        this.entities.values().forEach(entity -> this.sendNativePickingSnapshot(entity, true));
++        this.entities.values().forEach(entity -> {
++            if (!(entity instanceof ClientPlayerEntity)) {
++                this.pickingHitboxes.update(entity.uniqueId(), entity.position(), this.resolvedPickingHitboxes(entity));
++            }
++            this.sendNativePickingSnapshot(entity, true);
++        });
 +    }
 +
 +    private boolean nativePickingAvailable() {
@@ -638,18 +665,30 @@ index 817633947..f6697e13a 100644
      public void sendMovementEffectSnapshots() {
          if (this.nativeActorsJoined) {
              this.entities.values().forEach(Entity::sendMovementEffectSnapshot);
-@@ -407,12 +460,26 @@ public class EntityTracker extends StoredObject {
+@@ -407,12 +466,38 @@ public class EntityTracker extends StoredObject {
  
      public void entitySpawned(final Entity entity) {
          EntityReferenceTracker.sendUpdates(this.user(), this.references.actorSpawned(entity));
 +        if (!(entity instanceof ClientPlayerEntity)) {
-+            this.pickingHitboxes.spawn(entity.uniqueId(), entity.position(), entity.pickingHitboxes());
++            this.pickingHitboxes.spawn(entity.uniqueId(), entity.position(), this.resolvedPickingHitboxes(entity));
 +            this.sendNativePickingSnapshot(entity, false);
 +        }
 +    }
 +
++    List<NativeActorHitboxes.Box> resolvedPickingHitboxes(final Entity entity) {
++        final var authored = entity.pickingHitboxes();
++        if (!authored.isEmpty() || !this.nativePickingAvailable()) {
++            return authored;
++        }
++        final var physical = entity.boundingBoxDimensions();
++        if (physical.width().isEmpty() || physical.height().isEmpty()) {
++            return authored;
++        }
++        return List.of(NativeActorHitboxes.physical(physical.width().orElseThrow(), physical.height().orElseThrow(), entity.eyeOffset()));
++    }
++
 +    public void refreshPickingHitboxes(final Entity entity) {
-+        this.pickingHitboxes.update(entity.uniqueId(), entity.position(), entity.pickingHitboxes());
++        this.pickingHitboxes.update(entity.uniqueId(), entity.position(), this.resolvedPickingHitboxes(entity));
 +        this.sendNativePickingSnapshot(entity, false);
      }
  
@@ -665,7 +704,7 @@ index 817633947..f6697e13a 100644
                  EntityReferenceTracker.sendUpdates(user, tracker.references.actorRemoved(entity));
              }
          }
-@@ -423,10 +490,40 @@ public class EntityTracker extends StoredObject {
+@@ -423,10 +508,40 @@ public class EntityTracker extends StoredObject {
      }
  
      public Entity getEntityByJid(final int javaId) {
@@ -956,10 +995,10 @@ index 000000000..98b0a49ba
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeActorHitboxesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorHitboxesTest.java
 new file mode 100644
-index 000000000..83736c367
+index 000000000..6292b78fb
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorHitboxesTest.java
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,123 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1037,6 +1076,28 @@ index 000000000..83736c367
 +        final CompoundTag[] tooMany = new CompoundTag[NativeActorHitboxes.MAX_BOXES + 1];
 +        java.util.Arrays.fill(tooMany, box(0F, 0F, 0F, 1F, 1F, 1F));
 +        assertEquals(List.of(), NativeActorHitboxes.read(metadata(root(tooMany))));
++    }
++
++    @Test
++    void physicalFallbackMatchesNativeBoatAndArmorStandPickPlanes() {
++        final var boat = NativeActorHitboxes.physical(1.4F, .455F, .375F);
++        final var boatBase = boat.interactionPosition(new Position3f(-497.3F, 64.375F, -113.3F));
++        final var boatSize = boat.dimensions();
++        assertEquals(64.555F, boatBase.y() + boatSize.y(), .0001F);
++        assertEquals(-114.1F, boatBase.z() - boatSize.z() * .5F, .0001F);
++        assertEquals(-498.1F, boatBase.x() - boatSize.x() * .5F, .0001F);
++        assertEquals(63.9F, boatBase.y(), .0001F);
++        final var stand = NativeActorHitboxes.physical(.5F, 1.975F, 0F);
++        final var standBase = stand.interactionPosition(new Position3f(-497.5F, 64F, -113.5F));
++        assertEquals(-113.85F, standBase.z() - stand.dimensions().z() * .5F, .0001F);
++        assertEquals(-497.85F, standBase.x() - stand.dimensions().x() * .5F, .0001F);
++    }
++
++    @Test
++    void physicalFallbackRejectsUnavailableOrInvalidDimensions() {
++        assertThrows(IllegalArgumentException.class, () -> NativeActorHitboxes.physical(Float.NaN, 1F, 0F));
++        assertThrows(IllegalArgumentException.class, () -> NativeActorHitboxes.physical(1F, -1F, 0F));
++        assertThrows(IllegalArgumentException.class, () -> NativeActorHitboxes.physical(1F, 1F, Float.POSITIVE_INFINITY));
 +    }
 +
 +    private static EntityData metadata(final CompoundTag root) {
@@ -1148,10 +1209,10 @@ index 000000000..5f5c2427e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java
 new file mode 100644
-index 000000000..1cad3ab78
+index 000000000..92a082a36
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java
-@@ -0,0 +1,336 @@
+@@ -0,0 +1,356 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1171,6 +1232,7 @@ index 000000000..1cad3ab78
 +import net.raphimc.viabedrock.api.model.entity.BoatEntity;
 +import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
 +import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
 +import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 +import com.viaversion.nbt.tag.CompoundTag;
@@ -1407,6 +1469,25 @@ index 000000000..1cad3ab78
 +        assertEquals(false, available.invoke(tracker));
 +        channels.addChannels(List.of(NativeActorPickingMessage.CHANNEL));
 +        assertEquals(true, available.invoke(tracker));
++        final var boat = new BoatEntity(null, 7, 42, "minecraft:boat", 9, UUID.randomUUID(), EntityTypes26_3.OAK_BOAT);
++        assertTrue(tracker.resolvedPickingHitboxes(boat).isEmpty());
++        boat.entityData().put(ActorDataIds.RESERVED_053, new EntityData(53, EntityDataTypesBedrock.FLOAT, 1.4F));
++        boat.entityData().put(ActorDataIds.RESERVED_054, new EntityData(54, EntityDataTypesBedrock.FLOAT, .455F));
++        final var physical = boat.boundingBoxDimensions();
++        assertEquals(1, tracker.resolvedPickingHitboxes(boat).size());
++        assertEquals(physical, boat.boundingBoxDimensions());
++        final CompoundTag authored = new CompoundTag();
++        final CompoundTag part = new CompoundTag();
++        part.putFloat("MaxX", 1F);
++        part.putFloat("MaxY", 2F);
++        part.putFloat("MaxZ", 3F);
++        authored.put("Hitboxes", new ListTag<>(List.of(part)));
++        boat.entityData().put(ActorDataIds.HITBOX, new EntityData(118, EntityDataTypesBedrock.TAG, authored));
++        assertEquals(boat.pickingHitboxes(), tracker.resolvedPickingHitboxes(boat));
++        boat.entityData().remove(ActorDataIds.HITBOX);
++        channels.removeChannels(List.of(NativeActorPickingMessage.CHANNEL));
++        assertTrue(tracker.resolvedPickingHitboxes(boat).isEmpty());
++        channels.addChannels(List.of(NativeActorPickingMessage.CHANNEL));
 +        final var current = new ChannelStorage();
 +        current.addChannels(List.of(NativeActorMessage.CURRENT_CHANNEL, NativeActorPickingMessage.CHANNEL));
 +        final UserConnection currentUser = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),

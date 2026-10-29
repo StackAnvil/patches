@@ -2602,4 +2602,5 @@ The older proxy build retains the ordinary fallback because it lacks the new con
 The complete add-on build passes 1,309 cases, with 145 optional skips and no failures or errors.
 Core passes 2,075 cases, CubeConverter passes 21, and ViaProxy passes four.
 The bundle includes matching distributions.
-The native hull-surface difference of approximately 0.0075 blocks and broader picking geometry remain open.
+The core physical-fallback correction now reproduces the tested boat and armor-stand planes.
+Broader picking geometry and exact view-ray arithmetic remain open.
