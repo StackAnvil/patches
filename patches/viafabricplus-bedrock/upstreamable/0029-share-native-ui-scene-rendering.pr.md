@@ -557,3 +557,24 @@ The native vertex inputs and clamp behavior still need a complete comparison bef
 These comparisons cover fixed label bounds and exact pixel masks, rather than whole frames.
 TrueType pixel comparisons and broader viewport coverage remain open.
 Licensed pages, captures, packet journals, native reads, and image hashes remain private.
+
+### Further native GPU comparison
+
+Fresh native 1.26.60.5 captures reproduce all sixteen earlier current-font masks at both UI scales and all sixteen legacy masks at scale 2.
+The native GPU format uses half-float positions and UV origins encoded with 65536, then decoded as unsigned-normalized 16-bit values.
+Full-cell corner UVs feed the half-texel clamp.
+Unicode uses linear sampling and `BitmapSmooth` at UI scale 1, but point sampling at scale 2.
+This choice remains unchanged across all four label font sizes.
+
+Native post-vertex replay reproduces all sixteen current-font scale-1 and legacy scale-2 masks on Intel hardware.
+A complete Java candidate improves current-font scale 1 to fourteen matches and preserves all sixteen scale-2 matches on direct and ViaProxy.
+Both routes retain those results across all thirteen controls, including both Java GUI scales and resource reload.
+However, direct legacy comparisons regress to fourteen matches before and after reload at both Java GUI scales.
+Each affected small label loses three white pixels from its top row.
+
+The inspected Java draw retains the matching top-edge position, cell UVs, decoded atlas, and viewport scissor.
+Its isolated post-vertex replay matches all sixteen legacy masks, while its complete captured draw retains fourteen.
+Position-invariance and precise-arithmetic probes do not resolve the difference.
+The candidate is excluded, and the accepted renderer and bundle are restored.
+Accepted results remain eleven current-font matches at scale 1 and sixteen at scale 2, with sixteen legacy matches at scale 2.
+The final draw-coverage comparison remains open.

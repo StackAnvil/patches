@@ -12290,3 +12290,39 @@ The native pack-export observer fails during shutdown, but the sealed journal co
 These measurements use actor metadata and hit transactions.
 Broader picking and block-outline comparisons remain open, alongside the other five-area goal limits.
 Captures, runtime artifacts, and journals remain private.
+
+## Native font GPU comparisons, October 29, 2026
+
+Fresh native 1.26.60.5 captures reproduce all sixteen earlier current-font masks at UI scales 1 and 2.
+A matching legacy-pack capture also reproduces all sixteen earlier fixed-label masks.
+These controls use protocol 2225 and BDS 1.26.60.6 at 1280 × 720.
+
+The native vertex format stores local positions as half floats and UV origins as unsigned-normalized 16-bit values.
+Origins are encoded with a 65536 scale and decoded with 65535.
+The `UIText` shader generates full-cell corner UVs and clamps samples inside half-texel bounds.
+At UI scale 1, Unicode pages use linear sampling and the native `BitmapSmooth` color transfer.
+At scale 2, they use point sampling, as bitmap pages do at both scales.
+The material choice remains the same across all four label font sizes.
+
+Replaying native post-vertex outputs reproduces all sixteen scale-1 current-font masks on Intel hardware.
+Software rendering retains one edge-coverage difference.
+The native legacy outputs also reproduce all sixteen scale-2 legacy masks on Intel hardware.
+These replays establish shader inputs and sampling behavior, not complete Java client parity.
+
+A renderer candidate follows these paths and retains fractional font-grid origins until projection.
+Direct and ViaProxy comparisons improve current-font scale-1 matches from eleven to fourteen, while retaining sixteen scale-2 matches.
+All thirteen controls per route retain those results at both Java GUI scales, including after resource reload.
+However, fresh direct legacy controls regress from sixteen matches to fourteen at both Java GUI scales, before and after reload.
+Each affected small label loses a top row of three white pixels.
+
+The inspected Java draw has the matching top-edge position and cell UVs, an identical decoded atlas, and a full-viewport scissor.
+Replaying its post-vertex data separately reproduces all sixteen legacy masks, while replaying the complete captured draw retains fourteen.
+Position-invariance and precise-arithmetic probes retain the same legacy differences.
+The final draw-coverage difference remains unresolved.
+
+The candidate remains private and excluded from the patch stack and bundle.
+The accepted renderer is restored, retaining eleven current-font matches at scale 1 and sixteen at scale 2.
+Its earlier sixteen-match legacy result remains the accepted baseline.
+The five-area goal remains open.
+Owned clients and servers are stopped, temporary fixture changes are removed, and source settings are restored byte-for-byte.
+Captures, licensed atlases, native reads, and diagnostic builds remain private.
