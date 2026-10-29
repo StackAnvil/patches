@@ -29,6 +29,9 @@ Java instead uses a purple texture and a fixed dark vertex tint.
 The native pipeline uses the licensed world-selected texture, with accepted server overrides taking priority.
 Decoding runs off-thread. Client ticks upload the result before rendering starts.
 Listener replacement, disconnect, and resource generation changes retire the texture.
+Fabric can invoke disconnect on a Netty thread during client shutdown.
+Schedule retirement on the client executor before releasing GPU resources.
+Check listener ownership inside that task so an older disconnect cannot clear a replacement connection.
 
 The live fixture rejects uploads inside an active GPU render pass.
 The implementation uploads during client ticks instead.
@@ -49,3 +52,11 @@ Two policy regressions cover the observed 80/192-block cases, command precedence
 Native transition timing, sky motion, pixel sampling, and vanilla biome distances remain open.
 The no-command fallback outside the dragon override still uses Java's existing environment.
 This patch does not establish full fog parity.
+
+The qualified biome fixture exposed a shutdown failure on both connection routes.
+Fabric invoked disconnect from Netty, and End sky texture deletion failed the render-thread assertion.
+After client-thread retirement, fresh direct and ViaProxy recordings each finish normally after 60 seconds without that warning.
+Both render the white 16-block command with the native sky texture.
+Removal restores the red biome color and the existing 1,024-block base-distance fallback.
+The proxy removal control runs in a separate reconnect.
+Base fog distance and sky rendering remain incomplete.

@@ -93,3 +93,27 @@ generated core metadata have minimum engine versions equal to their numeric
 overlay versions. This validates the metadata cutoff used for this target.
 Archive corruption tests locate count and provenance fields after the variable
 version field, preserving malformed-role and truncated-header coverage.
+
+## Biome identifier priority
+
+Older vanilla layers identify the End biome as `the_end`.
+The matching client's `vanilla_1.21.120` layer uses `minecraft:the_end`.
+Previously, both entries survived, and registry lookup retained the older definition.
+This also prevented qualified server definitions from replacing older vanilla entries.
+
+Normalize biome identifiers during insertion and lookup.
+Both spellings now select the same definition, while custom namespaces remain distinct.
+The selected pack still supplies the whole definition.
+Two regressions fail before the correction and pass afterward.
+They cover both override directions, sky and water colors, fog binding, and namespace isolation.
+
+A private native fixture binds `minecraft:the_end` to a unique red fog definition, without fog commands or living dragons.
+Native 1.26.60.5 renders red fog from 0 to 32 blocks.
+Matching shader uniforms establish the distance and color independently of the screenshot.
+An earlier override of the vanilla fog identifier did not change those uniforms.
+Renaming that fog file to its canonical filename also had no effect.
+The explicit biome binding supplies the valid base-fog fixture.
+Fresh direct and ViaProxy recordings each finish normally after 180 seconds.
+Both receive red `FOG_COLOR` from the selected biome definition.
+Their actual renderer buffers retain Java's 1,024-block distance, compared with the native control's 32 blocks.
+This identifier correction does not implement base fog distances or establish complete rendering parity.

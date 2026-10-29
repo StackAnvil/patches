@@ -190,7 +190,7 @@ Player and persona controller assets do not establish the engine's new armor mas
    Core now retains `PLAYER_FOG` snapshots and resolves complete distance settings against the selected resources.
    The add-on consumes dry-air commands through a connection-owned receiver.
    The native dragon distance cap now has matching native and Java controls.
-   Base biome overrides and transition timing remain open.
+   Base biome distances and transition timing remain open.
    Existing lightmap and collision code cannot establish those fixes by itself.
    A live actor-picking fixture exposed missing hand fields in actor-use transactions and the explicit attack swing.
    The protocol patch now supplies both fields and shares outgoing swings through one factory.
@@ -220,6 +220,7 @@ Matching 26.60.5 shader bytecode multiplies this texture by `SkyColor`.
 Live white and red controls read approximately twice the fog RGB at that binding, with alpha 2.
 The add-on selects the licensed texture through the world resource library, below server pack overrides.
 It decodes off-thread and uploads during client ticks, before any GPU render pass.
+Disconnect retirement also runs on the client thread, with listener ownership checked before GPU cleanup.
 Fresh direct and ViaProxy recordings confirm white/red sky colors, fixed distances, water-only fallback, removal, and empty resets.
 Both 180-second recordings finish normally.
 Native sky motion, pixel sampling, transition timing, and base biome distances remain unverified.
@@ -261,10 +262,22 @@ These results distinguish actor lifetime from boss-bar visibility. They do not e
 Raised-platform captures, unsettled transitions, and frames with the inactivity overlay are excluded from the distance comparison.
 The separate resource-pack override of the vanilla End fog identifier remains unverified.
 
+A second fixture uses an explicit `minecraft:the_end` client-biome definition that binds a unique red fog identifier.
+Without commands or living dragons, native uniforms measure red fog from 0 to 32 blocks at effective render distance 192.
+Renaming the earlier vanilla fog override to its canonical filename did not change the native result.
+The explicit biome binding therefore supplies the base-fog control.
+
+This fixture also exposed stale biome metadata in core.
+Older vanilla definitions use `the_end`; the current `vanilla_1.21.120` definition uses `minecraft:the_end`.
+Core now normalizes insertion and lookup so higher vanilla and server layers replace the same biome entry.
+Custom namespaces remain distinct.
+Two regressions cover both override directions, colors, fog binding, and namespace isolation.
+This correction fixes resource selection; base fog distance consumption remains open.
+
 The Java implementation now consumes complete command snapshots and native distance settings.
 The add-on selects the dragon override from living admitted actors, independently of Java boss-bar flags.
 The native cap and command restoration have matching direct and ViaProxy controls.
-Exact transitions, base biome overrides, and broader sky and lighting parity remain open.
+Exact transitions, base biome distances, and broader sky and lighting parity remain open.
 
 ## Current implementation goal
 

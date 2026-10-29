@@ -1,4 +1,4 @@
-From 74a7f05f10f5d015ba48b38ea48778624abaaf49 Mon Sep 17 00:00:00 2001
+From b5049739146de51a6134f0d4610a62fd34682313 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(resource-packs): select native resources by world
@@ -67,10 +67,20 @@ the matching1.26.60.5 client and generated core metadata: every layer's
 minimum engine version matches its numeric overlay version. Archive
 validation tests derive count and provenance offsets after the variable
 version field, retaining malformed-role and truncated-header coverage.
+
+Canonicalize native biome identifiers on insertion and lookup. Older
+vanilla layers use names such as the_end; 1.21.120 and newer descriptions
+qualify the same identifier as minecraft:the_end. Keeping two keys lets
+registry lookup retain stale metadata or ignore a qualified server
+override even after the correct world-version layers are selected.
+Preserve independent custom namespaces and whole-definition pack priority.
+Two regressions cover both override directions, lookup aliases, sky/water
+colors, fog binding and custom namespace isolation.
 ---
  build.gradle                                  |  11 ++
  .../api/resourcepack/BaseGameVersion.java     |  94 ++++++++++
  .../api/resourcepack/NativeActorLibrary.java  |  25 ++-
+ .../definition/BiomeDefinitions.java          |   4 +-
  .../http/ConvertedResourcePackCache.java      |   1 +
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../protocol/packet/ResourcePackPackets.java  |  15 +-
@@ -83,16 +93,18 @@ version field, retaining malformed-role and truncated-header coverage.
  .../BuiltinActorResourcesTest.java            |  51 +++++
  .../resourcepack/NativeActorLibraryTest.java  |  45 +++--
  .../resourcepack/SoundTranslationsTest.java   |   6 +-
+ .../definition/BiomeDefinitionsTest.java      |  78 ++++++++
  .../http/ConvertedResourcePackCacheTest.java  |  22 +++
  .../http/WorldVersionCacheTest.java           |  27 +++
  .../provider/BundledImagePacksTest.java       | 163 ++++++++++++++++
  .../resourcepack/ModelResourceAssetsTest.java |  84 ++++++++-
- 19 files changed, 864 insertions(+), 49 deletions(-)
+ 21 files changed, 944 insertions(+), 51 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/BaseGameVersion.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacks.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/BaseGameVersionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/BuiltinActorResourcesTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/BiomeDefinitionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/http/WorldVersionCacheTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/provider/BundledImagePacksTest.java
 
@@ -292,6 +304,28 @@ index 7448e5169..c91f7513e 100644
      public record Layer(boolean server, Map<String, byte[]> resources) {
          public Layer {
              resources = Map.copyOf(resources);
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BiomeDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BiomeDefinitions.java
+index 004b5be32..7c049c9b6 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BiomeDefinitions.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BiomeDefinitions.java
+@@ -37,7 +37,7 @@ public class BiomeDefinitions {
+             for (String biomePath : pack.content().getFilesDeep("biomes/", ".json")) {
+                 try {
+                     final JsonObject biome = pack.content().getJson(biomePath).getAsJsonObject("minecraft:client_biome");
+-                    final String name = biome.getAsJsonObject("description").get("identifier").getAsString();
++                    final String name = Key.namespaced(biome.getAsJsonObject("description").get("identifier").getAsString());
+                     final BiomeDefinition biomeDefinition = new BiomeDefinition(name);
+                     if (biome.has("components")) {
+                         final JsonObject components = biome.getAsJsonObject("components");
+@@ -60,7 +60,7 @@ public class BiomeDefinitions {
+     }
+ 
+     public BiomeDefinition get(final String name) {
+-        return this.biomes.get(name);
++        return this.biomes.get(Key.namespaced(name));
+     }
+ 
+     public Map<String, BiomeDefinition> biomes() {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 index d9ce5c69d..1cad5c75b 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
@@ -1106,6 +1140,90 @@ index de4a1c640..8505d480a 100644
      }
  
      @Test
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/BiomeDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/BiomeDefinitionsTest.java
+new file mode 100644
+index 000000000..7688eae74
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/BiomeDefinitionsTest.java
+@@ -0,0 +1,78 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class BiomeDefinitionsTest {
++
++    @Test
++    void qualifiedLayersReplaceLegacyMetadataAndResolveThroughEitherSpelling() {
++        final var lower = pack("the_end", "test:old", 0x112233, 0x445566);
++        final var higher = pack("minecraft:the_end", "test:current", 0xAABBCC, 0xDDEEFF);
++        final var definitions = definitions(lower, higher);
++        final var selected = definitions.get("the_end");
++        assertSame(selected, definitions.get("minecraft:the_end"));
++        assertEquals(0xAABBCC, selected.skyColor());
++        assertEquals(0xDDEEFF, selected.waterSurfaceColor());
++        assertEquals("test:current", selected.fog());
++    }
++
++    @Test
++    void legacyServerOverridesRetainPriorityWithoutCollapsingOtherNamespaces() {
++        final var lower = pack("minecraft:the_end", "test:current", 0x112233, 0x445566);
++        final var higher = pack("the_end", "test:server", 0xAABBCC, 0xDDEEFF);
++        final var custom = pack("test:the_end", "test:custom", 0x000000, 0xFFFFFF);
++        final var definitions = definitions(lower, higher, custom);
++        assertSame(definitions.get("the_end"), definitions.get("minecraft:the_end"));
++        assertEquals("test:server", definitions.get("minecraft:the_end").fog());
++        assertEquals("test:custom", definitions.get("test:the_end").fog());
++        assertNotSame(definitions.get("the_end"), definitions.get("test:the_end"));
++    }
++
++    private static BiomeDefinitions definitions(final ResourcePack... layers) {
++        final var storage = mock(ResourcePackStorage.class);
++        when(storage.getPackStackBottomToTop()).thenReturn(List.of(layers));
++        return new BiomeDefinitions(storage);
++    }
++
++    private static ResourcePack pack(final String identifier, final String fog, final int sky, final int water) {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID()
++                + "\",\"version\":[1,0,0],\"name\":\"test\"}}");
++        final JsonObject document = new JsonObject();
++        document.addProperty("format_version", "1.21.120");
++        final JsonObject biome = new JsonObject();
++        final JsonObject description = new JsonObject();
++        final JsonObject components = new JsonObject();
++        description.addProperty("identifier", identifier);
++        biome.add("description", description);
++        final JsonObject fogAppearance = new JsonObject();
++        final JsonObject skyColor = new JsonObject();
++        final JsonObject waterAppearance = new JsonObject();
++        fogAppearance.addProperty("fog_identifier", fog);
++        skyColor.addProperty("sky_color", "#%06X".formatted(sky));
++        waterAppearance.addProperty("surface_color", "#%06X".formatted(water));
++        components.add("minecraft:fog_appearance", fogAppearance);
++        components.add("minecraft:sky_color", skyColor);
++        components.add("minecraft:water_appearance", waterAppearance);
++        biome.add("components", components);
++        document.add("minecraft:client_biome", biome);
++        content.putJson("biomes/the_end.client_biome.json", document);
++        return new ResourcePack(content);
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 index d9c133861..d6c48abde 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
