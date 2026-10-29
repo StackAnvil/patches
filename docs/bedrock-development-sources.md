@@ -177,7 +177,9 @@ Player and persona controller assets do not establish the engine's new armor mas
    The renderer does not explicitly preserve every clothing category for equipment masking.
    A native Dressing Room persona now supplies a visible reference and captured body/face inputs.
    Its offline capture retains the native player UUID, so profile changes reach the in-world appearance.
-   Matching Java comparisons and native LOD texture binding checks remain open.
+   Direct and ViaProxy Java comparisons now match visible armor coverage and restoration using the captured native persona inputs.
+   Both routes also replace Alex with Steve and restore Alex at 40 blocks.
+   Hidden-layer masking and native LOD texture binding checks remain open.
    Updated assets alone do not prove these engine fixes work here.
 5. **Verify movement and rendering boundaries.**
    Native and direct Java Survival captures now cover falls onto solid ground, both sides of a water boundary, and fully inside water.
@@ -316,8 +318,10 @@ The 26.60 audit above supplies the starting evidence, not completion evidence.
   and restoration across seven phases for one classic custom geometry.
   Eleven classic clothing-bone markers now match all 77 armor visibility conditions.
   Default Alex/Steve replacement also matches at 5, 20, and 40 blocks.
-  A real native Dressing Room persona now has a visible baseline, seven armor references, and near/far profile controls.
-  Matching Java comparisons using these native-produced inputs and native LOD texture selection remain open.
+  A real native Dressing Room persona now matches visible armor coverage and restoration across seven phases on both Java routes.
+  Captured Alex renders at 20 and 40 blocks; Alex/Steve/Alex replacement matches at 40 blocks.
+  Complete incoming skin records match the installed renderer records on both routes, with no rejected skins.
+  Body yaw, lighting, shadows, and idle phases differ. Hidden-layer masking and native LOD texture selection remain open.
   The synthetic custom persona markers remain excluded.
 - [ ] **Movement and rendering:** compare falls at water/solid boundaries,
   dragon-dependent fog, combined blindness/night vision, and block/entity

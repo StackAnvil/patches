@@ -889,3 +889,24 @@ These are native references for the next matching Java comparison.
 They do not yet establish hidden-layer behavior, native LOD texture selection, or Java persona parity.
 The earlier synthetic-marker controls remain excluded.
 The original selected profile is restored after capture, and licensed skin data and images remain private.
+
+## Captured persona inputs on both Java routes, October 29, 2026
+
+Direct and ViaProxy Java sessions now render the captured native Alex and Steve persona inputs.
+Both use the native reference camera position, rotation, FOV, output resolution, and physical target position.
+Seven iron-armor phases show matching visible coverage and restoration: none, each slot, all slots, and removal.
+Alex remains visible at 20 and 40 blocks. Alex/Steve/Alex replacement also changes the rendered profile at 40 blocks.
+
+The incoming complete skin records match the installed renderer records on each route, including both native persona inputs.
+The direct recorder observes 6,321 remote native-player submissions; ViaProxy observes 2,104. Neither route rejects a skin.
+Both sessions reach gameplay and finish normally.
+These controls require no skin renderer correction.
+
+The replay auditor previously consumed three identity strings in player-list entries; protocol 2225 carries four, including PlayFab identity.
+Its shared reader now consumes the complete entry tail for both local-player identification and appearance auditing.
+The binary regression fixture fails before the correction and passes afterward. Actual native and Java journals also decode successfully.
+
+Body yaw, lighting, shadows, and idle phases differ, so these captures do not establish pixel equality.
+Opaque armor coverage does not independently prove hidden-layer masking.
+The native resource patch still supplies no `persona_lod` binding; distance controls do not establish a native LOD texture switch.
+Early spawn timing and floating-position fixtures remain excluded. Licensed inputs, journals, and images remain private.
