@@ -68,11 +68,9 @@ public final class SceneFeatures {
                         input.readUnsignedByte(); UUID uuid = BedrockTypes.UUID.read(input);
                         if (action != 1) continue;
                         BedrockTypes.VAR_LONG.readPrimitive(input);
-                        for (int field = 0; field < 3; field++) BedrockTypes.STRING.read(input);
-                        input.readIntLE(); int geometry = skin(textures, fullSkinRecords, BedrockTypes.SKIN.read(input));
+                        int geometry = skin(textures, fullSkinRecords, playerListSkin(input));
                         geometrySkins += geometry; skins++;
                         if (local.filter(uuid::equals).isPresent()) localGeometrySkins += geometry;
-                        input.skipBytes(7); // teacher, host, subclient, ARGB color
                     }
                 }
             } finally { input.release(); }
@@ -105,13 +103,21 @@ public final class SceneFeatures {
                     if (action != 1) continue;
                     long uniqueId = BedrockTypes.VAR_LONG.readPrimitive(input);
                     if (uniqueId == self) matches.add(uuid);
-                    for (int field = 0; field < 3; field++) BedrockTypes.STRING.read(input);
-                    input.readIntLE(); BedrockTypes.SKIN.read(input); input.skipBytes(7);
+                    playerListSkin(input);
                 }
             } finally { input.release(); }
         }
         if (matches.size() > 1) throw new IllegalArgumentException("The recording identifies multiple local players for scene rendering");
         return matches.stream().findFirst();
+    }
+
+    private static SkinData playerListSkin(ByteBuf input) {
+        // Name, XUID, PlayFab ID, and platform online ID precede the device OS and skin.
+        for (int field = 0; field < 4; field++) BedrockTypes.STRING.read(input);
+        input.readIntLE();
+        SkinData skin = BedrockTypes.SKIN.read(input);
+        input.skipBytes(7); // teacher, host, subclient, ARGB color
+        return skin;
     }
 
     private static int skin(Set<String> textures, Map<String, Integer> records, SkinData skin) throws Exception {
