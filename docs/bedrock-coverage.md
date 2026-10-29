@@ -12304,25 +12304,28 @@ At UI scale 1, Unicode pages use linear sampling and the native `BitmapSmooth` c
 At scale 2, they use point sampling, as bitmap pages do at both scales.
 The material choice remains the same across all four label font sizes.
 
-Replaying native post-vertex outputs reproduces all sixteen scale-1 current-font masks on Intel hardware.
-Software rendering retains one edge-coverage difference.
-The native legacy outputs also reproduce all sixteen scale-2 legacy masks on Intel hardware.
-These replays establish shader inputs and sampling behavior, not complete Java client parity.
+The inspected Java draw retains matching top-edge positions and UVs, an identical decoded atlas, and a full-viewport scissor.
+Its isolated replay reproduces sixteen legacy masks on a default EGL surface, but fourteen in a texture framebuffer.
+A solid-color fragment shader retains the same six missing top-edge pixels, establishing a primitive-coverage difference.
 
-A renderer candidate follows these paths and retains fractional font-grid origins until projection.
-Direct and ViaProxy comparisons improve current-font scale-1 matches from eleven to fourteen, while retaining sixteen scale-2 matches.
-All thirteen controls per route retain those results at both Java GUI scales, including after resource reload.
-However, fresh direct legacy controls regress from sixteen matches to fourteen at both Java GUI scales, before and after reload.
-Each affected small label loses a top row of three white pixels.
+The GUI renderer now retains the native inputs and sampling behavior above.
+Coordinates snap to the native nearest-even n.8 grid before interpolation.
+A one-step upward adjustment on that grid selects the matching top half-pixel edge.
+Derivative compensation preserves the original texture samples.
+Explicit snapping keeps software interpolation consistent with the native rule.
+The [D3D11 rasterization specification](https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm) defines coordinate snapping, interpolation setup, and the top-left edge rule.
+An offscreen GPU regression covers both Java GUI scales, quarter-pixel origins, and positions around raster-grid rounding boundaries.
+It checks both primitive coverage and sampled color.
+The checks pass on Intel hardware and software rendering.
+World text and styled glyph metrics keep their existing behavior.
 
-The inspected Java draw has the matching top-edge position and cell UVs, an identical decoded atlas, and a full-viewport scissor.
-Replaying its post-vertex data separately reproduces all sixteen legacy masks, while replaying the complete captured draw retains fourteen.
-Position-invariance and precise-arithmetic probes retain the same legacy differences.
-The final draw-coverage difference remains unresolved.
+Direct and ViaProxy current-font comparisons match fifteen of sixteen labels at native UI scale 1 and all sixteen at scale 2.
+Both routes retain these results across thirteen controls each, including both Java GUI scales and resource reload.
+One red pixel in a small scale-1 label remains different.
+Both routes retain all sixteen legacy scale-2 masks across seven controls each, including both Java GUI scales and resource reload.
+Four final-build recordings finish normally after 75 seconds each.
+A paused, blurred proxy run is excluded; its replacement verifies that gameplay is visible before each capture.
 
-The candidate remains private and excluded from the patch stack and bundle.
-The accepted renderer is restored, retaining eleven current-font matches at scale 1 and sixteen at scale 2.
-Its earlier sixteen-match legacy result remains the accepted baseline.
-The five-area goal remains open.
-Owned clients and servers are stopped, temporary fixture changes are removed, and source settings are restored byte-for-byte.
+The renderer is included in its owning UI patch.
+Broader viewport sizes and TrueType pixel comparisons remain open, alongside the other five-area goal limits.
 Captures, licensed atlases, native reads, and diagnostic builds remain private.

@@ -314,11 +314,12 @@ The 26.60 audit above supplies the starting evidence, not completion evidence.
 - [ ] **Bitmap fonts:** support atlas layout metadata and extended character
   mapping. Resolve metadata from the atlas's own pack. Compare mixed-language
   vanilla text and a legacy custom atlas with no layout metadata.
-  Sixteen legacy-atlas labels now match native glyph positions and pixel masks
-  across four font sizes and quarter-unit offsets at GUI scale 2.
-  Current extended-font labels also match at scale 2. Two half-size Unicode
-  labels still differ. Scale-1 controls retain small-label and normal-size
-  Unicode sampling differences, so the font area remains open.
+  Current-font controls match fifteen of sixteen labels at native UI scale 1
+  and all sixteen at scale 2. Legacy atlas controls retain all sixteen scale-2
+  masks. Both Java routes retain these results at Java GUI scales 1 and 2,
+  including resource reload. Native GPU captures establish the atlas sampling
+  and raster rules. One scale-1 pixel, broader viewports, and TrueType pixel
+  comparisons remain open.
 - [ ] **Skins:** compare clothing beneath equipped armor and texture changes
   after profile selection. Cover each affected armor slot, unequip, profile
   replacement, and native LOD selection with matching visual fixtures.

@@ -518,63 +518,40 @@ Regressions cover page coordinates, retained padding, pack ownership, missing pa
 Conversion cache format 10 regenerates packs that lack the retained pages and descriptors.
 
 Labels apply the measured ten-unit line advance and retain fractional glyph advances.
-Each aligned origin receives the native one-unit inset before snapping to its font-size grid and then whole physical pixels.
+Labels add the native one-unit vertical inset and snap aligned origins to their font-size grid in physical space.
+Fractional grid positions remain intact until glyph submission.
 The native viewport scale remains independent of Java GUI scale.
 The sixteen fixed-label legacy controls cover small, normal, large, and extra-large fonts at whole, quarter, half, and three-quarter positions.
 
 Matching native 1.26.60.5 captures use protocol 2225 and BDS 1.26.60.6 at 1280 × 720.
 The current-font fixture contains eight extended-language labels and eight whole-label Unicode fallback labels.
-Direct and ViaProxy comparisons match all sixteen labels at native UI scale 2 and eleven at scale 1.
-Settled captures after live resource reload retain both results at Java GUI scales 1 and 2.
-All sixteen legacy controls also match on both routes at native UI scale 2 and Java GUI scales 1 and 2.
-The first proxy reload capture contains the fading reload overlay and is excluded.
+These comparisons cover fixed label bounds and glyph masks, rather than whole frames.
 
-The current-font recordings finish normally after 180 seconds, and the legacy recordings finish normally after 90 seconds.
-No accepted recording logs a rendering error.
-The owned fixture is removed, and the world pack list and source settings return to their original bytes.
+### Native GPU sampling and edge coverage
 
-The full builds pass 2,071 core cases and 1,306 add-on cases, with no failures or errors.
-Optional skips total 176 and 145 respectively.
-CubeConverter passes 21 cases and ViaProxy passes four.
-The modpack bundle and offline validation pass.
+Native 1.26.60.5 captures reproduce all sixteen current-font masks at both UI scales and sixteen legacy masks at scale 2.
+Local positions use half floats, and atlas origins use a 65536 scale before unsigned-normalized decoding with 65535.
+The shader generates full-cell UVs and clamps samples inside half-texel bounds.
+Unicode uses linear sampling with `BitmapSmooth` at UI scale 1 and point sampling at scale 2.
+Bitmap pages use point sampling at both scales.
 
-Five scale-1 sampling differences remain open.
-Fresh direct and ViaProxy recordings retain eleven scale-1 matches and sixteen scale-2 matches before and after reload.
-Both 90-second recordings finish normally without rendering errors.
-The UV arithmetic correction matches native numeric records but does not close the remaining pixel differences.
+The GUI renderer retains those inputs, original atlas RGBA, and the native sampling transfer.
+World text keeps its existing renderer, and styled glyph metrics retain their existing owner.
 
-The matching `UIText` material also defines a bitmap shader that generates full-cell corner UVs and clamps them inside half-texel bounds.
-Live HUD bindings confirm cell heights of `12/128` and `16/256`, with half-texel offsets of `0.5/128` and `0.5/256`.
-The updated native client reproduces all sixteen earlier scale-1 reference masks with the same fixture.
-These bindings identify another sampling path beyond the original CPU glyph writer.
-The writer regression alone does not verify the shader's final sampling behavior.
+A captured Java draw isolated the remaining legacy regression to primitive coverage in the offscreen GUI target.
+Its post-vertex inputs reproduce sixteen legacy masks on a default EGL surface, but fourteen in a texture framebuffer.
+Replacing the fragment shader with a solid color retains the six missing top-edge pixels.
+Coordinates snap to the native nearest-even n.8 grid before interpolation.
+A one-step upward adjustment on that grid restores top-edge coverage.
+Derivative compensation preserves the original texture samples across that adjustment.
+The [D3D11 rasterization specification](https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm) describes the native subpixel precision and edge rule.
+The regression uses a texture framebuffer and fractional positions at both Java GUI scales.
+GPU checks pass on Intel hardware and software rendering.
 
-A private Java probe removes only the provider's upper-edge inset and reloads its resources.
-Scale-1 matches decrease from eleven to ten, and scale-2 matches decrease from sixteen to fourteen at both Java GUI scales.
-The 150-second recording finishes normally, but this probe remains excluded from the stack and bundle.
-The native vertex inputs and clamp behavior still need a complete comparison before a renderer change.
-
-These comparisons cover fixed label bounds and exact pixel masks, rather than whole frames.
-TrueType pixel comparisons and broader viewport coverage remain open.
-Licensed pages, captures, packet journals, native reads, and image hashes remain private.
-
-### Further native GPU comparison
-
-Fresh native 1.26.60.5 captures reproduce all sixteen earlier current-font masks at both UI scales and all sixteen legacy masks at scale 2.
-The native GPU format uses half-float positions and UV origins encoded with 65536, then decoded as unsigned-normalized 16-bit values.
-Full-cell corner UVs feed the half-texel clamp.
-Unicode uses linear sampling and `BitmapSmooth` at UI scale 1, but point sampling at scale 2.
-This choice remains unchanged across all four label font sizes.
-
-Native post-vertex replay reproduces all sixteen current-font scale-1 and legacy scale-2 masks on Intel hardware.
-A complete Java candidate improves current-font scale 1 to fourteen matches and preserves all sixteen scale-2 matches on direct and ViaProxy.
-Both routes retain those results across all thirteen controls, including both Java GUI scales and resource reload.
-However, direct legacy comparisons regress to fourteen matches before and after reload at both Java GUI scales.
-Each affected small label loses three white pixels from its top row.
-
-The inspected Java draw retains the matching top-edge position, cell UVs, decoded atlas, and viewport scissor.
-Its isolated post-vertex replay matches all sixteen legacy masks, while its complete captured draw retains fourteen.
-Position-invariance and precise-arithmetic probes do not resolve the difference.
-The candidate is excluded, and the accepted renderer and bundle are restored.
-Accepted results remain eleven current-font matches at scale 1 and sixteen at scale 2, with sixteen legacy matches at scale 2.
-The final draw-coverage comparison remains open.
+Direct and ViaProxy current-font comparisons match fifteen of sixteen labels at UI scale 1 and all sixteen at scale 2.
+Both routes retain these results across thirteen controls, including both Java GUI scales and resource reload.
+One red pixel in a small scale-1 label remains different.
+Both routes retain all sixteen legacy scale-2 masks across seven controls each, including both Java GUI scales and resource reload.
+Four final-build recordings finish normally after 75 seconds each.
+Broader viewports and TrueType pixel comparisons remain open.
+Licensed pages, native reads, packet journals, and GPU captures remain private.

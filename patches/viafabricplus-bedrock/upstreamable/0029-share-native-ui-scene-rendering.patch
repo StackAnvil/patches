@@ -1,4 +1,4 @@
-From eda2a2d9f322aac2ac0c919521ccb61438a2d4c4 Mon Sep 17 00:00:00 2001
+From 0d1e7a40e547044c3d6b6b2191bae16da88c83ee Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -543,6 +543,19 @@ Subtracting the inset from an absolute pixel edge rounds differently for
 some cells. A regression against the original 141590f60 output fails with
 absolute-edge subtraction and passes with separate extent normalization
 and origin addition. Keep bitmap and Unicode paths on the same rule.
+
+Retain full native font cells, packed 16.16 atlas origins, half-precision
+local vertices and the UI-scale-dependent Unicode sampling shader from
+1.26.60.5 GPU captures. Preserve original RGBA and clamp samples to each
+cell rather than cropping the atlas. Snap GUI interpolation coordinates
+to the native nearest-even n.8 grid before selecting the native top
+half-pixel edge using one 8-bit raster step; derivative compensation keeps
+the unshifted texture samples. Apply this only to the GUI stream, leaving
+world text and styled glyph metrics with their existing owners.
+
+The native captures reproduce 16 current and 16 legacy fixture masks.
+An offscreen framebuffer regression covers fractional origins at both
+Java GUI scales, since a default EGL surface hid the edge disagreement.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -554,6 +567,7 @@ and origin addition. Keep bitmap and Unicode paths on the same rule.
  .../render/MixinAvatarAnimationRenderer.java  |   2 +
  .../render/MixinBedrockActorSubmission.java   |   6 +
  .../render/MixinBedrockBitmapFont.java        |  40 +
+ .../MixinBedrockBitmapGlyphRenderState.java   |  27 +
  .../MixinBedrockRenderingResources.java       |   2 +
  .../render/MixinEntityRenderDispatcher.java   |  21 +-
  .../render/MixinGuiEntityRenderer.java        |  53 +
@@ -571,7 +585,9 @@ and origin addition. Keep bitmap and Unicode paths on the same rule.
  .../render/BedrockGuiActorRenderer.java       | 140 +++
  .../render/BedrockPlayerAttachables.java      |  17 +-
  .../bedrock/render/BedrockPlayerSkins.java    |  44 +-
- .../render/font/BedrockBitmapFont.java        | 249 +++++
+ .../render/font/BedrockBitmapFont.java        | 251 +++++
+ .../render/font/BedrockBitmapGlyph.java       | 105 ++
+ .../render/font/BedrockBitmapPipeline.java    |  49 +
  .../bedrock/screen/ui/BedrockHudOverlays.java | 129 +++
  .../screen/ui/NativeHudOverlayState.java      |  66 ++
  .../bedrock/screen/ui/NativeHudPayload.java   |  36 +
@@ -611,8 +627,10 @@ and origin addition. Keep bitmap and Unicode paths on the same rule.
  .../bedrock/settings/NativeUiScale.java       |  27 +
  .../viafabricplus-bedrock/lang/en_us.json     |   2 +
  .../shaders/core/bedrock_actor.fsh            |   8 +
+ .../shaders/core/bedrock_bitmap_font.fsh      |  22 +
+ .../shaders/core/bedrock_bitmap_font.vsh      |  29 +
  .../viafabricplus-bedrock.accesswidener       |   1 +
- .../viafabricplus-bedrock.mixins.json         |  10 +-
+ .../viafabricplus-bedrock.mixins.json         |  11 +-
  .../BedrockBitmapFontResourcesTest.java       |  67 ++
  .../BedrockGuiActorAppearanceTest.java        |  92 ++
  .../BedrockGuiActorContextTest.java           | 126 +++
@@ -621,6 +639,8 @@ and origin addition. Keep bitmap and Unicode paths on the same rule.
  .../render/BedrockActorMaterialsGpuTest.java  |  38 +-
  .../render/BedrockShaderPipelinesTest.java    |  24 +
  .../render/font/BedrockBitmapFontTest.java    | 239 +++++
+ .../render/font/BedrockBitmapGlyphTest.java   |  71 ++
+ .../font/BedrockBitmapShaderGpuTest.java      | 220 ++++
  .../bedrock/screen/ui/AnimationPrograms.java  |  23 +
  .../screen/ui/NativeHudOverlayStateTest.java  | 153 +++
  .../screen/ui/NativeUiActorCameraTest.java    | 102 ++
@@ -631,7 +651,7 @@ and origin addition. Keep bitmap and Unicode paths on the same rule.
  .../bedrock/screen/ui/NativeUiButtonTest.java | 127 +++
  .../screen/ui/NativeUiColorAnimationTest.java | 114 +++
  .../bedrock/screen/ui/NativeUiFocusTest.java  | 124 +++
- .../bedrock/screen/ui/NativeUiFontTest.java   | 146 +++
+ .../bedrock/screen/ui/NativeUiFontTest.java   | 148 +++
  .../screen/ui/NativeUiImageCacheTest.java     | 142 +++
  .../screen/ui/NativeUiImageRegionsTest.java   | 217 ++++
  .../bedrock/screen/ui/NativeUiImagesTest.java | 100 ++
@@ -649,11 +669,12 @@ and origin addition. Keep bitmap and Unicode paths on the same rule.
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |  86 ++
  .../screen/ui/NativeUiViewportTest.java       |  95 ++
- 105 files changed, 11949 insertions(+), 36 deletions(-)
+ 112 files changed, 12477 insertions(+), 36 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockBitmapFont.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockBitmapGlyphRenderState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiEntityRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeHudOverlays.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiExtraction.java
@@ -664,6 +685,8 @@ and origin addition. Keep bitmap and Unicode paths on the same rule.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGuiActorContext.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapFont.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyph.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapPipeline.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/BedrockHudOverlays.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeHudOverlayState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeHudPayload.java
@@ -700,10 +723,14 @@ and origin addition. Keep bitmap and Unicode paths on the same rule.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiToggle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewport.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/settings/NativeUiScale.java
+ create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_bitmap_font.fsh
+ create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_bitmap_font.vsh
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBitmapFontResourcesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearanceTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorContextTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapFontTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyphTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapShaderGpuTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/AnimationPrograms.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeHudOverlayStateTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiActorCameraTest.java
@@ -734,10 +761,10 @@ and origin addition. Keep bitmap and Unicode paths on the same rule.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewportTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 1582bdd..47e5fd1 100644
+index cf614f2..6f6df8b 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -93,6 +93,7 @@ import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
+@@ -94,6 +94,7 @@ import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
  import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusEmoteProvider;
  import org.apache.logging.log4j.LogManager;
  import org.apache.logging.log4j.Logger;
@@ -745,7 +772,7 @@ index 1582bdd..47e5fd1 100644
  
  public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
  
-@@ -112,6 +113,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -113,6 +114,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
      public void onPreSettingsLoading() {
          com.viaversion.viafabricplus.bedrock.appearance.BedrockSkinChange.register();
          com.viaversion.viafabricplus.bedrock.appearance.BedrockEmotePlayback.register();
@@ -1149,6 +1176,39 @@ index 0000000..deb4aa5
 +        if (BedrockBitmapFont.ownsBitmap(this.file)) {
 +            cir.setReturnValue(BedrockBitmapFont.loadBitmap(cir.getReturnValue(), resources, this.file, this.codepointGrid));
 +        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockBitmapGlyphRenderState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockBitmapGlyphRenderState.java
+new file mode 100644
+index 0000000..3371316
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockBitmapGlyphRenderState.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.mojang.renderpearl.api.textures.FilterMode;
++import com.viaversion.viafabricplus.bedrock.render.font.BedrockBitmapPipeline;
++import net.minecraft.client.gui.font.TextRenderable;
++import net.minecraft.client.renderer.state.gui.GlyphRenderState;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.ModifyArg;
++
++@Mixin(GlyphRenderState.class)
++public abstract class MixinBedrockBitmapGlyphRenderState {
++    @Shadow @Final private TextRenderable renderable;
++
++    @ModifyArg(method = "textureSetup", at = @At(value = "INVOKE", target =
++            "Lcom/mojang/blaze3d/systems/SamplerCache;getClampToEdge(Lcom/mojang/renderpearl/api/textures/FilterMode;)Lcom/mojang/renderpearl/api/textures/GpuSampler;"), index = 0)
++    private FilterMode useNativeUnicodeSampling(final FilterMode original) {
++        return BedrockBitmapPipeline.isSmoothed(this.renderable.guiPipeline()) ? FilterMode.LINEAR : original;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingResources.java
@@ -2224,10 +2284,10 @@ index f1a0f99..b85e966 100644
                  ? walking.bedrockWalkingAnimation().sample(partialTick) : 0F);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapFont.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapFont.java
 new file mode 100644
-index 0000000..7fdbc71
+index 0000000..c8d0c36
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapFont.java
-@@ -0,0 +1,249 @@
+@@ -0,0 +1,251 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2265,6 +2325,7 @@ index 0000000..7fdbc71
 +public final class BedrockBitmapFont implements GlyphProvider {
 +    private static final AtomicLong NEXT_TEXTURE = new AtomicLong();
 +    private final NativeImage image;
++    private final boolean smooth;
 +    private final Identifier textureId;
 +    private final Int2ObjectMap<UnbakedGlyph> glyphs = new Int2ObjectOpenHashMap<>();
 +    private final IntSet supportedGlyphs = IntSets.unmodifiable(this.glyphs.keySet());
@@ -2273,7 +2334,8 @@ index 0000000..7fdbc71
 +    private GlyphRenderTypes renderTypes;
 +    private boolean closed;
 +
-+    private BedrockBitmapFont(final NativeImage image) {
++    private BedrockBitmapFont(final NativeImage image, final boolean smooth) {
++        this.smooth = smooth;
 +        this.image = image;
 +        this.textureId = Identifier.fromNamespaceAndPath("viabedrock", "font/native_bitmap/" + NEXT_TEXTURE.getAndIncrement());
 +    }
@@ -2294,7 +2356,7 @@ index 0000000..7fdbc71
 +            final int cellWidth = image.getWidth() / grid[0].length;
 +            final int cellHeight = image.getHeight() / grid.length;
 +            if (cellWidth == 0 || cellHeight == 0) throw new IOException("Empty native Unicode atlas cells");
-+            final BedrockBitmapFont font = new BedrockBitmapFont(image);
++            final BedrockBitmapFont font = new BedrockBitmapFont(image, true);
 +            for (int row = 0; row < grid.length; row++) {
 +                if (grid[row].length != grid[0].length) throw new IOException("Unequal native Unicode atlas rows");
 +                for (int column = 0; column < grid[row].length; column++) {
@@ -2346,7 +2408,7 @@ index 0000000..7fdbc71
 +            final int cellWidth = image.getWidth() / 16;
 +            final int cellHeight = layout.height() * (image.getWidth() / 128);
 +            if ((long) cellHeight * grid.length > image.getHeight()) throw new IOException("Native bitmap cells exceed their atlas");
-+            final BedrockBitmapFont font = new BedrockBitmapFont(image);
++            final BedrockBitmapFont font = new BedrockBitmapFont(image, false);
 +            for (int row = 0; row < grid.length; row++) {
 +                if (grid[row].length != 16) throw new IOException("Invalid native bitmap atlas row");
 +                for (int column = 0; column < 16; column++) {
@@ -2425,8 +2487,8 @@ index 0000000..7fdbc71
 +            this.textureManager = manager;
 +            this.texture = texture;
 +        }
-+        return new BakedSheetGlyph(info, this.renderTypes, this.texture.getTextureView(),
-+                cell.u0(), cell.u1(), cell.v0(), cell.v1(), cell.left(), cell.right(), cell.top(), cell.bottom());
++        return new BedrockBitmapGlyph(new BakedSheetGlyph(info, this.renderTypes, this.texture.getTextureView(),
++                cell.u0(), cell.u1(), cell.v0(), cell.v1(), cell.left(), cell.right(), cell.top(), cell.bottom()), cell, this.smooth);
 +    }
 +
 +    @Override
@@ -2475,6 +2537,172 @@ index 0000000..7fdbc71
 +    private record Glyph(GlyphInfo info, Cell cell, BedrockBitmapFont font) implements UnbakedGlyph {
 +        @Override
 +        public BakedGlyph bake(final Stitcher stitcher) { return this.font.bake(this.info, this.cell); }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyph.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyph.java
+new file mode 100644
+index 0000000..392b627
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyph.java
+@@ -0,0 +1,105 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.font;
++
++import com.mojang.blaze3d.font.GlyphInfo;
++import com.mojang.blaze3d.vertex.VertexConsumer;
++import com.mojang.renderpearl.api.pipeline.RenderPipeline;
++import com.mojang.renderpearl.api.textures.GpuTextureView;
++import com.viaversion.viafabricplus.bedrock.render.font.BedrockBitmapFont.Cell;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiViewport;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.Font;
++import net.minecraft.client.gui.font.TextRenderable;
++import net.minecraft.client.gui.font.glyphs.BakedGlyph;
++import net.minecraft.client.gui.font.glyphs.BakedSheetGlyph;
++import net.minecraft.client.renderer.rendertype.RenderType;
++import net.minecraft.network.chat.Style;
++import org.joml.Matrix4fc;
++
++/** Carries native cell bounds through GUI text while retaining Java's styled glyph geometry. */
++final class BedrockBitmapGlyph implements BakedGlyph {
++    private final BakedSheetGlyph glyph;
++    private final Cell cell;
++    private final boolean smooth;
++
++    BedrockBitmapGlyph(final BakedSheetGlyph glyph, final Cell cell, final boolean smooth) {
++        this.smooth = smooth;
++        this.glyph = glyph;
++        this.cell = cell;
++    }
++
++    @Override
++    public GlyphInfo info() { return this.glyph.info(); }
++
++    @Override
++    public TextRenderable.Styled createGlyph(final float x, final float y, final int color, final int shadowColor,
++                                             final Style style, final float boldOffset, final float shadowOffset) {
++        return new Instance(this.glyph.createGlyph(x, y, color, shadowColor, style, boldOffset, shadowOffset), this.cell,
++                this.smooth && NativeUiViewport.current().scale() == 1);
++    }
++
++    private record Instance(TextRenderable.Styled source, Cell cell, boolean smooth) implements TextRenderable.Styled {
++        @Override
++        public void render(final Matrix4fc pose, final VertexConsumer vertices, final int light, final boolean inverseDepth) {
++            this.source.render(pose, inverseDepth ? new CellVertices(vertices, this.cell, Minecraft.getInstance().getWindow().getGuiScale()) : vertices, light, inverseDepth);
++        }
++
++        @Override public RenderType renderType(final Font.DisplayMode mode) { return this.source.renderType(mode); }
++        @Override public GpuTextureView textureView() { return this.source.textureView(); }
++        @Override public RenderPipeline guiPipeline() { return this.smooth ? BedrockBitmapPipeline.GUI_SMOOTH : BedrockBitmapPipeline.GUI; }
++        @Override public Style style() { return this.source.style(); }
++        @Override public float left() { return this.source.left(); }
++        @Override public float top() { return this.source.top(); }
++        @Override public float right() { return this.source.right(); }
++        @Override public float bottom() { return this.source.bottom(); }
++        @Override public float activeLeft() { return this.source.activeLeft(); }
++        @Override public float activeTop() { return this.source.activeTop(); }
++        @Override public float activeRight() { return this.source.activeRight(); }
++        @Override public float activeBottom() { return this.source.activeBottom(); }
++    }
++
++    /** D3D11 sets up interpolation on positions snapped to the nearest even n.8 raster coordinate. */
++    static float rasterSnap(final float value, final int guiScale) {
++        final float rasterScale = 256 * guiScale;
++        return (float) Math.rint(value * rasterScale) / rasterScale;
++    }
++
++    /**
++     * Carries native vertex precision and top-edge coverage into Java's offscreen GUI target.
++     * One native 8-bit raster step selects the top half-pixel edge; the shader cancels its UV displacement.
++     */
++    private record CellVertices(VertexConsumer target, Cell cell, int guiScale) implements VertexConsumer {
++        @Override public VertexConsumer addVertex(final float x, final float y, final float z) {
++            this.target.addVertex(rasterSnap(x, this.guiScale),
++                rasterSnap(y, this.guiScale) - 1F / (256 * this.guiScale), z);
++            return this;
++        }
++        @Override public VertexConsumer addVertex(final Matrix4fc pose, final float x, final float y, final float z) {
++            return VertexConsumer.super.addVertex(pose, half(x), half(y), half(z));
++        }
++        private static float half(final float value) {
++            return Float.float16ToFloat(Float.floatToFloat16(value));
++        }
++        @Override public VertexConsumer setColor(final int r, final int g, final int b, final int a) {
++            this.target.setColor(r, g, b, a);
++            return this;
++        }
++        @Override public VertexConsumer setColor(final int color) { this.target.setColor(color); return this; }
++        @Override public VertexConsumer setUv(final float u, final float v) {
++            this.target.setUv(u, v).setUv1(this.cell.x(), this.cell.y()).setUv3(this.cell.width(), this.cell.height());
++            return this;
++        }
++        @Override public VertexConsumer setUv1(final int u, final int v) { this.target.setUv1(u, v); return this; }
++        @Override public VertexConsumer setUv2(final int u, final int v) { this.target.setUv2(u, v); return this; }
++        @Override public VertexConsumer setUv3(final float u, final float v) { this.target.setUv3(u, v); return this; }
++        @Override public VertexConsumer setNormal(final float x, final float y, final float z) {
++            this.target.setNormal(x, y, z);
++            return this;
++        }
++        @Override public VertexConsumer setLineWidth(final float width) { this.target.setLineWidth(width); return this; }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapPipeline.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapPipeline.java
+new file mode 100644
+index 0000000..299cd6d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapPipeline.java
+@@ -0,0 +1,49 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.font;
++
++import com.mojang.blaze3d.vertex.DefaultVertexFormat;
++import com.mojang.renderpearl.api.GpuFormat;
++import com.mojang.renderpearl.api.pipeline.ColorTargetState;
++import com.mojang.renderpearl.api.pipeline.RenderPipeline;
++import com.mojang.renderpearl.api.vertex.VertexFormat;
++import com.viaversion.viafabricplus.bedrock.render.BedrockShaderPipelines;
++import java.util.Optional;
++import net.minecraft.client.renderer.RenderPipelines;
++import net.minecraft.resources.Identifier;
++
++/** Native point-sampled bitmap and smoothed Unicode GUI programs. */
++public final class BedrockBitmapPipeline {
++    static final RenderPipeline GUI = create(false);
++    static final RenderPipeline GUI_SMOOTH = create(true);
++
++    private BedrockBitmapPipeline() { }
++
++    public static boolean isSmoothed(final RenderPipeline pipeline) { return pipeline == GUI_SMOOTH; }
++
++    private static RenderPipeline create(final boolean smooth) {
++        final RenderPipeline original = RenderPipelines.GUI_TEXT;
++        final var format = VertexFormat.builder(0);
++        for (final var element : original.getVertexFormatBindings().getFirst().getElements()) {
++            format.addAttribute(element.name(), element.format());
++        }
++        format.addAttribute(DefaultVertexFormat.UV1_SEMANTIC_NAME, GpuFormat.RG16_SINT);
++        format.addAttribute(DefaultVertexFormat.UV3_SEMANTIC_NAME, GpuFormat.RG32_FLOAT);
++        final ColorTargetState[] colors = original.getColorTargetStates().toArray(ColorTargetState[]::new);
++        final var snippet = new RenderPipeline.Snippet(original.getShaders(), Optional.of(original.getShaderDefines()),
++                Optional.of(original.getBindGroupLayouts()), colors, colors.length, Optional.ofNullable(original.getDepthStencilState()),
++                Optional.of(original.getPolygonMode()), Optional.of(original.isCull()),
++                original.getVertexFormatBindings().toArray(VertexFormat[]::new), Optional.of(original.getPrimitiveTopology()),
++                original.pushConstantSize());
++        final var builder = RenderPipeline.builder(snippet)
++                .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/bitmap_font" + (smooth ? "/smooth" : "/bitmap")))
++                .withVertexShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_bitmap_font"))
++                .withFragmentShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_bitmap_font"))
++                .withVertexBinding(0, format.build());
++        if (smooth) builder.withShaderDefine("BITMAP_SMOOTH");
++        return BedrockShaderPipelines.register(builder.build(), original);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/BedrockHudOverlays.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/BedrockHudOverlays.java
@@ -4433,7 +4661,7 @@ index 0000000..0d64363
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java
 new file mode 100644
-index 0000000..26d2a6b
+index 0000000..73691f2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java
 @@ -0,0 +1,58 @@
@@ -4466,7 +4694,7 @@ index 0000000..26d2a6b
 +    }
 +
 +    private static float snap(final float coordinate, final float fontScale, final int uiScale) {
-+        return (float) Math.floor(Math.floor(coordinate * (double) uiScale / fontScale) * fontScale) / uiScale;
++        return (float) (Math.floor(coordinate * (double) uiScale / fontScale) * fontScale) / uiScale;
 +    }
 +
 +    public record Origin(float x, float y) { }
@@ -8109,6 +8337,69 @@ index 88f77b0..2628d69 100644
 +#endif
  #endif
  }
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_bitmap_font.fsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_bitmap_font.fsh
+new file mode 100644
+index 0000000..a83b21c
+--- /dev/null
++++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_bitmap_font.fsh
+@@ -0,0 +1,22 @@
++#version 330
++#extension GL_ARB_separate_shader_objects : require
++#include <minecraft:dynamictransforms.glsl>
++
++uniform sampler2D Sampler0;
++layout(location = 0) in vec4 vertexColor;
++layout(location = 1) in vec2 glyphUv;
++layout(location = 2) flat in vec4 glyphBounds;
++layout(location = 3) noperspective in float glyphGuiY;
++layout(location = 0) out vec4 fragColor;
++
++void main() {
++    // Preserve the unshifted sample position while selecting native top-edge coverage.
++    vec2 sourceUv = glyphUv - dFdy(glyphUv) * sign(dFdy(glyphGuiY)) / 256.0;
++    vec2 uv = clamp(sourceUv, glyphBounds.xy, glyphBounds.zw);
++    vec4 color = texture(Sampler0, uv);
++#ifdef BITMAP_SMOOTH
++    color = clamp((color - 0.3) * 5.000000476837158, 0.0, 1.0);
++    color = color * color * (3.0 - 2.0 * color);
++#endif
++    fragColor = color * vertexColor * ColorModulator;
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_bitmap_font.vsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_bitmap_font.vsh
+new file mode 100644
+index 0000000..1564b4b
+--- /dev/null
++++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_bitmap_font.vsh
+@@ -0,0 +1,29 @@
++#version 330
++#extension GL_ARB_separate_shader_objects : require
++#include <minecraft:dynamictransforms.glsl>
++#include <minecraft:projection.glsl>
++
++uniform sampler2D Sampler0;
++layout(location = 0) in vec3 Position;
++layout(location = 1) in vec4 Color;
++layout(location = 2) in vec2 UV0;
++layout(location = 3) in ivec2 UV1;
++layout(location = 4) in vec2 UV3;
++layout(location = 0) out vec4 vertexColor;
++layout(location = 1) out vec2 glyphUv;
++layout(location = 2) flat out vec4 glyphBounds;
++layout(location = 3) noperspective out float glyphGuiY;
++
++void main() {
++    gl_Position = ProjMat * ModelViewMat * vec4(Position, 1.0);
++    vec2 page = vec2(textureSize(Sampler0, 0));
++    vec2 sourceOrigin = vec2(UV1) / page;
++    // Native packs 16.16 origins into an unsigned-normalized 16-bit attribute.
++    vec2 origin = clamp(floor(sourceOrigin * 65536.0), 0.0, 65535.0) / 65535.0;
++    vec2 extent = UV3 / page;
++    vec2 corner = vec2(greaterThan(UV0, sourceOrigin + extent * 0.5));
++    glyphUv = origin + corner * extent;
++    glyphBounds = vec4(origin + 0.5 / page, origin + extent - 0.5 / page);
++    vertexColor = Color;
++    glyphGuiY = Position.y;
++}
 diff --git a/src/main/resources/viafabricplus-bedrock.accesswidener b/src/main/resources/viafabricplus-bedrock.accesswidener
 index 8e8672c..e52389d 100644
 --- a/src/main/resources/viafabricplus-bedrock.accesswidener
@@ -8119,10 +8410,10 @@ index 8e8672c..e52389d 100644
  accessible field net/minecraft/client/renderer/RenderPipelines EYES_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 +accessible method net/minecraft/client/gui/GuiGraphicsExtractor innerBlit (Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;Lnet/minecraft/resources/Identifier;IIIIFFFFI)V
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 5bddfeb..65531be 100644
+index 6b82961..bf50fd9 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -150,6 +150,10 @@
+@@ -151,6 +151,11 @@
      "features.render.MixinBedrockModelPartTransforms",
      "features.render.MixinPlayerSkinWidget",
      "features.render.MixinGuiSkinRenderer",
@@ -8130,10 +8421,11 @@ index 5bddfeb..65531be 100644
 +    "features.render.MixinPictureInPictureRenderer",
 +    "features.render.MixinNativeUiPictures",
 +    "features.render.MixinBedrockBitmapFont",
++    "features.render.MixinBedrockBitmapGlyphRenderState",
      "features.input.MixinKeyboardInput",
      "features.input.MixinLocalPlayerInput",
      "features.input.MixinClientInput",
-@@ -204,7 +208,11 @@
+@@ -205,7 +210,11 @@
      "features.render.MixinBedrockCameraFade",
      "features.entities.MixinClientEntityTracking",
      "features.entities.MixinMinecraftProjectileOwners",
@@ -8875,6 +9167,309 @@ index 0000000..64784a5
 +                                                   final int left, final int right) {
 +        return BedrockBitmapFont.measure(codepoint, cell, cell, renderHeight,
 +                (x, y) -> x >= left && x < right && y == cell - 2 ? 1 : 0);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyphTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyphTest.java
+new file mode 100644
+index 0000000..f6651d3
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyphTest.java
+@@ -0,0 +1,71 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.font;
++
++import com.mojang.blaze3d.font.GlyphInfo;
++import com.mojang.blaze3d.platform.Window;
++import com.mojang.blaze3d.vertex.VertexConsumer;
++import com.mojang.renderpearl.api.textures.GpuTextureView;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiViewport;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.font.GlyphRenderTypes;
++import net.minecraft.client.gui.font.TextRenderable;
++import net.minecraft.client.gui.font.glyphs.BakedSheetGlyph;
++import net.minecraft.network.chat.Style;
++import org.joml.Matrix4f;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.*;
++import static org.mockito.Mockito.*;
++
++final class BedrockBitmapGlyphTest {
++    @Test
++    void packsGuiLocalVerticesBeforeThePoseAndPreservesWorldTextAndLight() {
++        final var cell = new BedrockBitmapFont.Cell(16, 64, 16, 16, 256, 256, .5F, 0, 0, .01F);
++        final var source = new BakedSheetGlyph(GlyphInfo.simple(4), mock(GlyphRenderTypes.class), mock(GpuTextureView.class),
++                cell.u0(), cell.u1(), cell.v0(), cell.v1(), cell.left(), cell.right(), cell.top(), cell.bottom());
++        final var bitmap = new BedrockBitmapGlyph(source, cell, false);
++        final var unicode = new BedrockBitmapGlyph(source, cell, true);
++        final TextRenderable.Styled glyph;
++        try (final var viewport = mockStatic(NativeUiViewport.class)) {
++            viewport.when(NativeUiViewport::current).thenReturn(new NativeUiViewport(1280, 720, 1, 1));
++            glyph = unicode.createGlyph(109.01F, 0, -1, 0, Style.EMPTY, 0, 0);
++            assertTrue(BedrockBitmapPipeline.isSmoothed(glyph.guiPipeline()));
++            assertFalse(BedrockBitmapPipeline.isSmoothed(bitmap.createGlyph(0, 0, -1, 0, Style.EMPTY, 0, 0).guiPipeline()));
++            viewport.when(NativeUiViewport::current).thenReturn(new NativeUiViewport(640, 360, 2, 2));
++            assertFalse(BedrockBitmapPipeline.isSmoothed(unicode.createGlyph(0, 0, -1, 0, Style.EMPTY, 0, 0).guiPipeline()));
++        }
++        final var vertices = mock(VertexConsumer.class, RETURNS_SELF);
++        final var pose = new Matrix4f().translate(20, 30, 0).scale(2);
++        final var client = mock(Minecraft.class);
++        final var window = mock(Window.class);
++        when(client.getWindow()).thenReturn(window);
++        when(window.getGuiScale()).thenReturn(2);
++        try (final var minecraft = mockStatic(Minecraft.class)) {
++            minecraft.when(Minecraft::getInstance).thenReturn(client);
++            glyph.render(pose, vertices, 0x00A00050, true);
++        }
++        verify(vertices).addVertex(238F, 30F - 1F / 512, 0F);
++        verify(vertices).addVertex(238F, 46F - 1F / 512, 0F);
++        verify(vertices, times(2)).addVertex(eq(254F), anyFloat(), eq(0F));
++        verify(vertices, times(4)).setUv1(16, 64);
++        verify(vertices, times(4)).setUv3(16, 16);
++        verify(vertices).setUv(cell.u0(), cell.v0());
++        verify(vertices).setUv(cell.u1(), cell.v1());
++        verify(vertices, times(4)).setUv2(80, 160);
++        assertEquals(109.01F, glyph.activeLeft());
++        assertEquals(113.01F, glyph.activeRight());
++        assertTrue(BedrockBitmapPipeline.isSmoothed(glyph.guiPipeline()));
++
++        final var world = mock(VertexConsumer.class, RETURNS_SELF);
++        glyph.render(pose, world, 0x00A00050, false);
++        verify(world, times(2)).addVertex(same(pose), eq(109.01F), anyFloat(), anyFloat());
++        verify(world, never()).setUv1(anyInt(), anyInt());
++        verify(world).setUv(cell.u0(), cell.v0());
++        verify(world, times(4)).setLight(0x00A00050);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapShaderGpuTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapShaderGpuTest.java
+new file mode 100644
+index 0000000..17577c8
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapShaderGpuTest.java
+@@ -0,0 +1,220 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.font;
++
++import com.viaversion.viafabricplus.bedrock.render.EglTestContext;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++import org.lwjgl.system.MemoryStack;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.lwjgl.opengl.GL33C.*;
++
++@EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_FONT_GPU_TESTS", matches = "1")
++final class BedrockBitmapShaderGpuTest {
++    @Test
++    void reproducesPackedOriginsAndClampBoundsFromTheNativeGpuDraw() {
++        EglTestContext.run(() -> {
++            final int program = program(false, true), vao = glGenVertexArrays();
++            final int texture = glGenTextures(), output = glGenBuffers();
++            try {
++                glBindVertexArray(vao);
++                glBindTexture(GL_TEXTURE_2D, texture);
++                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 128, 128, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0L);
++                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++                glUseProgram(program);
++                glUniform1i(glGetUniformLocation(program, "Sampler0"), 0);
++                glVertexAttrib3f(0, 12, 9, 0);
++                glVertexAttrib4f(1, 1, 0, 0, 1);
++                glVertexAttrib2f(2, .5625F, .5624921917915344F);
++                glVertexAttribI2i(3, 72, 60);
++                glVertexAttrib2f(4, 8, 12);
++                glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, output);
++                glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER, 6L * Float.BYTES, GL_STREAM_READ);
++                glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, output);
++                glEnable(GL_RASTERIZER_DISCARD);
++                glBeginTransformFeedback(GL_POINTS);
++                glDrawArrays(GL_POINTS, 0, 1);
++                glEndTransformFeedback();
++                glDisable(GL_RASTERIZER_DISCARD);
++                final float[] actual = new float[6];
++                glGetBufferSubData(GL_TRANSFORM_FEEDBACK_BUFFER, 0, actual);
++                // Original 1.26.60.5 UI/Text vertex outputs, including a source origin above 0.5.
++                assertArrayEquals(new float[] {.5625085830688477F, .562507152557373F,
++                    .5664148330688477F, .47266340255737305F, .6211023330688477F, .558600902557373F}, actual, 1E-7F);
++            } finally {
++                glDisable(GL_RASTERIZER_DISCARD);
++                glUseProgram(0);
++                glDeleteBuffers(output);
++                glDeleteTextures(texture);
++                glDeleteVertexArrays(vao);
++                glDeleteProgram(program);
++            }
++        });
++    }
++
++    @Test
++    void appliesNativeUnicodeSmoothingToEachSampledColorChannel() {
++        EglTestContext.run(() -> {
++            final int program = program(true, false), vao = glGenVertexArrays();
++            final int buffer = glGenBuffers(), texture = glGenTextures();
++            try (var stack = MemoryStack.stackPush()) {
++                glBindVertexArray(vao);
++                glBindBuffer(GL_ARRAY_BUFFER, buffer);
++                glBufferData(GL_ARRAY_BUFFER, stack.floats(-1, -1, 0, 0, 1, 1, -1, 0, 1, 1,
++                    -1, 1, 0, 0, 0, 1, 1, 0, 1, 0), GL_STATIC_DRAW);
++                glEnableVertexAttribArray(0);
++                glVertexAttribPointer(0, 3, GL_FLOAT, false, 20, 0L);
++                glEnableVertexAttribArray(2);
++                glVertexAttribPointer(2, 2, GL_FLOAT, false, 20, 12L);
++                glVertexAttrib4f(1, 1, 1, 1, 1);
++                glVertexAttribI2i(3, 0, 0);
++                glVertexAttrib2f(4, 1, 1);
++                glBindTexture(GL_TEXTURE_2D, texture);
++                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
++                    stack.bytes((byte) 102, (byte) 102, (byte) 102, (byte) 102));
++                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++                glUseProgram(program);
++                final var identity = stack.floats(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
++                glUniformMatrix4fv(glGetUniformLocation(program, "ModelViewMat"), false, identity);
++                glUniformMatrix4fv(glGetUniformLocation(program, "ProjMat"), false, identity);
++                glUniform4f(glGetUniformLocation(program, "ColorModulator"), 1, 1, 1, 1);
++                glUniform1i(glGetUniformLocation(program, "Sampler0"), 0);
++                glViewport(0, 0, 1, 1);
++                glDisable(GL_BLEND);
++                glDisable(GL_DEPTH_TEST);
++                glDisable(GL_CULL_FACE);
++                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
++                final var pixel = stack.malloc(4);
++                glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
++                for (int channel = 0; channel < 4; channel++) assertEquals(128, Byte.toUnsignedInt(pixel.get(channel)), 1);
++            } finally {
++                glUseProgram(0);
++                glDeleteTextures(texture);
++                glDeleteBuffers(buffer);
++                glDeleteVertexArrays(vao);
++                glDeleteProgram(program);
++            }
++        });
++    }
++
++    @Test
++    void retainsNativeTopEdgeAndUnshiftedSamplesInAnOffscreenTarget() {
++        EglTestContext.run(() -> {
++            final int program = program(false, false), vao = glGenVertexArrays(), buffer = glGenBuffers();
++            final int atlas = glGenTextures(), target = glGenTextures(), framebuffer = glGenFramebuffers();
++            try (var stack = MemoryStack.stackPush()) {
++                glBindTexture(GL_TEXTURE_2D, target);
++                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0L);
++                glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
++                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target, 0);
++                assertEquals(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
++                glBindTexture(GL_TEXTURE_2D, atlas);
++                final var texels = stack.malloc(8 * 8 * 4);
++                for (int y = 0; y < 8; y++) {
++                    for (int x = 0; x < 8; x++) {
++                        texels.put((byte) (y * 32)).put((byte) (x * 32)).put((byte) 0).put((byte) 255);
++                    }
++                }
++                texels.flip();
++                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 8, 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, texels);
++                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++                glBindVertexArray(vao);
++                glBindBuffer(GL_ARRAY_BUFFER, buffer);
++                glEnableVertexAttribArray(0);
++                glVertexAttribPointer(0, 3, GL_FLOAT, false, 20, 0L);
++                glEnableVertexAttribArray(2);
++                glVertexAttribPointer(2, 2, GL_FLOAT, false, 20, 12L);
++                glVertexAttrib4f(1, 1, 1, 1, 1);
++                glVertexAttribI2i(3, 0, 0);
++                glVertexAttrib2f(4, 8, 8);
++                glUseProgram(program);
++                glUniformMatrix4fv(glGetUniformLocation(program, "ModelViewMat"), false,
++                    stack.floats(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1));
++                glUniform4f(glGetUniformLocation(program, "ColorModulator"), 1, 1, 1, 1);
++                glUniform1i(glGetUniformLocation(program, "Sampler0"), 0);
++                glViewport(0, 0, 16, 16);
++                glDisable(GL_BLEND);
++                glDisable(GL_DEPTH_TEST);
++                glDisable(GL_CULL_FACE);
++                for (int guiScale = 1; guiScale <= 2; guiScale++) {
++                    final float unit = 1F / guiScale;
++                    glUniformMatrix4fv(glGetUniformLocation(program, "ProjMat"), false,
++                        stack.floats(guiScale / 8F, 0, 0, 0, 0, -guiScale / 8F, 0, 0, 0, 0, 1, 0, -1, 1, 0, 1));
++                    for (final float phase : new float[] {0, .25F, .5F, .75F, .5F - 1F / 1024, .5F + 1F / 1024,
++                            .5F - 3F / 1024, .5F + 3F / 1024}) {
++                        final float left = 3 * unit;
++                        final float top = (3 + phase) * unit;
++                        final float shifted = BedrockBitmapGlyph.rasterSnap(top, guiScale) - unit / 256;
++                        glBufferData(GL_ARRAY_BUFFER, stack.floats(
++                            left, shifted, 0, 0, 0, left, shifted + 8 * unit, 0, 0, 1,
++                            left + 8 * unit, shifted, 0, 1, 0, left + 8 * unit, shifted + 8 * unit, 0, 1, 1), GL_STREAM_DRAW);
++                        glClearColor(0, 0, 0, 0);
++                        glClear(GL_COLOR_BUFFER_BIT);
++                        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
++                        final var pixels = stack.malloc(16 * 16 * 4);
++                        glReadPixels(0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
++                        for (int y = 0; y < 16; y++) {
++                            final float snappedTop = (float) Math.rint((3 + phase) * 256) / 256F;
++                            final boolean covered = y + .5F >= snappedTop && y + .5F < snappedTop + 8;
++                            final int index = ((15 - y) * 16 + 5) * 4;
++                            assertEquals(covered ? 255 : 0, Byte.toUnsignedInt(pixels.get(index + 3)),
++                                "GUI scale " + guiScale + ", phase " + phase + ", row " + y);
++                            if (covered) assertEquals((int) (y + .5F - snappedTop) * 32, Byte.toUnsignedInt(pixels.get(index)),
++                                "GUI scale " + guiScale + ", phase " + phase + ", sample row " + y);
++                        }
++                    }
++                }
++            } finally {
++                glBindFramebuffer(GL_FRAMEBUFFER, 0);
++                glUseProgram(0);
++                glDeleteFramebuffers(framebuffer);
++                glDeleteTextures(atlas);
++                glDeleteTextures(target);
++                glDeleteBuffers(buffer);
++                glDeleteVertexArrays(vao);
++                glDeleteProgram(program);
++            }
++        });
++    }
++
++    private static int program(final boolean smooth, final boolean feedback) {
++        final int program = glCreateProgram();
++        final int vertex = shader(GL_VERTEX_SHADER, resource("vsh", smooth));
++        final int fragment = shader(GL_FRAGMENT_SHADER, resource("fsh", smooth));
++        try {
++            glAttachShader(program, vertex);
++            glAttachShader(program, fragment);
++            if (feedback) glTransformFeedbackVaryings(program, new String[] {"glyphUv", "glyphBounds"}, GL_INTERLEAVED_ATTRIBS);
++            glLinkProgram(program);
++            assertEquals(GL_TRUE, glGetProgrami(program, GL_LINK_STATUS), glGetProgramInfoLog(program));
++            return program;
++        } finally { glDeleteShader(vertex); glDeleteShader(fragment); }
++    }
++
++    private static int shader(final int type, final String source) {
++        final int shader = glCreateShader(type);
++        glShaderSource(shader, source);
++        glCompileShader(shader);
++        assertEquals(GL_TRUE, glGetShaderi(shader, GL_COMPILE_STATUS), glGetShaderInfoLog(shader));
++        return shader;
++    }
++
++    private static String resource(final String extension, final boolean smooth) {
++        final String path = "/assets/viafabricplus-bedrock/shaders/core/bedrock_bitmap_font." + extension;
++        try (var input = BedrockBitmapShaderGpuTest.class.getResourceAsStream(path)) {
++            assertNotNull(input);
++            return new String(input.readAllBytes(), StandardCharsets.UTF_8)
++                .replace("#version 330", "#version 330\n" + (smooth ? "#define BITMAP_SMOOTH\n" : ""))
++                .replace("#include <minecraft:dynamictransforms.glsl>", "uniform mat4 ModelViewMat; uniform vec4 ColorModulator;")
++                .replace("#include <minecraft:projection.glsl>", "uniform mat4 ProjMat;");
++        } catch (final IOException error) { throw new IllegalStateException(error); }
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/AnimationPrograms.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/AnimationPrograms.java
@@ -10249,10 +10844,10 @@ index 0000000..f022766
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java
 new file mode 100644
-index 0000000..2c6d44b
+index 0000000..3f67a8f
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,148 @@
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.google.gson.JsonArray;
@@ -10277,10 +10872,10 @@ index 0000000..2c6d44b
 +
 +    @Test
 +    void snapsBitmapLabelOriginsToTheNativeFontPixelGrid() {
-+        // Native 1.26.60.5, GUI scale 2, four font sizes and quarter-unit offsets.
++        // Native 1.26.60.5 submitted model matrices, four font sizes and quarter-unit offsets.
 +        final float[][] cases = {
-+            {45, 35, .5F, 45, 36}, {190.25F, 35.25F, .5F, 190, 36},
-+            {335.5F, 35.5F, .5F, 335.5F, 36.5F}, {480.75F, 35.75F, .5F, 480.5F, 36.5F},
++            {45, 35, .5F, 45, 36}, {190.25F, 35.25F, .5F, 190.25F, 36.25F},
++            {335.5F, 35.5F, .5F, 335.5F, 36.5F}, {480.75F, 35.75F, .5F, 480.75F, 36.75F},
 +            {45, 95, 1, 45, 96}, {190.25F, 95.25F, 1, 190, 96},
 +            {335.5F, 95.5F, 1, 335.5F, 96.5F}, {480.75F, 95.75F, 1, 480.5F, 96.5F},
 +            {45, 160, 2, 45, 161}, {190.25F, 160.25F, 2, 190, 161},
@@ -10292,6 +10887,8 @@ index 0000000..2c6d44b
 +            assertEquals(new NativeUiFont.Origin(sample[3], sample[4]),
 +                NativeUiFont.origin(sample[0], sample[1], sample[2], 2));
 +        }
++        assertEquals(new NativeUiFont.Origin(335.5F, 36.5F), NativeUiFont.origin(335.5F, 35.5F, .5F, 1));
++        assertEquals(new NativeUiFont.Origin(480.5F, 36.5F), NativeUiFont.origin(480.75F, 35.75F, .5F, 1));
 +    }
 +
 +    @Test
