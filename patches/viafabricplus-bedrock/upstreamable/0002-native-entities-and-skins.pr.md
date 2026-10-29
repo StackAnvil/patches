@@ -923,6 +923,21 @@ The same bindings remain at 20 and 40 blocks.
 At 40 blocks, Alex/Steve/Alex replacement selects the matching body and face textures for each profile.
 The selected textures each have one mip level. These controls show no stale profile binding.
 
+The owned outerwear persona also retains its original body and face atlases at 48 and 60 blocks.
+Persona/Steve/persona replacement selects the matching textures at 60 blocks.
+A profile change outside the tracked range also selects the correct Steve textures after re-entry.
+At 80 blocks, the paired Java journal records BDS actor removal, and native no longer retains the persona atlases.
+A simulation-distance comparison at four and eight chunks retains that boundary.
+Atlas absence after actor retirement does not establish an LOD switch.
+
+The reverse direction uses actual native Dressing Room profile changes while Java lacks the actor.
+The journal places each skin update between `RemoveActor` and `AddPlayer`.
+Alex arrives as a full 256 × 256 persona, and the restored Earth skin arrives as a 64 × 64 classic record.
+Java shows each matching profile after re-entry at 60 and five blocks.
+All nine canonical incoming skin records match installed renderer records, with zero rejected skins and 8,476 remote-player submissions.
+The 1,200-second recording finishes normally.
+These controls require no renderer correction. Distinct persona LOD resources remain unverified.
+
 The fixture uses a range of server UDP ports so both real clients remain connected.
 This fixture configuration does not establish a production transport correction.
 Cached capture notifications initially selected older frames.
@@ -930,7 +945,7 @@ The corrected reader accepts only a newly created capture, and the earlier metad
 
 Draw counts alone do not establish hidden-layer masking.
 These default personas contain no authored `persona_lod` binding and show no distance-dependent texture switch in this range.
-Wardrobe-specific masking and personas with distinct LOD resources still require matching native fixtures.
+Other wardrobe categories and personas with distinct LOD resources still require matching native fixtures.
 No skin renderer change follows from these controls. Licensed inputs and GPU captures remain private.
 
 ## Real outerwear masking beneath a chestplate, October 29, 2026

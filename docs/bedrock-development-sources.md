@@ -336,6 +336,9 @@ The 26.60 audit above supplies the starting evidence, not completion evidence.
   A real owned outerwear pendant now hides beneath a chestplate and restores after removal on native and direct Java.
   Native GPU vertices collapse while hidden. Thirty settled Java samples verify the actual cube visibility across the three phases.
   The canonical incoming persona record matches the installed renderer record. Other wardrobe categories and distinct LOD resources remain open.
+  Native binding controls now reach 60 blocks and cover profile replacement after actor retirement and re-entry.
+  Actual native persona updates also reach Java while the actor is absent, then render correctly after re-entry.
+  All nine canonical incoming records match installed renderer records. At 80 blocks, BDS actor retirement prevents a distinct LOD conclusion.
   The synthetic custom persona markers remain excluded.
 - [ ] **Movement and rendering:** compare falls at water/solid boundaries,
   dragon-dependent fog, combined blindness/night vision, and block/entity
