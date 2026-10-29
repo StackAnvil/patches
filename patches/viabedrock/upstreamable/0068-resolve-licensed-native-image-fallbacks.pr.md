@@ -113,7 +113,7 @@ Matching shader uniforms establish the distance and color independently of the s
 An earlier override of the vanilla fog identifier did not change those uniforms.
 Renaming that fog file to its canonical filename also had no effect.
 The explicit biome binding supplies the valid base-fog fixture.
-Fresh direct and ViaProxy recordings each finish normally after 180 seconds.
-Both receive red `FOG_COLOR` from the selected biome definition.
-Their actual renderer buffers retain Java's 1,024-block distance, compared with the native control's 32 blocks.
+Before the companion fog-consumer update, direct and ViaProxy recordings each finish normally after 180 seconds.
+Both receive red `FOG_COLOR` but retain Java's 1,024-block distance, compared with the native control's 32 blocks.
 This identifier correction does not implement base fog distances or establish complete rendering parity.
+The [fog transport patch](0104-transport-resolved-native-fog-stacks.pr.md) records the subsequent 32-block consumer controls and remaining limits.

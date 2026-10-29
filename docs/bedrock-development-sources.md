@@ -190,7 +190,7 @@ Player and persona controller assets do not establish the engine's new armor mas
    Core now retains `PLAYER_FOG` snapshots and resolves complete distance settings against the selected resources.
    The add-on consumes dry-air commands through a connection-owned receiver.
    The native dragon distance cap now has matching native and Java controls.
-   Base biome distances and transition timing remain open.
+   The authored base-biome distance control now matches. Native engine-specific rules and transition timing remain open.
    Existing lightmap and collision code cannot establish those fixes by itself.
    A live actor-picking fixture exposed missing hand fields in actor-use transactions and the explicit attack swing.
    The protocol patch now supplies both fields and shares outgoing swings through one factory.
@@ -210,7 +210,8 @@ Player and persona controller assets do not establish the engine's new armor mas
 
 ### Native fog controls in 26.60
 
-The command consumer carries fixed and render-relative distances, colors, and empty resets through the negotiated `viabedrock:fog` channel.
+Fog payload version 2 carries command layers, selected biome bindings, and the existing registry-default policy through the negotiated `viabedrock:fog` channel.
+Settings retain fixed or render-relative distances and colors. Empty commands reveal the selected biome settings.
 A water-only top layer preserves the lower air setting.
 Listener replacement and disconnect retire previous commands.
 Fluid and weather distances retain their existing paths.
@@ -223,7 +224,7 @@ It decodes off-thread and uploads during client ticks, before any GPU render pas
 Disconnect retirement also runs on the client thread, with listener ownership checked before GPU cleanup.
 Fresh direct and ViaProxy recordings confirm white/red sky colors, fixed distances, water-only fallback, removal, and empty resets.
 Both 180-second recordings finish normally.
-Native sky motion, pixel sampling, transition timing, and base biome distances remain unverified.
+Native sky motion, pixel sampling, transition timing, biome-boundary blending, legacy default bindings, and engine-specific vanilla fog rules remain unverified.
 
 The dragon override uses start 0 and end `min(100, effective render distance)`.
 Matching `RenderChunk` vertex bytecode establishes the distance formula and the native `FogAndDistanceControl` binding.
@@ -272,12 +273,17 @@ Older vanilla definitions use `the_end`; the current `vanilla_1.21.120` definiti
 Core now normalizes insertion and lookup so higher vanilla and server layers replace the same biome entry.
 Custom namespaces remain distinct.
 Two regressions cover both override directions, colors, fog binding, and namespace isolation.
-This correction fixes resource selection; base fog distance consumption remains open.
+The version-2 fog snapshot now carries these selected biome settings to both Java routes.
+Each fresh route verifies seven phases with actual renderer buffers and the received `minecraft:the_end` camera biome.
+Base red fog uses 32 blocks; a white command uses 16, and removal or empty commands restore 32.
+A living dragon retains red color and overrides distance to 100 blocks; death restores 32.
+The native grayscale End sky now applies to this base control too.
+Floor lighting still differs, so these controls do not establish native pixel parity.
 
-The Java implementation now consumes complete command snapshots and native distance settings.
+The Java implementation now consumes complete command snapshots, selected biome settings, and the existing registry-default fallback.
 The add-on selects the dragon override from living admitted actors, independently of Java boss-bar flags.
 The native cap and command restoration have matching direct and ViaProxy controls.
-Exact transitions, base biome distances, and broader sky and lighting parity remain open.
+Exact transitions, spatial biome blending, legacy default bindings, vanilla engine-specific rules, and broader sky/lighting parity remain open.
 
 ## Current implementation goal
 
