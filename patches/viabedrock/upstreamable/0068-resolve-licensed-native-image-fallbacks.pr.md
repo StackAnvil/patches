@@ -60,3 +60,60 @@ Screenshot review shows all five icons in the hotbar and the creative inventory 
 Each route also passes 16 equipped-state checks, including real sneak transitions and equipment removal.
 All 30 screenshots receive visual review, and installed runtime hashes match the build.
 These creative-screen controls do not reproduce the reported survival inventory or establish complete native visual parity.
+
+## Select vanilla resources by world version
+
+Core now reads the base-game version in `ResourcePackStack`. The resource
+preparation worker selects cumulative vanilla metadata and licensed layers
+using that cutoff. Server packs keep their priority independently of it.
+Raw verified bundles remain shared and immutable.
+
+Official BDS 1.26.60.6 on protocol 2225 advertises `*` for an ordinary world.
+A separate copied world with `baseGameVersion` set to `1.20.0` and template
+flags advertises `1.20.0`. These are private packet captures from an owned
+loopback server. They establish the input, not the native client's graphics.
+Microsoft's [base-game version guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/basegameversioning)
+establishes cumulative vanilla overlay selection and independent server packs.
+
+`ResourcePackStorage` retains the canonical world cutoff. Native resource
+archive format 2 carries it through ViaProxy alongside immutable pack layers.
+The conversion cache includes the context even when resource bytes match.
+Malformed archive context fails decoding instead of selecting current assets.
+
+Targeted tests cover numeric ordering, newer/older/newer selection, retained
+server priority, archive/storage context, and identical-byte cache separation.
+The full core build and tests pass with the repository's packaged UI and images.
+Native and direct Java comparisons now establish resource-dependent cat draws and current/1.20.0/current sound selection.
+Two conflicting server WAV packs retain native priority above vanilla FSB resources on direct and ViaProxy connections.
+The [add-on evidence](../../viafabricplus-bedrock/upstreamable/0013-resolve-licensed-native-vanilla-images.pr.md#world-version-resource-selection) records PCM comparisons, override retirement, and remaining visual/audio limits.
+The full resource-version acceptance area remains incomplete.
+
+All 55 versioned vanilla manifests in the matching client snapshot and
+generated core metadata have minimum engine versions equal to their numeric
+overlay versions. This validates the metadata cutoff used for this target.
+Archive corruption tests locate count and provenance fields after the variable
+version field, preserving malformed-role and truncated-header coverage.
+
+## Biome identifier priority
+
+Older vanilla layers identify the End biome as `the_end`.
+The matching client's `vanilla_1.21.120` layer uses `minecraft:the_end`.
+Previously, both entries survived, and registry lookup retained the older definition.
+This also prevented qualified server definitions from replacing older vanilla entries.
+
+Normalize biome identifiers during insertion and lookup.
+Both spellings now select the same definition, while custom namespaces remain distinct.
+The selected pack still supplies the whole definition.
+Two regressions fail before the correction and pass afterward.
+They cover both override directions, sky and water colors, fog binding, and namespace isolation.
+
+A private native fixture binds `minecraft:the_end` to a unique red fog definition, without fog commands or living dragons.
+Native 1.26.60.5 renders red fog from 0 to 32 blocks.
+Matching shader uniforms establish the distance and color independently of the screenshot.
+An earlier override of the vanilla fog identifier did not change those uniforms.
+Renaming that fog file to its canonical filename also had no effect.
+The explicit biome binding supplies the valid base-fog fixture.
+Before the companion fog-consumer update, direct and ViaProxy recordings each finish normally after 180 seconds.
+Both receive red `FOG_COLOR` but retain Java's 1,024-block distance, compared with the native control's 32 blocks.
+This identifier correction does not implement base fog distances or establish complete rendering parity.
+The [fog transport patch](0104-transport-resolved-native-fog-stacks.pr.md) records the subsequent 32-block consumer controls and remaining limits.

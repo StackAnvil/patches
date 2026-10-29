@@ -1,7 +1,7 @@
-From e1c32f5f335ae5e215ed5b5c7d635b4d508ae179 Mon Sep 17 00:00:00 2001
+From 6f8cfe7f5c9a5682b1712776cbc0df1fd5fe99f9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
-Subject: [PATCH] feat(resources): resolve bundled native vanilla images
+Subject: [PATCH] feat(resources): select native libraries by world version
 
 Servers reference built-in Bedrock textures without redistributing them.
 Supply images from the versioned resource bundle shipped with the add-on,
@@ -33,28 +33,56 @@ checks that 32 actor libraries share the same caption table while server
 locale overrides preserve selected-language precedence and fallback.
 This removes a confirmed duplication path without claiming the log alone
 identifies every retained heap object.
+
+Select immutable vanilla library views using the core world cutoff before
+applying accepted server overrides. Keep the raw licensed snapshot shared
+for out-of-world account assets and bound cached version views to four.
+Older views retain their complete vanilla source so returning to a newer
+world restores newer layers instead of filtering an already partial view.
+
+Read archive format2 context through the shared accepted-resource cache.
+Carry it into native actor storage, geometry, animation graphs, sounds,
+particles, and captions on direct and ViaProxy paths. Include the archive
+identity in effect cache retirement. Without accepted world context, use
+the existing Java fallback instead of silently selecting latest resources.
+
+Matching BDS1.26.60.6/protocol2225 captures establish wildcard and explicit
+1.20.0 base-game inputs. The core patch notes record the executable hash
+and Microsoft's cumulative overlay-selection evidence. Regressions cover
+newer/older/newer texture, sound and graph selection, retained server
+priority, immutable earlier views, eviction/reselection, missing context,
+and resource-manager reuse across world-version changes. Native graphical
+and audible world-transition comparisons remain pending.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   3 +
- .../appearance/BedrockActorAnimation.java     |   2 +-
- .../appearance/BedrockActorDependencies.java  |  62 +++++++++
- .../appearance/BedrockEntityResources.java    |  29 ++--
- .../appearance/BedrockResourceLibrary.java    |  87 +++++++++++-
- ...FabricPlusBuiltinResourcePackProvider.java |  36 +++++
- .../BedrockActorDependenciesTest.java         | 109 +++++++++++++++
- .../BedrockResourceLibraryTest.java           |  19 +++
+ .../appearance/BedrockActorAnimation.java     |   4 +-
+ .../appearance/BedrockActorDependencies.java  |  63 ++++++++
+ .../appearance/BedrockEntityResources.java    |  31 ++--
+ .../appearance/BedrockResourceLibrary.java    | 143 +++++++++++++++++-
+ .../appearance/BedrockServerResources.java    |  15 +-
+ ...FabricPlusBuiltinResourcePackProvider.java |  37 +++++
+ .../render/BedrockAcceptedResources.java      |  17 ++-
+ .../bedrock/render/BedrockActorResources.java |   4 +-
+ .../BedrockActorDependenciesTest.java         | 109 +++++++++++++
+ .../BedrockResourceLibraryTest.java           |  24 ++-
+ .../BedrockServerActorResourcesTest.java      |   3 +-
  .../BedrockServerEntityAnimationTest.java     |  14 +-
- ...icPlusBuiltinResourcePackProviderTest.java | 126 ++++++++++++++++++
- 10 files changed, 466 insertions(+), 21 deletions(-)
+ .../BedrockServerResourcesTest.java           |  42 ++++-
+ .../BedrockWorldResourceVersionsTest.java     |  85 +++++++++++
+ ...icPlusBuiltinResourcePackProviderTest.java | 127 ++++++++++++++++
+ .../render/BedrockAcceptedResourcesTest.java  |   3 +-
+ 17 files changed, 680 insertions(+), 44 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependencies.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependenciesTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldResourceVersionsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 512bb11..b086686 100644
+index 24b1e46..359455b 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -47,12 +47,14 @@ import com.viaversion.viafabricplus.api.entrypoint.ViaFabricPlusEntrypoint;
+@@ -49,12 +49,14 @@ import com.viaversion.viafabricplus.api.entrypoint.ViaFabricPlusEntrypoint;
  import com.viaversion.viafabricplus.bedrock.account.BedrockAccount;
  import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
  import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusSkinProvider;
@@ -69,7 +97,7 @@ index 512bb11..b086686 100644
  import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
  import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusEmoteProvider;
  import org.apache.logging.log4j.LogManager;
-@@ -133,6 +135,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -144,6 +146,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          new ViaFabricPlusViaBedrockPlatform();
          Via.getManager().getProviders().use(NettyPipelineProvider.class, new ViaFabricPlusNettyPipelineProvider());
          Via.getManager().getProviders().use(SkinProvider.class, new ViaFabricPlusSkinProvider());
@@ -78,9 +106,18 @@ index 512bb11..b086686 100644
      }
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-index 8171ea6..fb69872 100644
+index 8171ea6..30704f9 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
+@@ -39,7 +39,7 @@ public final class BedrockActorAnimation {
+             final ServerResources cached = SERVER_RESOURCES.get(packs);
+             if (cached != null) return cached;
+         }
+-        final BedrockResourceLibrary builtin = BedrockBuiltinAssets.load().library();
++        final BedrockResourceLibrary builtin = BedrockBuiltinAssets.load().library().forVersion(packs.getBaseGameVersion());
+         final ServerResources inherited = resources(builtin);
+         final Map<String, JsonObject> animations = new LinkedHashMap<>(inherited.animations());
+         final Map<String, ControllerResource> controllers = new LinkedHashMap<>(inherited.controllers());
 @@ -47,7 +47,7 @@ public final class BedrockActorAnimation {
          for (final var pack : packs.getPackStackBottomToTop()) {
              for (final String folder : List.of("animations/", "animation_controllers/")) {
@@ -92,10 +129,10 @@ index 8171ea6..fb69872 100644
                      if (definitions == null) continue;
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependencies.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependencies.java
 new file mode 100644
-index 0000000..8aca84a
+index 0000000..1e5da51
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependencies.java
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,63 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -136,10 +173,11 @@ index 0000000..8aca84a
 +    static Resolved resolve(final BedrockResourceLibrary builtin, final ResourcePackStorage accepted) throws IOException {
 +        // Direct connections already include the very same bundled visual packs. Reuse them below
 +        // core metadata instead of selecting and parsing every licensed model a second time.
-+        final var builtinPacks = builtin.resourcePacks();
++        final var selected = builtin.forVersion(accepted.getBaseGameVersion());
++        final var builtinPacks = selected.resourcePacks();
 +        final var acceptedPacks = accepted.getPackStackBottomToTop().stream()
 +                .filter(pack -> !builtinPacks.contains(pack)).toList();
-+        return merge(builtin, NativeActorLibrary.resources(acceptedPacks, accepted::isServerPack));
++        return merge(selected, NativeActorLibrary.resources(acceptedPacks, accepted::isServerPack));
 +    }
 +
 +    static Resolved merge(final BedrockResourceLibrary builtin, final List<NativeActorLibrary.Layer> accepted) throws IOException {
@@ -159,7 +197,7 @@ index 0000000..8aca84a
 +    record Resolved(BedrockResourceLibrary library, List<NativeActorLibrary.Layer> layers) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
-index b49b23d..f4837bc 100644
+index b49b23d..eed070b 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEntityResources.java
 @@ -30,11 +30,14 @@ public final class BedrockEntityResources {
@@ -205,6 +243,15 @@ index b49b23d..f4837bc 100644
          final List<NativeActorLibrary.Layer> selected = new ArrayList<>();
          for (final var layer : layers) {
              final Map<String, byte[]> files = new LinkedHashMap<>();
+@@ -94,7 +98,7 @@ public final class BedrockEntityResources {
+         header.add("version", version); manifest.add("header", header);
+         selected.add(new NativeActorLibrary.Layer(false, Map.of(
+                 "manifest.json", bytes(manifest), "entity/resolved.json", bytes(definition), "models/entity/resolved.json", bytes(model))));
+-        return new Definition(ResourcePackStorage.nativeActors(selected), library, identifier);
++        return new Definition(ResourcePackStorage.nativeActors(selected, library.baseGameVersion()), library, identifier);
+     }
+ 
+     /** Actor-local geometry storage paired with the complete shared animation and effect library. */
 @@ -125,5 +129,10 @@ public final class BedrockEntityResources {
  
      private static byte[] bytes(final JsonObject json) { return json.toString().getBytes(StandardCharsets.UTF_8); }
@@ -218,12 +265,38 @@ index b49b23d..f4837bc 100644
 +    }
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-index 9a394b9..7f0558a 100644
+index 9a394b9..b87194a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-@@ -39,6 +39,11 @@ final class BedrockResourceLibrary {
+@@ -11,9 +11,9 @@ import com.google.gson.JsonElement;
+ import com.google.gson.JsonObject;
+ import com.google.gson.JsonParser;
+ import com.google.gson.JsonPrimitive;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
+ import net.raphimc.viabedrock.api.resourcepack.definition.EntityDefinitions;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+-
+ import java.io.IOException;
+ import java.nio.charset.StandardCharsets;
+ import java.util.ArrayList;
+@@ -29,16 +29,25 @@ final class BedrockResourceLibrary {
+     /** Actor references inherit the verified native library before accepted pack overrides. */
+     static BedrockResourceLibrary serverActors(final BedrockResourceLibrary builtin,
+             final net.raphimc.viabedrock.protocol.storage.ResourcePackStorage stack) throws IOException {
+-        return withServerPacks(builtin, net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary
++        return withServerPacks(builtin == null ? null : builtin.forVersion(stack.getBaseGameVersion()), net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary
+                 .resources(stack.getPackStackBottomToTop(), stack::isServerPack).stream()
+                 .map(net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.Layer::resources).toList());
+     }
+ 
++    private static final int MAX_VERSION_VIEWS = 4;
+     private static final Pattern VERSION_PACK =
+             Pattern.compile("vanilla_(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:\\.(0|[1-9][0-9]*))?");
      private static final Pattern MODEL_IDENTIFIER =
              Pattern.compile("(?:[a-z0-9_.-]{1,64}:)?geometry\\.[a-zA-Z0-9_.'-]{1,128}");
++    private final BaseGameVersion baseGameVersion;
++    private final BedrockResourceLibrary vanillaSource;
++    private final Map<BaseGameVersion, BedrockResourceLibrary> versions = new LinkedHashMap<>(MAX_VERSION_VIEWS, .75F, true);
      private final List<Pack> packs;
 +    private final BedrockResourceLibrary inherited;
 +    private final Map<DefinitionKey, Map<String, Definition>> definitions = new java.util.HashMap<>();
@@ -233,15 +306,24 @@ index 9a394b9..7f0558a 100644
      private final Map<String, List<JsonObject>> models;
      private final Map<String, BedrockSoundEvent> sounds;
      private final net.raphimc.viabedrock.api.resourcepack.SoundTranslations translations;
-@@ -50,6 +55,7 @@ final class BedrockResourceLibrary {
+@@ -49,7 +58,16 @@ final class BedrockResourceLibrary {
+     }
  
      private BedrockResourceLibrary(final List<Pack> packs, final BedrockResourceLibrary builtin) throws IOException {
++        this(packs, builtin, builtin == null ? BaseGameVersion.CURRENT : builtin.baseGameVersion,
++                builtin == null ? null : builtin.vanillaSource);
++    }
++
++    private BedrockResourceLibrary(final List<Pack> packs, final BedrockResourceLibrary builtin,
++                                  final BaseGameVersion version, final BedrockResourceLibrary source) throws IOException {
++        this.baseGameVersion = version;
++        this.vanillaSource = source == null ? this : source;
          this.packs = List.copyOf(packs);
 +        this.inherited = builtin;
          final Map<String, List<JsonObject>> models = new LinkedHashMap<>();
          if (builtin != null) models.putAll(builtin.models);
          for (int index = builtin == null ? 0 : builtin.packs.size(); index < packs.size(); index++) {
-@@ -87,7 +93,11 @@ final class BedrockResourceLibrary {
+@@ -87,7 +105,11 @@ final class BedrockResourceLibrary {
          models.replaceAll((name, documents) -> List.copyOf(documents));
          this.models = Map.copyOf(models);
          this.sounds = this.readSounds();
@@ -254,7 +336,46 @@ index 9a394b9..7f0558a 100644
          final Map<String, BedrockLevelSounds.Configured> levelSounds = new LinkedHashMap<>();
          for (final Pack pack : this.packs) {
              final byte[] bytes = pack.files.get("sounds.json");
-@@ -169,6 +179,48 @@ final class BedrockResourceLibrary {
+@@ -122,6 +144,38 @@ final class BedrockResourceLibrary {
+         }
+     }
+ 
++    BaseGameVersion baseGameVersion() {
++        return this.baseGameVersion;
++    }
++
++    static BedrockResourceLibrary empty(final BaseGameVersion version) throws IOException {
++        return new BedrockResourceLibrary(List.of(), null, version, null);
++    }
++
++    /** Select before merging server packs, whose resources remain independent of the vanilla cutoff. */
++    synchronized BedrockResourceLibrary forVersion(final BaseGameVersion version) throws IOException {
++        if (this.inherited != null) {
++            throw new IllegalStateException("Select vanilla resources before server overrides");
++        }
++        if (this.vanillaSource != this) {
++            return this.vanillaSource.forVersion(version);
++        }
++        if (this.baseGameVersion.equals(version)) {
++            return this;
++        }
++        final var cached = this.versions.get(version);
++        if (cached != null) {
++            return cached;
++        }
++        final var selected = new BedrockResourceLibrary(this.packs.stream()
++                .filter(pack -> BaseGameVersion.vanillaLayer(pack.name).compareTo(version) <= 0).toList(), null, version, this);
++        if (this.versions.size() == MAX_VERSION_VIEWS) {
++            this.versions.remove(this.versions.keySet().iterator().next());
++        }
++        this.versions.put(version, selected);
++        return selected;
++    }
++
+     static BedrockResourceLibrary withServerPacks(final BedrockResourceLibrary builtin, final List<Map<String, byte[]>> serverPacks) throws IOException {
+         final List<Pack> packs = new ArrayList<>();
+         if (builtin != null) packs.addAll(builtin.packs);
+@@ -169,6 +223,56 @@ final class BedrockResourceLibrary {
          return this.packs.stream().map(Pack::name).toList();
      }
  
@@ -285,6 +406,14 @@ index 9a394b9..7f0558a 100644
 +            version.add(0);
 +            version.add(0);
 +            header.add("version", version);
++            if (packName(pack.name)) {
++                final var cutoff = BaseGameVersion.vanillaLayer(pack.name);
++                final var minimum = new JsonArray();
++                minimum.add(cutoff.major());
++                minimum.add(cutoff.minor());
++                minimum.add(cutoff.patch());
++                header.add("min_engine_version", minimum);
++            }
 +            manifest.add("header", header);
 +            content.putString("manifest.json", manifest.toString());
 +            result.add(new net.raphimc.viabedrock.api.resourcepack.ResourcePack(content));
@@ -303,7 +432,7 @@ index 9a394b9..7f0558a 100644
      byte[] file(final String path) throws IOException {
          BedrockBuiltinAssets.validPath(path);
          for (int index = this.packs.size() - 1; index >= 0; index--) {
-@@ -261,16 +313,37 @@ final class BedrockResourceLibrary {
+@@ -261,16 +365,37 @@ final class BedrockResourceLibrary {
          return definitions.getFirst();
      }
  
@@ -344,7 +473,7 @@ index 9a394b9..7f0558a 100644
                      final JsonObject definitions = document.getAsJsonObject(field);
                      if (definitions == null) continue;
                      final String version =
-@@ -293,7 +366,9 @@ final class BedrockResourceLibrary {
+@@ -293,7 +418,9 @@ final class BedrockResourceLibrary {
                  if (resolved.size() > 4096)
                      throw new IOException("Too many actor animation resources");
              }
@@ -355,7 +484,7 @@ index 9a394b9..7f0558a 100644
          } catch (RuntimeException invalid) {
              throw new IOException("Invalid actor animation resource", invalid);
          }
-@@ -438,6 +513,8 @@ final class BedrockResourceLibrary {
+@@ -438,6 +565,8 @@ final class BedrockResourceLibrary {
          }
      }
  
@@ -364,12 +493,43 @@ index 9a394b9..7f0558a 100644
      record Definition(JsonObject value, String formatVersion) {}
  
      private record Pack(String name, Map<String, byte[]> files) {}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java
+index e274777..d1dcc23 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java
+@@ -30,17 +30,20 @@ final class BedrockServerResources {
+ 
+     static synchronized BedrockResourceLibrary library(final ResourceManager resources, final BedrockBuiltinAssets.Contents builtin) throws IOException {
+         final long generation = GENERATION.get();
+-        final var layers = BedrockAcceptedResources.layers(resources);
++        final var archive = BedrockAcceptedResources.archive(resources)
++                .orElseThrow(() -> new IOException("No accepted native world resource context"));
++        final var layers = archive.layers();
+         final var cached = snapshot;
+-        if (cached != null && cached.generation == generation && cached.layers == layers && cached.builtin == builtin) return cached.library;
++        if (cached != null && cached.generation == generation && cached.archive == archive && cached.builtin == builtin) return cached.library;
+         final List<Map<String, byte[]>> packs;
+-        if (cached != null && cached.generation == generation && cached.layers == layers) packs = cached.packs;
++        if (cached != null && cached.generation == generation && cached.archive == archive) packs = cached.packs;
+         else packs = NativeActorLibrary.effects(layers);
+-        final var library = BedrockResourceLibrary.withServerPacks(builtin == null ? null : builtin.library(), packs);
+-        if (GENERATION.get() == generation) snapshot = new Snapshot(generation, layers, builtin, packs, library);
++        final var vanilla = builtin == null ? BedrockResourceLibrary.empty(archive.version()) : builtin.library().forVersion(archive.version());
++        final var library = BedrockResourceLibrary.withServerPacks(vanilla, packs);
++        if (GENERATION.get() == generation) snapshot = new Snapshot(generation, archive, builtin, packs, library);
+         return library;
+     }
+ 
+-    private record Snapshot(long generation, List<NativeActorLibrary.Layer> layers, BedrockBuiltinAssets.Contents builtin,
++    private record Snapshot(long generation, NativeActorLibrary.Archive archive, BedrockBuiltinAssets.Contents builtin,
+                             List<Map<String, byte[]>> packs, BedrockResourceLibrary library) {}
+ }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
 new file mode 100644
-index 0000000..e2661d0
+index 0000000..eed87fa
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,37 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -379,6 +539,7 @@ index 0000000..e2661d0
 +
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
 +import net.raphimc.viabedrock.protocol.provider.BuiltinResourcePackProvider;
 +
 +import java.io.IOException;
@@ -397,8 +558,8 @@ index 0000000..e2661d0
 +    }
 +
 +    @Override
-+    public List<ResourcePack> load(final UserConnection user) throws IOException {
-+        return this.library.load().resourcePacks();
++    public List<ResourcePack> load(final UserConnection user, final BaseGameVersion version) throws IOException {
++        return this.library.load().forVersion(version).resourcePacks();
 +    }
 +
 +    @FunctionalInterface
@@ -406,6 +567,76 @@ index 0000000..e2661d0
 +        BedrockResourceLibrary load() throws IOException;
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
+index 76f93d2..ffc8d7d 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
+@@ -12,6 +12,7 @@ import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
+ 
+ import java.io.IOException;
+ import java.util.List;
++import java.util.Optional;
+ 
+ /** Actor and effect loaders share one decoded accepted archive during each resource generation. */
+ public final class BedrockAcceptedResources {
+@@ -21,19 +22,23 @@ public final class BedrockAcceptedResources {
+     private BedrockAcceptedResources() {}
+ 
+     /** Decoding accepted assets never requests authentication or a direct Bedrock connection. */
+-    public static synchronized List<NativeActorLibrary.Layer> layers(final ResourceManager resources) throws IOException {
++    public static List<NativeActorLibrary.Layer> layers(final ResourceManager resources) throws IOException {
++        return archive(resources).map(NativeActorLibrary.Archive::layers).orElse(List.of());
++    }
++
++    public static synchronized Optional<NativeActorLibrary.Archive> archive(final ResourceManager resources) throws IOException {
+         if (snapshot == null || snapshot.resources != resources) {
+             try {
+                 snapshot = new Snapshot(resources, read(resources), null);
+             } catch (IOException | RuntimeException invalid) {
+-                snapshot = new Snapshot(resources, List.of(), new IOException("Could not read accepted native resources", invalid));
++                snapshot = new Snapshot(resources, null, new IOException("Could not read accepted native resources", invalid));
+             }
+         }
+         if (snapshot.error != null) throw snapshot.error;
+-        return snapshot.layers;
++        return Optional.ofNullable(snapshot.archive);
+     }
+ 
+-    private static List<NativeActorLibrary.Layer> read(final ResourceManager resources) throws IOException {
++    private static NativeActorLibrary.Archive read(final ResourceManager resources) throws IOException {
+         final var stack = resources.getResourceStack(Identifier.fromNamespaceAndPath("viabedrock", "actor_library.bin"));
+         for (int index = stack.size() - 1; index >= 0; index--) {
+             final var resource = stack.get(index);
+@@ -42,12 +47,12 @@ public final class BedrockAcceptedResources {
+                 return NativeActorLibrary.decode(input);
+             }
+         }
+-        return List.of();
++        return null;
+     }
+ 
+     public static synchronized void clear() {
+         snapshot = null;
+     }
+ 
+-    private record Snapshot(ResourceManager resources, List<NativeActorLibrary.Layer> layers, IOException error) {}
++    private record Snapshot(ResourceManager resources, NativeActorLibrary.Archive archive, IOException error) {}
+ }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
+index da726c2..eb6c3eb 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
+@@ -25,8 +25,8 @@ public final class BedrockActorResources {
+         if (loaded) return packs;
+         loaded = true;
+         try {
+-            final var layers = BedrockAcceptedResources.layers(Minecraft.getInstance().getResourceManager());
+-            if (!layers.isEmpty()) packs = ResourcePackStorage.nativeActors(layers);
++            final var archive = BedrockAcceptedResources.archive(Minecraft.getInstance().getResourceManager());
++            if (archive.isPresent()) packs = ResourcePackStorage.nativeActors(archive.get().layers(), archive.get().version());
+         } catch (IOException | RuntimeException invalid) {
+             ViaFabricPlusBedrock.impl().logger().warn("Could not read accepted native actor resources", invalid);
+         }
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependenciesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependenciesTest.java
 new file mode 100644
 index 0000000..6ebabf6
@@ -522,10 +753,29 @@ index 0000000..6ebabf6
 +    private static byte[] bytes(final String json) { return json.getBytes(StandardCharsets.UTF_8); }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
-index f12b71a..685e7f4 100644
+index e429c80..f07a19a 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
-@@ -156,6 +156,25 @@ final class BedrockResourceLibraryTest {
+@@ -9,6 +9,7 @@ import com.google.gson.JsonParser;
+ import org.junit.jupiter.api.Test;
+ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+ 
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
+ import java.io.IOException;
+ import java.nio.charset.StandardCharsets;
+ import java.nio.file.Path;
+@@ -36,8 +37,8 @@ final class BedrockResourceLibraryTest {
+             content.putString("particles/probe.json", document.toString());
+             content.put(path + ".png", encoded.toByteArray());
+             final var pack = new net.raphimc.viabedrock.api.resourcepack.ResourcePack(content);
+-            final byte[] archive = net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.encode(List.of(pack), ignored -> true);
+-            final var layers = net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.decode(new java.io.ByteArrayInputStream(archive));
++            final byte[] archive = net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.encode(BaseGameVersion.CURRENT, List.of(pack), ignored -> true);
++            final var layers = net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.decode(new java.io.ByteArrayInputStream(archive)).layers();
+             final var resources = BedrockResourceLibrary.withServerPacks(null, layers.stream()
+                     .map(net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.Layer::resources).toList());
+             final var effect = BedrockParticleEffect.read(resources.particle("test:burst"));
+@@ -156,6 +157,25 @@ final class BedrockResourceLibraryTest {
          files.put("library/" + pack + "/" + path, json.getBytes(StandardCharsets.UTF_8));
      }
  
@@ -551,6 +801,27 @@ index f12b71a..685e7f4 100644
      @Test
      void resolvesServerParticlesTexturesAndLevelSoundsAcrossPackOverrides() throws Exception {
          final java.util.List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> packs = new java.util.ArrayList<>();
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerActorResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerActorResourcesTest.java
+index a3d9891..f40f974 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerActorResourcesTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerActorResourcesTest.java
+@@ -12,6 +12,7 @@ import com.google.gson.JsonParser;
+ import java.nio.charset.StandardCharsets;
+ import java.util.HashMap;
+ import java.util.Map;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
+ import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ import org.junit.jupiter.api.Test;
+@@ -131,7 +132,7 @@ final class BedrockServerActorResourcesTest {
+                     """.formatted(index + 1)));
+             layers.add(new NativeActorLibrary.Layer(true, files));
+         }
+-        return ResourcePackStorage.nativeActors(layers);
++        return ResourcePackStorage.nativeActors(layers, BaseGameVersion.CURRENT);
+     }
+ 
+     private static byte[] bytes(final String json) {
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java
 index 14ccd22..74c64c4 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java
@@ -593,14 +864,171 @@ index 14ccd22..74c64c4 100644
          }
      }
  
-diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java
+index 9a364b5..27a0326 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java
+@@ -12,6 +12,7 @@ import net.minecraft.server.packs.PackResources;
+ import net.minecraft.server.packs.repository.PackSource;
+ import net.minecraft.server.packs.resources.Resource;
+ import net.minecraft.server.packs.resources.ResourceManager;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
+ import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
+@@ -53,12 +54,51 @@ class BedrockServerResourcesTest {
+         assertArrayEquals(new byte[]{3}, replaced.file("textures/shared.png"));
+     }
+ 
++    @Test
++    void refreshesTheWorldVersionWithoutLeakingThePreviousVanillaResources() throws Exception {
++        final var raw = BedrockResourceLibrary.read(java.util.Map.of(
++                "library/vanilla/textures/versioned.png", new byte[]{1},
++                "library/vanilla_1.26.60/textures/versioned.png", new byte[]{9}));
++        final var builtin = new BedrockBuiltinAssets.Contents("1.26.60.5", java.util.Map.of(), java.util.Map.of(), raw);
++        final var bytes = new AtomicReference<>(archive((byte) 7, BaseGameVersion.CURRENT));
++        final var manager = resources(bytes);
++        final var latest = BedrockServerResources.library(manager, builtin);
++        assertArrayEquals(new byte[]{9}, latest.file("textures/versioned.png"));
++        final var older = BaseGameVersion.parse("1.20.0");
++        bytes.set(archive((byte) 7, older));
++        BedrockAcceptedResources.clear();
++        final var previous = BedrockServerResources.library(manager, builtin);
++        assertEquals(older, previous.baseGameVersion());
++        assertArrayEquals(new byte[]{1}, previous.file("textures/versioned.png"));
++        assertArrayEquals(new byte[]{7}, previous.file("textures/shared.png"));
++        bytes.set(archive((byte) 8, BaseGameVersion.CURRENT));
++        BedrockAcceptedResources.clear();
++        final var returned = BedrockServerResources.library(manager, builtin);
++        assertArrayEquals(new byte[]{9}, returned.file("textures/versioned.png"));
++        assertArrayEquals(new byte[]{8}, returned.file("textures/shared.png"));
++        assertArrayEquals(new byte[]{1}, previous.file("textures/versioned.png"));
++        bytes.set(archive((byte) 7, older));
++        BedrockAcceptedResources.clear();
++        assertEquals(older, BedrockServerResources.library(manager, null).baseGameVersion());
++    }
++
++    @Test
++    void refusesToGuessLatestResourcesWhenTheWorldContextIsAbsent() {
++        final var manager = (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class[]{ResourceManager.class},
++                (proxy, method, arguments) -> method.getName().equals("getResourceStack") ? List.of() : null);
++        assertThrows(IOException.class, () -> BedrockServerResources.library(manager, null));
++    }
++
+     private static byte[] archive(final byte texture) throws IOException {
++        return archive(texture, BaseGameVersion.CURRENT);
++    }
++
++    private static byte[] archive(final byte texture, final BaseGameVersion version) throws IOException {
+         final var content = new InMemoryContent();
+         content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\""
+                 + UUID.randomUUID() + "\",\"version\":[1,0,0]}}");
+         content.put("textures/shared.png", new byte[]{texture});
+-        return NativeActorLibrary.encode(List.of(new ResourcePack(content)), ignored -> true);
++        return NativeActorLibrary.encode(version, List.of(new ResourcePack(content)), ignored -> true);
+     }
+ 
+     private static ResourceManager resources(final AtomicReference<byte[]> bytes) {
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldResourceVersionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldResourceVersionsTest.java
 new file mode 100644
-index 0000000..d47b872
+index 0000000..a589612
 --- /dev/null
-+++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
-@@ -0,0 +1,126 @@
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldResourceVersionsTest.java
+@@ -0,0 +1,85 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
++import org.junit.jupiter.api.Test;
++
++import java.nio.charset.StandardCharsets;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockWorldResourceVersionsTest {
++    private static final BaseGameVersion OLDER = BaseGameVersion.parse("1.20.0");
++
++    @Test
++    void selectsTexturesSoundsAndGraphsTogetherAndCanReturnToTheLatestView() throws Exception {
++        final var raw = library();
++        assertResources(raw, 9);
++        final var older = raw.forVersion(OLDER);
++        assertResources(older, 1);
++        assertEquals(OLDER, older.baseGameVersion());
++        assertSame(raw, older.forVersion(BaseGameVersion.CURRENT));
++        assertSame(older, raw.forVersion(OLDER));
++        assertResources(raw, 9);
++        // Cache eviction cannot make a partial older view the source for a newer world.
++        for (int patch = 1; patch <= 6; patch++) raw.forVersion(new BaseGameVersion(1, 20, patch));
++        assertResources(older.forVersion(BaseGameVersion.CURRENT), 9);
++        assertResources(raw.forVersion(OLDER), 1);
++    }
++
++    @Test
++    void retainsHigherServerOverridesAndTheirWorldContext() throws Exception {
++        final var older = library().forVersion(OLDER);
++        final var merged = BedrockResourceLibrary.withServerPacks(older, List.of(resources(7)));
++        assertResources(merged, 7);
++        assertEquals(OLDER, merged.baseGameVersion());
++        assertResources(older, 1);
++        assertThrows(IllegalStateException.class, () -> merged.forVersion(BaseGameVersion.CURRENT));
++    }
++
++    private static void assertResources(final BedrockResourceLibrary library, final int value) throws Exception {
++        assertArrayEquals(new byte[]{(byte) value}, library.file("textures/versioned.png"));
++        assertArrayEquals(new byte[]{(byte) value}, library.sound("sounds/versioned.wav"));
++        assertEquals(value, library.soundDefinition("fixture.versioned").select(_ -> 0, 1, 1, false).volume());
++        final var entity = JsonParser.parseString("""
++                {"animations":{"pose":"animation.versioned"},"scripts":{"animate":["pose"]}}
++                """).getAsJsonObject();
++        final var pose = BedrockActorAnimation.read(entity, Map.of(), library).playback()
++                .sample(0, new BedrockActorAnimation.Frame(Map.of(), Map.of()));
++        assertEquals(value, pose.get("head").position().x());
++    }
++
++    private static BedrockResourceLibrary library() throws Exception {
++        final Map<String, byte[]> files = new HashMap<>();
++        resources(1).forEach((path, bytes) -> files.put("library/vanilla/" + path, bytes));
++        resources(9).forEach((path, bytes) -> files.put("library/vanilla_1.26.60/" + path, bytes));
++        return BedrockResourceLibrary.read(files);
++    }
++
++    private static Map<String, byte[]> resources(final int value) {
++        final var definitions = JsonParser.parseString("""
++                {"sound_definitions":{"fixture.versioned":{"sounds":[{"name":"sounds/versioned","volume":1}]}}}
++                """).getAsJsonObject();
++        definitions.getAsJsonObject("sound_definitions").getAsJsonObject("fixture.versioned")
++                .getAsJsonArray("sounds").get(0).getAsJsonObject().addProperty("volume", value);
++        final var position = new com.google.gson.JsonArray(); position.add(value); position.add(0); position.add(0);
++        final var head = new JsonObject(); head.add("position", position);
++        final var bones = new JsonObject(); bones.add("head", head);
++        final var animation = new JsonObject(); animation.addProperty("loop", true); animation.add("bones", bones);
++        final var animations = new JsonObject(); animations.add("animation.versioned", animation);
++        final var document = new JsonObject(); document.addProperty("format_version", "1.8.0"); document.add("animations", animations);
++        return Map.of("textures/versioned.png", new byte[]{(byte) value},
++                "sounds/versioned.wav", new byte[]{(byte) value},
++                "sounds/sound_definitions.json", definitions.toString().getBytes(StandardCharsets.UTF_8),
++                "animations/versioned.json", document.toString().getBytes(StandardCharsets.UTF_8));
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
+new file mode 100644
+index 0000000..85d180b
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
+@@ -0,0 +1,127 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -616,7 +1044,7 @@ index 0000000..d47b872
 +final class ViaFabricPlusBuiltinResourcePackProviderTest {
 +    @Test
 +    void loadsBundledImagesWithoutAnAccount() throws Exception {
-+        final var packs = new ViaFabricPlusBuiltinResourcePackProvider().load(null);
++        final var packs = new ViaFabricPlusBuiltinResourcePackProvider().load(null, BaseGameVersion.CURRENT);
 +        assertFalse(packs.isEmpty());
 +        assertTrue(packs.stream().anyMatch(pack -> pack.content().get("textures/items/bread.png") != null));
 +    }
@@ -628,7 +1056,7 @@ index 0000000..d47b872
 +            final var platform = org.mockito.Mockito.mock(net.raphimc.viabedrock.platform.ViaBedrockPlatform.class);
 +            org.mockito.Mockito.when(platform.getLogger()).thenReturn(java.util.logging.Logger.getAnonymousLogger());
 +            viaBedrock.when(net.raphimc.viabedrock.ViaBedrock::getPlatform).thenReturn(platform);
-+            stack = new ResourcePackStorage(List.of(), new ViaFabricPlusBuiltinResourcePackProvider().load(null));
++            stack = new ResourcePackStorage(List.of(), new ViaFabricPlusBuiltinResourcePackProvider().load(null, BaseGameVersion.CURRENT));
 +        }
 +        assertNotNull(stack.getModels().getEntityModel("geometry.shield"));
 +        final var materials = com.viaversion.viafabricplus.bedrock.render.BedrockActorMaterialDefinitions.load(stack);
@@ -646,7 +1074,7 @@ index 0000000..d47b872
 +    @Test
 +    void reportsDamagedBundledResources() {
 +        final var provider = new ViaFabricPlusBuiltinResourcePackProvider(() -> { throw new IOException(); });
-+        assertThrows(IOException.class, () -> provider.load(null));
++        assertThrows(IOException.class, () -> provider.load(null, BaseGameVersion.CURRENT));
 +    }
 +
 +    @Test
@@ -688,7 +1116,7 @@ index 0000000..d47b872
 +                "library/vanilla/textures/items/shared.png", new byte[] {1},
 +                "library/vanilla_1.26.51/textures/items/shared.tga", new byte[] {2}));
 +        final var provider = new ViaFabricPlusBuiltinResourcePackProvider(() -> library);
-+        final var builtin = provider.load(null);
++        final var builtin = provider.load(null, BaseGameVersion.CURRENT);
 +        final var stack = new ResourcePackStorage(List.of(), builtin);
 +        assertArrayEquals(new byte[] {2}, selectedImage(stack, "textures/items/shared"));
 +
@@ -709,7 +1137,7 @@ index 0000000..d47b872
 +            files.put("library/vanilla/" + folder + "/native.json", definition);
 +        files.put("library/vanilla/materials/entity.material", definition);
 +        files.put("library/vanilla_1.26.10/attachables/native.json", definition);
-+        final var packs = new ViaFabricPlusBuiltinResourcePackProvider(() -> BedrockResourceLibrary.read(files)).load(null);
++        final var packs = new ViaFabricPlusBuiltinResourcePackProvider(() -> BedrockResourceLibrary.read(files)).load(null, BaseGameVersion.CURRENT);
 +        assertEquals(2, packs.size());
 +        for (final String folder : List.of("models", "animations", "animation_controllers", "render_controllers"))
 +            assertArrayEquals(definition, packs.getFirst().content().get(folder + "/native.json"));
@@ -725,5 +1153,26 @@ index 0000000..d47b872
 +        return null;
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java
+index ac26125..4fc603f 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java
+@@ -11,6 +11,7 @@ import net.minecraft.server.packs.PackResources;
+ import net.minecraft.server.packs.repository.PackSource;
+ import net.minecraft.server.packs.resources.Resource;
+ import net.minecraft.server.packs.resources.ResourceManager;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
+ import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
+@@ -98,7 +99,7 @@ class BedrockAcceptedResourcesTest {
+         }
+         upper.put("textures/shared.png", new byte[]{texture});
+         final var packs = List.of(new ResourcePack(lower), new ResourcePack(upper));
+-        return new AtomicReference<>(NativeActorLibrary.encode(packs, pack -> pack == packs.getLast()));
++        return new AtomicReference<>(NativeActorLibrary.encode(BaseGameVersion.CURRENT, packs, pack -> pack == packs.getLast()));
+     }
+ 
+     private static Resource resource(final PackSource source, final AtomicReference<byte[]> bytes, final AtomicInteger opens) {
 -- 
 2.56.0

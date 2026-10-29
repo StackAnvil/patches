@@ -317,7 +317,9 @@ public final class ReplaySelfTest {
             Types.VAR_INT.writePrimitive(packet, 63); BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(packet, 1);
             BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(packet, 1); packet.writeByte(0); BedrockTypes.UUID.write(packet, uuid);
             BedrockTypes.VAR_LONG.writePrimitive(packet, uniqueId);
-            for (int field = 0; field < 3; field++) BedrockTypes.STRING.write(packet, "");
+            for (String value : List.of("Replay player", "123456789", "playfab-player", "platform-player")) {
+                BedrockTypes.STRING.write(packet, value);
+            }
             packet.writeIntLE(0); BedrockTypes.SKIN.write(packet, appearance(geometry)); packet.writeZero(7);
             return new PacketJournal.Entry(true, 0, ReplayPackets.bytes(packet));
         } finally { packet.release(); }

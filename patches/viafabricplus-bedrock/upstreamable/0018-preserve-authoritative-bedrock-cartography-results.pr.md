@@ -88,3 +88,11 @@ Taking the result consumes one paper and receives the server's final map UUID wi
 Replacing paper with a glass pane displays the native lock image and caption.
 This verifies these direct previews with accepted matching server images.
 Further lock result reconciliation and complete operations remain open.
+
+## World-versioned fallback images
+
+Cartography image loading now uses the selected native world library.
+Accepted server images retain their existing priority. This removes the
+remaining raw-latest bundle lookup from the in-game cartography fallback.
+The shared resource-version fixtures cover selection; a native graphical
+comparison of older-template cartography remains pending.

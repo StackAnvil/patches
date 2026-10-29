@@ -486,3 +486,72 @@ GUI actor extraction keeps its own resources and selection scopes when world hel
 A GUI portrait does not inherit the held-item material route or assume the world item's verified UV scale.
 The pipeline guard rejects glint without explicit draw inputs.
 The [held-item checkpoint](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) leaves native GUI glint unverified.
+
+## Bitmap fonts for Bedrock 26.60
+
+The licensed resource provider retains bitmap pages and layout JSON beside TrueType fonts.
+The shared core converter selects each texture with its own pack metadata and exports the 449-entry extended map.
+Legacy replacements retain their layout and limit the active extension pages.
+The provider regression covers licensed resources, storage admission, conversion, and reuse of the unchanged library.
+
+`BedrockBitmapFont` keeps native page coordinates in provider-owned textures.
+Unicode glyphs retain fractional advances, bearings, full-width ranges, and the distinct Hangul advance.
+The native width loader at `0x1415905b0` and matching title captures establish these metrics.
+Ordinary Unicode pages use eight logical units.
+Private-use pages E0 through F8 retain source-pixel size and their centered baseline.
+Colored source pixels remain intact.
+
+ASCII bitmap textures carry a native atlas descriptor beside their Java representation.
+The descriptor supplies the original page, cell height, and vertical offset from the texture's own Bedrock pack.
+The renderer reads both descriptor and page from the winning converted texture's own pack.
+A Java texture override without a native descriptor retains its Java provider.
+Native quads keep original cell bounds and page dimensions while preserving existing bitmap advances.
+The bitmap edge inset scales in the native 128-unit atlas coordinate space.
+Upper UV edges normalize the inset extent before adding the cell origin, matching the original glyph writer's float operation order.
+A regression against native `0x141590f60` records fails with absolute-edge subtraction and passes with this order.
+
+Each provider uploads its page on the first glyph bake and shares that texture across its glyphs.
+Retirement releases the texture, or the CPU image if no glyph required an upload.
+Off-thread retirement schedules disposal on the client executor and releases the page only once.
+Distinct texture identities separate retired providers from replacements during reload.
+Regressions cover page coordinates, retained padding, pack ownership, missing pages, texture resolution, disposal, and use after retirement.
+Conversion cache format 10 regenerates packs that lack the retained pages and descriptors.
+
+Labels apply the measured ten-unit line advance and retain fractional glyph advances.
+Labels add the native one-unit vertical inset and snap aligned origins to their font-size grid in physical space.
+Fractional grid positions remain intact until glyph submission.
+The native viewport scale remains independent of Java GUI scale.
+The sixteen fixed-label legacy controls cover small, normal, large, and extra-large fonts at whole, quarter, half, and three-quarter positions.
+
+Matching native 1.26.60.5 captures use protocol 2225 and BDS 1.26.60.6 at 1280 × 720.
+The current-font fixture contains eight extended-language labels and eight whole-label Unicode fallback labels.
+These comparisons cover fixed label bounds and glyph masks, rather than whole frames.
+
+### Native GPU sampling and edge coverage
+
+Native 1.26.60.5 captures reproduce all sixteen current-font masks at both UI scales and sixteen legacy masks at scale 2.
+Local positions use half floats, and atlas origins use a 65536 scale before unsigned-normalized decoding with 65535.
+The shader generates full-cell UVs and clamps samples inside half-texel bounds.
+Unicode uses linear sampling with `BitmapSmooth` at UI scale 1 and point sampling at scale 2.
+Bitmap pages use point sampling at both scales.
+
+The GUI renderer retains those inputs, original atlas RGBA, and the native sampling transfer.
+World text keeps its existing renderer, and styled glyph metrics retain their existing owner.
+
+A captured Java draw isolated the remaining legacy regression to primitive coverage in the offscreen GUI target.
+Its post-vertex inputs reproduce sixteen legacy masks on a default EGL surface, but fourteen in a texture framebuffer.
+Replacing the fragment shader with a solid color retains the six missing top-edge pixels.
+Coordinates snap to the native nearest-even n.8 grid before interpolation.
+A one-step upward adjustment on that grid restores top-edge coverage.
+Derivative compensation preserves the original texture samples across that adjustment.
+The [D3D11 rasterization specification](https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm) describes the native subpixel precision and edge rule.
+The regression uses a texture framebuffer and fractional positions at both Java GUI scales.
+GPU checks pass on Intel hardware and software rendering.
+
+Direct and ViaProxy current-font comparisons match fifteen of sixteen labels at UI scale 1 and all sixteen at scale 2.
+Both routes retain these results across thirteen controls, including both Java GUI scales and resource reload.
+One red pixel in a small scale-1 label remains different.
+Both routes retain all sixteen legacy scale-2 masks across seven controls each, including both Java GUI scales and resource reload.
+Four final-build recordings finish normally after 75 seconds each.
+Broader viewports and TrueType pixel comparisons remain open.
+Licensed pages, native reads, packet journals, and GPU captures remain private.

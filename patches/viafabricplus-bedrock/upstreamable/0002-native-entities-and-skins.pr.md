@@ -790,3 +790,181 @@ Ordinary actor and GUI lookup still rejects glint without those inputs.
 The same cached definition supports both lookup domains without a rejected lookup hiding the held material.
 World held draws retain the Iris program and native buffer ownership verified in the preceding shader work.
 The [equipped check](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) records the tested artifact, actual enchanted shield, and remaining limits.
+
+
+## Native color-mask families, October 28, 2026
+
+ColorMask and AlphaTestColorMask now accept an explicit immutable tint for
+each prepared draw. Texture alpha controls RGB tint strength and multiplies
+output alpha. The alpha-test family discards only zero texture alpha before
+tinting. Ordinary cutout materials retain their 0.5 threshold.
+The native cat material also disables alpha writes. Preserve that state as
+an RGB-only color target and include it in the pipeline cache key.
+
+Matching 26.60 shader execution supplies 1,344 fragment controls.
+The GPU tests draw each control with RGBA and RGB-only write masks, covering
+partial alpha, zero tint alpha, overlay, lighting, fog, and depth.
+All 32 focused material, GPU, palette, and world-appearance tests pass without skips.
+These controls complement the native unlit palette and alpha-band captures.
+
+The native palette uses pure white for index zero. Missing versioned color
+context and unverified indices retain fallback. Tint combined with glint,
+emission, or masked multitexture remains unsupported. Existing GUI coverage
+keeps its separate pipeline policy. This work does not establish skin armor
+masking, Character Creator tint behavior, or native GUI tint parity.
+
+Iris receives sampled tint from the current prepared draw before binding its
+replacement program. Primary texture wrappers preserve sampler-helper
+identity and use the native source beneath pack sampler overrides.
+Source-alpha coverage remains separate from tint alpha. Nested Java draws
+and failed draws restore the previous context.
+Transformed pack and fallback programs each pass 672 original native
+fragment controls. All 38 focused tests pass without skips.
+The [coverage record](../../../docs/bedrock-coverage.md#native-actor-palette-inputs-and-versioned-cat-draws-october-28-2026)
+records live swatch measurements and the remaining acceptance limits.
+
+The final full add-on build passes 1,288 tests, with 134 optional skips and
+no failures or errors. Core passes 2,056 tests with 176 optional skips.
+The focused run executes all 38 selected tests without skips, including
+the licensed bundled-cat regression and native fragment comparisons.
+
+A final live direct session activates Iris 1.11.7 and Complementary Reimagined
+r5.9.3 with the rebuilt add-on. The native tint and ordinary controls both
+render. The recording reaches spawn and exits normally without missing
+native pipeline overrides or shader compilation errors. This establishes
+runtime admission and binding, with pack-defined lighting still in effect.
+
+## Classic custom skin armor comparison, October 28, 2026
+
+Matching native 1.26.60.5 and direct Java recordings show the same captured classic custom skin on a controlled remote player.
+Both clients receive the same geometry, texture, player identity, position, and equipment descriptors through a private relay.
+Seven phases cover no armor, each armor slot separately, all armor, and removal of all armor.
+
+The helmet covers the floating hat. Chest armor covers the upper jacket and shoulder projections while the lower cuffs remain visible.
+Leggings cover the belt and leg straps; boots cover the orange footwear while upper leg details remain visible.
+Both clients restore the original visible skin layers after removal.
+This fixture shows matching coverage and does not justify a renderer correction.
+
+The clients use different output resolutions and apparent target sizes. Their body yaw also differs.
+These captures establish visible coverage for this classic geometry, not pixel equality or natural movement parity.
+Character Creator categories, profile replacement, and native LOD texture selection remain open.
+Licensed skin data, images, and sealed packet journals remain private.
+
+## Named clothing layers beneath armor, October 28, 2026
+
+A captured classic custom model now has eleven private colored markers on the native clothing bones.
+The markers sit outside armor geometry, so their disappearance establishes hiding rather than opaque coverage.
+Native 1.26.60.5 and direct Java match all 77 bone/state conditions across seven equipment phases.
+
+Head armor hides `helmet`. Chest armor hides `bodyArmor` and both arm armor bones.
+Leggings hide both legging bones; boots hide both boot bones.
+Either leggings or boots hide both sock bones. Either chest armor or leggings hide `belt`.
+All markers disappear with full armor, and removal restores every marker.
+These results agree with the shipped armor `parent_setup` scripts and player render-controller conditions.
+The existing shared runtime supplies this behavior; this comparison requires no renderer correction.
+
+The journals contain matching serialized skins. The Java recorder confirms 2,243 submissions through `BedrockPlayerRenderer` and no rejected skins.
+The recording reaches gameplay and exits normally. Licensed skin data and images remain private.
+Different resolutions, apparent sizes, and body yaw limit pixel comparisons.
+The synthetic persona markers never established a visible unarmored baseline, so they supply no persona masking acceptance.
+
+## Native Dressing Room persona reference, October 29, 2026
+
+The native Dressing Room now supplies a visibly rendered Character Creator reference instead of an edited synthetic skin.
+Native 1.26.60.5 sends `persona=true`, a 256 × 256 body atlas, body geometry, and separate animated-face geometry.
+The face uses a two-frame 32 × 64 texture.
+The resource patch contains `default` and `animated_face`; it contains no `persona_lod` binding.
+These inputs do not justify adding a guessed LOD alias.
+
+The offline capture previously assigned a different player UUID from the one in native skin-change packets.
+Profile selection changed the Dressing Room preview while the world retained the previous appearance.
+Preserving the native UUID in the offline login makes the BDS player-list UUID match the native skin sender.
+Actual in-session Steve/Alex replacement then changes the visible world body.
+Gameplay packets remain unchanged.
+Earlier stale-profile captures and the failed per-packet UUID-routing experiment are excluded.
+
+Seven native reference scenes cover no armor, each slot, all armor, and removal.
+Native camera controls also cover Alex at 5, 20, and 40 blocks, plus Alex/Steve/Alex replacement at 40 blocks.
+These are native references for the next matching Java comparison.
+They do not yet establish hidden-layer behavior, native LOD texture selection, or Java persona parity.
+The earlier synthetic-marker controls remain excluded.
+The original selected profile is restored after capture, and licensed skin data and images remain private.
+
+## Captured persona inputs on both Java routes, October 29, 2026
+
+Direct and ViaProxy Java sessions now render the captured native Alex and Steve persona inputs.
+Both use the native reference camera position, rotation, FOV, output resolution, and physical target position.
+Seven iron-armor phases show matching visible coverage and restoration: none, each slot, all slots, and removal.
+Alex remains visible at 20 and 40 blocks. Alex/Steve/Alex replacement also changes the rendered profile at 40 blocks.
+
+The incoming complete skin records match the installed renderer records on each route, including both native persona inputs.
+The direct recorder observes 6,321 remote native-player submissions; ViaProxy observes 2,104. Neither route rejects a skin.
+Both sessions reach gameplay and finish normally.
+These controls require no skin renderer correction.
+
+The replay auditor previously consumed three identity strings in player-list entries; protocol 2225 carries four, including PlayFab identity.
+Its shared reader now consumes the complete entry tail for both local-player identification and appearance auditing.
+The binary regression fixture fails before the correction and passes afterward. Actual native and Java journals also decode successfully.
+
+Body yaw, lighting, shadows, and idle phases differ, so these captures do not establish pixel equality.
+Opaque armor coverage does not independently prove hidden-layer masking.
+The native resource patch still supplies no `persona_lod` binding; distance controls do not establish a native LOD texture switch.
+Early spawn timing and floating-position fixtures remain excluded. Licensed inputs, journals, and images remain private.
+
+## Native persona texture bindings, October 29, 2026
+
+Native 1.26.60.5 GPU captures now identify the textures used by the remote player.
+A real Java player supplies the captured persona through the public skin-change transport.
+BDS supplies the player identity and spawn.
+
+All seven Alex armor phases bind the original 256 × 256 body atlas and 32 × 64 face atlas.
+Four body draws contain 360 indices. Two face draws contain 72 indices.
+The same bindings remain at 20 and 40 blocks.
+At 40 blocks, Alex/Steve/Alex replacement selects the matching body and face textures for each profile.
+The selected textures each have one mip level. These controls show no stale profile binding.
+
+The owned outerwear persona also retains its original body and face atlases at 48 and 60 blocks.
+Persona/Steve/persona replacement selects the matching textures at 60 blocks.
+A profile change outside the tracked range also selects the correct Steve textures after re-entry.
+At 80 blocks, the paired Java journal records BDS actor removal, and native no longer retains the persona atlases.
+A simulation-distance comparison at four and eight chunks retains that boundary.
+Atlas absence after actor retirement does not establish an LOD switch.
+
+The reverse direction uses actual native Dressing Room profile changes while Java lacks the actor.
+The journal places each skin update between `RemoveActor` and `AddPlayer`.
+Alex arrives as a full 256 × 256 persona, and the restored Earth skin arrives as a 64 × 64 classic record.
+Java shows each matching profile after re-entry at 60 and five blocks.
+All nine canonical incoming skin records match installed renderer records, with zero rejected skins and 8,476 remote-player submissions.
+The 1,200-second recording finishes normally.
+These controls require no renderer correction. Distinct persona LOD resources remain unverified.
+
+The fixture uses a range of server UDP ports so both real clients remain connected.
+This fixture configuration does not establish a production transport correction.
+Cached capture notifications initially selected older frames.
+The corrected reader accepts only a newly created capture, and the earlier metadata remains excluded.
+
+Draw counts alone do not establish hidden-layer masking.
+These default personas contain no authored `persona_lod` binding and show no distance-dependent texture switch in this range.
+Other wardrobe categories and personas with distinct LOD resources still require matching native fixtures.
+No skin renderer change follows from these controls. Licensed inputs and GPU captures remain private.
+
+## Real outerwear masking beneath a chestplate, October 29, 2026
+
+A native Dressing Room fixture now equips an owned Coin Pendant outerwear piece on Alex.
+Its transmitted persona contains one cube on `bodyarmor`, alongside the existing body and animated-face geometry.
+Native 1.26.60.5 GPU captures establish hiding rather than opaque armor coverage.
+All 24 pendant vertices have positive clip-space W without armor, zero W with an iron chestplate, and positive W after removal.
+The source atlas remains bound throughout these phases.
+
+Direct Java renders the same native persona record.
+A read-only observer samples the actual rendered model after production setup.
+Ten settled samples per phase show the pendant cube visible, hidden, and visible again.
+The canonical incoming skin record matches the installed renderer record, with zero rejected skins and 7,391 remote-player submissions.
+The 300-second recording finishes normally. This outerwear case requires no renderer correction.
+
+The local fixture forwards BDS discovery replies to the native client's discovery port.
+It preserves those replies and subsequent signaling bytes. Gameplay packets remain unchanged.
+A failed external-server attempt supplies no acceptance evidence.
+An early Java capture during shutdown and phase labels across transitions remain excluded.
+Projection, lighting, and idle poses differ, so these controls do not establish pixel equality.
+Other wardrobe categories and distinct LOD resources remain open. Licensed assets and observations remain private.

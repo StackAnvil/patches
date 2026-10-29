@@ -11902,3 +11902,430 @@ One direct case emits three input packets between wire receipt and actual client
 Comparisons therefore align the input with the observed physical application tick, not merely the first packet after wire receipt.
 Input scheduling, complete trajectories, mounted controls and ordinary Java sessions still need further verification.
 The original rollback and eating reports and the full five-area goal remain open.
+
+## Native actor palette inputs and versioned cat draws, October 28, 2026
+
+Actor-state v6 carries the native primary and secondary palette indices.
+These BYTE fields stay separate from the existing INT metadata view.
+Older payload revisions preserve their wire layout and expose unavailable color context.
+The frontend registers the v6 Fabric payload and receiver before selecting this revision.
+A real v5-only session retains Java fallback, as intended.
+
+The renderer accepts the verified ColorMask and AlphaTestColorMask families with an explicit sampled tint.
+Texture alpha controls RGB tint strength and multiplies output alpha.
+The alpha-test family discards zero texture alpha before applying tint.
+Ordinary cutouts retain their 0.5 threshold.
+Native `DisableAlphaWrite` becomes an RGB-only write mask.
+Each prepared draw owns its tint and buffer slice; material caches include the sampled tint.
+
+Native 26.60.5 and BDS 26.60.6 controls verify all 16 primary palette values on protocol 2225.
+Index zero is pure white.
+Original target shader execution supplies 1,344 fragment controls.
+GPU checks repeat these controls with RGBA and RGB-only writes, including zero tint alpha, low texture alpha, overlay, lighting, fog, and depth.
+The native material SHA-256 is `ac39dc5bf532073e54cfae29e0d5f720f27b152004ea1b60d3883a6d20f22ac6`.
+Licensed assets, packet journals, screenshots, and execution fixtures remain private.
+
+Live direct and ViaProxy sessions display the native tint fixture through the new payload revision.
+The paired native ordinary-cutout and tint controls establish matching material inputs.
+ViaProxy's opaque red sample is `(145, 38, 32)`; the native sample is `(145, 38, 31)`.
+The direct sample also measures `(145, 38, 32)`.
+The original palette sweep has a different unresolved brightness state, so it does not justify a directional-lighting change.
+These comparisons preserve the existing vertex shader.
+
+A direct session reconnects through current, 1.20.0, and current resource views in one client process.
+All three cat graphs select native draws without missing queries or material failure.
+Their script scales are 2.5, 1, and 2.5; the native actor scale remains 0.4.
+Their primary palette indices are 0, 14, and 0, matching each world's native metadata.
+The newer worlds contain an untamed cat; the older world contains a tamed cat.
+The return connection restores the current baby geometry and clears the older palette context.
+This confirms resource and material selection across sessions.
+Full pose alignment remains open: the Java cat capture shows a head-roll difference from the native reference.
+
+Iris replacement programs also compose the sampled primary tint before shader-pack shading.
+Sampler helpers retain actor identity, and pack sampler overrides do not replace the native source image.
+Source-alpha coverage stays independent of tint alpha.
+Prepared draws scope the tint across nested Java draws and restore it after failure.
+Transformed pack and fallback programs each pass 672 original native fragment controls.
+All 38 focused tests pass without skips.
+These checks establish material composition; shader-pack lighting remains pack-defined.
+
+Secondary-color visuals, authored controller colors, GUI tint parity, and tint combined with glint, emission, or masked multitexture remain unverified.
+The world-version audio comparisons below establish sample selection and the tested server-pack priority paths. Broader resource and audio comparisons remain open.
+Skin armor masking, profile/LOD fixtures, font sampling differences, and the remaining movement/rendering comparisons stay open.
+
+The full build passes with 2,056 core tests and 1,288 add-on tests, including the new Iris composition controls.
+Core skips 176 optional tests; the add-on skips 134. Neither suite reports failures or errors.
+The bundle also builds successfully.
+A final direct recording activates Iris 1.11.7 and Complementary Reimagined r5.9.3 with the rebuilt add-on.
+The tint and ordinary controls both render. The session reaches spawn and exits normally without missing pipeline overrides or shader compilation errors.
+This verifies runtime admission and binding, while retaining the stated visual and lighting limits.
+
+## Native cat engine variables, October 28, 2026
+
+The native world adapter now binds the cat's engine variables before sampling its authored graph.
+Missing `variable.state` kept the graph in its initial lying state, including the current baby's fixed head roll.
+The matching 26.60 producer selects sneaking, sprinting, sitting, ordinary movement, and resting as states zero through four.
+Flag priority remains sneaking, sprinting, sitting, then resting.
+
+A cat-owned tick state advances body and tail rest values independently of rendering.
+Their native increments are 0.15 and 0.08 when resting, and minus 0.22 and minus 0.13 otherwise.
+Values clamp to their native endpoints. Render sampling interpolates previous/current values without advancing the tick state.
+A new native lifetime clears interpolation. Ordinary Java cats retain their original behavior.
+
+Nearby-player lookup uses the native physical width and height, scaled by actor metadata.
+It expands the resulting float box by two on each axis.
+Authored picking boxes cannot change this animation input. Missing or retired physical dimensions retain fallback.
+Production adapter tests cover sleeping-player detection, dimension ownership, and immutable earlier inputs.
+
+The 1.26.60.5 executable SHA-256 is `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`.
+Producer `142c18730` selects state and render interpolation; `UpdateLieDownAmountSystem` registers tick leaf `146965fd0`.
+Original execution covers all 16 state combinations and 72 bounded tick inputs.
+A 39-tick rest/return history supplies another 156 render samples.
+State selection uses a supplied actor-flag callback. Tick and interpolation controls execute the original arithmetic without substitution.
+These boundaries do not establish native scheduler ordering.
+
+A local relay supplies controlled pose flags to real native and Java clients.
+It preserves the server's actor identity, age, scale, resources, and movement.
+Both current and 1.20.0 worlds receive standing, sneaking, sprinting, sitting, resting, and return controls.
+The sealed journals confirm all five states with the baby flag in all four recordings.
+All 12 direct observations keep native rendering active, without missing queries or material failure.
+The standing head roll clears. Body and tail values reach one during rest and return to zero afterward.
+
+A fresh ViaProxy run uses the final artifact with the physical-dimension correction.
+Its observer confirms width 0.6, height 0.7, native rendering, and body/tail values of zero, one, and zero.
+The recorder exits normally. The owned relay closes and preserves its journal.
+The full build passes 2,056 core tests and 1,293 add-on tests, with 176 and 134 optional skips respectively.
+Neither suite reports failures or errors. All new cat regressions execute, including the native instruction controls.
+The patch stack and bundle also build successfully.
+
+These controls establish the engine-variable binding and resource-dependent pose selection.
+They do not establish natural AI production, exact head-target timing, shadows, or sleeping-player query parity.
+The forced current baby rest clips below the fixture floor on both clients; natural rest positioning needs a separate control.
+One native reference uses a cached font pack that does not re-export. Its wire cutoff and vanilla actor inputs remain recorded.
+The world-version audio comparisons below cover sample selection, server WAV priority, and override retirement. The other unfinished goal areas remain open.
+
+## World-version audio selection, October 28, 2026
+
+Native 1.26.60.5 and direct Java captures select splash/explosion/splash samples across current/1.20.0/current connections in one process per client.
+The event remains `cauldron.explode`; the world cutoff changes its vanilla sound definition.
+Correlations exceed 0.995 against decoded bundled samples. Sealed connection journals retain the cutoffs and requests.
+This establishes actual PCM selection beyond the earlier resource-library probes.
+
+Two server packs supply 500 Hz and 1320 Hz WAV files at `sounds/random/splash`.
+Both override the sound definition, and the matching vanilla resource uses FSB.
+Native and direct Java select the first pack's 500 Hz WAV in current and older worlds.
+ViaProxy accepts the 1.20.0 archive context and selects the same sample.
+Native and direct reconnects without those packs restore the vanilla splash sample.
+All four Java acceptance recordings finish normally.
+
+The private PipeWire graph contains one null sink and no hardware devices or discovery modules.
+Only copied client profiles enable playback. The original native profile remains unchanged and muted.
+Licensed samples, authored fixtures, PCM, packet journals, and client profiles remain private.
+
+These comparisons establish sample identity, the tested pack priority across formats, and removal of server overrides.
+They do not establish equal gain, attenuation, captions, looping, or broader mixing behavior.
+Complete pose alignment, font sampling, skins, and the remaining movement/rendering comparisons remain open.
+
+## Classic custom skin armor comparison, October 28, 2026
+
+Matching native 1.26.60.5 and direct Java recordings show the same captured classic custom skin on a controlled remote player.
+Both clients receive the same geometry, texture, player identity, position, and equipment descriptors through a private relay.
+Seven phases cover no armor, each armor slot separately, all armor, and removal of all armor.
+
+The helmet covers the floating hat. Chest armor covers the upper jacket and shoulder projections while the lower cuffs remain visible.
+Leggings cover the belt and leg straps; boots cover the orange footwear while upper leg details remain visible.
+Both clients restore the original visible skin layers after removal.
+This fixture shows matching coverage and does not justify a renderer correction.
+
+The clients use different output resolutions and apparent target sizes. Their body yaw also differs.
+These captures establish visible coverage for this classic geometry, not pixel equality or natural movement parity.
+Character Creator categories, profile replacement, and native LOD texture selection remain open.
+Licensed skin data, images, and sealed packet journals remain private.
+
+## Complete 26.60 HUD inventory snapshots, October 28, 2026
+
+BDS 1.26.60.6 sends 57 entries for HUD container 124. The older protocol-2193 fixture sends 54.
+The version patch now accepts the complete update instead of rejecting it.
+A regression retains every slot and accepts later updates to the appended slots.
+The existing cursor snapshot fixture now uses the current count. Armor handling stays unchanged.
+
+The standalone patch passes all 22 tests and checkstyle without setup.
+The full core suite reports 2,057 tests with 176 optional skips; the add-on reports 1,293 with 145 optional skips.
+Neither suite reports failures or errors. CubeConverter passes all 21 tests.
+The rebuilt add-on embeds the same HUD class as the rebuilt core, and the bundle rebuilds successfully.
+A fresh direct Java recording reaches gameplay, receives all 57 entries without a HUD rejection, and exits normally.
+
+## Native clothing-layer and default persona controls, October 28, 2026
+
+Eleven colored markers extend beyond a classic custom model's armor bounds.
+Native and direct Java match all 77 visibility conditions across no armor, each slot, full armor, and removal.
+The markers establish actual hiding, including the combined sock and belt conditions.
+The existing armor `parent_setup` scripts and player render-controller rules produce the matching result.
+The Java recorder confirms 2,243 native player renderer submissions, matching serialized skin data, and no rejected skins.
+Its 90-second recording exits normally.
+
+Default Alex and Steve use production-assembled 26.60 assets and distinct recipe hashes.
+Native and direct Java show Alex/Steve/Alex at 5, 20, and 40 blocks, then replace the near texture correctly.
+Pixel measurements distinguish green and cyan shirts at each distance.
+The recorder confirms 6,948 native player renderer submissions and matching installed skin hashes.
+Its 300-second recording exits normally. Seven armor phases also show matching coverage and restoration.
+These default coverage images alone do not establish individual clothing-layer hiding.
+
+No runtime correction follows from the passing cases.
+The custom persona marker attempts never supplied a visible unarmored baseline, so their masking result remains unproven.
+Native LOD selection and texture bindings also remain unverified.
+Different resolutions, apparent sizes, and body yaw limit frame comparisons.
+The original native options file remains unchanged; test clients and relays stop after recording.
+Licensed assets, skin data, images, and journals remain private.
+
+The [classic skin notes](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md#named-clothing-layers-beneath-armor-october-28-2026)
+and [persona notes](../patches/viafabricplus-bedrock/upstreamable/0006-render-character-creator-geometry-and-face-animations.pr.md#default-persona-replacement-in-2660-october-28-2026) retain the scope and remaining limits.
+
+
+## Bitmap label pixel-grid comparison, October 28, 2026
+
+Native Bedrock 1.26.60.5, protocol 2225, supplies a sixteen-label reference at 1280 × 720 and GUI scale 2.
+The accepted server pack contains a legacy bitmap atlas without layout metadata.
+Four font sizes each use whole, quarter, half, and three-quarter label positions.
+
+The old renderer produces vertical drift and extra ink columns at fractional positions.
+The shared UI renderer now applies the native one-unit vertical inset and snaps each aligned line origin on the font-size pixel grid.
+A final physical-pixel snap also handles the smallest font.
+Glyph advances and authored line spacing retain their fractional values.
+
+All sixteen corrected glyphs match native bounds, ink counts, and normalized pixel masks.
+Both Java recordings reach gameplay and finish normally.
+Connected-component comparison excludes unrelated tutorial text and world pixels.
+The regression uses the sixteen native coordinate cases.
+The full stack build reports 2,057 core cases and 1,294 add-on cases without failures or errors.
+Optional skips total 176 and 145 respectively.
+The fresh bundle includes the corrected implementation.
+
+The reference covers unshadowed legacy bitmap labels at the stated scale.
+Extended-font origins, other viewport scales, and TrueType pixel comparisons remain open.
+Native LOD selection remains a separate open skin requirement.
+Licensed assets and raw evidence remain private.
+
+
+## Extended bitmap and Unicode sampling limits, October 28, 2026
+
+A second sixteen-label fixture removes the legacy atlas override and uses the current vanilla font resources.
+Eight labels use `AÀΩ`; eight use `AἀA` to select whole-label Unicode fallback.
+Each text spans four font sizes and two fractional positions.
+The official client is 1.26.60.5, with protocol 2225 and BDS 1.26.60.6.
+
+At native UI scale 2 and 1280 × 720, the accepted add-on matches fourteen label bounds and pixel masks.
+All eight extended-font labels match.
+The two half-size Unicode labels retain a horizontal sampling difference.
+Normal, large, and extra-large Unicode labels match.
+
+At native UI scale 1, ten of sixteen labels match.
+Small labels and normal-size Unicode fallback retain sampling differences.
+The native capture uses 1280 × 720 with GUI offset -1; Java uses 854 × 480 with automatic native scale 1.
+Only fixed top-left label glyphs are compared across these window sizes.
+The comparison covers neither whole frames nor world poses.
+A toast-obscured Java frame and an ignored native window-resize attempt are excluded.
+
+The native Unicode glyph writer starts UVs at the cell edge and insets the upper edge.
+An experimental sampling change matches all sixteen scale-2 labels but leaves the scale-1 differences unresolved.
+That candidate remains private and is excluded from the patch stack and restored bundle.
+Further work must trace the scale-dependent rasterization before changing the shared sampling rule.
+The accepted legacy-atlas position fix remains covered by its sixteen matching scale-2 controls.
+Both accepted Java comparison recordings finish normally.
+Bitmap-font acceptance remains open.
+
+### Matching viewport and atlas controls, October 29, 2026
+
+The follow-up uses 1280 × 720 for both clients and an explicit native UI scale of 1.
+The accepted add-on still matches ten of sixteen labels.
+The earlier window-size difference does not explain the remaining sampling differences.
+The fixture contains the same HUD labels and no font overrides.
+
+A private UV adjustment retains ten matches at native UI scale 1 and fourteen at scale 2.
+Java GUI scales 1 and 2 produce the same results at each native UI scale.
+The UV adjustment alone does not resolve the differences.
+
+Another private probe preserves the original atlas coordinates, dimensions, and upper-edge inset instead of repacking glyphs into Java's font atlas.
+With the existing origin rule, it matches eleven labels at native UI scale 1 and all sixteen at scale 2.
+Five scale-1 labels still differ.
+Five alternative origin rules reduce the match count at both native UI scales.
+These controls cover glyph bounds and exact pixel masks, rather than whole frames.
+Three repeated captures at each scale retain the same result.
+The final 180-second Java recording reaches gameplay and finishes normally.
+
+The original native glyph writer retains fractional positions and uses different upper-edge insets for bitmap and Unicode cells.
+The native tessellator stores float positions and UVs.
+Those instructions do not establish the complete label transform or final rasterization rule.
+Both private rendering probes remain excluded from the patch stack and bundle.
+The world pack list and source settings return to their original bytes after the controls.
+The bitmap-font area remains open.
+
+### Unicode atlas sampling correction, October 29, 2026
+
+The production Unicode provider now retains each converted page as one texture, with its original cell coordinates and native upper-edge inset.
+Java's per-glyph atlas packing previously changed the sampled columns of half-size Unicode labels.
+Provider retirement releases the texture, and distinct identities separate retired and replacement providers during reload.
+Focused regressions cover page coordinates at three resolutions, shared uploads, disposal, invalid grids, and use after retirement.
+Off-thread retirement schedules disposal on the client executor and releases the page only once.
+
+All sixteen scale-2 labels now match native bounds and exact pixel masks.
+This includes the two half-size Unicode labels that previously differed.
+Repeated captures and a live resource reload retain these matches at Java GUI scales 1 and 2.
+A chat-warning toast obscures one early frame, which is excluded.
+
+At native UI scale 1, ten of sixteen labels still match.
+The six remaining differences cover small labels and normal-size Unicode labels.
+The bitmap-atlas and alternative-origin probes remain private.
+
+Two fresh legacy-atlas captures retain all sixteen native scale-2 matches at Java GUI scale 1.
+The current-font and legacy recordings finish normally after 180 and 60 seconds respectively.
+The current-font recording includes a live resource reload and logs no rendering errors.
+
+The full build passes 2,071 core cases and 1,303 add-on cases, with no failures or errors.
+Bitmap-font acceptance remains open for scale-1 sampling.
+
+### Original bitmap pages and pack ownership, October 29, 2026
+
+The converter now retains each original ASCII bitmap page alongside the Java representation.
+Texture metadata carries the page, cell height, and vertical offset from the texture's own Bedrock pack.
+The client reads the descriptor and page from the winning converted texture's own pack.
+Java texture overrides without a native descriptor retain their Java provider.
+Conversion cache format 10 regenerates cached packs with these resources.
+
+Native quads retain the original cells and page dimensions, including padding that Java's representation removes or adds.
+The bitmap edge inset scales in the native 128-unit atlas coordinate space.
+Regressions cover retained pixels, metadata-only overrides, source-pack boundaries, missing pages, and doubled texture resolution.
+
+Direct and ViaProxy comparisons now match eleven of sixteen current-font labels at native UI scale 1, up from ten.
+All sixteen scale-2 labels still match at Java GUI scales 1 and 2.
+Settled captures after a live resource reload retain both results.
+The first proxy reload capture contains the fading reload overlay and is excluded.
+Five scale-1 sampling differences remain open.
+
+All sixteen legacy controls also match on both routes at native UI scale 2 and Java GUI scales 1 and 2.
+The current-font recordings finish normally after 180 seconds, and the legacy recordings finish normally after 90 seconds.
+No accepted recording logs a rendering error.
+The world pack list and source settings return to their original bytes after the controls.
+
+All builds and the modpack bundle pass.
+The core reports 2,071 cases and the add-on reports 1,305, with no failures or errors.
+Optional skips total 176 and 145 respectively.
+
+### Native UV operation order, October 29, 2026
+
+Upper glyph UV edges now normalize the inset extent before adding the cell origin.
+The original native glyph writer uses this order, which rounds differently from absolute-edge subtraction for some cells.
+A regression against its numeric records fails before the correction and passes afterward.
+
+Fresh direct and ViaProxy controls retain eleven of sixteen scale-1 matches and all sixteen scale-2 matches, including after reload.
+Both 90-second recordings finish normally without rendering errors.
+The arithmetic correction does not resolve the five remaining pixel differences.
+The full build passes 2,071 core cases and 1,306 add-on cases, with no failures or errors.
+The bundle and offline validation pass.
+
+The matching native `UIText` bitmap shader generates full-cell corner UVs, then clamps samples inside half-texel bounds.
+Live HUD bindings confirm the bitmap and Unicode cell heights and half-texel offsets.
+The updated native client reproduces all sixteen earlier scale-1 reference masks with the same fixture.
+The original glyph-writer regression does not establish this shader's final sampling behavior.
+
+A private Java probe removes only the provider's upper-edge inset, then reloads its resources.
+It reduces scale-1 matches from eleven to ten and scale-2 matches from sixteen to fourteen at both Java GUI scales.
+The 150-second recording finishes normally.
+The probe remains excluded from the patch stack and bundle.
+A complete comparison still needs the native vertex inputs and clamp behavior.
+
+## Atomic native actor attacks, October 29, 2026
+
+The matching native 1.26.60.5 capture carries a world hit in actor attacks.
+Java 26.3 supplies only an entity ID, and the previous translation sends zero coordinates.
+Supporting clients now send one negotiated attack message with the actual world pick and current actor lifetime.
+Core validates the published owner and lifetime before using the shared transaction writer.
+Proxy targets resolve to their authoritative owner without adding hull or eye offsets.
+Ordinary Java attacks remain available when the capability or matching client pick is absent.
+
+Four core regressions cover the codec, malformed frames, finite coordinates, owner identity, actor lifetime, alias removal, and capability loss.
+Three client regressions cover exact world hits, proxy ownership, unrelated picks, and absent lifetimes.
+The full builds pass 2,075 core cases and 1,309 add-on cases, with no failures or errors.
+Optional skips remain 176 and 145 respectively.
+CubeConverter passes 21 cases, ViaProxy passes four, and the bundle includes matching distributions.
+
+Each direct and matching ViaProxy control attacks an original boat, adds an occluding block, and replaces the boat at another position.
+Both routes send exactly two attacks with hits equal to their observed client picks after float conversion.
+The intervening block produces no entity attack.
+Both boats receive the native nine-to-zero hurt countdown on each route.
+An older proxy build lacks the new capability and retains the ordinary zero-hit fallback.
+
+These controls establish attack hit transport and lifetime handling.
+The separate hull-surface difference of approximately 0.0075 blocks remains open, along with broader picking geometry and block-outline comparisons.
+The full five-area implementation goal remains unfinished.
+Captures, runtime class hashes, packet journals, and licensed assets remain private.
+
+## Native physical fallback picking, October 29, 2026
+
+Five fresh native 1.26.60.5 controls cover boat top/front/side hits and armor-stand front/side hits on protocol 2225.
+Both actors use their physical box with 0.1 blocks of picking padding on each face.
+The boat metadata reports width 1.4 and height 0.455.
+Its selected top reaches Y64.555, while Java's vanilla hull reaches Y64.5625.
+
+Supporting clients now receive this fallback through the existing nonphysical picking aliases.
+The calculation uses retained scaled dimensions and the actor's native origin offset.
+Authored picking boxes retain priority, and missing dimensions retain the previous fallback.
+Physical collision remains separate.
+Capability replay updates existing actors, while clients without the native geometry capability keep their existing path.
+
+Two new model regressions cover the captured planes and invalid dimensions.
+The capability fixture also covers missing metadata, authored priority, negotiation, and unchanged physical dimensions.
+All builds and the matching bundle pass.
+Core reports 2,077 cases, the add-on reports 1,309, CubeConverter reports 21, and ViaProxy reports four.
+Core and add-on optional skips remain 176 and 145, with no failures or errors.
+
+Direct and ViaProxy recordings each send five attacks through the picking aliases.
+All five selected planes match native within 0.0001 blocks on both routes.
+The other hit components differ by up to 0.000184 blocks, so exact view-ray arithmetic remains unverified.
+Both routes preserve block occlusion.
+A separate direct control loads an existing actor, blocks its ray with stone, and restores a valid hit after removing the stone.
+Both main recordings finish normally after 150 seconds.
+
+The native pack-export observer fails during shutdown, but the sealed journal contains 14,258 complete records and all five native hit controls.
+These measurements use actor metadata and hit transactions.
+Broader picking and block-outline comparisons remain open, alongside the other five-area goal limits.
+Captures, runtime artifacts, and journals remain private.
+
+## Native font GPU comparisons, October 29, 2026
+
+Fresh native 1.26.60.5 captures reproduce all sixteen earlier current-font masks at UI scales 1 and 2.
+A matching legacy-pack capture also reproduces all sixteen earlier fixed-label masks.
+These controls use protocol 2225 and BDS 1.26.60.6 at 1280 × 720.
+
+The native vertex format stores local positions as half floats and UV origins as unsigned-normalized 16-bit values.
+Origins are encoded with a 65536 scale and decoded with 65535.
+The `UIText` shader generates full-cell corner UVs and clamps samples inside half-texel bounds.
+At UI scale 1, Unicode pages use linear sampling and the native `BitmapSmooth` color transfer.
+At scale 2, they use point sampling, as bitmap pages do at both scales.
+The material choice remains the same across all four label font sizes.
+
+The inspected Java draw retains matching top-edge positions and UVs, an identical decoded atlas, and a full-viewport scissor.
+Its isolated replay reproduces sixteen legacy masks on a default EGL surface, but fourteen in a texture framebuffer.
+A solid-color fragment shader retains the same six missing top-edge pixels, establishing a primitive-coverage difference.
+
+The GUI renderer now retains the native inputs and sampling behavior above.
+Coordinates snap to the native nearest-even n.8 grid before interpolation.
+A one-step upward adjustment on that grid selects the matching top half-pixel edge.
+Derivative compensation preserves the original texture samples.
+Explicit snapping keeps software interpolation consistent with the native rule.
+The [D3D11 rasterization specification](https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm) defines coordinate snapping, interpolation setup, and the top-left edge rule.
+An offscreen GPU regression covers both Java GUI scales, quarter-pixel origins, and positions around raster-grid rounding boundaries.
+It checks both primitive coverage and sampled color.
+The checks pass on Intel hardware and software rendering.
+World text and styled glyph metrics keep their existing behavior.
+
+Direct and ViaProxy current-font comparisons match fifteen of sixteen labels at native UI scale 1 and all sixteen at scale 2.
+Both routes retain these results across thirteen controls each, including both Java GUI scales and resource reload.
+One red pixel in a small scale-1 label remains different.
+Both routes retain all sixteen legacy scale-2 masks across seven controls each, including both Java GUI scales and resource reload.
+Four final-build recordings finish normally after 75 seconds each.
+A paused, blurred proxy run is excluded; its replacement verifies that gameplay is visible before each capture.
+
+The renderer is included in its owning UI patch.
+Broader viewport sizes and TrueType pixel comparisons remain open, alongside the other five-area goal limits.
+Captures, licensed atlases, native reads, and diagnostic builds remain private.

@@ -1,4 +1,4 @@
-From c9487f3ef950b4c71f11a2a11a81a7d104519658 Mon Sep 17 00:00:00 2001
+From f840c8db2e0fe2ffea5033ddecdb846ec95146b3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(render): reproduce native Bedrock classic lighting
@@ -22,6 +22,15 @@ This overlay incorrectly darkened the world and held items toward edges.
 Use immutable frame inputs to preserve Java refresh behavior while updating
 changed native inputs. Ordinary Java sessions retain their original renderer;
 End light-image inputs and enhanced native lighting remain outside this port.
+
+Defer Overworld air-fog blindness dimming until after night-vision RGB
+normalization. The vanilla ordering cancels the fade on its first nonzero
+frame and makes the sky jump to bright fog. Native 1.26.60.5 against
+BDS 1.26.60.6 fades back during the final second in day and night controls.
+Reuse the existing darkness factor and preserve alpha. Other fog media,
+dimensions, and the Darkness effect retain their current paths.
+Native fog colors and the precise native fade envelope still differ;
+this ordering correction does not establish complete fog parity.
 ---
  .../access/IBedrockLightmapState.java         | 14 ++++
  .../access/IBedrockLightmapWeather.java       | 11 +++
@@ -34,15 +43,16 @@ End light-image inputs and enhanced native lighting remain outside this port.
  .../MixinBedrockRenderingResources.java       | 24 ++++++
  .../render/MixinBedrockRenderingSession.java  | 22 ++++++
  .../features/render/MixinBedrockVignette.java | 28 +++++++
+ .../render/MixinBedrockVisionFog.java         | 58 ++++++++++++++
  .../light/BedrockLightmapExtractor.java       | 66 ++++++++++++++++
  .../render/light/BedrockLightmapMath.java     | 74 ++++++++++++++++++
  .../light/BedrockLightmapParameters.java      | 60 +++++++++++++++
  .../render/light/BedrockLightmapRenderer.java | 55 +++++++++++++
  .../shaders/core/bedrock_lightmap.fsh         | 49 ++++++++++++
- .../viafabricplus-bedrock.mixins.json         |  9 +++
+ .../viafabricplus-bedrock.mixins.json         | 10 +++
  .../render/light/BedrockLightmapMathTest.java | 77 +++++++++++++++++++
  .../light/BedrockLightmapParametersTest.java  | 38 +++++++++
- 19 files changed, 713 insertions(+)
+ 20 files changed, 772 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapWeather.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmap.java
@@ -54,6 +64,7 @@ End light-image inputs and enhanced native lighting remain outside this port.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingSession.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVignette.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVisionFog.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapExtractor.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapMath.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapParameters.java
@@ -413,6 +424,70 @@ index 0000000..75b1d93
 +        if (BedrockLightmapExtractor.dimension(this.minecraft) != null) ci.cancel();
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVisionFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVisionFog.java
+new file mode 100644
+index 0000000..86d0279
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVisionFog.java
+@@ -0,0 +1,58 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.llamalad7.mixinextras.sugar.Local;
++import com.llamalad7.mixinextras.sugar.Share;
++import com.llamalad7.mixinextras.sugar.ref.LocalRef;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapExtractor;
++import net.minecraft.client.Camera;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.renderer.fog.FogRenderer;
++import net.minecraft.client.renderer.fog.environment.BlindnessFogEnvironment;
++import net.minecraft.client.renderer.fog.environment.FogEnvironment;
++import net.minecraft.world.effect.MobEffects;
++import net.minecraft.world.entity.LivingEntity;
++import net.minecraft.world.level.material.FogType;
++import net.raphimc.viabedrock.protocol.data.enums.Dimension;
++import org.joml.Vector4f;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(FogRenderer.class)
++public abstract class MixinBedrockVisionFog {
++
++    @WrapOperation(method = "computeFogColor", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/fog/environment/FogEnvironment;getModifiedDarkness(Lnet/minecraft/world/entity/LivingEntity;FF)F"))
++    private float deferBlindnessDimming(final FogEnvironment environment, final LivingEntity entity, final float voidDarkness,
++                                       final float partialTick, final Operation<Float> original,
++                                       @Local(argsOnly = true) final Camera camera,
++                                       @Share("blindnessVisibility") final LocalRef<Float> visibility) {
++        final float darkness = original.call(environment, entity, voidDarkness, partialTick);
++        if (environment instanceof BlindnessFogEnvironment && entity.hasEffect(MobEffects.NIGHT_VISION)
++            && !entity.hasEffect(MobEffects.DARKNESS) && camera.getFluidInCamera() == FogType.NONE
++            && BedrockLightmapExtractor.dimension(Minecraft.getInstance()) == Dimension.OVERWORLD) {
++            // Normalizing already dimmed RGB cancels the fade as soon as a channel becomes nonzero.
++            visibility.set(1F - darkness);
++            return 0F;
++        }
++        return darkness;
++    }
++
++    @Inject(method = "computeFogColor", at = @At("TAIL"))
++    private void dimAfterNightVision(final CallbackInfo ci, @Local(argsOnly = true) final Vector4f color,
++                                    @Share("blindnessVisibility") final LocalRef<Float> visibility) {
++        final Float remaining = visibility.get();
++        if (remaining != null) {
++            final float factor = remaining * remaining;
++            color.mul(factor, factor, factor, 1F);
++        }
++    }
++
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapExtractor.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapExtractor.java
 new file mode 100644
 index 0000000..d40570b
@@ -748,10 +823,10 @@ index 0000000..2a2ae69
 +    fragColor = vec4(color, 1.0);
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index eb6bf61..fc0709b 100644
+index 5efbac3..722a9a3 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -96,6 +96,15 @@
+@@ -109,6 +109,16 @@
      "features.render.MixinBedrockNameTags",
      "features.render.MixinBedrockNameTagMetadata",
      "features.render.MixinBedrockNameTagRenderer",
@@ -764,6 +839,7 @@ index eb6bf61..fc0709b 100644
 +    "features.render.MixinBedrockLightmapExtractor",
 +    "features.render.MixinBedrockLightmap",
 +    "features.render.MixinBedrockLightmapPipelines",
++    "features.render.MixinBedrockVisionFog",
      "features.render.MixinBedrockRidingMetadata",
      "features.render.MixinBedrockRidingPosition",
      "features.render.MixinEntityRenderDispatcher",

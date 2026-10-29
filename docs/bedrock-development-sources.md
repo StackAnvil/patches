@@ -50,6 +50,7 @@ A schema update establishes wire compatibility. Each existing feature must also 
 | Animation and interaction hands | The updated codecs carry hand fields. Native offhand item restrictions still apply. |
 | Skins and player lists | PlayFab identity comes from player-list entries and reaches Java profile properties. Serialized skin data no longer carries that field. |
 | Sound updates | Decode the new tagged event union through the sound model. |
+| Vanilla resources | Apply the advertised world cutoff to metadata and native libraries. Archive format 2 carries it through ViaProxy. Native and direct Java current/older/current cat controls verify resource selection. Tint materials render through v6 actor state. Native cat engine variables now select the expected pose states. Captured audio matches sample selection and the tested server WAV priority paths. Complete pose alignment and broader resource comparisons remain pending. |
 | Chunk biomes | Consume the new override flag. Java uses received biome data because it does not run Bedrock's client biome generator. |
 | Block seating and signed audio | Spawn fields are decoded, but seating and signed content playback remain unsupported. |
 | Matchmaking and environment layers | Queue-state UI integration and attribute-layer rendering remain feature gaps. |
@@ -58,9 +59,13 @@ The changelog's collision-box JSON arrays do not require a decoder change by the
 Our block renderer consumes the server's normalized `boxes` list, rather than block-authoring JSON.
 Keep legacy authoring support separate from the network shape representation.
 
-The new bitmap atlas layout metadata is a separate rendering gap.
-The current UI font importer handles TrueType declarations, not bitmap atlas layout or extended character mapping.
-Do not claim that the protocol migration implements the changelog's font or Character Creator rendering fixes.
+Bitmap atlas conversion now reads layout metadata and the extended character map.
+Each atlas retains metadata from its own pack, including legacy behavior without metadata.
+Matching native captures establish whole-label Unicode fallback, fractional glyph metrics, and ten-unit bitmap line advances.
+Ordinary Unicode cells use eight UI units. Private-use cells retain their source-pixel size.
+The legacy-pack comparison confirms that replacing the first atlas also retires inactive vanilla extension pages.
+Text spacing and colored icons now match; a one-pixel vertical title-origin difference remains.
+The protocol migration alone does not establish font or Character Creator rendering parity.
 
 ## 26.60 behavior audit
 
@@ -113,37 +118,100 @@ Player and persona controller assets do not establish the engine's new armor mas
 
 ### Work still needed
 
-1. **Select vanilla resources by world version.**
-   `ResourcePackPackets` discards the base-game version in `ResourcePackStack`.
-   `BedrockResourceLibrary` loads every bundled vanilla overlay.
-   Actor and sound loaders also use the global latest library.
+1. **Verify vanilla resource transitions against the native client.**
+   The audit found that `ResourcePackPackets` discarded the base-game version
+   and native loaders selected every vanilla overlay.
+   The implementation now retains that version and selects metadata, textures,
+   actor graphs, and audio together before applying server overrides.
+   Native archive format 2 carries the context through ViaProxy.
+   The conversion cache includes it even when the selected file bytes match.
    Microsoft's [base-game version guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/basegameversioning)
-   says older templates must skip later vanilla resources.
-   A complete fix must select metadata, textures, actors, and audio together.
-   Filtering images alone would leave mixed-version resources.
-   A latest-world to older-template transition needs a native comparison.
-2. **Implement held trapdoor placement.**
-   The 26.60 release locks placement direction until the use control is released
-   and suppresses block interactions during that placement.
-   `InteractionPackets` forwards each Java use-on-block independently.
-   `MixinTrapDoorBlock` changes shape only. No placement-session state implements the new rule.
-   Capture direction choice, release, item changes, and interaction suppression
-   before changing outgoing requests or client prediction.
-3. **Implement bitmap font layout.**
-   `UiFonts` imports TrueType metadata. The bundled pack provider skips bitmap atlases and their layout files.
+   specifies cumulative vanilla overlay selection and independent server packs.
+   BDS 1.26.60.6 captures confirm `*` for an ordinary world and `1.20.0`
+   for an isolated template-marked world with that version.
+   Unit tests cover newer/older/newer selection and resource-manager reuse.
+   Native and direct Java controls now select matching cat resources across current/1.20.0/current connections.
+   Captured PCM confirms splash/explosion/splash sample selection through those transitions.
+   Native and direct controls retain server WAV priority above vanilla FSB resources in both versions.
+   ViaProxy accepts the older context and selects the same server WAV.
+   Native and direct reconnects without the sound packs restore the vanilla sample.
+   The [resource notes](../patches/viafabricplus-bedrock/upstreamable/0013-resolve-licensed-native-vanilla-images.pr.md#world-version-resource-selection)
+   retain the evidence scope. Complete pose alignment and broader audio comparisons remain open.
+2. **Held trapdoor placement comparisons.**
+   The core retains physical use lifetime and matches local predictions to Java sequence numbers.
+   Prediction format 2 carries the result and target-relative cursor.
+   The add-on retains the first trapdoor facing, half, and world hit until release or cancellation.
+   Temporary item-family changes preserve that state but apply the snap only to held trapdoors.
+   Empty hands restore ordinary interaction with fresh hits.
+   The existing native outline remains correct. Native bottom-face hits use approximately 0.8175.
+   Physical mouse rotation matches native facing, upper-half state, and closed state through direct Java and ViaProxy.
+   Held repeats use a 300 ms delay after the first attempt and each successful local use.
+   Failed repeats do not restart the delay.
+   Frame polling after camera movement preserves placement order before the next network tick.
+   Fresh forced-Survival native fixtures predict inventory decrements and send the remaining stack in the first placement's air phase.
+   The last block uses request ID zero and omits the empty air phase.
+   Earlier captures combined Creative client state with server Survival consumption and did not establish the Survival inventory format.
+   Native and direct Java retry one rejected first placement within the same session.
+   Direct Java and ViaProxy pause cancellation stop active sessions before physical release.
+   Fresh native and ViaProxy sessions also match repeated rejection followed by rotation without consumption.
+   After a preceding successful hold, both native and ViaProxy instead place a neighbor and consume one item.
+   Matching session history explains the earlier apparent correction mismatch.
+   Native outline and occlusion checks now recognize remote Bedrock connections through ViaProxy.
+3. **Verify bitmap font layout against native Bedrock.**
+   The importer now converts bitmap atlases, layout metadata, and Unicode fallback pages.
+   The licensed provider retains atlas images and layout files.
    The new vanilla `default8.json` requests extended mapping, height 12, and offset -3.
-   Custom atlases without their own metadata must retain legacy layout.
-   Glyph mapping and same-pack metadata ownership both need implementation.
+   The matching executable selects 449 extended entries or 256 legacy entries.
+   Custom atlases without their own metadata retain legacy layout.
+   Tests cover metadata ownership, glyph pages, texture scale, offsets, and server overrides.
+   Native 1.26.60.5 title captures establish whole-label fallback for Japanese text and U+1F00.
+   Ordinary Unicode pages use eight logical UI units, independent of texture resolution.
+   Private-use pages E0 through F8 retain their source-pixel size.
+   Mixed-language and legacy-pack renders now match glyph shapes, sizes, and spacing.
+   Native multiline and colored private-use captures verify their distinct metrics.
+   A one-pixel vertical title-origin difference remains at the tested scale.
+   Fixed anchor controls also expose fractional sampling differences: normal labels sit one pixel high, while extra-large fixed-height labels sit one pixel low.
+   Fractional X positions add an extra Java ink column. These native controls reject a universal origin adjustment.
 4. **Verify skin masking and profile changes.**
    Persona assembly combines piece geometry into shared surfaces.
    The renderer does not explicitly preserve every clothing category for equipment masking.
-   Account replacement and native LOD texture selection need visual fixtures.
+   A native Dressing Room persona now supplies a visible reference and captured body/face inputs.
+   Its offline capture retains the native player UUID, so profile changes reach the in-world appearance.
+   Direct and ViaProxy Java comparisons now match visible armor coverage and restoration using the captured native persona inputs.
+   Both routes also replace Alex with Steve and restore Alex at 40 blocks.
+   Hidden-layer masking and native LOD texture binding checks remain open.
    Updated assets alone do not prove these engine fixes work here.
 5. **Verify movement and rendering boundaries.**
-   Falls at water/solid boundaries still need native movement traces.
-   Dragon-dependent fog distances, combined blindness/night vision, and changed
-   block picking need visual or native checks.
+   Native and direct Java Survival captures now cover falls onto solid ground, both sides of a water boundary, and fully inside water.
+   Both take landing damage while the body overlaps the solid block, including when the center is over water.
+   The water control takes no landing damage. These cases do not establish complete movement parity.
+   Native recordings show the sky fading back during blindness's final second while night vision remains active.
+   Java normalized already dimmed RGB and jumped to bright fog on the first nonzero frame.
+   The add-on now applies that dimming after night-vision normalization for Overworld air fog.
+   Fresh direct Java and ViaProxy day/night controls fade gradually and preserve immediate restoration after forced cancellation.
+   Native night fog brightness and the precise fade curve still differ.
+   Dragon-dependent fog distances now have native controls, described below. Changed block picking still needs focused native checks.
+   Core now retains `PLAYER_FOG` snapshots and resolves complete distance settings against the selected resources.
+   The add-on consumes dry-air commands through a connection-owned receiver.
+   The native dragon distance cap now has matching native and Java controls.
+   The authored base-biome distance control now matches. Native engine-specific rules and transition timing remain open.
    Existing lightmap and collision code cannot establish those fixes by itself.
+   A live actor-picking fixture exposed missing hand fields in actor-use transactions and the explicit attack swing.
+   The protocol patch now supplies both fields and shares outgoing swings through one factory.
+   Native boat interaction and attack captures establish field order.
+   Fresh direct and ViaProxy recordings confirm boarding and the native hurt countdown, without malformed-packet disconnects.
+   Boat and player clicks now use the displayed Java base before conversion to Bedrock world coordinates.
+   The native boat comparison identified a 0.375 hull-origin error in the old conversion.
+   The physical fallback now uses the retained native dimensions with 0.1 blocks of picking padding on each face.
+   Native boat top/front/side and armor-stand front/side controls establish the tested planes.
+   Direct and ViaProxy reproduce all five planes within 0.0001 blocks using nonphysical aliases.
+   Authored hitboxes retain priority, physical collision remains separate, and both routes preserve block occlusion.
+   Native attacks also carry the picked world position, which Java's attack packet omits.
+   A negotiated atomic attack message now preserves the actual client pick and current actor lifetime.
+   Direct and matching ViaProxy controls cover actor replacement, block occlusion, exact hit transport, and native hurt countdowns.
+   Ordinary Java attacks remain available without that capability.
+   The fallback correction closes the tested hull-surface difference. Exact view-ray arithmetic and broader block-outline comparisons remain open.
+   Fresh direct and ViaProxy recordings confirm the corrected world hit and receive the boarding acknowledgment.
 6. **Complete remaining content features.**
    Item-component custom swing, use-start, and durability sounds have no matching
    component consumer in the current item path.
@@ -151,6 +219,139 @@ Player and persona controller assets do not establish the engine's new armor mas
    Block seating, signed audio, matchmaking UI, and environment layers remain separate gaps.
    Experimental freezing, Frostbite, and ice features require feature-specific
    evidence; generated IDs or Java fallbacks do not establish parity.
+
+### Native fog controls in 26.60
+
+Fog payload version 2 carries command layers, selected biome bindings, and the existing registry-default policy through the negotiated `viabedrock:fog` channel.
+Settings retain fixed or render-relative distances and colors. Empty commands reveal the selected biome settings.
+A water-only top layer preserves the lower air setting.
+Listener replacement and disconnect retire previous commands.
+Fluid and weather distances retain their existing paths.
+
+The native End sky uses a grayscale texture instead of Java's purple texture.
+Matching 26.60.5 shader bytecode multiplies this texture by `SkyColor`.
+Live white and red controls read approximately twice the fog RGB at that binding, with alpha 2.
+The add-on selects the licensed texture through the world resource library, below server pack overrides.
+It decodes off-thread and uploads during client ticks, before any GPU render pass.
+Disconnect retirement also runs on the client thread, with listener ownership checked before GPU cleanup.
+Fresh direct and ViaProxy recordings confirm white/red sky colors, fixed distances, water-only fallback, removal, and empty resets.
+Both 180-second recordings finish normally.
+Native sky motion, pixel sampling, transition timing, biome-boundary blending, legacy default bindings, and engine-specific vanilla fog rules remain unverified.
+
+The dragon override uses start 0 and end `min(100, effective render distance)`.
+Matching `RenderChunk` vertex bytecode establishes the distance formula and the native `FogAndDistanceControl` binding.
+Owned native uniform reads measure 100 blocks at effective render distance 192 and 80 blocks at effective distance 80.
+Native controls also establish 100 blocks without commands and above red command fog.
+Teleporting the admitted actor far away preserves the override. Death restores the short command distance.
+Fresh direct and ViaProxy recordings each finish normally after ten corresponding phases.
+Their actual renderer buffers report 100 blocks during the override and restore the 128-block or 16-block command after death.
+These controls replace Java's previous 1,024-block dragon fallback.
+
+
+Native 1.26.60.5 and BDS 1.26.60.6 use protocol 2225 for these controls.
+The client uses Fancy graphics, a 1280 × 720 window, and GUI scale 2.
+The private journal contains 32 complete `PLAYER_FOG` snapshots.
+Each payload contains an unsigned variable-length count followed by UTF-8 strings with unsigned variable-length lengths.
+Removing the final command entry sends an empty stack.
+
+In dry Overworld air, a white 16-block fog overrides a lower 128-block fog.
+A water-only entry above that air entry preserves the air result.
+A red air entry above both changes the visible air fog.
+Removing it restores the lower air entry.
+These controls establish stack priority and fallback between media. They do not establish inheritance between individual fields.
+Captures after roughly two seconds still contain transitions; the steady controls wait at least twelve seconds.
+
+The End fixture places black distance markers on a quartz floor at player foot height 65.
+With no living dragon, the 16-block fog hides the nearest marker. The 128-block control leaves it visible.
+A living dragon roughly 24 blocks away overrides the 16-block distance while the white fog color remains visible.
+Killing the dragon restores the command distance in the same view.
+The [26.60 changelog](https://feedback.minecraft.net/hc/en-us/articles/49852828563853-Minecraft-Bedrock-Edition-26-60-Changelog)
+describes this nearby-dragon override and the dead or distant cases.
+
+After a fresh connection, a living dragon roughly 345 blocks away does not override the 16-block command distance.
+Moving a previously nearby dragon 512 blocks away removes its boss bar but retains the distance override in the earlier session.
+The journals retain admitted actors until death. A fresh distant connection contains no dragon admission.
+These results distinguish actor lifetime from boss-bar visibility. They do not establish a universal admission radius.
+Raised-platform captures, unsettled transitions, and frames with the inactivity overlay are excluded from the distance comparison.
+The separate resource-pack override of the vanilla End fog identifier remains unverified.
+
+A second fixture uses an explicit `minecraft:the_end` client-biome definition that binds a unique red fog identifier.
+Without commands or living dragons, native uniforms measure red fog from 0 to 32 blocks at effective render distance 192.
+Renaming the earlier vanilla fog override to its canonical filename did not change the native result.
+The explicit biome binding therefore supplies the base-fog control.
+
+This fixture also exposed stale biome metadata in core.
+Older vanilla definitions use `the_end`; the current `vanilla_1.21.120` definition uses `minecraft:the_end`.
+Core now normalizes insertion and lookup so higher vanilla and server layers replace the same biome entry.
+Custom namespaces remain distinct.
+Two regressions cover both override directions, colors, fog binding, and namespace isolation.
+The version-2 fog snapshot now carries these selected biome settings to both Java routes.
+Each fresh route verifies seven phases with actual renderer buffers and the received `minecraft:the_end` camera biome.
+Base red fog uses 32 blocks; a white command uses 16, and removal or empty commands restore 32.
+A living dragon retains red color and overrides distance to 100 blocks; death restores 32.
+The native grayscale End sky now applies to this base control too.
+Floor lighting still differs, so these controls do not establish native pixel parity.
+
+The Java implementation now consumes complete command snapshots, selected biome settings, and the existing registry-default fallback.
+The add-on selects the dragon override from living admitted actors, independently of Java boss-bar flags.
+The native cap and command restoration have matching direct and ViaProxy controls.
+Exact transitions, spatial biome blending, legacy default bindings, vanilla engine-specific rules, and broader sky/lighting parity remain open.
+
+## Current implementation goal
+
+The next general compatibility PR covers these five areas.
+A checked item requires the behavior evidence listed below, implemented
+corrections where needed, and fresh validation of the affected stack.
+The 26.60 audit above supplies the starting evidence, not completion evidence.
+
+- [ ] **World resource versions:** select vanilla metadata, textures, actors, and
+  audio from one immutable world-version context. Preserve server pack priority.
+  Compare a newer-world to older-template transition against native Bedrock.
+  Check that cached definitions and sounds from the previous world do not leak.
+- [x] **Held trapdoor placement:** establish how native Bedrock selects and holds
+  the placement direction. Suppress ordinary block interaction during the held
+  placement. Verify release, item changes, cancellation, and server correction.
+- [ ] **Bitmap fonts:** support atlas layout metadata and extended character
+  mapping. Resolve metadata from the atlas's own pack. Compare mixed-language
+  vanilla text and a legacy custom atlas with no layout metadata.
+  Current-font controls match fifteen of sixteen labels at native UI scale 1
+  and all sixteen at scale 2. Legacy atlas controls retain all sixteen scale-2
+  masks. Both Java routes retain these results at Java GUI scales 1 and 2,
+  including resource reload. Native GPU captures establish the atlas sampling
+  and raster rules. One scale-1 pixel, broader viewports, and TrueType pixel
+  comparisons remain open.
+- [ ] **Skins:** compare clothing beneath equipped armor and texture changes
+  after profile selection. Cover each affected armor slot, unequip, profile
+  replacement, and native LOD selection with matching visual fixtures.
+  Native and direct Java captures now show matching visible armor coverage
+  and restoration across seven phases for one classic custom geometry.
+  Eleven classic clothing-bone markers now match all 77 armor visibility conditions.
+  Default Alex/Steve replacement also matches at 5, 20, and 40 blocks.
+  A real native Dressing Room persona now matches visible armor coverage and restoration across seven phases on both Java routes.
+  Captured Alex renders at 20 and 40 blocks; Alex/Steve/Alex replacement matches at 40 blocks.
+  Complete incoming skin records match the installed renderer records on both routes, with no rejected skins.
+  Body yaw, lighting, shadows, and idle phases differ. Hidden-layer masking and native LOD texture selection remain open.
+  Native GPU captures now identify the actual body and face bindings through seven armor phases and 20/40-block distance controls.
+  Alex/Steve/Alex replacement at 40 blocks selects each matching atlas, with no stale profile binding.
+  These default personas show no LOD texture switch. Distinct LOD resources and wardrobe-specific masking remain open.
+  A real owned outerwear pendant now hides beneath a chestplate and restores after removal on native and direct Java.
+  Native GPU vertices collapse while hidden. Thirty settled Java samples verify the actual cube visibility across the three phases.
+  The canonical incoming persona record matches the installed renderer record. Other wardrobe categories and distinct LOD resources remain open.
+  Native binding controls now reach 60 blocks and cover profile replacement after actor retirement and re-entry.
+  Actual native persona updates also reach Java while the actor is absent, then render correctly after re-entry.
+  All nine canonical incoming records match installed renderer records. At 80 blocks, BDS actor retirement prevents a distinct LOD conclusion.
+  The synthetic custom persona markers remain excluded.
+- [ ] **Movement and rendering:** compare falls at water/solid boundaries,
+  dragon-dependent fog, combined blindness/night vision, and block/entity
+  picking. Trace the responsible client or server path before changing it.
+  Retain a separate evidence result for each boundary.
+
+Fold corrections into their owning patches. Keep independently reviewable
+features separate, preserve historical native provenance, and replay the
+affected stacks. Local probes verify their declared contracts only.
+Record unresolved native differences explicitly instead of marking the
+whole area complete from packet decoding or Java fallbacks.
+The upstream version-update draft remains separate from this general PR.
 
 ## Establish the behavior to port
 

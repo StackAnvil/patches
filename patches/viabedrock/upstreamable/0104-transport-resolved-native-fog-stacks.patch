@@ -1,0 +1,864 @@
+From 02d425b55d061714cc4bcb50783f478a1a70e790 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 01:05:15 +0100
+Subject: [PATCH] feat(fog): transport resolved native fog settings
+
+Retain complete PLAYER_FOG snapshots and resolve command, biome and
+existing registry-default settings against the connection-selected packs.
+Publish one immutable version-2 snapshot after join and channel negotiation,
+including empty command resets and late registrations. Preserve distance
+units and colors without inferring field-level inheritance.
+
+Native Bedrock 1.26.60.5 with BDS 1.26.60.6 (protocol 2225) confirms
+unsigned-count string-array snapshots, topmost matching-medium precedence,
+and water-only fallback to lower air settings. A qualified End-biome fixture
+renders red fog from 0 to 32 blocks without commands or living dragons.
+Both prior Java routes read the red registry color but kept 1,024 blocks.
+
+Empty command stacks now retain world resources. World replacement retires
+the entire snapshot, and payload decoding rejects ambiguous biome aliases
+and unsupported versions. Regressions cover medium precedence, immutable
+resource ownership, codec bounds, late registration, command removal and
+world replacement. Biome-boundary blending, legacy data-default bindings,
+and native engine-specific vanilla rules remain separate acceptance work.
+
+BREAKING CHANGE: FogDefinition includes distances; FogState requires biome/default settings and the negotiated fog payload uses version 2.
+---
+ .../viabedrock/api/model/FogState.java        | 176 ++++++++++++++++++
+ .../definition/FogDefinitions.java            |  44 +++--
+ .../viabedrock/protocol/BedrockProtocol.java  |   2 +
+ .../protocol/packet/FogPackets.java           |  32 ++++
+ .../protocol/packet/JoinPackets.java          |   2 +
+ .../protocol/packet/MultiStatePackets.java    |   4 +
+ .../protocol/packet/UnhandledPackets.java     |   1 -
+ .../protocol/storage/FogStorage.java          |  72 +++++++
+ .../viabedrock/api/model/FogStateTest.java    | 144 ++++++++++++++
+ .../definition/FogDefinitionsTest.java        |  73 ++++++++
+ .../protocol/data/JavaRegistriesFogTest.java  |  12 +-
+ .../protocol/storage/FogStorageTest.java      | 117 ++++++++++++
+ 12 files changed, 661 insertions(+), 18 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FogState.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/FogPackets.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/FogStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/FogStateTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/FogDefinitionsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/FogStorageTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/FogState.java b/src/main/java/net/raphimc/viabedrock/api/model/FogState.java
+new file mode 100644
+index 000000000..be1a75389
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/FogState.java
+@@ -0,0 +1,176 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.util.Key;
++import io.netty.buffer.ByteBuf;
++
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/** Atomic command and biome settings resolved against this connection's selected resource packs. */
++public record FogState(List<Layer> layers, Map<String, Layer> biomes, Map<String, Distance> defaults) {
++
++    public static final String CHANNEL = "viabedrock:fog";
++    public static final int MAX_LAYERS = 16;
++    public static final int MAX_BIOMES = 1024;
++    private static final int MAX_SETTINGS = 16;
++    public static final FogState EMPTY = new FogState(List.of(), Map.of(), Map.of());
++    public static final Type<FogState> TYPE = new Type<>(FogState.class) {
++        @Override
++        public FogState read(final ByteBuf buffer) {
++            if (Types.VAR_INT.readPrimitive(buffer) != 2) {
++                throw new IllegalArgumentException("Unsupported fog payload version");
++            }
++            final int count = boundedCount(buffer, MAX_LAYERS);
++            final List<Layer> layers = new ArrayList<>(count);
++            for (int i = 0; i < count; i++) {
++                layers.add(readLayer(buffer));
++            }
++            final int biomeCount = boundedCount(buffer, MAX_BIOMES);
++            final Map<String, Layer> biomes = new LinkedHashMap<>();
++            for (int i = 0; i < biomeCount; i++) {
++                final String biome = Types.STRING.read(buffer);
++                if (biomes.put(biome, readLayer(buffer)) != null) {
++                    throw new IllegalArgumentException("Duplicate fog biome");
++                }
++            }
++            final Map<String, Distance> defaults = readDistances(buffer);
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Unexpected fog payload fields");
++            }
++            return new FogState(layers, biomes, defaults);
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final FogState state) {
++            Types.VAR_INT.writePrimitive(buffer, 2);
++            Types.VAR_INT.writePrimitive(buffer, state.layers.size());
++            for (final Layer layer : state.layers) {
++                writeLayer(buffer, layer);
++            }
++            Types.VAR_INT.writePrimitive(buffer, state.biomes.size());
++            for (final Map.Entry<String, Layer> entry : state.biomes.entrySet()) {
++                Types.STRING.write(buffer, entry.getKey());
++                writeLayer(buffer, entry.getValue());
++            }
++            writeDistances(buffer, state.defaults);
++        }
++
++        private static Layer readLayer(final ByteBuf buffer) {
++            return new Layer(Types.STRING.read(buffer), readDistances(buffer));
++        }
++
++        private static void writeLayer(final ByteBuf buffer, final Layer layer) {
++            Types.STRING.write(buffer, layer.identifier);
++            writeDistances(buffer, layer.distances);
++        }
++
++        private static Map<String, Distance> readDistances(final ByteBuf buffer) {
++            final int count = boundedCount(buffer, MAX_SETTINGS);
++            final Map<String, Distance> distances = new LinkedHashMap<>();
++            for (int i = 0; i < count; i++) {
++                final String medium = Types.STRING.read(buffer);
++                final Distance distance = new Distance(buffer.readFloat(), buffer.readFloat(), buffer.readInt(), buffer.readBoolean());
++                if (distances.put(medium, distance) != null) {
++                    throw new IllegalArgumentException("Duplicate fog medium");
++                }
++            }
++            return distances;
++        }
++
++        private static void writeDistances(final ByteBuf buffer, final Map<String, Distance> distances) {
++            Types.VAR_INT.writePrimitive(buffer, distances.size());
++            for (final Map.Entry<String, Distance> entry : distances.entrySet()) {
++                Types.STRING.write(buffer, entry.getKey());
++                final Distance distance = entry.getValue();
++                buffer.writeFloat(distance.start).writeFloat(distance.end).writeInt(distance.color).writeBoolean(distance.renderRelative);
++            }
++        }
++
++        private static int boundedCount(final ByteBuf buffer, final int maximum) {
++            final int count = Types.VAR_INT.readPrimitive(buffer);
++            if (count < 0 || count > maximum) {
++                throw new IllegalArgumentException("Invalid fog payload count");
++            }
++            return count;
++        }
++    };
++
++    public FogState {
++        layers = List.copyOf(layers);
++        if (layers.size() > MAX_LAYERS || biomes.size() > MAX_BIOMES) {
++            throw new IllegalArgumentException("Too many fog layers or biomes");
++        }
++        final Map<String, Layer> canonical = new LinkedHashMap<>();
++        for (final Map.Entry<String, Layer> entry : biomes.entrySet()) {
++            if (entry.getKey().isEmpty() || entry.getKey().length() > 256) {
++                throw new IllegalArgumentException("Invalid fog biome");
++            }
++            if (canonical.put(Key.namespaced(entry.getKey()), entry.getValue()) != null) {
++                throw new IllegalArgumentException("Duplicate fog biome");
++            }
++        }
++        biomes = Map.copyOf(canonical);
++        defaults = immutableDistances(defaults);
++    }
++
++    /** Native stack precedence applies independently to each medium, not to individual fields. */
++    public Distance resolve(final String medium, final String biome) {
++        for (int i = this.layers.size() - 1; i >= 0; i--) {
++            final Distance distance = this.layers.get(i).distances.get(medium);
++            if (distance != null) {
++                return distance;
++            }
++        }
++        final Layer layer = biome == null ? null : this.biomes.get(Key.namespaced(biome));
++        final Distance distance = layer == null ? null : layer.distances.get(medium);
++        return distance == null ? this.defaults.get(medium) : distance;
++    }
++
++    private static Map<String, Distance> immutableDistances(final Map<String, Distance> distances) {
++        if (distances.size() > MAX_SETTINGS) {
++            throw new IllegalArgumentException("Too many fog settings");
++        }
++        for (final String medium : distances.keySet()) {
++            if (medium.isEmpty() || medium.length() > 64) {
++                throw new IllegalArgumentException("Invalid fog medium");
++            }
++        }
++        return Map.copyOf(distances);
++    }
++
++    public record Layer(String identifier, Map<String, Distance> distances) {
++        public Layer {
++            if (identifier == null || identifier.isEmpty() || identifier.length() > 256) {
++                throw new IllegalArgumentException("Invalid fog layer");
++            }
++            distances = immutableDistances(distances);
++        }
++    }
++
++    public record Distance(float start, float end, int color, boolean renderRelative) {
++        public Distance {
++            if (!Float.isFinite(start) || !Float.isFinite(end) || end < 0 || start > end || (color & 0xFF000000) != 0
++                    || (renderRelative ? start < -1 || end > 1 : start < 0)) {
++                throw new IllegalArgumentException("Invalid fog distance");
++            }
++        }
++
++        public float start(final float renderDistance) {
++            return this.renderRelative ? this.start * renderDistance : this.start;
++        }
++
++        public float end(final float renderDistance) {
++            return this.renderRelative ? this.end * renderDistance : this.end;
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/FogDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/FogDefinitions.java
+index 6196540c0..a799d2730 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/FogDefinitions.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/FogDefinitions.java
+@@ -21,6 +21,7 @@ import com.viaversion.viaversion.libs.gson.JsonElement;
+ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import com.viaversion.viaversion.util.Key;
+ import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.FogState;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ 
+@@ -37,16 +38,8 @@ public class FogDefinitions {
+             for (String fogPath : pack.content().getFilesDeep("fogs/", ".json")) {
+                 try {
+                     final JsonObject fog = pack.content().getJson(fogPath).getAsJsonObject("minecraft:fog_settings");
+-                    final String identifier = Key.namespaced(fog.getAsJsonObject("description").get("identifier").getAsString());
+-                    final Map<String, Integer> colors = new HashMap<>();
+-                    final JsonObject distance = fog.getAsJsonObject("distance");
+-                    for (Map.Entry<String, JsonElement> entry : distance.entrySet()) {
+-                        final JsonObject value = entry.getValue().getAsJsonObject();
+-                        if (value.has("fog_color")) {
+-                            colors.put(entry.getKey(), Integer.parseInt(value.get("fog_color").getAsString().substring(1), 16));
+-                        }
+-                    }
+-                    this.fogs.put(identifier, new FogDefinition(identifier, colors));
++                    final FogDefinition definition = parse(fog);
++                    this.fogs.put(definition.identifier(), definition);
+                 } catch (final Throwable e) {
+                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse fog definition " + fogPath + " in pack " + pack.key(), e);
+                 }
+@@ -58,7 +51,36 @@ public class FogDefinitions {
+         return this.fogs.get(identifier);
+     }
+ 
+-    public record FogDefinition(String identifier, Map<String, Integer> colors) {
++    static FogDefinition parse(final JsonObject fog) {
++        final String identifier = Key.namespaced(fog.getAsJsonObject("description").get("identifier").getAsString());
++        final Map<String, Integer> colors = new HashMap<>();
++        final Map<String, FogState.Distance> distances = new HashMap<>();
++        final JsonObject distance = fog.getAsJsonObject("distance");
++        if (distance != null) {
++            for (final Map.Entry<String, JsonElement> entry : distance.entrySet()) {
++                final JsonObject value = entry.getValue().getAsJsonObject();
++                if (value.has("fog_color")) {
++                    final int color = Integer.parseInt(value.get("fog_color").getAsString().substring(1), 16);
++                    colors.put(entry.getKey(), color);
++                    if (value.has("fog_start") && value.has("fog_end") && value.has("render_distance_type")) {
++                        final String type = value.get("render_distance_type").getAsString();
++                        if (!type.equals("fixed") && !type.equals("render")) {
++                            throw new IllegalArgumentException("Unknown fog distance type: " + type);
++                        }
++                        distances.put(entry.getKey(), new FogState.Distance(value.get("fog_start").getAsFloat(),
++                                value.get("fog_end").getAsFloat(), color, type.equals("render")));
++                    }
++                }
++            }
++        }
++        return new FogDefinition(identifier, colors, distances);
++    }
++
++    public record FogDefinition(String identifier, Map<String, Integer> colors, Map<String, FogState.Distance> distances) {
++        public FogDefinition {
++            colors = Map.copyOf(colors);
++            distances = Map.copyOf(distances);
++        }
+     }
+ 
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+index 448550a96..3eece0a67 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+@@ -114,6 +114,7 @@ public class BedrockProtocol
+         EntityPackets.register(this);
+         HudPackets.register(this);
+         HudVisibilityPackets.register(this);
++        FogPackets.register(this);
+         CameraPackets.register(this);
+         InventoryPackets.register(this);
+         NpcDialoguePackets.register(this);
+@@ -180,6 +181,7 @@ public class BedrockProtocol
+         user.put(new PlayerModeStorage());
+         user.put(new VehiclePredictionStorage(user));
+         user.put(new HudVisibilityStorage(user));
++        user.put(new FogStorage(user));
+         user.put(new CameraEffectsStorage(user));
+         user.put(new PlayerListStorage());
+         user.put(new PlayerWaypointTracker(user));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/FogPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/FogPackets.java
+new file mode 100644
+index 000000000..c0d185237
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/FogPackets.java
+@@ -0,0 +1,32 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.type.Types;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.storage.FogStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++public final class FogPackets {
++
++    public static void register(final BedrockProtocol protocol) {
++        protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_FOG, null, wrapper -> {
++            wrapper.cancel();
++            final String[] identifiers = wrapper.read(BedrockTypes.STRING_ARRAY);
++            if (wrapper.read(Types.REMAINING_BYTES).length != 0) {
++                throw new IllegalArgumentException("Unexpected native fog fields");
++            }
++            final FogStorage storage = wrapper.user().get(FogStorage.class);
++            storage.update(identifiers);
++            storage.sendSnapshot();
++        });
++    }
++
++    private FogPackets() {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index d4cf7a04a..215e2d3c6 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -598,6 +598,8 @@ public final class JoinPackets {
+         user.get(PlayerInputStorage.class).markJoined();
+         user.get(PlayerInputStorage.class).sendSnapshot();
+         HudPackets.sendNativeRoot(user);
++        user.get(FogStorage.class).markJoined();
++        user.get(FogStorage.class).sendSnapshot();
+         user.get(HudVisibilityStorage.class).markJoined();
+         user.get(HudVisibilityStorage.class).sendSnapshot();
+         user.get(CameraEffectsStorage.class).markJoined();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index df24b545b..476b5fc38 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -87,6 +87,7 @@ import net.raphimc.viabedrock.protocol.storage.PlayerInputStorage;
+ import net.raphimc.viabedrock.protocol.storage.PlayerPredictionStorage;
+ import net.raphimc.viabedrock.protocol.storage.VehiclePredictionStorage;
+ import net.raphimc.viabedrock.protocol.storage.HudVisibilityStorage;
++import net.raphimc.viabedrock.protocol.storage.FogStorage;
+ import net.raphimc.viabedrock.protocol.storage.CameraEffectsStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+@@ -379,6 +380,9 @@ public final class MultiStatePackets {
+             HudPackets.sendNativeRoot(wrapper.user());
+             wrapper.user().get(PlayerInputStorage.class).sendSnapshot();
+             wrapper.user().get(HudVisibilityStorage.class).sendSnapshot();
++            if (channels.contains(net.raphimc.viabedrock.api.model.FogState.CHANNEL)) {
++                wrapper.user().get(FogStorage.class).sendSnapshot();
++            }
+             wrapper.user().get(CameraEffectsStorage.class).sendSnapshot();
+ 
+             if (channels.contains(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
+index 0e0fe5920..b8c53fa4f 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
+@@ -36,7 +36,6 @@ public final class UnhandledPackets {
+         protocol.cancelClientbound(ClientboundBedrockPackets.LAB_TABLE); // Not relevant (Education Edition)
+         protocol.cancelClientbound(ClientboundBedrockPackets.EDUCATION_SETTINGS); // Not relevant (Education Edition)
+         protocol.cancelClientbound(ClientboundBedrockPackets.CODE_BUILDER); // Not relevant (Education Edition)
+-        protocol.cancelClientbound(ClientboundBedrockPackets.PLAYER_FOG); // Not possible in Java Edition
+         protocol.cancelClientbound(ClientboundBedrockPackets.EDU_URI_RESOURCE); // Not relevant (Education Edition)
+         protocol.cancelClientbound(ClientboundBedrockPackets.SCRIPT_MESSAGE); // Not relevant (Education Edition)
+         protocol.cancelClientbound(ClientboundBedrockPackets.LESSON_PROGRESS); // Not relevant (Education Edition)
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/FogStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/FogStorage.java
+new file mode 100644
+index 000000000..cf1c6e04e
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/FogStorage.java
+@@ -0,0 +1,72 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StoredObject;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.model.FogState;
++import net.raphimc.viabedrock.api.resourcepack.definition.FogDefinitions;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++
++import java.util.Arrays;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++public final class FogStorage extends StoredObject {
++
++    private List<String> identifiers = List.of();
++    private boolean joined;
++
++    public FogStorage(final UserConnection user) {
++        super(user);
++    }
++
++    public void update(final String[] identifiers) {
++        if (identifiers.length > FogState.MAX_LAYERS) {
++            throw new IllegalArgumentException("Too many native fog layers");
++        }
++        this.identifiers = List.copyOf(Arrays.asList(identifiers));
++    }
++
++    public FogState snapshot(final ResourcePackStorage resources) {
++        final FogDefinitions definitions = resources.getFogs();
++        final Map<String, FogState.Layer> biomes = new LinkedHashMap<>();
++        for (final var biome : resources.getBiomes().biomes().values()) {
++            if (biome.fog() == null) {
++                continue;
++            }
++            final FogDefinitions.FogDefinition definition = definitions.get(biome.fog());
++            if (definition != null) {
++                biomes.put(biome.name(), new FogState.Layer(definition.identifier(), definition.distances()));
++            }
++        }
++        final FogDefinitions.FogDefinition defaults = definitions.get("minecraft:fog_default");
++        return new FogState(this.identifiers.stream().map(identifier -> {
++            final FogDefinitions.FogDefinition definition = definitions.get(identifier);
++            return new FogState.Layer(identifier, definition == null ? Map.of() : definition.distances());
++        }).toList(), biomes, defaults == null ? Map.of() : defaults.distances());
++    }
++
++    public void markJoined() {
++        this.joined = true;
++    }
++
++    public void sendSnapshot() {
++        if (!this.joined || this.user().getProtocolInfo().getServerState() != State.PLAY || !this.user().get(ChannelStorage.class).hasChannel(FogState.CHANNEL)) {
++            return;
++        }
++        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++        packet.write(Types.STRING, FogState.CHANNEL);
++        packet.write(FogState.TYPE, this.snapshot(this.user().get(ResourcePackStorage.class)));
++        packet.send(BedrockProtocol.class);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/FogStateTest.java b/src/test/java/net/raphimc/viabedrock/api/model/FogStateTest.java
+new file mode 100644
+index 000000000..4be4bc92b
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/FogStateTest.java
+@@ -0,0 +1,144 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.Unpooled;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class FogStateTest {
++
++    @Test
++    void resolvesTheLastDefinedMediumWithoutDiscardingLowerAir() {
++        final var air = new FogState.Distance(0, 16, 0xFFFFFF, false);
++        final var water = new FogState.Distance(0, 4, 0x00FF00, false);
++        final var red = new FogState.Distance(0, 32, 0xFF0000, false);
++        final var layers = new ArrayList<FogState.Layer>();
++        layers.add(new FogState.Layer("test:air", Map.of("air", air)));
++        layers.add(new FogState.Layer("test:water", Map.of("water", water)));
++        final var state = new FogState(layers, Map.of(), Map.of());
++        layers.add(new FogState.Layer("test:red", Map.of("air", red)));
++        assertSame(air, state.resolve("air", null));
++        assertSame(water, state.resolve("water", null));
++        assertSame(red, new FogState(layers, Map.of(), Map.of()).resolve("air", null));
++        assertNull(state.resolve("lava", null));
++        assertNull(FogState.EMPTY.resolve("air", null));
++    }
++
++    @Test
++    void retainsAtomicImmutableLayersAndIndependentDistanceUnits() {
++        final var settings = new HashMap<String, FogState.Distance>();
++        final var relative = new FogState.Distance(-0.25F, 0.75F, 0, true);
++        settings.put("air", relative);
++        final var layer = new FogState.Layer("test:relative", settings);
++        settings.clear();
++        assertEquals(-48, layer.distances().get("air").start(192));
++        assertEquals(144, layer.distances().get("air").end(192));
++        assertEquals(72, relative.end(96));
++        assertEquals(16, new FogState.Distance(0, 16, 0, false).end(192));
++        assertThrows(UnsupportedOperationException.class, () -> layer.distances().clear());
++    }
++
++    @Test
++    void roundTripsAllFieldsAndRejectsTrailingAndInvalidCounts() {
++        final var state = new FogState(List.of(new FogState.Layer("test:both", Map.of(
++                "air", new FogState.Distance(-0.125F, 0.9375F, 0xABCDEF, true),
++                "water", new FogState.Distance(2, 14.5F, 0x123456, false)))), Map.of(), Map.of());
++        final var buffer = Unpooled.buffer();
++        try {
++            FogState.TYPE.write(buffer, state);
++            assertEquals(state, FogState.TYPE.read(buffer.duplicate()));
++            buffer.writeByte(0);
++            assertThrows(IllegalArgumentException.class, () -> FogState.TYPE.read(buffer.duplicate()));
++            for (final int count : new int[]{-1, 17}) {
++                buffer.clear();
++                Types.VAR_INT.writePrimitive(buffer, 2);
++                Types.VAR_INT.writePrimitive(buffer, count);
++                assertThrows(IllegalArgumentException.class, () -> FogState.TYPE.read(buffer.duplicate()));
++            }
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void commandsOverrideBiomesAndDefaultsIndependentlyForEachMedium() {
++        final var base = new FogState.Distance(0.25F, 0.75F, 0x123456, true);
++        final var biome = new FogState.Distance(0, 32, 0xFF0000, false);
++        final var water = new FogState.Distance(0, 4, 0x00FF00, false);
++        final var command = new FogState.Distance(0, 16, 0xFFFFFF, false);
++        final var bindings = Map.of("the_end", new FogState.Layer("test:biome", Map.of("air", biome)));
++        final var defaults = Map.of("air", base);
++        final var state = new FogState(List.of(new FogState.Layer("test:water", Map.of("water", water))), bindings, defaults);
++        assertSame(biome, state.resolve("air", "minecraft:the_end"));
++        assertSame(biome, state.resolve("air", "the_end"));
++        assertSame(base, state.resolve("air", "test:unknown"));
++        assertSame(base, state.resolve("air", null));
++        assertSame(water, state.resolve("water", "the_end"));
++        final var overridden = new FogState(List.of(new FogState.Layer("test:command", Map.of("air", command))), bindings, defaults);
++        assertSame(command, overridden.resolve("air", "the_end"));
++        final var reset = new FogState(List.of(), bindings, defaults);
++        assertSame(biome, reset.resolve("air", "the_end"));
++        assertNull(reset.resolve("water", "the_end"));
++        assertSame(base, reset.resolve("air", "test:the_end"));
++    }
++
++    @Test
++    void roundTripsImmutableWorldSettingsAndRejectsAmbiguousBiomeAliases() {
++        final var distance = new FogState.Distance(0, 32, 0xFF0000, false);
++        final var biomes = new HashMap<String, FogState.Layer>();
++        final var defaults = new HashMap<String, FogState.Distance>();
++        biomes.put("the_end", new FogState.Layer("test:red", Map.of("air", distance)));
++        defaults.put("water", new FogState.Distance(0, 8, 0, false));
++        final var state = new FogState(List.of(), biomes, defaults);
++        biomes.clear();
++        defaults.clear();
++        final var buffer = Unpooled.buffer();
++        try {
++            FogState.TYPE.write(buffer, state);
++            final var decoded = FogState.TYPE.read(buffer);
++            assertEquals(state, decoded);
++            assertEquals(distance, decoded.resolve("air", "the_end"));
++            assertEquals(8, decoded.resolve("water", "the_end").end(192));
++            biomes.put("the_end", state.biomes().get("minecraft:the_end"));
++            biomes.put("minecraft:the_end", state.biomes().get("minecraft:the_end"));
++            assertThrows(IllegalArgumentException.class, () -> new FogState(List.of(), biomes, Map.of()));
++            for (final int count : new int[]{-1, FogState.MAX_BIOMES + 1}) {
++                buffer.clear();
++                Types.VAR_INT.writePrimitive(buffer, 2);
++                Types.VAR_INT.writePrimitive(buffer, 0);
++                Types.VAR_INT.writePrimitive(buffer, count);
++                assertThrows(IllegalArgumentException.class, () -> FogState.TYPE.read(buffer.duplicate()));
++            }
++            buffer.clear();
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            assertThrows(IllegalArgumentException.class, () -> FogState.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void rejectsNonFiniteReversedAndOutOfRangeSettings() {
++        for (final float value : new float[]{Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY}) {
++            assertThrows(IllegalArgumentException.class, () -> new FogState.Distance(value, 16, 0, false));
++            assertThrows(IllegalArgumentException.class, () -> new FogState.Distance(0, value, 0, false));
++        }
++        assertThrows(IllegalArgumentException.class, () -> new FogState.Distance(17, 16, 0, false));
++        assertThrows(IllegalArgumentException.class, () -> new FogState.Distance(-1, 16, 0, false));
++        assertThrows(IllegalArgumentException.class, () -> new FogState.Distance(-2, 1, 0, true));
++        assertThrows(IllegalArgumentException.class, () -> new FogState.Distance(0, 2, 0, true));
++        assertThrows(IllegalArgumentException.class, () -> new FogState.Distance(0, 1, 0xFF000000, true));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/FogDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/FogDefinitionsTest.java
+new file mode 100644
+index 000000000..543686d95
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/FogDefinitionsTest.java
+@@ -0,0 +1,73 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class FogDefinitionsTest {
++
++    @Test
++    void preservesFixedAndRenderUnitsAlongsideExistingColors() {
++        final JsonObject fog = fog();
++        final JsonObject settings = new JsonObject();
++        settings.add("air", distance(-0.25F, 1, 0x112233, "render"));
++        settings.add("water", distance(0, 15, 0, "fixed"));
++        fog.add("distance", settings);
++        final var parsed = FogDefinitions.parse(fog);
++        assertEquals(0x112233, parsed.colors().get("air"));
++        assertEquals(0, parsed.colors().get("water"));
++        assertEquals(-48, parsed.distances().get("air").start(192));
++        assertEquals(192, parsed.distances().get("air").end(192));
++        assertEquals(15, parsed.distances().get("water").end(192));
++        assertThrows(UnsupportedOperationException.class, () -> parsed.distances().clear());
++    }
++
++    @Test
++    void retainsColorOnlyDefinitionsWithoutInventingDistanceFields() {
++        final JsonObject fog = fog();
++        final JsonObject medium = new JsonObject();
++        medium.addProperty("fog_color", "#000000");
++        final JsonObject settings = new JsonObject();
++        settings.add("air", medium);
++        fog.add("distance", settings);
++        assertEquals(0, FogDefinitions.parse(fog).colors().get("air"));
++        assertTrue(FogDefinitions.parse(fog).distances().isEmpty());
++        fog.remove("distance");
++        assertTrue(FogDefinitions.parse(fog).colors().isEmpty());
++    }
++
++    @Test
++    void rejectsInvalidCompleteSettingsInsteadOfChangingTheirUnits() {
++        final JsonObject fog = fog();
++        final JsonObject settings = new JsonObject();
++        fog.add("distance", settings);
++        settings.add("air", distance(0, 16, 0, "render"));
++        assertThrows(IllegalArgumentException.class, () -> FogDefinitions.parse(fog));
++        settings.add("air", distance(0, 16, 0, "unknown"));
++        assertThrows(IllegalArgumentException.class, () -> FogDefinitions.parse(fog));
++    }
++
++    private static JsonObject fog() {
++        final JsonObject description = new JsonObject();
++        description.addProperty("identifier", "test:fog");
++        final JsonObject fog = new JsonObject();
++        fog.add("description", description);
++        return fog;
++    }
++
++    private static JsonObject distance(final float start, final float end, final int color, final String type) {
++        final JsonObject settings = new JsonObject();
++        settings.addProperty("fog_start", start);
++        settings.addProperty("fog_end", end);
++        settings.addProperty("fog_color", "#%06X".formatted(color));
++        settings.addProperty("render_distance_type", type);
++        return settings;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/data/JavaRegistriesFogTest.java b/src/test/java/net/raphimc/viabedrock/protocol/data/JavaRegistriesFogTest.java
+index 05383c57d..658e16522 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/data/JavaRegistriesFogTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/data/JavaRegistriesFogTest.java
+@@ -27,19 +27,19 @@ class JavaRegistriesFogTest {
+ 
+     @Test
+     void explicitBiomeAirOverridesPackDefaultIncludingBlack() {
+-        final var packDefault = new FogDefinition("minecraft:fog_default", Map.of("air", 0x112233));
+-        assertEquals(0, JavaRegistries.getAirFogColor(new FogDefinition("biome", Map.of("air", 0)), packDefault));
+-        assertEquals(0x987654, JavaRegistries.getAirFogColor(new FogDefinition("biome", Map.of("air", 0x987654)), packDefault));
++        final var packDefault = new FogDefinition("minecraft:fog_default", Map.of("air", 0x112233), Map.of());
++        assertEquals(0, JavaRegistries.getAirFogColor(new FogDefinition("biome", Map.of("air", 0), Map.of()), packDefault));
++        assertEquals(0x987654, JavaRegistries.getAirFogColor(new FogDefinition("biome", Map.of("air", 0x987654), Map.of()), packDefault));
+     }
+ 
+     @Test
+     void missingBiomeAirInheritsEffectivePackDefaultBeforeNativeFallback() {
+-        final var waterOnly = new FogDefinition("biome", Map.of("water", 0x556677));
+-        final var packDefault = new FogDefinition("minecraft:fog_default", Map.of("air", 0x123456));
++        final var waterOnly = new FogDefinition("biome", Map.of("water", 0x556677), Map.of());
++        final var packDefault = new FogDefinition("minecraft:fog_default", Map.of("air", 0x123456), Map.of());
+         assertEquals(0x123456, JavaRegistries.getAirFogColor(waterOnly, packDefault));
+         assertEquals(0x123456, JavaRegistries.getAirFogColor(null, packDefault));
+         assertEquals(0xABD2FF, JavaRegistries.getAirFogColor(waterOnly, null));
+-        assertEquals(0xABD2FF, JavaRegistries.getAirFogColor(waterOnly, new FogDefinition("minecraft:fog_default", Map.of("water", 0x778899))));
++        assertEquals(0xABD2FF, JavaRegistries.getAirFogColor(waterOnly, new FogDefinition("minecraft:fog_default", Map.of("water", 0x778899), Map.of())));
+         assertEquals(0xABD2FF, JavaRegistries.getAirFogColor(null, null));
+     }
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/FogStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/FogStorageTest.java
+new file mode 100644
+index 000000000..7eeaa0355
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/FogStorageTest.java
+@@ -0,0 +1,117 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.model.FogState;
++import net.raphimc.viabedrock.api.resourcepack.definition.FogDefinitions;
++import net.raphimc.viabedrock.api.resourcepack.definition.BiomeDefinitions;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class FogStorageTest {
++
++    @Test
++    void reResolvesResourceOwnershipAndReplacesRatherThanAppendsStacks() {
++        final var storage = new FogStorage(mock(UserConnection.class));
++        final var definitions = mock(FogDefinitions.class);
++        final var resources = resources(definitions, Map.of());
++        final var current = new FogState.Distance(0, 16, 0xFFFFFF, false);
++        final var older = new FogState.Distance(0, 32, 0, false);
++        final String identifier = "test:world";
++        storage.update(new String[]{identifier});
++        when(definitions.get(identifier)).thenReturn(new FogDefinitions.FogDefinition(identifier, Map.of(), Map.of("air", current)));
++        final var first = storage.snapshot(resources);
++        when(definitions.get(identifier)).thenReturn(new FogDefinitions.FogDefinition(identifier, Map.of(), Map.of("air", older)));
++        assertSame(older, storage.snapshot(resources).resolve("air", null));
++        assertSame(current, first.resolve("air", null));
++        storage.update(new String[]{"test:missing"});
++        assertNull(storage.snapshot(resources).resolve("air", null));
++        storage.update(new String[0]);
++        assertEquals(FogState.EMPTY, storage.snapshot(resources));
++    }
++
++    @Test
++    void publishesOnlyAfterJoinPlayAndChannelRegistrationIncludingEmptyReset() {
++        final var user = mock(UserConnection.class);
++        final var info = mock(ProtocolInfo.class);
++        when(user.getProtocolInfo()).thenReturn(info);
++        when(info.getServerState()).thenReturn(State.PLAY);
++        final var channels = new ChannelStorage();
++        when(user.get(ChannelStorage.class)).thenReturn(channels);
++        final var resources = mock(ResourcePackStorage.class);
++        when(user.get(ResourcePackStorage.class)).thenReturn(resources);
++        when(resources.getFogs()).thenReturn(mock(FogDefinitions.class));
++        when(resources.getBiomes()).thenReturn(mock(BiomeDefinitions.class));
++        final var storage = new FogStorage(user);
++        final var output = mock(PacketWrapper.class);
++        try (var packets = mockStatic(PacketWrapper.class)) {
++            packets.when(() -> PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user)).thenReturn(output);
++            storage.sendSnapshot();
++            storage.markJoined();
++            storage.sendSnapshot();
++            channels.addChannels(List.of(FogState.CHANNEL));
++            when(info.getServerState()).thenReturn(State.CONFIGURATION);
++            storage.sendSnapshot();
++            verifyNoInteractions(output);
++            when(info.getServerState()).thenReturn(State.PLAY);
++            storage.sendSnapshot();
++            verify(output).write(FogState.TYPE, FogState.EMPTY);
++        }
++    }
++
++    @Test
++    void worldReplacementAndEmptyCommandsResolveCurrentBiomeResources() {
++        final var storage = new FogStorage(mock(UserConnection.class));
++        final var definitions = mock(FogDefinitions.class);
++        final var biomes = mock(BiomeDefinitions.class);
++        final var biome = mock(BiomeDefinitions.BiomeDefinition.class);
++        when(biome.name()).thenReturn("minecraft:the_end");
++        when(biome.fog()).thenReturn("test:end");
++        when(biomes.biomes()).thenReturn(Map.of("minecraft:the_end", biome));
++        final var resources = mock(ResourcePackStorage.class);
++        when(resources.getFogs()).thenReturn(definitions);
++        when(resources.getBiomes()).thenReturn(biomes);
++        final var current = new FogState.Distance(0, 32, 0xFF0000, false);
++        final var older = new FogState.Distance(0, 64, 0x0000FF, false);
++        final var command = new FogState.Distance(0, 16, 0xFFFFFF, false);
++        when(definitions.get("test:end")).thenReturn(new FogDefinitions.FogDefinition("test:end", Map.of(), Map.of("air", current)));
++        when(definitions.get("test:command")).thenReturn(new FogDefinitions.FogDefinition("test:command", Map.of(), Map.of("air", command)));
++        final var fallback = new FogState.Distance(0.25F, 0.75F, 0x123456, true);
++        when(definitions.get("minecraft:fog_default")).thenReturn(new FogDefinitions.FogDefinition("minecraft:fog_default", Map.of(), Map.of("air", fallback)));
++        final var first = storage.snapshot(resources);
++        assertSame(fallback, first.resolve("air", "test:unknown"));
++        storage.update(new String[]{"test:command"});
++        assertSame(command, storage.snapshot(resources).resolve("air", "the_end"));
++        when(definitions.get("test:end")).thenReturn(new FogDefinitions.FogDefinition("test:end", Map.of(), Map.of("air", older)));
++        storage.update(new String[0]);
++        assertSame(older, storage.snapshot(resources).resolve("air", "the_end"));
++        assertSame(current, first.resolve("air", "the_end"));
++        when(biomes.biomes()).thenReturn(Map.of());
++        assertSame(fallback, storage.snapshot(resources).resolve("air", "the_end"));
++        when(definitions.get("minecraft:fog_default")).thenReturn(null);
++        assertEquals(FogState.EMPTY, storage.snapshot(resources));
++    }
++
++    private static ResourcePackStorage resources(final FogDefinitions definitions, final Map<String, BiomeDefinitions.BiomeDefinition> bindings) {
++        final var resources = mock(ResourcePackStorage.class);
++        final var biomes = mock(BiomeDefinitions.class);
++        when(resources.getFogs()).thenReturn(definitions);
++        when(resources.getBiomes()).thenReturn(biomes);
++        when(biomes.biomes()).thenReturn(bindings);
++        return resources;
++    }
++
++}
+-- 
+2.56.0

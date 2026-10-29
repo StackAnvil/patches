@@ -78,3 +78,23 @@ Character Creator meshes use the shared native polygon compiler.
 Sodium's cached constructor cuboid does not contain the later mesh positions or UVs.
 The owning renderer regression verifies actual vertex submission through reflected transforms.
 This preserves authored mesh data without reversing its winding or changing skin bytes.
+
+## Default persona replacement in 26.60, October 28, 2026
+
+The production assembler prepares default Alex and Steve from the bundled 1.26.60.5 assets without account appearance writes.
+Each recipe has a distinct profile hash. Native and direct Java receive matching serialized skin data for one controlled remote player.
+Both clients show Alex, Steve, then Alex at 5, 20, and 40 blocks.
+Both also replace the texture correctly after returning to the near view.
+Coarse shirt-color measurements distinguish each displayed profile at every tested distance.
+The first obstructed 40-block attempt is excluded; a clear corridor supplies the accepted comparison.
+
+Seven armor phases show matching visible coverage and restoration for the default persona.
+Coverage alone does not prove hiding of individual clothing layers.
+The recorder confirms 6,948 submissions through `BedrockPlayerRenderer`, matching installed skin hashes, and no rejected skins.
+The 300-second Java recording exits normally. The original native options file remains unchanged.
+
+These controls establish visible profile replacement for the tested defaults.
+They do not identify native LOD selection or compare native Dressing Room assembly with our assembler.
+Modified persona geometry did not establish a visible marker baseline and remains unresolved.
+Native LOD texture bindings, additional clothing categories, and custom persona geometry still need matching controls.
+All licensed assets, skin data, journals, and images remain private.

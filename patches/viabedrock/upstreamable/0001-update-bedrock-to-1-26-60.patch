@@ -1,4 +1,4 @@
-From b625d0ee3ad3744f192f53ed473f3f6dab8aae74 Mon Sep 17 00:00:00 2001
+From 5931209444c6da20842410eff551af7837ad1fa4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 27 Oct 2026 19:53:57 +0100
 Subject: [PATCH] feat(protocol): update Bedrock to 1.26.60
@@ -58,12 +58,33 @@ the bounds semantics; Mojang's matching 2225 DimensionDefinition schema
 and us_1665751 note establish cloud synchronization. Six targeted tests
 cover complete packet boundaries, signed bounds and registry projection.
 This path works on pinned upstream without deferred inventory features.
+
+Include the new HandSlot in both manual actor-use writers, not only the
+shared inventory codec. Protocol 2225 places it before the item descriptor.
+Without it a live right-click on a player with a trapdoor shifted the item
+ID into the hand enum and BDS terminated the connection as malformed.
+
+The attack helper also omitted Animate's trailing hand and caused a second
+BDS disconnect after actor interaction was repaired. Share the outgoing
+swing layout between ordinary punches, explicit attacks and later held
+use consumers so these writers cannot disagree. A protocol-2225 native
+attack payload and source/hand framing controls cover this boundary.
+
+Accept all 57 player UI inventory entries sent by BDS 1.26.60.6.
+The previous 54-entry capacity rejected the complete update, including
+cursor and crafting state. A sealed native protocol-2225 journal confirms
+the new count; the older protocol-2193 fixture contains 54 entries.
+Retain the existing slot projections and test complete-array retention
+and subsequent updates to the appended slots. Armor handling is unchanged.
 ---
  Data Asset Sources.md                         |   23 +-
  build.gradle                                  |   11 +
  .../chunk/blockstate/BlockStateUpgrader.java  |    1 +
  .../ConnectionBlockStateUpgradeSchema.java    |   51 +
+ .../model/container/player/HudContainer.java  |    2 +-
+ .../api/model/entity/ClientPlayerEntity.java  |    8 +-
  .../viabedrock/netty/CompressionCodec.java    |    5 +-
+ .../protocol/ActorSwingPacketFactory.java     |   39 +
  .../protocol/ClientboundBedrockPackets.java   |    4 +-
  .../protocol/data/JavaRegistries.java         |   27 +-
  .../protocol/data/ProtocolConstants.java      |    4 +-
@@ -89,7 +110,7 @@ This path works on pinned upstream without deferred inventory features.
  .../protocol/model/PassengerOfBlock.java      |   24 +
  .../viabedrock/protocol/model/SkinData.java   |    2 +-
  .../inventory/InventoryTransactionData.java   |    4 +-
- .../protocol/packet/ClientPlayerPackets.java  |    1 +
+ .../protocol/packet/ClientPlayerPackets.java  |    9 +-
  .../protocol/packet/EntityPackets.java        |    4 +-
  .../protocol/packet/HudPackets.java           |    2 +
  .../protocol/packet/InteractionPackets.java   |    3 +-
@@ -130,7 +151,9 @@ This path works on pinned upstream without deferred inventory features.
  .../resource_packs/vanilla_1.26.51.mcpack     |  Bin 676 -> 0 bytes
  .../resource_packs/vanilla_1.26.60.mcpack     |  Bin 0 -> 676 bytes
  ...ConnectionBlockStateUpgradeSchemaTest.java |   64 +
+ .../container/player/HudContainerTest.java    |   34 +
  .../netty/CompressionCodecTest.java           |   59 +
+ .../protocol/ActorSwingPacketFactoryTest.java |   61 +
  .../data/JavaDimensionRegistryTest.java       |   55 +
  .../packet/DimensionDataPacketTest.java       |   96 +
  .../ResourcePackClientResponseTest.java       |   74 +
@@ -139,8 +162,9 @@ This path works on pinned upstream without deferred inventory features.
  .../types/model/PassengerOfBlockTypeTest.java |   69 +
  .../BedrockDataEnumGeneratorTest.java         |   73 +
  .../generator/BedrockDataEnumGenerator.java   |   55 +-
- 80 files changed, 3760 insertions(+), 420 deletions(-)
+ 85 files changed, 3900 insertions(+), 432 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/ConnectionBlockStateUpgradeSchema.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/ActorSwingPacketFactory.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/AudioContentPlaybackType.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/CursorItemDragState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/EditorLevelMigrationVersion.java
@@ -155,7 +179,9 @@ This path works on pinned upstream without deferred inventory features.
  delete mode 100644 src/main/resources/assets/viabedrock/resource_packs/vanilla_1.26.51.mcpack
  create mode 100644 src/main/resources/assets/viabedrock/resource_packs/vanilla_1.26.60.mcpack
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/ConnectionBlockStateUpgradeSchemaTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/player/HudContainerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/netty/CompressionCodecTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/ActorSwingPacketFactoryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/JavaDimensionRegistryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/DimensionDataPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponseTest.java
@@ -300,6 +326,45 @@ index 000000000..03119b0e4
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/player/HudContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/player/HudContainer.java
+index 5ec975db5..5e0a3d15d 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/container/player/HudContainer.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/player/HudContainer.java
+@@ -25,7 +25,7 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ public class HudContainer extends InventoryRedirectContainer {
+ 
+     public HudContainer(final UserConnection user) {
+-        super(user, (byte) ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue(), ContainerType.HUD, 54);
++        super(user, (byte) ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue(), ContainerType.HUD, 57);
+     }
+ 
+     @Override
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+index 57e75bd5f..7ba22030f 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+@@ -28,6 +28,7 @@ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.util.EnumUtil;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ActorSwingPacketFactory;
+ import net.raphimc.viabedrock.protocol.PlayerActionPacketFactory;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.enums.Direction;
+@@ -150,12 +151,7 @@ public class ClientPlayerEntity extends PlayerEntity {
+     }
+ 
+     public void sendSwingPacketToServer() {
+-        final PacketWrapper animate = PacketWrapper.create(ServerboundBedrockPackets.ANIMATE, this.user);
+-        animate.write(Types.UNSIGNED_BYTE, (short) AnimatePacketPayload_Action.Swing.getValue()); // action
+-        animate.write(BedrockTypes.UNSIGNED_VAR_LONG, this.runtimeId); // entity runtime id
+-        animate.write(BedrockTypes.FLOAT_LE, 0F); // data
+-        animate.write(BedrockTypes.OPTIONAL_STRING, ActorSwingSource.Attack.name().toLowerCase(Locale.ROOT)); // swing source // TODO: 1.21.130
+-        animate.sendToServer(BedrockProtocol.class);
++        ActorSwingPacketFactory.sendSwing(this.user, this.runtimeId, ActorSwingSource.Attack, HandSlot.Mainhand);
+     }
+ 
+     public void updatePlayerPosition(final short flags) {
 diff --git a/src/main/java/net/raphimc/viabedrock/netty/CompressionCodec.java b/src/main/java/net/raphimc/viabedrock/netty/CompressionCodec.java
 index 45f7a6f5a..4ef6cf68d 100644
 --- a/src/main/java/net/raphimc/viabedrock/netty/CompressionCodec.java
@@ -323,6 +388,51 @@ index 45f7a6f5a..4ef6cf68d 100644
          } else {
              final ByteBuf uncompressedData = ctx.alloc().buffer();
              compressionAlgorithm.decompress(in, uncompressedData); // Bedrock client would drop packets with invalid data, but this would be too insane to do
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/ActorSwingPacketFactory.java b/src/main/java/net/raphimc/viabedrock/protocol/ActorSwingPacketFactory.java
+new file mode 100644
+index 000000000..30075ec4c
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/ActorSwingPacketFactory.java
+@@ -0,0 +1,39 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import java.util.Locale;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorSwingSource;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AnimatePacketPayload_Action;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HandSlot;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++/** One wire layout for ordinary, attack, and predicted-use swings. */
++public final class ActorSwingPacketFactory {
++
++    private ActorSwingPacketFactory() {
++    }
++
++    public static void writeSwing(final PacketWrapper packet, final long runtimeId,
++                                  final ActorSwingSource source, final HandSlot hand) {
++        packet.write(Types.UNSIGNED_BYTE, (short) AnimatePacketPayload_Action.Swing.getValue());
++        packet.write(BedrockTypes.UNSIGNED_VAR_LONG, runtimeId);
++        packet.write(BedrockTypes.FLOAT_LE, 0F);
++        packet.write(BedrockTypes.OPTIONAL_STRING, source.name().toLowerCase(Locale.ROOT));
++        packet.write(Types.UNSIGNED_BYTE, (short) hand.getValue());
++    }
++
++    public static void sendSwing(final UserConnection user, final long runtimeId,
++                                 final ActorSwingSource source, final HandSlot hand) {
++        final PacketWrapper packet = PacketWrapper.create(ServerboundBedrockPackets.ANIMATE, user);
++        writeSwing(packet, runtimeId, source, hand);
++        packet.sendToServer(BedrockProtocol.class);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java
 index 609785cc6..28abb1e2b 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java
@@ -1093,14 +1203,50 @@ index 49f4ddd44..5d2fb1ad1 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index b784209e1..f95d6ac03 100644
+index b784209e1..a5717987f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-@@ -621,6 +621,7 @@ public final class ClientPlayerPackets {
-             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId()); // entity runtime id
-             wrapper.write(BedrockTypes.FLOAT_LE, 0F); // data
-             wrapper.write(BedrockTypes.OPTIONAL_STRING, ActorSwingSource.Attack.name().toLowerCase(Locale.ROOT)); // swing source // TODO: 1.21.130
+@@ -35,6 +35,7 @@ import net.raphimc.viabedrock.api.util.EnumUtil;
+ import net.raphimc.viabedrock.api.util.MathUtil;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ActorSwingPacketFactory;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+@@ -52,7 +53,6 @@ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ import net.raphimc.viabedrock.protocol.storage.*;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+-import java.util.Locale;
+ import java.util.Set;
+ import java.util.UUID;
+ import java.util.logging.Level;
+@@ -381,6 +381,7 @@ public final class ClientPlayerPackets {
+             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, entity.runtimeId()); // entity runtime id
+             wrapper.write(BedrockTypes.VAR_INT, ItemUseOnActorActionType.Attack.getValue()); // action type
+             wrapper.write(BedrockTypes.VAR_INT, (int) inventoryContainer.getSelectedHotbarSlot()); // hotbar slot
 +            wrapper.write(Types.UNSIGNED_BYTE, (short) HandSlot.Mainhand.getValue()); // hand
+             wrapper.write(wrapper.user().get(ItemRewriter.class).newItemType(), inventoryContainer.getSelectedHotbarItem()); // held item
+             wrapper.write(BedrockTypes.POSITION_3F, entityTracker.getClientPlayer().position()); // player position
+             wrapper.write(BedrockTypes.POSITION_3F, Position3f.ZERO); // click position
+@@ -412,6 +413,7 @@ public final class ClientPlayerPackets {
+             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, entity.runtimeId()); // entity runtime id
+             wrapper.write(BedrockTypes.VAR_INT, ItemUseOnActorActionType.Interact.getValue()); // action type
+             wrapper.write(BedrockTypes.VAR_INT, (int) inventoryContainer.getSelectedHotbarSlot()); // hotbar slot
++            wrapper.write(Types.UNSIGNED_BYTE, (short) HandSlot.Mainhand.getValue()); // hand
+             wrapper.write(wrapper.user().get(ItemRewriter.class).newItemType(), inventoryContainer.getSelectedHotbarItem()); // held item
+             wrapper.write(BedrockTypes.POSITION_3F, entityTracker.getClientPlayer().position()); // player position
+             final Vector3d location = wrapper.read(Types.LOW_PRECISION_VECTOR); // location
+@@ -617,10 +619,7 @@ public final class ClientPlayerPackets {
+                 return;
+             }
+ 
+-            wrapper.write(Types.UNSIGNED_BYTE, (short) AnimatePacketPayload_Action.Swing.getValue()); // action
+-            wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId()); // entity runtime id
+-            wrapper.write(BedrockTypes.FLOAT_LE, 0F); // data
+-            wrapper.write(BedrockTypes.OPTIONAL_STRING, ActorSwingSource.Attack.name().toLowerCase(Locale.ROOT)); // swing source // TODO: 1.21.130
++            ActorSwingPacketFactory.writeSwing(wrapper, clientPlayer.runtimeId(), ActorSwingSource.Attack, HandSlot.Mainhand);
  
              if (clientPlayer.blockBreakingInfo() != null) {
                  if (!gameSession.isBlockBreakingServerAuthoritative()) {
@@ -26021,6 +26167,46 @@ index 000000000..ac5b91efe
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/player/HudContainerTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/player/HudContainerTest.java
+new file mode 100644
+index 000000000..195ea4a81
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/container/player/HudContainerTest.java
+@@ -0,0 +1,34 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container.player;
++
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class HudContainerTest {
++
++    @Test
++    void acceptsTheCompleteProtocol2225InventoryAndRetainsEverySlot() {
++        final var container = new HudContainer(null);
++        final BedrockItem[] items = BedrockItem.emptyArray(57);
++        for (final int slot : new int[]{0, 28, 29, 30, 31, 50, 54, 55, 56}) {
++            items[slot] = new BedrockItem(slot + 1, (short) 0, (byte) 3);
++        }
++        assertTrue(container.setItems(items));
++        for (int slot = 0; slot < items.length; slot++) {
++            assertSame(items[slot], container.getItem(slot));
++        }
++        for (int slot = 28; slot <= 31; slot++) {
++            assertEquals(slot - 27, container.javaSlot(slot));
++        }
++        final var replacement = new BedrockItem(42);
++        container.setItem(56, replacement);
++        assertSame(replacement, container.getItem(56));
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/netty/CompressionCodecTest.java b/src/test/java/net/raphimc/viabedrock/netty/CompressionCodecTest.java
 new file mode 100644
 index 000000000..616193b0d
@@ -26082,6 +26268,73 @@ index 000000000..616193b0d
 +            }
 +        } finally {
 +            channel.finishAndReleaseAll();
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/ActorSwingPacketFactoryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/ActorSwingPacketFactoryTest.java
+new file mode 100644
+index 000000000..2bdeaf1bc
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/ActorSwingPacketFactoryTest.java
+@@ -0,0 +1,61 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol;
++
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.Unpooled;
++import java.util.Locale;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorSwingSource;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HandSlot;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class ActorSwingPacketFactoryTest {
++
++    @Test
++    void matchesTheNativeProtocol2225AttackPayloadIncludingItsHand() throws Exception {
++        final var packet = new PacketWrapperImpl(0, null, null);
++        ActorSwingPacketFactory.writeSwing(packet, 77, ActorSwingSource.Attack, HandSlot.Mainhand);
++        final var bytes = Unpooled.buffer();
++        try {
++            packet.writeToBuffer(bytes);
++            assertEquals(0, Types.VAR_INT.readPrimitive(bytes));
++            final byte[] payload = new byte[bytes.readableBytes()];
++            bytes.readBytes(payload);
++            assertArrayEquals(new byte[]{1, 77, 0, 0, 0, 0, 1, 6, 97, 116, 116, 97, 99, 107, 0}, payload);
++        } finally {
++            bytes.release();
++        }
++    }
++
++    @Test
++    void keepsEachSwingSourceAndHandInsideItsPacketBoundary() throws Exception {
++        for (final ActorSwingSource source : ActorSwingSource.values()) {
++            for (final HandSlot hand : HandSlot.values()) {
++                final var packet = new PacketWrapperImpl(0, null, null);
++                ActorSwingPacketFactory.writeSwing(packet, 0x12345, source, hand);
++                final var bytes = Unpooled.buffer();
++                try {
++                    packet.writeToBuffer(bytes);
++                    bytes.writeInt(0x13579BDF);
++                    assertEquals(0, Types.VAR_INT.readPrimitive(bytes));
++                    assertEquals(1, bytes.readUnsignedByte());
++                    assertEquals(0x12345, BedrockTypes.UNSIGNED_VAR_LONG.read(bytes));
++                    assertEquals(0F, BedrockTypes.FLOAT_LE.read(bytes));
++                    assertEquals(source.name().toLowerCase(Locale.ROOT), BedrockTypes.OPTIONAL_STRING.read(bytes));
++                    assertEquals(hand.getValue(), bytes.readUnsignedByte());
++                    assertEquals(0x13579BDF, bytes.readInt());
++                    assertFalse(bytes.isReadable());
++                } finally {
++                    bytes.release();
++                }
++            }
 +        }
 +    }
 +

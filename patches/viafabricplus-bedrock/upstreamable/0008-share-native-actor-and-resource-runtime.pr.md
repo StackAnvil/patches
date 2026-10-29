@@ -2551,3 +2551,56 @@ The deprecated equipped-name query still returns the path.
 The target shield uses namespaced matching during blocking; the missing query previously rejected its native binding evaluation.
 The [equipped check](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) records that failure and the final client observations.
 Hotbar and inventory lookup require their own native inventory owner and remain outside this adapter.
+
+
+## Native tame state, October 28, 2026
+
+The shared actor scope now binds `query.is_tamed` to the native `TAMED` flag.
+The matching 26.60 cat render controller requests this query.
+Without it, both older and current baby-cat definitions select Java fallback.
+A private renderer observation confirms the missing query and the accepted
+older-world cutoff of `1.20.0`.
+
+The existing carrier regression now covers tame state, retirement, and
+immutable earlier samples through the production Molang scope.
+Native 26.60 captures show distinct older/current baby-cat models across
+current/older/current connections in one client process.
+The full dependency build and bundle pass. Core runs 2,054 tests and the
+add-on runs 1,281, with no failures or errors. Optional skips remain unchanged.
+The corrected live draw reports no missing queries, but still selects Java
+fallback: its cached `cat` material result is unsupported. The inherited
+`entity_alphatest_change_color` tint family needs a verified implementation.
+This query correction alone does not establish native cat rendering parity.
+
+Source: [Molang tame query](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions/query_is_tamed).
+
+
+## Versioned color receiver, October 28, 2026
+
+Register the Fabric payload codec and connection receiver for actor-state v6.
+The decoded snapshot retains native byte-sized palette indices. A frontend
+regression sends v6 and v5 payloads through the real codec and state store,
+verifying that older payloads clear color context and later v6 restores it.
+The v5-only live control correctly keeps Java fallback without a native tint.
+The core channel contract and palette evidence are recorded in the
+[metadata patch](../../viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#native-palette-indices-october-28-2026).
+
+## Native attack hit transport, October 29, 2026
+
+Supporting backends advertise the negotiated actor-attack channel after publishing a remote actor.
+The client replaces Java's coordinate-free attack with one message containing the actual world pick and current owner lifetime.
+Proxy targets retain their clicked ID while using the authoritative owner's identity.
+A mismatched pick, absent lifetime, or unavailable capability retains the ordinary attack path.
+The message replaces the attack atomically, so no separate hit remains pending.
+
+Three client regressions cover world coordinates, proxy ownership, unrelated picks, and absent lifetimes.
+Direct and matching ViaProxy controls each cover an original boat, block occlusion, and a replacement boat at another position.
+Both routes send two attacks with hits equal to the observed client picks and receive native nine-to-zero hurt countdowns.
+The intervening block produces no entity attack.
+The older proxy build retains the ordinary fallback because it lacks the new contract.
+
+The complete add-on build passes 1,309 cases, with 145 optional skips and no failures or errors.
+Core passes 2,075 cases, CubeConverter passes 21, and ViaProxy passes four.
+The bundle includes matching distributions.
+The core physical-fallback correction now reproduces the tested boat and armor-stand planes.
+Broader picking geometry and exact view-ray arithmetic remain open.

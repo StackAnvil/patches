@@ -340,3 +340,24 @@ Received snapshots retain arm then wildcard order and the expected texture and m
 The actor lifetime remains stable while snapshots and resolved draw caches change.
 The downloaded pack matches every declared fixture file on both routes.
 These controls establish authored behavior through real BDS state changes, without a native graphical baseline.
+
+
+## Native palette indices, October 28, 2026
+
+Actor-state v6 carries primary and secondary palette indices separately from
+the typed INT metadata view. Both native slots are BYTE values.
+The producer preserves their unsigned range and supplies the native zero
+default for absent or wrongly typed entries. Older state revisions retain
+their original bytes and expose unavailable color context.
+
+The codec tests cover unsigned boundaries, truncated color fields, rejection
+before partial writes, and all previous state revisions. Producer tests cover
+wrong native types, metadata removal, and immutable earlier samples.
+The full core suite passes 2,056 tests, with 176 optional skips and no failures.
+
+Native 26.60.5 runs against BDS 26.60.6, protocol 2225, verify all 16 palette
+updates on a tamed cat. The journal confirms BYTE slot 3 and its values.
+Index zero renders pure white in the unlit fixture. Secondary color transport
+has codec and producer coverage; a matching tropical-fish visual remains open.
+The [color component reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/entitycomponents/minecraftcomponent_color)
+describes the native palette input. Raw licensed assets and captures stay private.

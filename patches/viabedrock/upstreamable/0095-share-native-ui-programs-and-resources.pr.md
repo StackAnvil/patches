@@ -547,3 +547,68 @@ This extraction does not install the player availability evaluator or change scr
 The shared recipe search exposes normalized-query emptiness to its player policy consumer.
 An empty normalized query skips text production and differs from a failed output-validity check.
 The existing formatter and Unicode5.0 search algorithms remain shared.
+
+## Bitmap font layouts for 26.60
+
+The shared font importer now converts bitmap atlases and Unicode fallback pages.
+It reads `ascii_extended`, `ascii_character_height`, and `ascii_character_y_offset` from the atlas pack.
+An upper atlas without its own metadata retains legacy layout and mapping.
+A metadata-only layer does not change an atlas from another pack.
+
+The [official 26.60 changelog](https://feedback.minecraft.net/hc/en-us/articles/49852828563853-Minecraft-Bedrock-Edition-26-60-Changelog) defines these metadata fields and ownership rules.
+The matching client supplies three 128-pixel ASCII atlases and metadata for 12-pixel cells with offset -3.
+Its executable selects a 256-entry legacy map or a 449-entry extended map.
+The extended map includes Latin, Cyrillic, and Greek characters.
+The [versioned source guide](../../../docs/bedrock-development-sources.md#versioned-windows-gdk-reference) identifies the executable and package digests.
+
+The converter removes incomplete rows and preserves glyph scale for larger textures.
+Offsets that exceed Java's bitmap ascent limit use transparent cell padding.
+Each Java bitmap texture also carries a native atlas descriptor in its texture metadata.
+The descriptor retains the original page, cell height, and vertical offset from the texture's own Bedrock pack.
+The native renderer reads that original page, including padding that Java's normalized representation removes or adds.
+Conversion cache format 10 retires cached packs that lack these resources.
+Unicode pages follow the ASCII providers, including the final BMP page.
+The conversion cache revision changes with this output.
+Ordinary spaces retain the existing Java space provider.
+Java 26.3 otherwise gives a blank bitmap cell a one-unit advance.
+Image dimensions are checked before decoding, and padded atlases retain the image dimension limit.
+The font file budget includes bitmap pages beside TrueType files.
+
+Matching native Bedrock 1.26.60.5 now runs on an isolated headless Weston display.
+The owned BDS 1.26.60.6 session confirms movement and block placement before font comparison.
+The display uses the Intel GPU and keeps game audio silent.
+The user installation and saved client selection remain unchanged.
+
+Native title captures at 1280 × 720 and GUI scale 2 establish whole-label fallback.
+Latin, Cyrillic, and Greek text from the extended map retains the bitmap family.
+Adding Japanese text or U+1F00 switches the whole label to the Unicode family.
+The first Latin glyph changes from 40 × 56 pixels to 24 × 40 pixels.
+
+Exported UI programs retain the selected bitmap character map, so remote controllers make the same family choice.
+Ordinary Unicode pages use eight logical UI units at every texture resolution.
+Private-use pages E0 through F8 retain source-pixel size and their centered baseline.
+A separate Unicode font supplies whole-label fallback and keeps its own ordinary-space advance.
+Authored TrueType families retain their independent selection.
+Regression tests cover pack overrides, transported character maps, formatting codes, and texture resolution.
+
+The native legacy-pack fixture supplies an unchanged 1.26.51.1 atlas without layout metadata.
+Its Greek forms retain the legacy bitmap layout.
+Modern Latin and Cyrillic text instead selects Unicode for the whole label.
+The winning first atlas now limits the active page count, which excludes stale vanilla extension pages after a legacy replacement.
+The captured pack export contains the same atlas bytes and no layout JSON.
+
+The add-on applies native fractional advances, bearings, full-width ranges, and Hangul widths.
+It retains native page coordinates in provider-owned textures and keeps colored atlas pixels intact.
+Labels retain rounded line widths and a ten-unit bitmap line advance.
+Native multiline captures confirm an 80-pixel advance at GUI scale 2 with the title's fourfold font scale.
+Private-use icon captures confirm the separate scale and baseline for both 256- and 512-pixel atlases.
+
+Fixed-label comparisons retain all sixteen native matches at UI scale 2 for current and legacy bitmap fonts.
+The retained bitmap atlas improves the matching scale-1 comparison from ten to eleven labels out of sixteen.
+Five scale-1 sampling differences remain open.
+The renderer uses the descriptor and retained page from the winning converted texture's own pack.
+A metadata-only upper Java pack cannot substitute another page or layout.
+
+The replayed core stack passes 2,071 tests, with 176 optional skips and no failures or errors.
+The add-on passes 1,306 tests, with 145 optional skips and no failures or errors.
+All four builds and the modpack bundle pass. Core Checkstyle checks pass.
