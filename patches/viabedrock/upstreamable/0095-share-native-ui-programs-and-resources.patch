@@ -1,4 +1,4 @@
-From 3092573e80414b9b298c4e8815e8f3f26b866362 Mon Sep 17 00:00:00 2001
+From 73f8165f7e178c6505264e9aa1ec6dea8ea9a6c4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): share bounded native UI programs and resource
@@ -304,6 +304,13 @@ The winning first ASCII atlas also selects the active page count. A native
 server-pack capture with the unmodified 1.26.51.1 legacy atlas retains its
 Greek forms and falls back for newer Cyrillic/Latin glyphs. Exclude stale
 vanilla extension pages when the winning first atlas uses legacy mapping.
+
+Retain each original bitmap page with its own height and offset in texture
+metadata beside the Java-normalized image. Native sampling depends on the
+original page dimensions and source-cell boundaries, which Java's ascent
+padding and grid conversion can change. Keep the descriptor and raw page
+in the same converted pack and advance the resource cache format so old
+conversions cannot omit this data.
 ---
  build.gradle                                  |   11 +
  .../api/model/NativeContainerAction.java      |   93 +
@@ -343,7 +350,7 @@ vanilla extension pages when the winning first atlas uses legacy mapping.
  .../api/resourcepack/ui/ServerFormUi.java     |  253 +++
  .../resourcepack/ui/UiAsepriteMetadata.java   |   95 ++
  .../api/resourcepack/ui/UiBindings.java       |   43 +
- .../api/resourcepack/ui/UiBitmapFonts.java    |  271 +++
+ .../api/resourcepack/ui/UiBitmapFonts.java    |  282 +++
  .../api/resourcepack/ui/UiExpression.java     |  308 ++++
  .../api/resourcepack/ui/UiFonts.java          |  286 ++++
  .../api/resourcepack/ui/UiTextures.java       |   94 +
@@ -386,12 +393,12 @@ vanilla extension pages when the winning first atlas uses legacy mapping.
  .../ui/ServerFormUiSliderStateTest.java       |  126 ++
  .../api/resourcepack/ui/ServerFormUiTest.java |  427 +++++
  .../ui/UiAsepriteMetadataTest.java            |  112 ++
- .../resourcepack/ui/UiBitmapFontsTest.java    |  259 +++
+ .../resourcepack/ui/UiBitmapFontsTest.java    |  285 ++++
  .../api/resourcepack/ui/UiExpressionTest.java |   68 +
  .../api/resourcepack/ui/UiFontsTest.java      |  192 +++
  .../api/resourcepack/ui/UiTexturesTest.java   |  175 ++
  .../generator/SearchUnicodeDataGenerator.java |  126 ++
- 86 files changed, 13552 insertions(+), 60 deletions(-)
+ 86 files changed, 13589 insertions(+), 60 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
@@ -1882,7 +1889,7 @@ index 000000000..0e2c78baf
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index f7460be9a..97dcbcfab 100644
+index f7460be9a..7c48ba838 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -17,6 +17,7 @@
@@ -1901,7 +1908,7 @@ index f7460be9a..97dcbcfab 100644
 +    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-offsets-and-forms-13";
      // Advance when the set or format of emitted resources changes independently of converter profiles.
 -    private static final int RESOURCE_FORMAT_VERSION = 7;
-+    private static final int RESOURCE_FORMAT_VERSION = 9;
++    private static final int RESOURCE_FORMAT_VERSION = 10;
  
      private final Path directory;
      private final String conversionVersion;
@@ -7167,10 +7174,10 @@ index 000000000..ded11b88e
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBitmapFonts.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBitmapFonts.java
 new file mode 100644
-index 000000000..10c59d1a3
+index 000000000..f8051c4b8
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBitmapFonts.java
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,282 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7278,6 +7285,17 @@ index 000000000..10c59d1a3
 +                    ImageIO.write(image, "png", png);
 +                    final String resource = "bedrock_bitmap/" + family + "_" + atlas.page() + ".png";
 +                    result.put("assets/viabedrock/textures/font/" + resource, png.toByteArray());
++                    // Native renderers retain the original page, including atlas and cell padding.
++                    final String nativeResource = "bedrock_bitmap/" + family + "_" + atlas.page() + "_native.png";
++                    result.put("assets/viabedrock/textures/font/" + nativeResource, atlas.bytes());
++                    final JsonObject nativeLayout = new JsonObject();
++                    nativeLayout.addProperty("texture", "viabedrock:font/" + nativeResource);
++                    nativeLayout.addProperty("height", atlas.layout().height());
++                    nativeLayout.addProperty("y_offset", atlas.layout().offset());
++                    final JsonObject textureMetadata = new JsonObject();
++                    textureMetadata.add("viabedrock:font_atlas", nativeLayout);
++                    result.put("assets/viabedrock/textures/font/" + resource + ".mcmeta",
++                            textureMetadata.toString().getBytes(StandardCharsets.UTF_8));
 +                    final JsonObject provider = new JsonObject();
 +                    provider.addProperty("type", "bitmap");
 +                    provider.addProperty("file", "viabedrock:font/" + resource);
@@ -14619,10 +14637,10 @@ index 000000000..f191690a6
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBitmapFontsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBitmapFontsTest.java
 new file mode 100644
-index 000000000..44f834745
+index 000000000..11028d9b5
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiBitmapFontsTest.java
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,285 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -14664,6 +14682,12 @@ index 000000000..44f834745
 +            assertEquals(120, image.getHeight());
 +            assertEquals(0xFF12AB34, image.getRGB(127, 119));
 +            assertEquals(10, provider.getAsJsonArray("chars").size());
++            final var nativeLayout = nativeLayout(resources, provider);
++            assertEquals(12, nativeLayout.get("height").getAsInt());
++            assertEquals(-3, nativeLayout.get("y_offset").getAsInt());
++            final var original = nativeImage(resources, provider);
++            assertEquals(128, original.getHeight());
++            assertEquals(0xFF12AB34, original.getRGB(127, 127));
 +        }
 +        // The existing space provider supplies its advance, not the one-unit empty bitmap cell.
 +        assertEquals(0, codePoint(providers, 0, 32));
@@ -14690,6 +14714,9 @@ index 000000000..44f834745
 +        assertEquals(16, provider.getAsJsonArray("chars").size());
 +        assertEquals(0x03B1, codePoint(providers(resources), 0, 224));
 +        assertEquals(0xFFABCDEF, image(resources, provider).getRGB(127, 127));
++        assertEquals(8, nativeLayout(resources, provider).get("height").getAsInt());
++        assertEquals(0, nativeLayout(resources, provider).get("y_offset").getAsInt());
++        assertEquals(0xFFABCDEF, nativeImage(resources, provider).getRGB(127, 127));
 +        fonts.load(Map.of("font/default8.json", metadata(true, 10, -1), "font/default8.png", atlas(1, 0xFF876543)));
 +        final JsonObject overridden = providers(fonts.resources()).get(0).getAsJsonObject();
 +        assertEquals(10, overridden.get("height").getAsInt());
@@ -14726,6 +14753,12 @@ index 000000000..44f834745
 +        assertEquals(0xFF192837, image.getRGB(0, 11));
 +        assertEquals(0, image.getRGB(0, 12));
 +        assertEquals(0xFF192837, image.getRGB(0, 15));
++        final var nativeLayout = nativeLayout(resources, provider);
++        assertEquals(12, nativeLayout.get("height").getAsInt());
++        assertEquals(-8, nativeLayout.get("y_offset").getAsInt());
++        final var original = nativeImage(resources, provider);
++        assertEquals(128, original.getHeight());
++        assertEquals(0xFF192837, original.getRGB(0, 12));
 +    }
 +
 +    @Test
@@ -14874,6 +14907,17 @@ index 000000000..44f834745
 +
 +    private static int codePoint(final JsonArray providers, final int page, final int index) {
 +        return providers.get(page).getAsJsonObject().getAsJsonArray("chars").get(index / 16).getAsString().charAt(index % 16);
++    }
++
++    private static JsonObject nativeLayout(final Map<String, byte[]> resources, final JsonObject provider) {
++        final String metadata = "assets/viabedrock/textures/" + provider.get("file").getAsString().substring("viabedrock:".length()) + ".mcmeta";
++        return JsonParser.parseString(new String(resources.get(metadata), StandardCharsets.UTF_8))
++                .getAsJsonObject().getAsJsonObject("viabedrock:font_atlas");
++    }
++
++    private static BufferedImage nativeImage(final Map<String, byte[]> resources, final JsonObject provider) throws IOException {
++        final String texture = nativeLayout(resources, provider).get("texture").getAsString();
++        return ImageIO.read(new ByteArrayInputStream(resources.get("assets/viabedrock/textures/" + texture.substring("viabedrock:".length()))));
 +    }
 +
 +    private static BufferedImage image(final Map<String, byte[]> resources, final JsonObject provider) throws IOException {

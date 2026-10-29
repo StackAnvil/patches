@@ -487,114 +487,56 @@ A GUI portrait does not inherit the held-item material route or assume the world
 The pipeline guard rejects glint without explicit draw inputs.
 The [held-item checkpoint](../../../docs/bedrock-coverage.md#equipped-native-glint-and-current-item-channels-october-27-2026) leaves native GUI glint unverified.
 
-## Bitmap font resources for 26.60
+## Bitmap fonts for Bedrock 26.60
 
-The licensed resource provider now retains bitmap atlases and their layout JSON beside TrueType fonts.
-The shared core converter selects each atlas with its own pack metadata.
-The add-on regression exercises this provider through resource storage and font conversion.
-It covers extended native layout, a legacy server texture override, pixel retention, and reuse of the unchanged licensed view.
-The full add-on stack passes 1,274 tests, with no failures or errors and 142 optional skips.
-Matching native 1.26.60.5 captures now cover mixed-language text, a legacy atlas, wide punctuation, multiline labels, and colored private-use icons.
+The licensed resource provider retains bitmap pages and layout JSON beside TrueType fonts.
+The shared core converter selects each texture with its own pack metadata and exports the 449-entry extended map.
+Legacy replacements retain their layout and limit the active extension pages.
+The provider regression covers licensed resources, storage admission, conversion, and reuse of the unchanged library.
 
-`BedrockUnicodeFont` preserves native fractional advances, bearings, and page coordinates through a provider-owned atlas.
-The native width loader at `0x1415905b0` supplies the full-width ranges and distinct Hangul advance.
-The line-advance method at `0x141590590` and the multiline capture establish ten UI units between bitmap text lines.
-Ordinary Unicode pages use eight logical units; private-use pages E0 through F8 retain source-pixel size and a centered baseline.
-The core converter owns that atlas scale and the winning first atlas's active page count.
+`BedrockBitmapFont` keeps native page coordinates in provider-owned textures.
+Unicode glyphs retain fractional advances, bearings, full-width ranges, and the distinct Hangul advance.
+The native width loader at `0x1415905b0` and matching title captures establish these metrics.
+Ordinary Unicode pages use eight logical units.
+Private-use pages E0 through F8 retain source-pixel size and their centered baseline.
+Colored source pixels remain intact.
 
-Labels measure and align each line with a rounded width while glyph positions retain fractional advances.
-The font layout regressions now live in this shared patch instead of the container consumer.
-Tests cover narrow bearings, wide-range boundaries, Hangul, empty cells, texture resolution, and private-use metrics.
-Paired renders match text spacing and preserve colored icon pixels.
-The legacy-atlas origin difference is resolved by the native pixel grid rule below.
-Font acceptance remains open for origin comparisons outside that fixture.
+ASCII bitmap textures carry a native atlas descriptor beside their Java representation.
+The descriptor supplies the original page, cell height, and vertical offset from the texture's own Bedrock pack.
+The renderer reads both descriptor and page from the winning converted texture's own pack.
+A Java texture override without a native descriptor retains its Java provider.
+Native quads keep original cell bounds and page dimensions while preserving existing bitmap advances.
+The bitmap edge inset scales in the native 128-unit atlas coordinate space.
 
-### Bitmap label origin comparison, October 28, 2026
+Each provider uploads its page on the first glyph bake and shares that texture across its glyphs.
+Retirement releases the texture, or the CPU image if no glyph required an upload.
+Off-thread retirement schedules disposal on the client executor and releases the page only once.
+Distinct texture identities separate retired providers from replacements during reload.
+Regressions cover page coordinates, retained padding, pack ownership, missing pages, texture resolution, disposal, and use after retirement.
+Conversion cache format 10 regenerates packs that lack the retained pages and descriptors.
 
-Native 1.26.60.5 and the corrected Java add-on render the same legacy atlas at 1280 × 720 and GUI scale 2.
-Sixteen fixed labels cover small, normal, large, and extra-large fonts at whole, quarter, half, and three-quarter positions.
-The old Java renderer drifts vertically and samples extra ink columns at fractional positions.
-All sixteen corrected glyphs match native bounds, ink counts, and normalized pixel masks.
-Both Java recordings reach gameplay and finish normally.
-The comparison isolates the glyph component from unrelated tutorial text and world pixels.
+Labels apply the measured ten-unit line advance and retain fractional glyph advances.
+Each aligned origin receives the native one-unit inset before snapping to its font-size grid and then whole physical pixels.
+The native viewport scale remains independent of Java GUI scale.
+The sixteen fixed-label legacy controls cover small, normal, large, and extra-large fonts at whole, quarter, half, and three-quarter positions.
 
-Apply the native one-unit label inset before snapping each aligned line origin to its font-size grid and then whole physical pixels.
-Use the native viewport scale independently of Java's GUI scale.
-Keep glyph advances and authored line spacing fractional.
-The sixteen native coordinate cases form the regression fixture.
+Matching native 1.26.60.5 captures use protocol 2225 and BDS 1.26.60.6 at 1280 × 720.
+The current-font fixture contains eight extended-language labels and eight whole-label Unicode fallback labels.
+Direct and ViaProxy comparisons match all sixteen labels at native UI scale 2 and eleven at scale 1.
+Settled captures after live resource reload retain both results at Java GUI scales 1 and 2.
+All sixteen legacy controls also match on both routes at native UI scale 2 and Java GUI scales 1 and 2.
+The first proxy reload capture contains the fading reload overlay and is excluded.
 
-The full build reports 2,057 core cases and 1,294 add-on cases, with no failures or errors.
+The current-font recordings finish normally after 180 seconds, and the legacy recordings finish normally after 90 seconds.
+No accepted recording logs a rendering error.
+The owned fixture is removed, and the world pack list and source settings return to their original bytes.
+
+The full builds pass 2,071 core cases and 1,305 add-on cases, with no failures or errors.
 Optional skips total 176 and 145 respectively.
-The fresh bundle contains the corrected origin implementation.
-This result covers unshadowed legacy bitmap labels at the stated scale.
-Extended-font origins, other viewport scales, and TrueType pixel comparisons remain open.
-Licensed atlases, captures, packet journals, and image hashes remain private.
+CubeConverter passes 21 cases and ViaProxy passes four.
+The modpack bundle and offline validation pass.
 
-### Extended-font and cross-scale follow-up
-
-A pack without font overrides supplies eight current extended-font labels and eight whole-label Unicode fallback labels.
-At native UI scale 2 and 1280 × 720, fourteen label bounds and pixel masks match.
-All extended-font labels match; two half-size Unicode labels retain a horizontal sampling difference.
-
-At scale 1, ten labels match.
-Small labels and normal-size Unicode fallback still differ.
-The native window is 1280 × 720 with GUI offset -1; Java uses 854 × 480 and automatic native scale 1.
-The comparison uses fixed top-left glyphs and makes no whole-frame or world-pose claim.
-Toast-obscured frames and an ignored native resize are excluded.
-
-A private UV candidate passes all sixteen scale-2 labels but leaves the cross-scale rule unresolved.
-It is excluded from this patch and the restored bundle.
-The native glyph writer's edge coordinates alone do not close the rasterization comparison.
-The copied native profile is restored after the controls.
-Both accepted Java comparison recordings finish normally.
-The bitmap-font area stays open.
-
-### Matching viewport and atlas controls, October 29, 2026
-
-The accepted add-on still matches ten of sixteen labels at native UI scale 1 when both clients use 1280 × 720.
-The earlier window-size difference does not explain the remaining sampling differences.
-An explicit native UI scale keeps this comparison separate from Java GUI scale.
-The fixture retains the same labels and supplies no font overrides.
-
-A private UV adjustment matches ten labels at native UI scale 1 and fourteen at scale 2.
-Java GUI scales 1 and 2 produce the same results at each native UI scale.
-A second private probe retains the original atlas coordinates, dimensions, and upper-edge inset instead of Java's repacked atlas.
-With the existing origin rule, that probe matches eleven labels at scale 1 and all sixteen at scale 2.
-Five scale-1 labels still differ.
-Five alternative origin rules reduce the match count at both scales.
-Three repeated captures at each scale retain the same result.
-The final 180-second Java recording reaches gameplay and finishes normally.
-
-The original glyph writer retains fractional positions, with upper-edge insets of 0.001 source pixels for bitmap cells and 0.01 for Unicode cells.
-The native tessellator stores float positions and UVs.
-These instructions do not establish the complete label transform or final rasterization rule.
-Neither private rendering probe enters this patch or the bundle.
-Bitmap-font acceptance remains open.
-
-### Native Unicode atlas provider, October 29, 2026
-
-The production Unicode provider now retains each converted page as one texture instead of repacking individual glyphs into Java's font atlas.
-It retains source-cell bounds and the native upper-edge inset of 0.01 source pixels.
-Only converted `viabedrock:font/glyph_*.png` resources use this provider.
-The converter still owns pack selection, layout metadata, and colored source pixels.
-
-The provider uploads its page on the first glyph bake and shares that texture across its glyphs.
-Provider retirement releases the texture, or the CPU image if no glyph required an upload.
-Each provider has a distinct texture identity, so retirement cannot release a replacement provider's page.
-Regressions cover source coordinates at three resolutions, shared uploads, disposal, invalid grids, and attempted use after retirement.
-Off-thread retirement schedules texture disposal on the client executor and releases the page only once.
-
-The production add-on matches all sixteen native scale-2 labels, including both previously different half-size Unicode labels.
-Repeated captures and a live resource reload retain these matches at Java GUI scales 1 and 2.
-An early toast-obscured frame is excluded.
-
-At native UI scale 1, ten labels still match, with six sampling differences.
-The original-atlas bitmap probe and alternative origin rules remain private.
-
-Two fresh legacy-atlas captures still match all sixteen native scale-2 controls at Java GUI scale 1.
-The 180-second current-font recording and 60-second legacy recording both finish normally.
-The current-font recording includes a live resource reload and logs no rendering errors.
-
-The full build passes 2,071 core cases and 1,303 add-on cases, with no failures or errors.
-Optional skips total 176 and 145 respectively.
-Bitmap-font acceptance remains open for the scale-1 differences.
+Five scale-1 sampling differences remain open.
+These comparisons cover fixed label bounds and exact pixel masks, rather than whole frames.
+TrueType pixel comparisons and broader viewport coverage remain open.
+Licensed pages, captures, packet journals, native reads, and image hashes remain private.

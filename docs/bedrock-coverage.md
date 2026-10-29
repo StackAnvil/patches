@@ -12183,3 +12183,30 @@ The current-font recording includes a live resource reload and logs no rendering
 
 The full build passes 2,071 core cases and 1,303 add-on cases, with no failures or errors.
 Bitmap-font acceptance remains open for scale-1 sampling.
+
+### Original bitmap pages and pack ownership, October 29, 2026
+
+The converter now retains each original ASCII bitmap page alongside the Java representation.
+Texture metadata carries the page, cell height, and vertical offset from the texture's own Bedrock pack.
+The client reads the descriptor and page from the winning converted texture's own pack.
+Java texture overrides without a native descriptor retain their Java provider.
+Conversion cache format 10 regenerates cached packs with these resources.
+
+Native quads retain the original cells and page dimensions, including padding that Java's representation removes or adds.
+The bitmap edge inset scales in the native 128-unit atlas coordinate space.
+Regressions cover retained pixels, metadata-only overrides, source-pack boundaries, missing pages, and doubled texture resolution.
+
+Direct and ViaProxy comparisons now match eleven of sixteen current-font labels at native UI scale 1, up from ten.
+All sixteen scale-2 labels still match at Java GUI scales 1 and 2.
+Settled captures after a live resource reload retain both results.
+The first proxy reload capture contains the fading reload overlay and is excluded.
+Five scale-1 sampling differences remain open.
+
+All sixteen legacy controls also match on both routes at native UI scale 2 and Java GUI scales 1 and 2.
+The current-font recordings finish normally after 180 seconds, and the legacy recordings finish normally after 90 seconds.
+No accepted recording logs a rendering error.
+The world pack list and source settings return to their original bytes after the controls.
+
+All builds and the modpack bundle pass.
+The core reports 2,071 cases and the add-on reports 1,305, with no failures or errors.
+Optional skips total 176 and 145 respectively.

@@ -563,6 +563,10 @@ The [versioned source guide](../../../docs/bedrock-development-sources.md#versio
 
 The converter removes incomplete rows and preserves glyph scale for larger textures.
 Offsets that exceed Java's bitmap ascent limit use transparent cell padding.
+Each Java bitmap texture also carries a native atlas descriptor in its texture metadata.
+The descriptor retains the original page, cell height, and vertical offset from the texture's own Bedrock pack.
+The native renderer reads that original page, including padding that Java's normalized representation removes or adds.
+Conversion cache format 10 retires cached packs that lack these resources.
 Unicode pages follow the ASCII providers, including the final BMP page.
 The conversion cache revision changes with this output.
 Ordinary spaces retain the existing Java space provider.
@@ -594,17 +598,17 @@ The winning first atlas now limits the active page count, which excludes stale v
 The captured pack export contains the same atlas bytes and no layout JSON.
 
 The add-on applies native fractional advances, bearings, full-width ranges, and Hangul widths.
-It shares Java's texture upload and provider lifetime and keeps colored atlas pixels intact.
+It retains native page coordinates in provider-owned textures and keeps colored atlas pixels intact.
 Labels retain rounded line widths and a ten-unit bitmap line advance.
 Native multiline captures confirm an 80-pixel advance at GUI scale 2 with the title's fourfold font scale.
 Private-use icon captures confirm the separate scale and baseline for both 256- and 512-pixel atlases.
 
-The paired renders now match glyph shapes, sizes, and spacing for mixed-language and legacy text.
-A one-pixel vertical title-origin difference remains at the tested scale.
-A private fractional-offset fixture is prepared to isolate layout snapping from font rasterization.
-That fixture remains inactive; it does not establish a correction.
-The font acceptance check stays open until this remaining alignment check passes.
+Fixed-label comparisons retain all sixteen native matches at UI scale 2 for current and legacy bitmap fonts.
+The retained bitmap atlas improves the matching scale-1 comparison from ten to eleven labels out of sixteen.
+Five scale-1 sampling differences remain open.
+The renderer uses the descriptor and retained page from the winning converted texture's own pack.
+A metadata-only upper Java pack cannot substitute another page or layout.
 
-The replayed core stack passes 2,039 tests, with 176 optional skips and no failures or errors.
-The add-on passes 1,274 tests, with 142 optional skips and no failures or errors.
+The replayed core stack passes 2,071 tests, with 176 optional skips and no failures or errors.
+The add-on passes 1,305 tests, with 145 optional skips and no failures or errors.
 All four builds and the modpack bundle pass. Core Checkstyle checks pass.
