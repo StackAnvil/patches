@@ -12210,3 +12210,15 @@ The world pack list and source settings return to their original bytes after the
 All builds and the modpack bundle pass.
 The core reports 2,071 cases and the add-on reports 1,305, with no failures or errors.
 Optional skips total 176 and 145 respectively.
+
+### Native UV operation order, October 29, 2026
+
+Upper glyph UV edges now normalize the inset extent before adding the cell origin.
+The original native glyph writer uses this order, which rounds differently from absolute-edge subtraction for some cells.
+A regression against its numeric records fails before the correction and passes afterward.
+
+Fresh direct and ViaProxy controls retain eleven of sixteen scale-1 matches and all sixteen scale-2 matches, including after reload.
+Both 90-second recordings finish normally without rendering errors.
+The arithmetic correction does not resolve the five remaining pixel differences.
+The full build passes 2,071 core cases and 1,306 add-on cases, with no failures or errors.
+The bundle and offline validation pass.

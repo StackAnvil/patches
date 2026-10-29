@@ -507,6 +507,8 @@ The renderer reads both descriptor and page from the winning converted texture's
 A Java texture override without a native descriptor retains its Java provider.
 Native quads keep original cell bounds and page dimensions while preserving existing bitmap advances.
 The bitmap edge inset scales in the native 128-unit atlas coordinate space.
+Upper UV edges normalize the inset extent before adding the cell origin, matching the original glyph writer's float operation order.
+A regression against native `0x141590f60` records fails with absolute-edge subtraction and passes with this order.
 
 Each provider uploads its page on the first glyph bake and shares that texture across its glyphs.
 Retirement releases the texture, or the CPU image if no glyph required an upload.
@@ -531,12 +533,16 @@ The current-font recordings finish normally after 180 seconds, and the legacy re
 No accepted recording logs a rendering error.
 The owned fixture is removed, and the world pack list and source settings return to their original bytes.
 
-The full builds pass 2,071 core cases and 1,305 add-on cases, with no failures or errors.
+The full builds pass 2,071 core cases and 1,306 add-on cases, with no failures or errors.
 Optional skips total 176 and 145 respectively.
 CubeConverter passes 21 cases and ViaProxy passes four.
 The modpack bundle and offline validation pass.
 
 Five scale-1 sampling differences remain open.
+Fresh direct and ViaProxy recordings retain eleven scale-1 matches and sixteen scale-2 matches before and after reload.
+Both 90-second recordings finish normally without rendering errors.
+The UV arithmetic correction matches native numeric records but does not close the remaining pixel differences.
+
 These comparisons cover fixed label bounds and exact pixel masks, rather than whole frames.
 TrueType pixel comparisons and broader viewport coverage remain open.
 Licensed pages, captures, packet journals, native reads, and image hashes remain private.

@@ -610,5 +610,5 @@ The renderer uses the descriptor and retained page from the winning converted te
 A metadata-only upper Java pack cannot substitute another page or layout.
 
 The replayed core stack passes 2,071 tests, with 176 optional skips and no failures or errors.
-The add-on passes 1,305 tests, with 145 optional skips and no failures or errors.
+The add-on passes 1,306 tests, with 145 optional skips and no failures or errors.
 All four builds and the modpack bundle pass. Core Checkstyle checks pass.
