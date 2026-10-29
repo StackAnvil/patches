@@ -51,7 +51,7 @@ Merchant offers now use the shared saved ItemStack loader for the complete conve
 Remove the duplicate Block write after loading.
 That write bypassed missing-state admission and could restore a Block after zero-count header invalidation.
 
-The [inventory reference](../../../docs/native-player-inventory.md#saved-nbt-stack-loading) records 4,508 matching native saved-constructor outputs.
+The [inventory reference](../../../docs/native-player-inventory.md) records 4,508 matching native saved-constructor outputs.
 The complete core suite passes 1,741 tests, including merchant, trade-offer and trade-packet regressions.
 All four build targets pass.
 These constructor controls do not replace the remaining native legacy-trade UI and full-inventory close comparisons.

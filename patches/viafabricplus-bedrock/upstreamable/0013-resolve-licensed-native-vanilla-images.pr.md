@@ -68,7 +68,7 @@ retain it. Effect caches compare the whole accepted archive identity. Missing
 world context selects the existing fallback instead of guessing latest vanilla.
 Account-owned skin and emote assets remain independent of world version.
 
-The [core evidence](../../viabedrock/upstreamable/0068-resolve-licensed-native-image-fallbacks.pr.md#select-vanilla-resources-by-world-version)
+The [core evidence](../../viabedrock/upstreamable/0068-resolve-licensed-native-image-fallbacks.pr.md)
 records BDS 1.26.60.6 packet inputs and Microsoft's selection rules.
 New regressions switch texture bytes, sound definitions, and animation poses
 together across newer/older/newer worlds. They also cover server priority,

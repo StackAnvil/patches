@@ -1,119 +1,23 @@
-Server packs can refer to vanilla item images without sending those images. Hive does this for bread, buckets, potion bottles, and other item atlas entries. The official 1.26.51.1 client resolves them from its built-in packs. The bundled ViaBedrock metadata archives contain no images.
+# feat(resource-packs): select native resources by world version
 
-Add a platform provider for licensed native images. Run acquisition on the existing resource pack executor, then wait for images and server downloads before conversion. Keep each native image layer below bundled metadata and server packs, with its original path casing and overlay order. The converted cache includes the image bytes. The provider does not change server pack advertisements or counts.
+## Purpose
 
-The default provider loads optional version-matched image layers from the core classpath.
-Without that bundle, it returns no additional packs.
-Platforms can still supply their own image layers and supported actor dependencies.
-Server metadata keeps its existing priority.
+Bedrock 1.26.51.1 protocol 2193 accepts Hive item atlas aliases to vanilla images which the server does not resend. The bundled metadata archives intentionally contain no images, leaving these aliases unresolved during Java conversion.
 
-Validation: all 270 ViaBedrock tests pass. Focused tests check vanilla atlas aliases, server overrides, and higher TGA layers that replace lower PNG images. Other tests check metadata rejection and cache invalidation after image bytes change. The Hive evidence comes from a saved official-client capture at network protocol 2193; no further public join was needed.
+## Design constraints
 
-## Native actor dependencies
+Resolve licensed images beneath server assets from the selected native resource context. Keep acquisition, version validation, cache identity, and fallback ownership explicit.
 
-The provider whitelist also accepts native equipment definitions, models, animations, controllers and material documents.
-These dependencies retain their lower priority and built-in provenance.
-Server packs can replace them.
-Unrelated entity, block and atlas definitions remain excluded.
-The shield regression covers dependencies, precedence and provenance.
+Prerequisites:
 
-## Native icon atlases
+- viabedrock/0015-transport-native-resources-and-sound-commands.patch: Carry the selected world version through the existing native resource archive and converted-pack transport.
 
-Permit the exact `textures/item_texture.json` and `textures/terrain_texture.json` paths beside licensed images.
-These definitions select native bed and pane icons when servers do not replace them.
-Other unrelated definitions remain excluded, and accepted server packs retain precedence.
+- viabedrock/0025-apply-dependencies-and-selected-subpacks.patch: Select world-versioned vanilla resources while retaining the negotiated server dependency/subpack stack.
 
-## Share native images with the proxy
+## Validation and remaining limits
 
-The StackAnvil build derives `builtin_images.zip` from the checksum-verified native archives already used by the add-on.
-The bundle retains 11,398 images and atlas entries across 48 native layers.
-It includes `vanilla_base`, preserves path casing, and orders versioned overlays numerically.
-Its 51.1 MiB of source data compresses to about 25 MiB.
-The core, shaded proxy, and nested client core contain the exact verified image bundle.
-The existing built-in UI bundle retains the native copyright notice in each distribution.
+Regression coverage includes `BaseGameVersionTest`, `BuiltinActorResourcesTest`, `NativeActorLibraryTest`, `SoundTranslationsTest`.
 
-Previously, the direct frontend supplied these images, while the proxy default provider supplied none.
-An attachable without its own inventory image therefore used held geometry in the proxy hotbar.
-The authored test geometry lay outside the icon view, so its slots appeared blank.
-Supplying native images lets the existing converter select inventory icons while retaining held geometry and accepted server overrides.
-No item identity or gameplay component changes.
+Resource-selection and fallback tests protect known cases. Missing licensed resources and broader native rendering comparisons remain limits.
 
-The runtime loader checks the target version, indexed file hashes, path boundaries, resource types, sizes, and layer order.
-A malformed present bundle fails explicitly.
-The immutable loaded layers remain below metadata and accepted server packs.
-Image bytes already participate in the converted-pack fingerprint.
-
-Four targeted tests cover genuine default icon conversion, retained held selectors, overlay ordering, server priority, and malformed bundles.
-Three tooling tests cover original bytes, deterministic packaging, and exact core and consumer resources.
-Earlier PNG/TGA precedence, atlas alias, and cache-invalidation checks remain active.
-Native visual parity and other actor behavior remain separate requirements.
-
-The full build passes 3,053 tests with 152 optional skips and no failures or errors.
-Four additional checks execute against the distributable core JAR and verify five production class origins.
-All 1,558 core classes and 200 assets match both embedded consumers.
-The build also verifies all 39 converter classes and 1,205 compiled client classes.
-
-Fresh BDS 1.26.51.1 sessions verify both routes with the same final distributables.
-Five real hotbar items retain their GUI icon selectors and held-model selectors.
-Four icons use the native image fallback; the bone uses an accepted server atlas override with an orange and cyan checkerboard.
-Screenshot review shows all five icons in the hotbar and the creative inventory opened with E.
-Each route also passes 16 equipped-state checks, including real sneak transitions and equipment removal.
-All 30 screenshots receive visual review, and installed runtime hashes match the build.
-These creative-screen controls do not reproduce the reported survival inventory or establish complete native visual parity.
-
-## Select vanilla resources by world version
-
-Core now reads the base-game version in `ResourcePackStack`. The resource
-preparation worker selects cumulative vanilla metadata and licensed layers
-using that cutoff. Server packs keep their priority independently of it.
-Raw verified bundles remain shared and immutable.
-
-Official BDS 1.26.60.6 on protocol 2225 advertises `*` for an ordinary world.
-A separate copied world with `baseGameVersion` set to `1.20.0` and template
-flags advertises `1.20.0`. These are private packet captures from an owned
-loopback server. They establish the input, not the native client's graphics.
-Microsoft's [base-game version guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/basegameversioning)
-establishes cumulative vanilla overlay selection and independent server packs.
-
-`ResourcePackStorage` retains the canonical world cutoff. Native resource
-archive format 2 carries it through ViaProxy alongside immutable pack layers.
-The conversion cache includes the context even when resource bytes match.
-Malformed archive context fails decoding instead of selecting current assets.
-
-Targeted tests cover numeric ordering, newer/older/newer selection, retained
-server priority, archive/storage context, and identical-byte cache separation.
-The full core build and tests pass with the repository's packaged UI and images.
-Native and direct Java comparisons now establish resource-dependent cat draws and current/1.20.0/current sound selection.
-Two conflicting server WAV packs retain native priority above vanilla FSB resources on direct and ViaProxy connections.
-The [add-on evidence](../../viafabricplus-bedrock/upstreamable/0013-resolve-licensed-native-vanilla-images.pr.md#world-version-resource-selection) records PCM comparisons, override retirement, and remaining visual/audio limits.
-The full resource-version acceptance area remains incomplete.
-
-All 55 versioned vanilla manifests in the matching client snapshot and
-generated core metadata have minimum engine versions equal to their numeric
-overlay versions. This validates the metadata cutoff used for this target.
-Archive corruption tests locate count and provenance fields after the variable
-version field, preserving malformed-role and truncated-header coverage.
-
-## Biome identifier priority
-
-Older vanilla layers identify the End biome as `the_end`.
-The matching client's `vanilla_1.21.120` layer uses `minecraft:the_end`.
-Previously, both entries survived, and registry lookup retained the older definition.
-This also prevented qualified server definitions from replacing older vanilla entries.
-
-Normalize biome identifiers during insertion and lookup.
-Both spellings now select the same definition, while custom namespaces remain distinct.
-The selected pack still supplies the whole definition.
-Two regressions fail before the correction and pass afterward.
-They cover both override directions, sky and water colors, fog binding, and namespace isolation.
-
-A private native fixture binds `minecraft:the_end` to a unique red fog definition, without fog commands or living dragons.
-Native 1.26.60.5 renders red fog from 0 to 32 blocks.
-Matching shader uniforms establish the distance and color independently of the screenshot.
-An earlier override of the vanilla fog identifier did not change those uniforms.
-Renaming that fog file to its canonical filename also had no effect.
-The explicit biome binding supplies the valid base-fog fixture.
-Before the companion fog-consumer update, direct and ViaProxy recordings each finish normally after 180 seconds.
-Both receive red `FOG_COLOR` but retain Java's 1,024-block distance, compared with the native control's 32 blocks.
-This identifier correction does not implement base fog distances or establish complete rendering parity.
-The [fog transport patch](0104-transport-resolved-native-fog-stacks.pr.md) records the subsequent 32-block consumer controls and remaining limits.
+The [owning patch](0068-resolve-licensed-native-image-fallbacks.patch) retains implementation rationale and versioned evidence.

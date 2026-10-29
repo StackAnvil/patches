@@ -24,9 +24,9 @@ The add-on setup includes one compatibility patch for the current ViaBedrock API
 
 ## Bundled Bedrock resources
 
-[`bedrock-assets.json`](../bedrock-assets.json) pins the built-in resource bundle to Bedrock 1.26.51.1.
-The build adds [`assets/bedrock/1.26.51.1/`](../assets/bedrock/1.26.51.1/) to the add-on's resources.
-The JAR contains five archives, their checksum manifest, and the native copyright notice.
+[`bedrock-assets.json`](../bedrock-assets.json) pins the built-in resource bundle to Bedrock 1.26.60.5.
+The build adds [`assets/bedrock/1.26.60.5/`](../assets/bedrock/1.26.60.5/) to the add-on's resources.
+The JAR contains the pinned archives, their checksum manifest, and the native copyright notice.
 Runtime loading uses these resources without Store sign-in or a downloaded asset cache.
 
 The core also embeds `assets/viabedrock/builtin_ui.zip` from the same versioned resource directory.
@@ -38,8 +38,8 @@ Missing or incomplete assets stop the build. Each finished JAR must contain the 
 To regenerate the bundle from a matching installed game, run:
 
 ```bash
-bun scripts/bundle-bedrock-assets.ts /path/to/bedrock-game 1.26.51.1
-bun scripts/bundle-bedrock-ui.ts /path/to/bedrock-game 1.26.51.1 .stackanvil/builtin_ui.zip
+bun scripts/bundle-bedrock-assets.ts /path/to/bedrock-game 1.26.60.5
+bun scripts/bundle-bedrock-ui.ts /path/to/bedrock-game 1.26.60.5 .stackanvil/builtin_ui.zip
 ```
 
 The game directory must contain `data/resource_packs/`.
@@ -48,7 +48,7 @@ It selects persona resources and stable vanilla models, animations, controllers,
 It uses original `.bol-orig` files when an installation keeps patched copies beside them.
 
 The UI extractor requires a fresh output path and writes a checksum manifest beside the ZIP.
-After reviewing the output, replace both tracked files under `assets/bedrock/1.26.51.1/assets/viabedrock/`.
+After reviewing the output, replace both tracked files under `assets/bedrock/1.26.60.5/assets/viabedrock/`.
 Keep the native copyright notice in the ZIP. Commit both files with changes to the version pin.
 
 The normal stack build also derives an image-only bundle from the verified add-on archives.
@@ -60,9 +60,9 @@ Core builds now require the full pinned native archive inputs alongside the trac
 Generated image bundles remain outside Git.
 
 The normal stack build passes the resource directory to Gradle.
-For a direct add-on Gradle build, pass `-PbedrockBuiltinAssets=/absolute/path/to/assets/bedrock/1.26.51.1`.
-For a direct core Gradle build, pass `-PbedrockBuiltinUi=/absolute/path/to/assets/bedrock/1.26.51.1/assets/viabedrock/builtin_ui.zip`.
-To include the optional image bundle in a direct core Gradle build, also pass `-PbedrockBuiltinImages=/absolute/path/to/builtin_images.zip`.
+For a direct add-on Gradle build, pass `-PbedrockBuiltinAssets=/absolute/path/to/assets/bedrock/1.26.60.5`.
+For a direct core Gradle build, pass `-PbedrockBuiltinUi=/absolute/path/to/assets/bedrock/1.26.60.5/assets/viabedrock/builtin_ui.zip`.
+To include the required image bundle in a direct core Gradle build, also pass `-PbedrockBuiltinImages=/absolute/path/to/builtin_images.zip`.
 When changing the target Bedrock version, regenerate the bundle and update the pin together.
 The runtime rejects bundles that do not match ViaBedrock's target version.
 

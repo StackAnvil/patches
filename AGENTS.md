@@ -37,6 +37,7 @@ If `stack sync` stops at a conflict, resolve it in the generated checkout, stage
 
 ## Repository work
 
+- Use `net.pistonmaster.stackanvil` for StackAnvil-owned Java packages. Preserve each upstream project's package names in upstream patches. Never introduce `com.enderdash` packages.
 - Use Bun, TypeScript, and Effect for the stack tooling. Keep the command behavior clear from the CLI and avoid shell-specific behavior.
 - Use Conventional Commit messages in the form `<type>(<scope>): <description>`. Add a body for non-trivial changes. Do not bypass Git hooks or Lefthook.
 - Do not create a branch unless the user explicitly asks for one.
@@ -48,3 +49,25 @@ If `stack sync` stops at a conflict, resolve it in the generated checkout, stage
 - Use `bun run lab` and `bun run capture` for local Bedrock and Java tests. Keep their virtual display and zero volume defaults. Desktop input requires an explicit `--allow-focus`. Follow [the capture lab guide](docs/capture-lab.md). Keep credentials, raw flows, screenshots, and JVM dumps private.
 - Do not commit `.worktrees/`, `.stackanvil/`, `dist/`, downloaded servers, credentials, or traffic captures.
 - Treat the patches repository as GPL-3.0-or-later tooling. Keep upstream projects' license and copyright notices in generated source and builds.
+
+## Documentation
+
+- Write for a reader's current task: installation, development, patch maintenance, testing, or troubleshooting.
+- Keep one source for each fact. Link to it instead of repeating it across the coverage page, feature guides, and patch notes.
+- Keep `docs/bedrock-coverage.md` as a short current-status reference. Replace outdated status when behavior changes. Do not append a chronological change ledger.
+- Keep `.pr.md` files focused on purpose, design constraints, validation, and remaining limits. Put enduring implementation rationale in the owning patch's commit body or code comments.
+- Keep experiment transcripts, addresses, raw outputs, and repeated validation runs in private `.stackanvil/research/` artifacts. Keep released change history in Git and release notes.
+- Remove obsolete prose instead of moving it into another tracked archive. Git preserves earlier revisions.
+- Follow the task-based approach in [Paper's docs](https://docs.papermc.io/) and [Purpur's docs](https://purpurmc.org/docs/). Do not document every development step.
+
+## Tests
+
+- Add a test for a concrete failure risk or regression. State the observable behavior in its name.
+- Favor packet-to-state, resource selection, inventory reconciliation, patch recovery, and other boundaries where a defect affects users or loses work.
+- Keep native comparison fixtures for behavior that depends on Bedrock rendering, input, or timing. A unit test does not establish native parity.
+- Do not add tests solely to increase coverage, count tests, or exercise every helper. There is no coverage quota.
+- Remove tests that only restate constants, getters, source text, or the implementation's branch structure. Keep assertions on strings when the string is an observable protocol, parser, or rendering result.
+- Prefer one representative boundary test over duplicate checks at every layer. Keep separate cases only when they catch distinct failures.
+- Use small, explicit fixtures. Do not generate large expected outputs from the same algorithm under test.
+- Run checks appropriate to the change. Do not add redundant tests for mechanical renames or documentation edits.
+- Apply Google's guidance on [behavior tests](https://testing.googleblog.com/2014/04/testing-on-toilet-test-behaviors-not.html), [change detectors](https://testing.googleblog.com/2015/01/testing-on-toilet-change-detector-tests.html), and [coverage](https://testing.googleblog.com/2020/08/code-coverage-best-practices.html).

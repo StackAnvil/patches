@@ -27,7 +27,7 @@ Action tests cover raw-mode differences, destination equipment and count rules, 
 The full build passes 2,910 tests; the packaged core passes 68 focused checks and rejects 32 deliberate regressions by value.
 Those packaged totals include earlier permission, identity and armor controls.
 
-See [the native discard reference](../../../docs/native-player-inventory.md#inventory-discard-and-creative-admission) for evidence and limits.
+See [the native discard reference](../../../docs/native-player-inventory.md) for evidence and limits.
 The new controls do not establish complete creative catalog production, created-output ownership or live acceptance of these permission changes.
 
 ## Live creative picker control
@@ -39,7 +39,7 @@ Client and core snapshots agree on the resulting item.
 The ordinary Java picker remains installed; these observations do not establish the authored native player controller.
 Physical refusals do not independently identify whether client or core admission stopped each operation.
 
-See [the complete E-key control](../../../docs/native-player-inventory.md#live-e-key-action-controls) for artifact verification, response counts and remaining limits.
+See [the complete E-key control](../../../docs/native-player-inventory.md) for artifact verification, response counts and remaining limits.
 
 ## Bound player recipe model
 

@@ -248,64 +248,11 @@ The tooling refuses to recreate media over an orphaned installation.
 
 ## Coverage boundary
 
-The repository's main tooling and full builds run on Ubuntu GitHub runners.
-The separate native persona helper matrix runs on Ubuntu, Windows, Intel macOS, and ARM macOS.
-The private packet recorder permission tests also run on Ubuntu, Windows, and ARM macOS.
-Those jobs do not run account-based game joins.
-See [ci.yml](../.github/workflows/ci.yml) and [persona-helpers.yml](../.github/workflows/persona-helpers.yml).
+The main tooling and full builds run on Ubuntu GitHub runners.
+Private capture-file permission checks also run on Windows and macOS.
+These jobs do not run account-based game joins. See [ci.yml](../.github/workflows/ci.yml).
 
-Local verification covers profile preservation, QMP framing and errors, validated input, restricted artifact sharing, and a Quickemu control smoke test.
-The smoke test boots a disposable disk without a guest OS. It verifies screenshot and input commands, not Windows or macOS application behavior.
-## Guest results, October 6, 2026
-
-Both installed guests launched Minecraft 26.3 through Prism 11.1.1 with Temurin 25.0.4.1+1 and the current add-on.
-Each guest ran ViaProxy locally and joined CubeCraft with an accepted converted resource pack.
-Screenshots show the lobby, custom NPCs, banners, item icons, and sidebar.
-Private logs retain conversion progress and thread samples.
-
-| Guest | Graphics | Observed conversion interval |
-| --- | --- | --- |
-| Windows 11 Enterprise evaluation, build 26100 | Mesa llvmpipe 26.2.4 | 1,198 milliseconds |
-| macOS Sonoma 14.8.9, build 23J631 | Apple Software Renderer, OpenGL 4.1 | 1,278 milliseconds |
-
-These intervals cover conversion only. They exclude preparation, account refresh, pack approval, resource reload, and world loading.
-The Windows first attempt disconnected during world loading. A retry reached the lobby and retained server traffic for more than five minutes.
-The first macOS attempt used an unavailable local proxy; the next attempt reached the lobby after the proxy started.
-
-The Windows guest needed the official VC++ runtime and an application-local Mesa deployment for SDL and LWJGL.
-Its default graphics route aborted before the game menu.
-Use [Mesa's Windows deployment instructions](https://github.com/pal1000/mesa-dist-win) for a software renderer.
-Both guests need long input holds during slow rendering.
-Software graphics establish functional coverage only, without hardware performance claims.
-
-Fresh Store approval, passkeys, Modrinth, the official launcher with Fabric, direct Bedrock connections, Apple Silicon, and movement parity remain unverified.
-
-The macOS reload also exposes a 2 GiB Java heap failure.
-A confirmed 4 GiB test heap permits a successful lobby load and pack unload.
-A live heap dump identifies duplicate actor animation definitions; the add-on now shares these within each accepted pack lifetime.
-The rebuilt add-on now reaches the CubeCraft lobby and unloads its pack with a confirmed 2 GiB heap.
-One shared library serves 27 actor graphs in the live histogram.
-Longer sessions and other packs remain to be tested.
-
-A radius-four CubeCraft join can stall after conversion finishes.
-In the recorded macOS connection, repeating radius four receives no chunks or acknowledgment.
-Requesting radius eight on the same connection receives chunks and spawn status, followed by more than two minutes of initialized gameplay traffic.
-Automatic recovery in ViaBedrock core now reaches the macOS lobby from radius four.
-The packet journal confirms two radius-four requests, radius eight, acknowledgment, spawn, initialization, and sustained input.
-The rebuilt Windows stack reaches the lobby on retry with a confirmed 2 GiB heap.
-Live diagnostics verify an active PLAY connection, completed spawn, and advancing player ticks.
-After more than four minutes, the client unloads its server pack back to the multiplayer menu without heap exhaustion.
-Its first resource reload still disconnects. The successful retry does not close that gap.
-Native negotiation comparison and Windows recovery from smaller radii remain open.
-The later Windows recording below requests radius sixteen.
-Treat conversion, resource reload, chunk negotiation, and graphics as separate stages when diagnosing a stalled join.
-
-A fresh Windows client and proxy also complete a CubeCraft join with an empty converted-pack cache.
-The private recorder saves five server packs and a closed 219-second packet journal.
-It records spawn, one initialization packet, 3,747 input packets, and 594 chunks.
-The client requests radius sixteen and receives radius fourteen, so this run does not exercise the smaller-radius recovery.
-The client reaches the visible lobby, accepts walking and jumping input, and unloads back to the multiplayer menu with a confirmed 2 GiB heap.
-The two conversion intervals are 1,715 milliseconds and 2,426 milliseconds; these exclude other join stages.
-The warm-cache client restart also reaches spawn.
-These successful repeats do not reproduce or explain the earlier first reload disconnect.
-Fresh Store login, other launchers, direct connections, and complete movement parity remain open.
+Local Quickemu checks cover profile preservation, QMP commands, input, and restricted artifact sharing.
+The disposable-disk smoke test does not establish Windows or macOS application behavior.
+Record launcher, account, graphics, and gameplay results against the exact tested build privately.
+Keep current platform limits in [compatibility status](bedrock-coverage.md).
