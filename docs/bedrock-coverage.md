@@ -12159,3 +12159,27 @@ Those instructions do not establish the complete label transform or final raster
 Both private rendering probes remain excluded from the patch stack and bundle.
 The world pack list and source settings return to their original bytes after the controls.
 The bitmap-font area remains open.
+
+### Unicode atlas sampling correction, October 29, 2026
+
+The production Unicode provider now retains each converted page as one texture, with its original cell coordinates and native upper-edge inset.
+Java's per-glyph atlas packing previously changed the sampled columns of half-size Unicode labels.
+Provider retirement releases the texture, and distinct identities separate retired and replacement providers during reload.
+Focused regressions cover page coordinates at three resolutions, shared uploads, disposal, invalid grids, and use after retirement.
+Off-thread retirement schedules disposal on the client executor and releases the page only once.
+
+All sixteen scale-2 labels now match native bounds and exact pixel masks.
+This includes the two half-size Unicode labels that previously differed.
+Repeated captures and a live resource reload retain these matches at Java GUI scales 1 and 2.
+A chat-warning toast obscures one early frame, which is excluded.
+
+At native UI scale 1, ten of sixteen labels still match.
+The six remaining differences cover small labels and normal-size Unicode labels.
+The bitmap-atlas and alternative-origin probes remain private.
+
+Two fresh legacy-atlas captures retain all sixteen native scale-2 matches at Java GUI scale 1.
+The current-font and legacy recordings finish normally after 180 and 60 seconds respectively.
+The current-font recording includes a live resource reload and logs no rendering errors.
+
+The full build passes 2,071 core cases and 1,303 add-on cases, with no failures or errors.
+Bitmap-font acceptance remains open for scale-1 sampling.

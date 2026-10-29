@@ -1,4 +1,4 @@
-From 51004698f4bc24a0df5ae4585e65996d96a93d94 Mon Sep 17 00:00:00 2001
+From 8d49fe7e936c9aa3abeac067feb2fbec4a57b965 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -495,14 +495,24 @@ provider alongside TrueType fonts. The shared 26.60 font converter needs
 the original pack boundary to distinguish extended vanilla metadata from
 legacy server textures. Exercise provider, storage admission, conversion,
 and immutable library reuse together instead of testing only the file
-filter. Native mixed-language and legacy-pack visual comparison remains
-pending on a matching Gaming Services engine.
+filter. Native 1.26.60.5 controls cover mixed-language and legacy packs.
+All sixteen current scale-2 labels match after the atlas correction;
+scale-1 rasterization remains open.
 
-Retain native Unicode advances and bearings through Java's atlas lifetime.
+Retain native Unicode advances, bearings and atlas coordinates.
 Bedrock 1.26.60.5 uses fractional narrow advances, fixed wide ranges and
 Hangul advances. The native width loader at 1415905b0 and matching title
-captures establish these rules. Wrap the accepted provider's glyph metrics
-without replacing its colored pixels, uploads, or resource lifetime.
+captures establish these rules. Its glyph writer starts at the cell edge
+and insets only the upper edge by 0.01 source pixels. Java's per-glyph
+atlas packing changes small-label sampling even with matching advances.
+
+Keep each converted Unicode page as one provider-owned texture, uploaded
+lazily on the render thread and released when the provider closes.
+Retain colored pixels and source-cell bounds. Unique texture identities
+keep retired providers separate from replacement providers during reload.
+Scope this to converted viabedrock glyph pages; Java fonts and bitmap
+layout conversion retain their own paths. Native scale-1 rasterization
+remains a separate comparison limit rather than an inferred epsilon fix.
 
 Use the measured ten-unit bitmap line advance. Label dimensions and line
 alignment retain rounded widths; only glyph advances remain fractional.
@@ -527,7 +537,7 @@ and authored line spacing instead of applying a fixed screen-pixel offset.
  .../render/MixinAvatarAnimationRenderer.java  |   2 +
  .../render/MixinBedrockActorSubmission.java   |   6 +
  .../MixinBedrockRenderingResources.java       |   2 +
- .../render/MixinBedrockUnicodeFont.java       |  33 +
+ .../render/MixinBedrockUnicodeFont.java       |  34 +
  .../render/MixinEntityRenderDispatcher.java   |  21 +-
  .../render/MixinGuiEntityRenderer.java        |  53 +
  .../render/MixinNativeHudOverlays.java        |  34 +
@@ -544,7 +554,7 @@ and authored line spacing instead of applying a fixed screen-pixel offset.
  .../render/BedrockGuiActorRenderer.java       | 140 +++
  .../render/BedrockPlayerAttachables.java      |  17 +-
  .../bedrock/render/BedrockPlayerSkins.java    |  44 +-
- .../render/font/BedrockUnicodeFont.java       | 128 +++
+ .../render/font/BedrockUnicodeFont.java       | 175 ++++
  .../bedrock/screen/ui/BedrockHudOverlays.java | 129 +++
  .../screen/ui/NativeHudOverlayState.java      |  66 ++
  .../bedrock/screen/ui/NativeHudPayload.java   |  36 +
@@ -593,7 +603,7 @@ and authored line spacing instead of applying a fixed screen-pixel offset.
  ...icPlusBuiltinResourcePackProviderTest.java |   4 +
  .../render/BedrockActorMaterialsGpuTest.java  |  38 +-
  .../render/BedrockShaderPipelinesTest.java    |  24 +
- .../render/font/BedrockUnicodeFontTest.java   |  58 ++
+ .../render/font/BedrockUnicodeFontTest.java   | 152 +++
  .../bedrock/screen/ui/AnimationPrograms.java  |  23 +
  .../screen/ui/NativeHudOverlayStateTest.java  | 153 +++
  .../screen/ui/NativeUiActorCameraTest.java    | 102 ++
@@ -622,7 +632,7 @@ and authored line spacing instead of applying a fixed screen-pixel offset.
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |  86 ++
  .../screen/ui/NativeUiViewportTest.java       |  95 ++
- 105 files changed, 11640 insertions(+), 36 deletions(-)
+ 105 files changed, 11782 insertions(+), 36 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -1100,10 +1110,10 @@ index f70a0c9..f94612e 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockUnicodeFont.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockUnicodeFont.java
 new file mode 100644
-index 0000000..4afa9f6
+index 0000000..1f68e8b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockUnicodeFont.java
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,34 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1129,11 +1139,12 @@ index 0000000..4afa9f6
 +    @Shadow @Final private Identifier file;
 +    @Shadow @Final private int[][] codepointGrid;
 +    @Shadow @Final private int height;
++    @Shadow @Final private int ascent;
 +
-+    @Inject(method = "load", at = @At("RETURN"), cancellable = true)
++    @Inject(method = "load", at = @At("HEAD"), cancellable = true)
 +    private void retainNativeMetrics(final ResourceManager resources, final CallbackInfoReturnable<GlyphProvider> cir) throws IOException {
 +        if (BedrockUnicodeFont.owns(this.file)) {
-+            cir.setReturnValue(BedrockUnicodeFont.load(cir.getReturnValue(), resources, this.file, this.codepointGrid, this.height));
++            cir.setReturnValue(BedrockUnicodeFont.load(resources, this.file, this.codepointGrid, this.height, this.ascent));
 +        }
 +    }
 +}
@@ -2190,10 +2201,10 @@ index f1a0f99..b85e966 100644
                  ? walking.bedrockWalkingAnimation().sample(partialTick) : 0F);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockUnicodeFont.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockUnicodeFont.java
 new file mode 100644
-index 0000000..45019b5
+index 0000000..7c13c32
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockUnicodeFont.java
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,175 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2201,58 +2212,80 @@ index 0000000..45019b5
 + */
 +package com.viaversion.viafabricplus.bedrock.render.font;
 +
-+import com.mojang.blaze3d.font.GlyphBitmap;
 +import com.mojang.blaze3d.font.GlyphInfo;
 +import com.mojang.blaze3d.font.GlyphProvider;
 +import com.mojang.blaze3d.font.UnbakedGlyph;
 +import com.mojang.blaze3d.platform.NativeImage;
-+import com.mojang.renderpearl.api.textures.GpuTexture;
++import com.mojang.blaze3d.systems.RenderSystem;
 +import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 +import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 +import it.unimi.dsi.fastutil.ints.IntSet;
++import it.unimi.dsi.fastutil.ints.IntSets;
 +import java.io.IOException;
++import java.util.concurrent.atomic.AtomicLong;
 +import java.util.function.IntBinaryOperator;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.font.GlyphRenderTypes;
 +import net.minecraft.client.gui.font.glyphs.BakedGlyph;
++import net.minecraft.client.gui.font.glyphs.BakedSheetGlyph;
++import net.minecraft.client.renderer.texture.DynamicTexture;
++import net.minecraft.client.renderer.texture.TextureManager;
 +import net.minecraft.resources.Identifier;
 +import net.minecraft.server.packs.resources.ResourceManager;
 +
-+/** Native Unicode metrics on the converted atlas, sharing Java's texture upload and lifetime. */
++/** Retains native Unicode metrics and sampling on a provider-owned atlas. */
 +public final class BedrockUnicodeFont implements GlyphProvider {
-+    private final GlyphProvider source;
-+    private final Int2ObjectMap<UnbakedGlyph> glyphs;
++    private static final AtomicLong NEXT_TEXTURE = new AtomicLong();
++    private final NativeImage image;
++    private final Identifier textureId;
++    private final Int2ObjectMap<UnbakedGlyph> glyphs = new Int2ObjectOpenHashMap<>();
++    private final IntSet supportedGlyphs = IntSets.unmodifiable(this.glyphs.keySet());
++    private DynamicTexture texture;
++    private TextureManager textureManager;
++    private GlyphRenderTypes renderTypes;
++    private boolean closed;
 +
-+    private BedrockUnicodeFont(final GlyphProvider source, final Int2ObjectMap<UnbakedGlyph> glyphs) {
-+        this.source = source;
-+        this.glyphs = glyphs;
++    private BedrockUnicodeFont(final NativeImage image) {
++        this.image = image;
++        this.textureId = Identifier.fromNamespaceAndPath("viabedrock", "font/native_unicode/" + NEXT_TEXTURE.getAndIncrement());
 +    }
 +
 +    public static boolean owns(final Identifier file) {
 +        return file.getNamespace().equals("viabedrock") && file.getPath().matches("font/glyph_[0-9a-f]{2}\\.png");
 +    }
 +
-+    public static GlyphProvider load(final GlyphProvider source, final ResourceManager resources,
-+                                     final Identifier file, final int[][] grid, final int height) throws IOException {
-+        final Int2ObjectMap<UnbakedGlyph> glyphs = new Int2ObjectOpenHashMap<>();
-+        try (var input = resources.open(file.withPrefix("textures/")); var image = NativeImage.read(input)) {
++    public static GlyphProvider load(final ResourceManager resources, final Identifier file, final int[][] grid,
++                                     final int height, final int ascent) throws IOException {
++        final NativeImage image;
++        try (var input = resources.open(file.withPrefix("textures/"))) {
++            image = NativeImage.read(input);
++        }
++        try {
++            if (grid.length == 0 || grid[0].length == 0 || image.getWidth() % grid[0].length != 0
++                    || image.getHeight() % grid.length != 0) throw new IOException("Invalid native Unicode atlas grid");
 +            final int cellWidth = image.getWidth() / grid[0].length;
 +            final int cellHeight = image.getHeight() / grid.length;
++            if (cellWidth == 0 || cellHeight == 0) throw new IOException("Empty native Unicode atlas cells");
++            final BedrockUnicodeFont font = new BedrockUnicodeFont(image);
 +            for (int row = 0; row < grid.length; row++) {
++                if (grid[row].length != grid[0].length) throw new IOException("Unequal native Unicode atlas rows");
 +                for (int column = 0; column < grid[row].length; column++) {
 +                    final int codepoint = grid[row][column];
-+                    final UnbakedGlyph glyph = source.getGlyph(codepoint);
-+                    if (codepoint == 0 || glyph == null) continue;
++                    if (codepoint == 0) continue;
 +                    final int x = column * cellWidth;
 +                    final int y = row * cellHeight;
 +                    final Metrics metrics = measure(codepoint, cellWidth, cellHeight, height,
 +                            (px, py) -> image.getLuminanceOrAlpha(x + px, y + py) & 255);
-+                    glyphs.put(codepoint, new Glyph(glyph, GlyphInfo.simple(metrics.advance()), metrics.bearing()));
++                    final Cell cell = new Cell(x, y, cellWidth, cellHeight, image.getWidth(), image.getHeight(),
++                            (float) height / cellHeight, metrics.bearing(), 7 - ascent);
++                    font.glyphs.put(codepoint, new Glyph(GlyphInfo.simple(metrics.advance()), cell, font));
 +                }
 +            }
++            return font;
 +        } catch (final IOException | RuntimeException error) {
-+            source.close();
++            image.close();
 +            throw error;
 +        }
-+        return new BedrockUnicodeFont(source, glyphs);
 +    }
 +
 +    static Metrics measure(final int codepoint, final int width, final int height, final int renderHeight,
@@ -2290,36 +2323,61 @@ index 0000000..45019b5
 +    public UnbakedGlyph getGlyph(final int codepoint) { return this.glyphs.get(codepoint); }
 +
 +    @Override
-+    public IntSet getSupportedGlyphs() { return this.source.getSupportedGlyphs(); }
++    public IntSet getSupportedGlyphs() { return this.supportedGlyphs; }
++
++    private synchronized BakedGlyph bake(final GlyphInfo info, final Cell cell) {
++        if (this.closed) throw new IllegalStateException("Native Unicode font is closed");
++        RenderSystem.assertOnRenderThread();
++        if (this.texture == null) {
++            final TextureManager manager = Minecraft.getInstance().getTextureManager();
++            final DynamicTexture texture = new DynamicTexture(this.textureId::toString, this.image);
++            boolean registered = false;
++            try {
++                manager.register(this.textureId, texture);
++                registered = true;
++                this.renderTypes = GlyphRenderTypes.createForColorTexture(this.textureId);
++            } catch (final RuntimeException error) {
++                if (registered) manager.release(this.textureId);
++                else texture.close();
++                this.closed = true;
++                throw error;
++            }
++            this.textureManager = manager;
++            this.texture = texture;
++        }
++        return new BakedSheetGlyph(info, this.renderTypes, this.texture.getTextureView(),
++                cell.u0(), cell.u1(), cell.v0(), cell.v1(), cell.left(), cell.right(), cell.top(), cell.bottom());
++    }
 +
 +    @Override
-+    public void close() { this.source.close(); }
-+
-+    record Metrics(float advance, float bearing) { }
-+
-+    private record Glyph(UnbakedGlyph source, GlyphInfo info, float bearing) implements UnbakedGlyph {
-+        @Override
-+        public BakedGlyph bake(final Stitcher stitcher) {
-+            return this.source.bake(new Stitcher() {
-+                @Override
-+                public BakedGlyph stitch(final GlyphInfo ignored, final GlyphBitmap bitmap) {
-+                    return stitcher.stitch(info, bearing == 0 ? bitmap : new ShiftedBitmap(bitmap, bearing));
-+                }
-+
-+                @Override
-+                public BakedGlyph getMissing() { return stitcher.getMissing(); }
-+            });
++    public synchronized void close() {
++        if (this.closed) return;
++        this.closed = true;
++        if (this.texture == null) {
++            this.image.close();
++        } else if (RenderSystem.isOnRenderThread()) {
++            this.textureManager.release(this.textureId);
++        } else {
++            Minecraft.getInstance().execute(() -> this.textureManager.release(this.textureId));
 +        }
 +    }
 +
-+    private record ShiftedBitmap(GlyphBitmap source, float bearing) implements GlyphBitmap {
-+        @Override public int getPixelWidth() { return this.source.getPixelWidth(); }
-+        @Override public int getPixelHeight() { return this.source.getPixelHeight(); }
-+        @Override public void upload(final int x, final int y, final GpuTexture texture) { this.source.upload(x, y, texture); }
-+        @Override public boolean isColored() { return this.source.isColored(); }
-+        @Override public float getOversample() { return this.source.getOversample(); }
-+        @Override public float getBearingLeft() { return this.source.getBearingLeft() + this.bearing; }
-+        @Override public float getBearingTop() { return this.source.getBearingTop(); }
++    record Metrics(float advance, float bearing) { }
++
++    /** Source coordinates stay in their original page, including empty space around the glyph. */
++    record Cell(int x, int y, int width, int height, int atlasWidth, int atlasHeight,
++                float scale, float left, float top) {
++        float u0() { return (float) this.x / this.atlasWidth; }
++        float u1() { return (this.x + this.width - .01F) / this.atlasWidth; }
++        float v0() { return (float) this.y / this.atlasHeight; }
++        float v1() { return (this.y + this.height - .01F) / this.atlasHeight; }
++        float right() { return this.left + this.width * this.scale; }
++        float bottom() { return this.top + this.height * this.scale; }
++    }
++
++    private record Glyph(GlyphInfo info, Cell cell, BedrockUnicodeFont font) implements UnbakedGlyph {
++        @Override
++        public BakedGlyph bake(final Stitcher stitcher) { return this.font.bake(this.info, this.cell); }
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/BedrockHudOverlays.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/BedrockHudOverlays.java
@@ -8479,16 +8537,30 @@ index 934021b..96f2342 100644
          for (final int light : new int[] {0, 0x80, 0x900050, net.minecraft.util.LightCoordsUtil.FULL_BRIGHT}) {
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockUnicodeFontTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockUnicodeFontTest.java
 new file mode 100644
-index 0000000..ad69519
+index 0000000..54adf17
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockUnicodeFontTest.java
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,152 @@
 +package com.viaversion.viafabricplus.bedrock.render.font;
 +
++import com.mojang.blaze3d.font.UnbakedGlyph;
++import com.mojang.blaze3d.platform.NativeImage;
++import com.mojang.blaze3d.systems.RenderSystem;
++import java.io.ByteArrayInputStream;
++import java.io.InputStream;
++import java.io.IOException;
 +import java.util.function.IntBinaryOperator;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.font.GlyphRenderTypes;
++import net.minecraft.client.renderer.texture.DynamicTexture;
++import net.minecraft.client.renderer.texture.TextureManager;
++import net.minecraft.server.packs.resources.ResourceManager;
 +import net.minecraft.resources.Identifier;
 +import org.junit.jupiter.api.Test;
++import org.mockito.ArgumentCaptor;
 +import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.*;
++import static org.mockito.Mockito.*;
 +
 +final class BedrockUnicodeFontTest {
 +    @Test
@@ -8533,6 +8605,86 @@ index 0000000..ad69519
 +        assertTrue(BedrockUnicodeFont.owns(Identifier.fromNamespaceAndPath("viabedrock", "font/glyph_00.png")));
 +        assertFalse(BedrockUnicodeFont.owns(Identifier.fromNamespaceAndPath("server", "font/glyph_00.png")));
 +        assertFalse(BedrockUnicodeFont.owns(Identifier.fromNamespaceAndPath("viabedrock", "font/bedrock_bitmap/default8_0.png")));
++    }
++
++    @Test
++    void retainsPageCoordinatesAndFullCellBoundsAtDifferentResolutions() {
++        for (final int resolution : new int[] {256, 512, 1024}) {
++            final int size = resolution / 16;
++            final var cell = new BedrockUnicodeFont.Cell(size * 15, size * 7, size, size,
++                    resolution, resolution, 8F / size, -.5F, -4);
++            assertEquals(15F / 16, cell.u0());
++            assertEquals(7F / 16, cell.v0());
++            assertEquals((resolution - .01F) / resolution, cell.u1());
++            assertEquals((size * 8 - .01F) / resolution, cell.v1());
++            assertEquals(7.5F, cell.right());
++            assertEquals(4, cell.bottom());
++        }
++    }
++
++    @Test
++    void releasesUnusedAtlasOnceAndClosesInvalidAtlasWithoutUploading() throws Exception {
++        final var resources = mock(ResourceManager.class);
++        final var pixels = mock(NativeImage.class);
++        when(resources.open(any())).thenAnswer(_ -> new ByteArrayInputStream(new byte[0]));
++        when(pixels.getWidth()).thenReturn(32);
++        when(pixels.getHeight()).thenReturn(32);
++        try (final var decoder = mockStatic(NativeImage.class)) {
++            decoder.when(() -> NativeImage.read(any(InputStream.class))).thenReturn(pixels);
++            final var font = BedrockUnicodeFont.load(resources,
++                    Identifier.fromNamespaceAndPath("viabedrock", "font/glyph_00.png"), new int[][] {{65, 66}, {0, 67}}, 8, 7);
++            final var glyph = font.getGlyph(65);
++            assertNotNull(glyph);
++            assertEquals(3, font.getSupportedGlyphs().size());
++            font.close();
++            font.close();
++            verify(pixels).close();
++            assertThrows(IllegalStateException.class, () -> glyph.bake(null));
++
++            assertThrows(IOException.class, () -> BedrockUnicodeFont.load(resources,
++                    Identifier.fromNamespaceAndPath("viabedrock", "font/glyph_00.png"), new int[][] {{65, 66, 67}}, 8, 7));
++            verify(pixels, times(2)).close();
++        }
++    }
++
++    @Test
++    void sharesOneTextureAcrossGlyphsAndRetiresItWithTheProvider() throws Exception {
++        final var resources = mock(ResourceManager.class);
++        final var pixels = mock(NativeImage.class);
++        final var game = mock(Minecraft.class);
++        final var manager = mock(TextureManager.class);
++        when(resources.open(any())).thenAnswer(_ -> new ByteArrayInputStream(new byte[0]));
++        when(pixels.getWidth()).thenReturn(32);
++        when(pixels.getHeight()).thenReturn(32);
++        when(game.getTextureManager()).thenReturn(manager);
++        try (final var decoder = mockStatic(NativeImage.class);
++             final var singleton = mockStatic(Minecraft.class);
++             final var renderSystem = mockStatic(RenderSystem.class);
++             final var renderTypes = mockStatic(GlyphRenderTypes.class);
++             final var textures = mockConstruction(DynamicTexture.class)) {
++            decoder.when(() -> NativeImage.read(any(InputStream.class))).thenReturn(pixels);
++            singleton.when(Minecraft::getInstance).thenReturn(game);
++            renderSystem.when(RenderSystem::isOnRenderThread).thenReturn(true);
++            renderTypes.when(() -> GlyphRenderTypes.createForColorTexture(any())).thenReturn(mock(GlyphRenderTypes.class));
++            final var font = BedrockUnicodeFont.load(resources,
++                    Identifier.fromNamespaceAndPath("viabedrock", "font/glyph_00.png"), new int[][] {{65, 66}, {0, 67}}, 8, 7);
++            final var stitcher = mock(UnbakedGlyph.Stitcher.class);
++            assertNotNull(font.getGlyph(65).bake(stitcher));
++            assertNotNull(font.getGlyph(67).bake(stitcher));
++            verifyNoInteractions(stitcher);
++            assertEquals(1, textures.constructed().size());
++            verify(manager).register(any(), same(textures.constructed().getFirst()));
++            renderSystem.when(RenderSystem::isOnRenderThread).thenReturn(false);
++            font.close();
++            font.close();
++            final var disposal = ArgumentCaptor.forClass(Runnable.class);
++            verify(game).execute(disposal.capture());
++            verify(manager, never()).release(any());
++            disposal.getValue().run();
++            verify(manager).release(any());
++            verify(pixels, never()).close();
++            assertThrows(IllegalStateException.class, () -> font.getGlyph(65).bake(stitcher));
++        }
 +    }
 +
 +    private static BedrockUnicodeFont.Metrics glyph(final int codepoint, final int cell, final int renderHeight,

@@ -496,7 +496,7 @@ It covers extended native layout, a legacy server texture override, pixel retent
 The full add-on stack passes 1,274 tests, with no failures or errors and 142 optional skips.
 Matching native 1.26.60.5 captures now cover mixed-language text, a legacy atlas, wide punctuation, multiline labels, and colored private-use icons.
 
-`BedrockUnicodeFont` preserves native fractional advances and bearings while retaining Java's atlas uploads and provider lifetime.
+`BedrockUnicodeFont` preserves native fractional advances, bearings, and page coordinates through a provider-owned atlas.
 The native width loader at `0x1415905b0` supplies the full-width ranges and distinct Hangul advance.
 The line-advance method at `0x141590590` and the multiline capture establish ten UI units between bitmap text lines.
 Ordinary Unicode pages use eight logical units; private-use pages E0 through F8 retain source-pixel size and a centered baseline.
@@ -570,3 +570,31 @@ The native tessellator stores float positions and UVs.
 These instructions do not establish the complete label transform or final rasterization rule.
 Neither private rendering probe enters this patch or the bundle.
 Bitmap-font acceptance remains open.
+
+### Native Unicode atlas provider, October 29, 2026
+
+The production Unicode provider now retains each converted page as one texture instead of repacking individual glyphs into Java's font atlas.
+It retains source-cell bounds and the native upper-edge inset of 0.01 source pixels.
+Only converted `viabedrock:font/glyph_*.png` resources use this provider.
+The converter still owns pack selection, layout metadata, and colored source pixels.
+
+The provider uploads its page on the first glyph bake and shares that texture across its glyphs.
+Provider retirement releases the texture, or the CPU image if no glyph required an upload.
+Each provider has a distinct texture identity, so retirement cannot release a replacement provider's page.
+Regressions cover source coordinates at three resolutions, shared uploads, disposal, invalid grids, and attempted use after retirement.
+Off-thread retirement schedules texture disposal on the client executor and releases the page only once.
+
+The production add-on matches all sixteen native scale-2 labels, including both previously different half-size Unicode labels.
+Repeated captures and a live resource reload retain these matches at Java GUI scales 1 and 2.
+An early toast-obscured frame is excluded.
+
+At native UI scale 1, ten labels still match, with six sampling differences.
+The original-atlas bitmap probe and alternative origin rules remain private.
+
+Two fresh legacy-atlas captures still match all sixteen native scale-2 controls at Java GUI scale 1.
+The 180-second current-font recording and 60-second legacy recording both finish normally.
+The current-font recording includes a live resource reload and logs no rendering errors.
+
+The full build passes 2,071 core cases and 1,303 add-on cases, with no failures or errors.
+Optional skips total 176 and 145 respectively.
+Bitmap-font acceptance remains open for the scale-1 differences.
