@@ -156,6 +156,9 @@ The native recorder supports RakNet and owned BDS NetherNet targets.
 For NetherNet, it exposes a loopback RakNet endpoint to the native client and records the decoded backend packets.
 It uses the recording account for the NetherNet session and keeps authentication data private.
 An account-free loopback recording uses one self-signed identity for HTTP signaling and game login.
+It preserves the native player's UUID from `leguuid`, or derives it from the native `xid` when that field is absent.
+A replacement UUID can leave Dressing Room changes disconnected from the in-world appearance.
+Gameplay packets retain their original bytes; identity routing belongs in the offline login.
 The SDP offer includes proof of possession for that identity, even when the owned server disables online authentication.
 The recorder retains offline game authentication and validates the SDP answer.
 

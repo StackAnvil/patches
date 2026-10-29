@@ -175,7 +175,9 @@ Player and persona controller assets do not establish the engine's new armor mas
 4. **Verify skin masking and profile changes.**
    Persona assembly combines piece geometry into shared surfaces.
    The renderer does not explicitly preserve every clothing category for equipment masking.
-   Account replacement and native LOD texture selection need visual fixtures.
+   A native Dressing Room persona now supplies a visible reference and captured body/face inputs.
+   Its offline capture retains the native player UUID, so profile changes reach the in-world appearance.
+   Matching Java comparisons and native LOD texture binding checks remain open.
    Updated assets alone do not prove these engine fixes work here.
 5. **Verify movement and rendering boundaries.**
    Native and direct Java Survival captures now cover falls onto solid ground, both sides of a water boundary, and fully inside water.
@@ -314,7 +316,9 @@ The 26.60 audit above supplies the starting evidence, not completion evidence.
   and restoration across seven phases for one classic custom geometry.
   Eleven classic clothing-bone markers now match all 77 armor visibility conditions.
   Default Alex/Steve replacement also matches at 5, 20, and 40 blocks.
-  Native LOD selection and a valid custom persona geometry baseline remain unverified.
+  A real native Dressing Room persona now has a visible baseline, seven armor references, and near/far profile controls.
+  Matching Java comparisons using these native-produced inputs and native LOD texture selection remain open.
+  The synthetic custom persona markers remain excluded.
 - [ ] **Movement and rendering:** compare falls at water/solid boundaries,
   dragon-dependent fog, combined blindness/night vision, and block/entity
   picking. Trace the responsible client or server path before changing it.

@@ -47,7 +47,7 @@ public final class NativeCaptureSelfTest {
         properties.put("ServerAddress", "target.example:19132");
         if (!new Gson().toJsonTree(properties).equals(new Gson().toJsonTree(claims))) throw new AssertionError("Native claims changed");
         authenticatedIdentity(original, relay, source);
-        offlineSignalingIdentity(source);
+        offlineSignalingIdentity(source, original);
         if (!NativeCaptureIdentity.offlineClientKey(source).equals(original.getPublic())) throw new AssertionError("Offline client key changed");
         KeyPair remote = CryptUtil.generateEcdsa384KeyPair();
         byte[] salt = new byte[16]; new SecureRandom().nextBytes(salt);
@@ -66,8 +66,18 @@ public final class NativeCaptureSelfTest {
         System.out.println("PASS native relay JWT claim preservation, trusted multiplayer identity and proof of possession, ECDH, transport framing, and encrypted chunk-pack export" + (args.length == 2 ? ", local backend reached StartGame" : ""));
     }
 
-    private static void offlineSignalingIdentity(String clientJwt) throws Exception {
-        var identity = NativeCaptureProxy.Identity.selfSigned();
+    private static void offlineSignalingIdentity(String clientJwt, KeyPair nativeKey) throws Exception {
+        UUID expected = UUID.fromString("0676085a-621b-3c9c-935e-688dee206e9b");
+        String nativeToken = sign(Map.of("xid", "281474976710655"), nativeKey);
+        UUID player = NativeCaptureIdentity.offlinePlayerId(nativeToken);
+        if (!expected.equals(player)) throw new AssertionError("Native XUID no longer identifies the same player");
+        UUID legacy = UUID.fromString("26600000-0000-4000-8000-000000000001");
+        if (!legacy.equals(NativeCaptureIdentity.offlinePlayerId(sign(Map.of("leguuid", legacy.toString(), "xid", "281474976710655"), nativeKey))))
+            throw new AssertionError("Explicit native UUID lost priority");
+        for (var invalid : List.<Map<String, Object>>of(Map.of(), Map.of("xid", "invalid"), Map.of("xid", -1), Map.of("leguuid", "invalid"))) {
+            rejected(() -> NativeCaptureIdentity.offlinePlayerId(sign(invalid, nativeKey)));
+        }
+        var identity = NativeCaptureProxy.Identity.selfSigned(player);
         if (identity.online()) throw new AssertionError("Self-signed login must remain offline");
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(identity.keys().getPublic().getEncoded());
         String fingerprint = HexFormat.ofDelimiter(":").withUpperCase().formatHex(digest);
@@ -78,7 +88,8 @@ public final class NativeCaptureSelfTest {
         JsonObject assertion = JsonParser.parseString(envelope.get("assertion").getAsString()).getAsJsonObject();
         String token = assertion.get("token").getAsString();
         if (!token.equals(identity.token())) throw new AssertionError("Signaling replaced the game login identity");
-        Jwts.parser().verifyWith(identity.keys().getPublic()).build().parseSignedClaims(token);
+        var gameClaims = Jwts.parser().verifyWith(identity.keys().getPublic()).build().parseSignedClaims(token).getPayload();
+        if (!player.toString().equals(gameClaims.get("leguuid", String.class))) throw new AssertionError("Offline game identity changed the native player UUID");
 
         String payload = "{\"fingerprint\":[{\"algorithm\":\"sha-256\",\"digest\":\"" + fingerprint + "\"}]}";
         String[] proof = assertion.get("fingerprints").getAsString().split("\\.", -1);

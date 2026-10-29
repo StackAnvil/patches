@@ -40,9 +40,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Raw native-client relay. Gameplay never enters ViaBedrock's translation protocol. */
 public final class NativeCaptureProxy {
     record Identity(KeyPair keys, String token, boolean online) {
-        static Identity selfSigned() {
+        static Identity selfSigned(UUID nativeUuid) {
             AuthData auth = AuthData.createSelfSigned("NativeCapture");
-            return new Identity(auth.getSessionKeyPair(), auth.getMultiplayerToken(), false);
+            var properties = new LinkedHashMap<String, Object>(Jwts.parser().verifyWith(auth.getSessionKeyPair().getPublic())
+                    .build().parseSignedClaims(auth.getMultiplayerToken()).getPayload());
+            properties.put("leguuid", nativeUuid.toString());
+            String token = Jwts.builder().header().add("x5u", Base64.getEncoder().encodeToString(auth.getSessionKeyPair().getPublic().getEncoded())).and()
+                    .claims(properties).signWith(auth.getSessionKeyPair().getPrivate(), Jwts.SIG.ES384).compact();
+            return new Identity(auth.getSessionKeyPair(), token, false);
         }
 
         OperatorIdentity signaling() {
@@ -159,9 +164,9 @@ public final class NativeCaptureProxy {
         return new SecretKeySpec(digest.digest(), "AES");
     }
 
-    private Identity identity() throws Exception {
+    private Identity identity(String nativeToken) throws Exception {
         if (account.equals("offline")) {
-            return Identity.selfSigned();
+            return Identity.selfSigned(NativeCaptureIdentity.offlinePlayerId(nativeToken));
         }
         KeyPair keys = CryptUtil.generateEcdsa384KeyPair();
         JsonObject saved = JsonParser.parseString(Files.readString(Path.of(account))).getAsJsonObject();
@@ -213,7 +218,7 @@ public final class NativeCaptureProxy {
                         NativeCaptureIdentity verifier = account.equals("offline") ? null : NativeCaptureIdentity.official();
                         PublicKey clientKey = verifier == null ? NativeCaptureIdentity.offlineClientKey(clientJwt)
                                 : verifier.nativeClientKey(nativeToken, clientJwt);
-                        Identity identity = identity();
+                        Identity identity = identity(nativeToken);
                         if (verifier != null) verifier.sameAccount(nativeToken, clientJwt, identity.token(), identity.keys().getPublic());
                         return new LoginIdentity(identity, clientKey);
                     }

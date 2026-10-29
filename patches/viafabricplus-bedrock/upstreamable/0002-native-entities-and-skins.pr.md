@@ -867,3 +867,25 @@ The journals contain matching serialized skins. The Java recorder confirms 2,243
 The recording reaches gameplay and exits normally. Licensed skin data and images remain private.
 Different resolutions, apparent sizes, and body yaw limit pixel comparisons.
 The synthetic persona markers never established a visible unarmored baseline, so they supply no persona masking acceptance.
+
+## Native Dressing Room persona reference, October 29, 2026
+
+The native Dressing Room now supplies a visibly rendered Character Creator reference instead of an edited synthetic skin.
+Native 1.26.60.5 sends `persona=true`, a 256 × 256 body atlas, body geometry, and separate animated-face geometry.
+The face uses a two-frame 32 × 64 texture.
+The resource patch contains `default` and `animated_face`; it contains no `persona_lod` binding.
+These inputs do not justify adding a guessed LOD alias.
+
+The offline capture previously assigned a different player UUID from the one in native skin-change packets.
+Profile selection changed the Dressing Room preview while the world retained the previous appearance.
+Preserving the native UUID in the offline login makes the BDS player-list UUID match the native skin sender.
+Actual in-session Steve/Alex replacement then changes the visible world body.
+Gameplay packets remain unchanged.
+Earlier stale-profile captures and the failed per-packet UUID-routing experiment are excluded.
+
+Seven native reference scenes cover no armor, each slot, all armor, and removal.
+Native camera controls also cover Alex at 5, 20, and 40 blocks, plus Alex/Steve/Alex replacement at 40 blocks.
+These are native references for the next matching Java comparison.
+They do not yet establish hidden-layer behavior, native LOD texture selection, or Java persona parity.
+The earlier synthetic-marker controls remain excluded.
+The original selected profile is restored after capture, and licensed skin data and images remain private.

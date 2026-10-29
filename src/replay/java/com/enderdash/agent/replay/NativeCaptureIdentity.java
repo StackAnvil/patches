@@ -20,6 +20,7 @@ import java.security.interfaces.RSAPublicKey;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /** Trusts the franchise issuer's published keys, never keys supplied by a login token. */
 final class NativeCaptureIdentity {
@@ -111,6 +112,24 @@ final class NativeCaptureIdentity {
 
     static Claims clientClaims(String token, PublicKey key) {
         return Jwts.parser().sig().clear().add(Jwts.SIG.ES384).and().verifyWith(key).build().parseSignedClaims(token).getPayload();
+    }
+
+    /** Preserve local player routing without treating an offline token as trusted authentication. */
+    static UUID offlinePlayerId(String nativeToken) {
+        var claims = net.raphimc.viabedrock.api.util.Jwt.parse(nativeToken).payload();
+        if (claims.has("leguuid")) {
+            var legacy = claims.get("leguuid");
+            if (!legacy.isJsonPrimitive() || !legacy.getAsJsonPrimitive().isString()) {
+                throw new IllegalArgumentException("Invalid native player UUID");
+            }
+            return UUID.fromString(legacy.getAsString());
+        }
+        var xuid = claims.get("xid");
+        if (xuid == null || !xuid.isJsonPrimitive() || !xuid.getAsJsonPrimitive().isString()
+                || !xuid.getAsString().matches("[0-9]+")) {
+            throw new IllegalArgumentException("Missing native player identity");
+        }
+        return UUID.nameUUIDFromBytes(("pocket-auth-1-xuid:" + xuid.getAsString()).getBytes(StandardCharsets.UTF_8));
     }
 
     /** Only used by the relay's explicitly loopback-scoped offline route. */
