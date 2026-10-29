@@ -543,6 +543,17 @@ Fresh direct and ViaProxy recordings retain eleven scale-1 matches and sixteen s
 Both 90-second recordings finish normally without rendering errors.
 The UV arithmetic correction matches native numeric records but does not close the remaining pixel differences.
 
+The matching `UIText` material also defines a bitmap shader that generates full-cell corner UVs and clamps them inside half-texel bounds.
+Live HUD bindings confirm cell heights of `12/128` and `16/256`, with half-texel offsets of `0.5/128` and `0.5/256`.
+The updated native client reproduces all sixteen earlier scale-1 reference masks with the same fixture.
+These bindings identify another sampling path beyond the original CPU glyph writer.
+The writer regression alone does not verify the shader's final sampling behavior.
+
+A private Java probe removes only the provider's upper-edge inset and reloads its resources.
+Scale-1 matches decrease from eleven to ten, and scale-2 matches decrease from sixteen to fourteen at both Java GUI scales.
+The 150-second recording finishes normally, but this probe remains excluded from the stack and bundle.
+The native vertex inputs and clamp behavior still need a complete comparison before a renderer change.
+
 These comparisons cover fixed label bounds and exact pixel masks, rather than whole frames.
 TrueType pixel comparisons and broader viewport coverage remain open.
 Licensed pages, captures, packet journals, native reads, and image hashes remain private.

@@ -12222,3 +12222,14 @@ Both 90-second recordings finish normally without rendering errors.
 The arithmetic correction does not resolve the five remaining pixel differences.
 The full build passes 2,071 core cases and 1,306 add-on cases, with no failures or errors.
 The bundle and offline validation pass.
+
+The matching native `UIText` bitmap shader generates full-cell corner UVs, then clamps samples inside half-texel bounds.
+Live HUD bindings confirm the bitmap and Unicode cell heights and half-texel offsets.
+The updated native client reproduces all sixteen earlier scale-1 reference masks with the same fixture.
+The original glyph-writer regression does not establish this shader's final sampling behavior.
+
+A private Java probe removes only the provider's upper-edge inset, then reloads its resources.
+It reduces scale-1 matches from eleven to ten and scale-2 matches from sixteen to fourteen at both Java GUI scales.
+The 150-second recording finishes normally.
+The probe remains excluded from the patch stack and bundle.
+A complete comparison still needs the native vertex inputs and clamp behavior.
