@@ -1,42 +1,47 @@
-From 02d425b55d061714cc4bcb50783f478a1a70e790 Mon Sep 17 00:00:00 2001
+From 36d3d1de3c0c93036215026d40561d77946edd4a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 29 Oct 2026 01:05:15 +0100
 Subject: [PATCH] feat(fog): transport resolved native fog settings
 
-Retain complete PLAYER_FOG snapshots and resolve command, biome and
-existing registry-default settings against the connection-selected packs.
-Publish one immutable version-2 snapshot after join and channel negotiation,
-including empty command resets and late registrations. Preserve distance
-units and colors without inferring field-level inheritance.
+Retain complete PLAYER_FOG snapshots and resolve commands, biome bindings,
+and data defaults against the connection-selected packs. Publish immutable
+version-2 snapshots after join and channel negotiation, including empty
+command resets and late registrations. Preserve distance units and colors
+without inferring partial-field inheritance.
 
-Native Bedrock 1.26.60.5 with BDS 1.26.60.6 (protocol 2225) confirms
-unsigned-count string-array snapshots, topmost matching-medium precedence,
-and water-only fallback to lower air settings. A qualified End-biome fixture
-renders red fog from 0 to 32 blocks without commands or living dragons.
-Both prior Java routes read the red registry color but kept 1,024 blocks.
+Resolve inherited legacy fog chains per medium before transport. Use the
+actual default binding instead of assuming minecraft:fog_default. Clearing
+legacy bindings leaves modern biome definitions available. World changes
+retire the entire snapshot; no client payload change is necessary for
+these resolved resource layers.
 
-Empty command stacks now retain world resources. World replacement retires
-the entire snapshot, and payload decoding rejects ambiguous biome aliases
-and unsupported versions. Regressions cover medium precedence, immutable
-resource ownership, codec bounds, late registration, command removal and
-world replacement. Biome-boundary blending, legacy data-default bindings,
-and native engine-specific vanilla rules remain separate acceptance work.
+Native Bedrock 1.26.60.5 with BDS 1.26.60.6, protocol 2225, confirms the
+unsigned-count string array, matching-medium command priority, and red
+32-block End fog without commands or living dragons. Native Fancy controls
+also establish blue 48-block air beneath an inherited water-only legacy
+binding, green 24-block data-default air after replacement, and restoration
+of modern red 32-block fog after legacy clearing. Captures stay private.
+
+Regressions cover composed resource-to-snapshot behavior, replacement,
+immutable ownership, command removal, codec bounds, and late registration.
+Biome-boundary blending, remote legacy name cutoffs, engine-specific
+vanilla rules, and other render modes remain separate acceptance work.
 
 BREAKING CHANGE: FogDefinition includes distances; FogState requires biome/default settings and the negotiated fog payload uses version 2.
 ---
  .../viabedrock/api/model/FogState.java        | 176 ++++++++++++++++++
- .../definition/FogDefinitions.java            |  44 +++--
+ .../definition/FogDefinitions.java            |  48 +++--
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../protocol/packet/FogPackets.java           |  32 ++++
  .../protocol/packet/JoinPackets.java          |   2 +
  .../protocol/packet/MultiStatePackets.java    |   4 +
  .../protocol/packet/UnhandledPackets.java     |   1 -
- .../protocol/storage/FogStorage.java          |  72 +++++++
+ .../protocol/storage/FogStorage.java          |  69 +++++++
  .../viabedrock/api/model/FogStateTest.java    | 144 ++++++++++++++
  .../definition/FogDefinitionsTest.java        |  73 ++++++++
  .../protocol/data/JavaRegistriesFogTest.java  |  12 +-
- .../protocol/storage/FogStorageTest.java      | 117 ++++++++++++
- 12 files changed, 661 insertions(+), 18 deletions(-)
+ .../protocol/storage/FogStorageTest.java      | 145 +++++++++++++++
+ 12 files changed, 689 insertions(+), 19 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FogState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/FogPackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/FogStorage.java
@@ -227,7 +232,7 @@ index 000000000..be1a75389
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/FogDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/FogDefinitions.java
-index 6196540c0..a799d2730 100644
+index 00e7f86d3..b3d7c14ed 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/FogDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/FogDefinitions.java
 @@ -21,6 +21,7 @@ import com.viaversion.viaversion.libs.gson.JsonElement;
@@ -238,7 +243,7 @@ index 6196540c0..a799d2730 100644
  import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  
-@@ -37,16 +38,8 @@ public class FogDefinitions {
+@@ -38,16 +39,8 @@ public class FogDefinitions {
              for (String fogPath : pack.content().getFilesDeep("fogs/", ".json")) {
                  try {
                      final JsonObject fog = pack.content().getJson(fogPath).getAsJsonObject("minecraft:fog_settings");
@@ -257,8 +262,22 @@ index 6196540c0..a799d2730 100644
                  } catch (final Throwable e) {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse fog definition " + fogPath + " in pack " + pack.key(), e);
                  }
-@@ -58,7 +51,36 @@ public class FogDefinitions {
-         return this.fogs.get(identifier);
+@@ -61,18 +54,49 @@ public class FogDefinitions {
+ 
+     public FogDefinition resolve(final List<String> identifiers) {
+         final Map<String, Integer> colors = new HashMap<>();
++        final Map<String, FogState.Distance> distances = new HashMap<>();
+         String identifier = null;
+         for (String name : identifiers) {
+             final FogDefinition fog = this.get(name);
+             if (fog != null) {
+                 identifier = fog.identifier();
+                 colors.putAll(fog.colors());
++                distances.putAll(fog.distances());
+             }
+         }
+-        return identifier != null ? new FogDefinition(identifier, Map.copyOf(colors)) : null;
++        return identifier != null ? new FogDefinition(identifier, colors, distances) : null;
      }
  
 -    public record FogDefinition(String identifier, Map<String, Integer> colors) {
@@ -367,10 +386,10 @@ index d4cf7a04a..215e2d3c6 100644
          user.get(HudVisibilityStorage.class).sendSnapshot();
          user.get(CameraEffectsStorage.class).markJoined();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index df24b545b..476b5fc38 100644
+index 9cbf7341a..d41a2a00a 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-@@ -87,6 +87,7 @@ import net.raphimc.viabedrock.protocol.storage.PlayerInputStorage;
+@@ -88,6 +88,7 @@ import net.raphimc.viabedrock.protocol.storage.PlayerInputStorage;
  import net.raphimc.viabedrock.protocol.storage.PlayerPredictionStorage;
  import net.raphimc.viabedrock.protocol.storage.VehiclePredictionStorage;
  import net.raphimc.viabedrock.protocol.storage.HudVisibilityStorage;
@@ -378,7 +397,7 @@ index df24b545b..476b5fc38 100644
  import net.raphimc.viabedrock.protocol.storage.CameraEffectsStorage;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  
-@@ -379,6 +380,9 @@ public final class MultiStatePackets {
+@@ -390,6 +391,9 @@ public final class MultiStatePackets {
              HudPackets.sendNativeRoot(wrapper.user());
              wrapper.user().get(PlayerInputStorage.class).sendSnapshot();
              wrapper.user().get(HudVisibilityStorage.class).sendSnapshot();
@@ -402,10 +421,10 @@ index 0e0fe5920..b8c53fa4f 100644
          protocol.cancelClientbound(ClientboundBedrockPackets.LESSON_PROGRESS); // Not relevant (Education Edition)
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/FogStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/FogStorage.java
 new file mode 100644
-index 000000000..cf1c6e04e
+index 000000000..13a918f75
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/FogStorage.java
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,69 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -447,16 +466,13 @@ index 000000000..cf1c6e04e
 +    public FogState snapshot(final ResourcePackStorage resources) {
 +        final FogDefinitions definitions = resources.getFogs();
 +        final Map<String, FogState.Layer> biomes = new LinkedHashMap<>();
-+        for (final var biome : resources.getBiomes().biomes().values()) {
-+            if (biome.fog() == null) {
-+                continue;
-+            }
-+            final FogDefinitions.FogDefinition definition = definitions.get(biome.fog());
++        for (final var binding : resources.getBiomes().fogBindings().entrySet()) {
++            final FogDefinitions.FogDefinition definition = definitions.resolve(binding.getValue());
 +            if (definition != null) {
-+                biomes.put(biome.name(), new FogState.Layer(definition.identifier(), definition.distances()));
++                biomes.put(binding.getKey(), new FogState.Layer(definition.identifier(), definition.distances()));
 +            }
 +        }
-+        final FogDefinitions.FogDefinition defaults = definitions.get("minecraft:fog_default");
++        final FogDefinitions.FogDefinition defaults = definitions.resolve(resources.getBiomes().defaultFog());
 +        return new FogState(this.identifiers.stream().map(identifier -> {
 +            final FogDefinitions.FogDefinition definition = definitions.get(identifier);
 +            return new FogState.Layer(identifier, definition == null ? Map.of() : definition.distances());
@@ -739,10 +755,10 @@ index 05383c57d..658e16522 100644
  
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/FogStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/FogStorageTest.java
 new file mode 100644
-index 000000000..7eeaa0355
+index 000000000..228a91e4d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/FogStorageTest.java
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,145 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -756,12 +772,16 @@ index 000000000..7eeaa0355
 +import com.viaversion.viaversion.api.protocol.packet.State;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
 +import net.raphimc.viabedrock.api.model.FogState;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.api.resourcepack.definition.FogDefinitions;
 +import net.raphimc.viabedrock.api.resourcepack.definition.BiomeDefinitions;
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.List;
 +import java.util.Map;
++import java.util.UUID;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.mockito.Mockito.*;
@@ -818,44 +838,68 @@ index 000000000..7eeaa0355
 +    }
 +
 +    @Test
-+    void worldReplacementAndEmptyCommandsResolveCurrentBiomeResources() {
++    void worldReplacementPublishesInheritedLegacyMediaAndClearedModernFallback() {
++        final var lower = pack("""
++                {"default":{"fog_identifier":"test:default"},"the_end":{"fog_identifier":"test:end"}}
++                """);
++        lower.content().putString("fogs/default.json", fog("test:default", "air", 24, "#00FF00"));
++        lower.content().putString("fogs/end.json", fog("test:end", "air", 48, "#0000FF"));
++        final var upper = pack("""
++                {"the_end":{"fog_identifier":"test:water","inherit_from_prior_fog":true}}
++                """);
++        upper.content().putString("fogs/water.json", fog("test:water", "water", 8, "#00FF00"));
++        upper.content().putString("biomes/end.json", """
++                {"minecraft:client_biome":{"description":{"identifier":"minecraft:the_end"},
++                 "components":{"minecraft:fog_appearance":{"fog_identifier":"test:modern"}}}}
++                """);
++        upper.content().putString("fogs/modern.json", fog("test:modern", "air", 32, "#FF0000"));
++        final var clear = pack("{\"default\":{\"remove_all_prior_fog\":true}}");
 +        final var storage = new FogStorage(mock(UserConnection.class));
-+        final var definitions = mock(FogDefinitions.class);
-+        final var biomes = mock(BiomeDefinitions.class);
-+        final var biome = mock(BiomeDefinitions.BiomeDefinition.class);
-+        when(biome.name()).thenReturn("minecraft:the_end");
-+        when(biome.fog()).thenReturn("test:end");
-+        when(biomes.biomes()).thenReturn(Map.of("minecraft:the_end", biome));
-+        final var resources = mock(ResourcePackStorage.class);
-+        when(resources.getFogs()).thenReturn(definitions);
-+        when(resources.getBiomes()).thenReturn(biomes);
-+        final var current = new FogState.Distance(0, 32, 0xFF0000, false);
-+        final var older = new FogState.Distance(0, 64, 0x0000FF, false);
-+        final var command = new FogState.Distance(0, 16, 0xFFFFFF, false);
-+        when(definitions.get("test:end")).thenReturn(new FogDefinitions.FogDefinition("test:end", Map.of(), Map.of("air", current)));
-+        when(definitions.get("test:command")).thenReturn(new FogDefinitions.FogDefinition("test:command", Map.of(), Map.of("air", command)));
-+        final var fallback = new FogState.Distance(0.25F, 0.75F, 0x123456, true);
-+        when(definitions.get("minecraft:fog_default")).thenReturn(new FogDefinitions.FogDefinition("minecraft:fog_default", Map.of(), Map.of("air", fallback)));
-+        final var first = storage.snapshot(resources);
-+        assertSame(fallback, first.resolve("air", "test:unknown"));
-+        storage.update(new String[]{"test:command"});
-+        assertSame(command, storage.snapshot(resources).resolve("air", "the_end"));
-+        when(definitions.get("test:end")).thenReturn(new FogDefinitions.FogDefinition("test:end", Map.of(), Map.of("air", older)));
-+        storage.update(new String[0]);
-+        assertSame(older, storage.snapshot(resources).resolve("air", "the_end"));
-+        assertSame(current, first.resolve("air", "the_end"));
-+        when(biomes.biomes()).thenReturn(Map.of());
-+        assertSame(fallback, storage.snapshot(resources).resolve("air", "the_end"));
-+        when(definitions.get("minecraft:fog_default")).thenReturn(null);
-+        assertEquals(FogState.EMPTY, storage.snapshot(resources));
++        final var first = storage.snapshot(resources(lower, upper));
++        assertEquals(new FogState.Distance(0, 48, 0x0000FF, false), first.resolve("air", "the_end"));
++        assertEquals(new FogState.Distance(0, 8, 0x00FF00, false), first.resolve("water", "the_end"));
++        assertEquals(new FogState.Distance(0, 24, 0x00FF00, false), first.resolve("air", "test:unknown"));
++        final var replaced = storage.snapshot(resources(lower, upper, clear));
++        assertEquals(new FogState.Distance(0, 32, 0xFF0000, false), replaced.resolve("air", "the_end"));
++        assertNull(replaced.resolve("air", "test:unknown"));
++        assertEquals(48, first.resolve("air", "the_end").end());
 +    }
 +
-+    private static ResourcePackStorage resources(final FogDefinitions definitions, final Map<String, BiomeDefinitions.BiomeDefinition> bindings) {
++    private static String fog(final String identifier, final String medium, final int end, final String color) {
++        return """
++                {"minecraft:fog_settings":{"description":{"identifier":"%s"},"distance":{"%s":
++                {"fog_color":"%s","fog_start":0,"fog_end":%d,"render_distance_type":"fixed"}}}}
++                """.formatted(identifier, medium, color, end);
++    }
++
++    private static ResourcePack pack(final String biomes) {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID()
++                + "\",\"version\":[1,0,0],\"name\":\"test\"}}");
++        content.putString("biomes_client.json", "{\"biomes\":" + biomes + "}");
++        return new ResourcePack(content);
++    }
++
++    private static ResourcePackStorage resources(final ResourcePack... packs) {
++        final var resources = mock(ResourcePackStorage.class);
++        when(resources.getPackStackBottomToTop()).thenReturn(List.of(packs));
++        when(resources.getBaseGameVersion()).thenReturn(BaseGameVersion.CURRENT);
++        for (ResourcePack pack : packs) {
++            when(resources.isServerPack(pack)).thenReturn(true);
++        }
++        final var biomes = new BiomeDefinitions(resources);
++        final var fogs = new FogDefinitions(resources);
++        when(resources.getBiomes()).thenReturn(biomes);
++        when(resources.getFogs()).thenReturn(fogs);
++        return resources;
++    }
++
++    private static ResourcePackStorage resources(final FogDefinitions definitions, final Map<String, List<String>> bindings) {
 +        final var resources = mock(ResourcePackStorage.class);
 +        final var biomes = mock(BiomeDefinitions.class);
 +        when(resources.getFogs()).thenReturn(definitions);
 +        when(resources.getBiomes()).thenReturn(biomes);
-+        when(biomes.biomes()).thenReturn(bindings);
++        when(biomes.fogBindings()).thenReturn(bindings);
 +        return resources;
 +    }
 +
