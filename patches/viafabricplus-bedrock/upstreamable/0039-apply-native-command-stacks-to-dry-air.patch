@@ -1,0 +1,625 @@
+From 2427adad72c1bd34d9621db2f83a5d3f6b9ff58f Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 01:28:02 +0100
+Subject: [PATCH] feat(fog): apply native command stacks to dry air
+
+Accept versioned resolved fog snapshots through a connection-owned receiver. Retire commands on disconnect or listener replacement and reject callbacks from older generations. Apply fixed and render-relative air distances and colors through the existing fog pipeline so later camera, vision, and void modifiers remain intact.
+
+Native Bedrock 1.26.60.5 protocol 2225 controls establish command-medium precedence and short-distance fog in the End after dragon death or a fresh distant join. The native journal retains a previously admitted dragon across a distant teleport, so preserve the tracked live dragon environment instead of using boss-bar visibility as its lifetime. Native dragon distance values, transition timing, fluids, weather, and complete rendering parity still require matching comparisons.
+
+Render command-colored End skies with the licensed grayscale texture from
+this world's selected native resource library, below accepted server pack
+overrides. Native 1.26.60.5 EndSky fragment bytecode multiplies that texture
+by SkyColor. Matching live white and red controls read approximately twice
+the fog RGB with alpha 2 at the SkyColor binding. Ignore Java's fixed dark
+vertex tint and use the fog buffer for the command color. Keep the original
+sky if the native texture is unavailable.
+
+Decode off-thread, upload during the client tick before any render pass,
+and retire textures with their connection and resource generation. Never
+upload from the sky render callback. Sky UV motion, native transitions,
+base biome distances, and dragon distance values remain unverified.
+---
+ .../bedrock/ViaFabricPlusBedrock.java         |  2 +
+ .../appearance/BedrockEndSkyTexture.java      | 96 +++++++++++++++++++
+ .../features/render/MixinBedrockEndSky.java   | 32 +++++++
+ .../render/MixinBedrockEndSkyPipeline.java    | 25 +++++
+ .../features/render/MixinBedrockFog.java      | 43 +++++++++
+ .../render/fog/BedrockEndSkyPipeline.java     | 38 ++++++++
+ .../bedrock/render/fog/BedrockFog.java        | 87 +++++++++++++++++
+ .../bedrock/render/fog/FogPayload.java        | 24 +++++
+ .../bedrock/render/fog/FogSession.java        | 33 +++++++
+ .../shaders/core/bedrock_end_sky.fsh          | 12 +++
+ .../shaders/core/bedrock_end_sky.vsh          | 14 +++
+ .../viafabricplus-bedrock.mixins.json         |  3 +
+ .../bedrock/render/fog/BedrockFogTest.java    | 22 +++++
+ .../bedrock/render/fog/FogSessionTest.java    | 41 ++++++++
+ 14 files changed, 472 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEndSkyTexture.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockEndSky.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockEndSkyPipeline.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFog.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockEndSkyPipeline.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSession.java
+ create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_end_sky.fsh
+ create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_end_sky.vsh
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSessionTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index 88cf6fe..775fe5f 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -59,6 +59,7 @@ import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+ import com.viaversion.viafabricplus.bedrock.input.InputPermissionsPayload;
+ import com.viaversion.viafabricplus.bedrock.hud.HudVisibilityPayload;
+ import com.viaversion.viafabricplus.bedrock.camera.CameraFadePayload;
++import com.viaversion.viafabricplus.bedrock.render.fog.BedrockFog;
+ import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraFade;
+ import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraFov;
+ import com.viaversion.viafabricplus.bedrock.camera.CameraFovPayload;
+@@ -221,6 +222,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+         ClientPlayConnectionEvents.INIT.register((listener, client) ->
+             ClientPlayNetworking.registerReceiver(LocatorBarPayload.TYPE,
+                 (payload, context) -> BedrockLocatorBar.accept(listener.getConnection(), payload.snapshot())));
++        BedrockFog.register();
+         PayloadTypeRegistry.clientboundPlay().register(CameraFadePayload.TYPE, CameraFadePayload.CODEC);
+         ClientPlayNetworking.registerGlobalReceiver(CameraFadePayload.TYPE,
+             (payload, context) -> BedrockCameraFade.accept(payload.state()));
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEndSkyTexture.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEndSkyTexture.java
+new file mode 100644
+index 0000000..2583c78
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEndSkyTexture.java
+@@ -0,0 +1,96 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.mojang.blaze3d.platform.NativeImage;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.CompletionException;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.renderer.texture.AbstractTexture;
++import net.minecraft.client.renderer.texture.DynamicTexture;
++import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.resources.ResourceManager;
++import org.jetbrains.annotations.Nullable;
++
++/** The world's selected licensed vanilla texture, below accepted server overrides. */
++public final class BedrockEndSkyTexture {
++    private static final Identifier LOCATION = Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "environment/end_sky");
++    private static long generation = -1;
++    private static ResourceManager resources;
++    private static CompletableFuture<byte[]> pending;
++    private static AbstractTexture texture;
++
++    private BedrockEndSkyTexture() {
++    }
++
++    public static @Nullable AbstractTexture get() {
++        return generation == BedrockServerResources.generation()
++            && resources == Minecraft.getInstance().getResourceManager() ? texture : null;
++    }
++
++    /** Upload before rendering begins. Texture writes are invalid inside an active sky pass. */
++    public static void tick() {
++        final var minecraft = Minecraft.getInstance();
++        final long current = BedrockServerResources.generation();
++        if (generation != current || resources != minecraft.getResourceManager()) {
++            clear();
++            generation = current;
++            resources = minecraft.getResourceManager();
++            final ResourceManager selected = resources;
++            pending = CompletableFuture.supplyAsync(() -> {
++                try {
++                    final var library = BedrockServerResources.library(selected, BedrockBuiltinAssets.load());
++                    return encode(library.particleTexture("textures/environment/end_sky"));
++                } catch (final IOException | RuntimeException failure) {
++                    throw new CompletionException(failure);
++                }
++            });
++        }
++        if (pending != null && pending.isDone()) {
++            final var completed = pending;
++            pending = null;
++            try {
++                final byte[] encoded = completed.join();
++                if (encoded != null) {
++                    final NativeImage pixels = NativeImage.read(encoded);
++                    DynamicTexture loaded = null;
++                    try {
++                        loaded = new DynamicTexture(LOCATION::toString, pixels);
++                        minecraft.getTextureManager().register(LOCATION, loaded);
++                        texture = loaded;
++                    } catch (final RuntimeException failure) {
++                        if (loaded == null) pixels.close();
++                        else loaded.close();
++                        throw failure;
++                    }
++                }
++            } catch (final IOException | RuntimeException failure) {
++                ViaFabricPlusBedrock.impl().logger().warn("Could not load the native End sky texture", failure);
++            }
++        }
++    }
++
++    private static byte @Nullable [] encode(final byte[] bytes) throws IOException {
++        if (bytes == null) return null;
++        final var image = BedrockParticleTexture.read(bytes);
++        if (image.getWidth() > 4096 || image.getHeight() > 4096) throw new IOException("End sky texture exceeds size limits");
++        final var encoded = new ByteArrayOutputStream();
++        if (!javax.imageio.ImageIO.write(image, "png", encoded)) throw new IOException("Could not encode the End sky texture");
++        return encoded.toByteArray();
++    }
++
++    public static void clear() {
++        if (pending != null) pending.cancel(false);
++        pending = null;
++        if (texture != null) Minecraft.getInstance().getTextureManager().release(LOCATION);
++        texture = null;
++        resources = null;
++        generation = -1;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockEndSky.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockEndSky.java
+new file mode 100644
+index 0000000..316aa1d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockEndSky.java
+@@ -0,0 +1,32 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
++import com.mojang.renderpearl.api.pipeline.RenderPipeline;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockEndSkyTexture;
++import com.viaversion.viafabricplus.bedrock.render.fog.BedrockEndSkyPipeline;
++import com.viaversion.viafabricplus.bedrock.render.fog.BedrockFog;
++import net.minecraft.client.renderer.SkyRenderer;
++import net.minecraft.client.renderer.texture.AbstractTexture;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.ModifyArg;
++
++@Mixin(SkyRenderer.class)
++public abstract class MixinBedrockEndSky {
++    @ModifyArg(method = "renderEndSky", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;getCompiledPipeline(Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)Lcom/mojang/renderpearl/api/pipeline/CompiledRenderPipeline;"))
++    private RenderPipeline nativeEndSky(final RenderPipeline original) {
++        return BedrockFog.endSky() && BedrockEndSkyTexture.get() != null ? BedrockEndSkyPipeline.PIPELINE : original;
++    }
++
++    @ModifyExpressionValue(method = "renderEndSky", at = @At(value = "FIELD", target = "Lnet/minecraft/client/renderer/SkyRenderer;endSkyTexture:Lnet/minecraft/client/renderer/texture/AbstractTexture;"))
++    private AbstractTexture nativeEndTexture(final AbstractTexture original) {
++        if (!BedrockFog.endSky()) return original;
++        final var texture = BedrockEndSkyTexture.get();
++        return texture == null ? original : texture;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockEndSkyPipeline.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockEndSkyPipeline.java
+new file mode 100644
+index 0000000..4a06cb8
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockEndSkyPipeline.java
+@@ -0,0 +1,25 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.ModifyReturnValue;
++import com.mojang.renderpearl.api.pipeline.RenderPipeline;
++import com.viaversion.viafabricplus.bedrock.render.fog.BedrockEndSkyPipeline;
++import java.util.ArrayList;
++import java.util.List;
++import net.minecraft.client.renderer.RenderPipelines;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(RenderPipelines.class)
++public abstract class MixinBedrockEndSkyPipeline {
++    @ModifyReturnValue(method = "requiredPipelines", at = @At("RETURN"))
++    private static List<RenderPipeline> includeNativeEndSky(final List<RenderPipeline> pipelines) {
++        final var result = new ArrayList<>(pipelines);
++        result.add(BedrockEndSkyPipeline.PIPELINE);
++        return result;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFog.java
+new file mode 100644
+index 0000000..5c85ac1
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFog.java
+@@ -0,0 +1,43 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.viaversion.viafabricplus.bedrock.render.fog.BedrockFog;
++import net.minecraft.client.Camera;
++import net.minecraft.client.DeltaTracker;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.client.renderer.fog.FogData;
++import net.minecraft.client.renderer.fog.FogRenderer;
++import net.minecraft.client.renderer.fog.environment.AtmosphericFogEnvironment;
++import net.minecraft.client.renderer.fog.environment.FogEnvironment;
++import org.joml.Vector3f;
++import org.joml.Vector3fc;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(FogRenderer.class)
++public abstract class MixinBedrockFog {
++    @WrapOperation(method = "computeFogColor", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/fog/environment/FogEnvironment;getBaseColor(Lnet/minecraft/client/multiplayer/ClientLevel;Lnet/minecraft/client/Camera;IF)Lorg/joml/Vector3fc;"))
++    private Vector3fc commandColor(final FogEnvironment environment, final ClientLevel level, final Camera camera,
++                                  final int renderChunks, final float partialTick, final Operation<Vector3fc> original) {
++        final Vector3fc color = original.call(environment, level, camera, renderChunks, partialTick);
++        final var air = BedrockFog.air(camera, level);
++        if (air == null) return color;
++        // Preserve the later void, blindness, darkness, night-vision and camera-effect modifiers.
++        return new Vector3f((air.color() >> 16 & 255) / 255F, (air.color() >> 8 & 255) / 255F, (air.color() & 255) / 255F);
++    }
++
++    @WrapOperation(method = "setupFog", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/fog/environment/FogEnvironment;setupFog(Lnet/minecraft/client/renderer/fog/FogData;Lnet/minecraft/client/Camera;Lnet/minecraft/client/multiplayer/ClientLevel;FLnet/minecraft/client/DeltaTracker;)V"))
++    private void commandDistance(final FogEnvironment environment, final FogData fog, final Camera camera,
++                                 final ClientLevel level, final float distance, final DeltaTracker delta,
++                                 final Operation<Void> original) {
++        original.call(environment, fog, camera, level, distance, delta);
++        // Fluid and status-effect environments retain their own distance rules.
++        if (environment instanceof AtmosphericFogEnvironment) BedrockFog.applyDistance(fog, camera, level, distance);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockEndSkyPipeline.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockEndSkyPipeline.java
+new file mode 100644
+index 0000000..09d62f3
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockEndSkyPipeline.java
+@@ -0,0 +1,38 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.fog;
++
++import com.mojang.renderpearl.api.pipeline.ColorTargetState;
++import com.mojang.renderpearl.api.pipeline.RenderPipeline;
++import com.mojang.renderpearl.api.vertex.VertexFormat;
++import com.viaversion.viafabricplus.bedrock.render.BedrockShaderPipelines;
++import java.util.Optional;
++import net.minecraft.client.renderer.BindGroupLayouts;
++import net.minecraft.client.renderer.RenderPipelines;
++import net.minecraft.resources.Identifier;
++
++public final class BedrockEndSkyPipeline {
++    public static final RenderPipeline PIPELINE = create();
++
++    private BedrockEndSkyPipeline() {
++    }
++
++    private static RenderPipeline create() {
++        final RenderPipeline original = RenderPipelines.END_SKY;
++        final ColorTargetState[] colors = original.getColorTargetStates().toArray(ColorTargetState[]::new);
++        final var snippet = new RenderPipeline.Snippet(original.getShaders(), Optional.of(original.getShaderDefines()),
++            Optional.of(original.getBindGroupLayouts()), colors, colors.length, Optional.ofNullable(original.getDepthStencilState()),
++            Optional.of(original.getPolygonMode()), Optional.of(original.isCull()),
++            original.getVertexFormatBindings().toArray(VertexFormat[]::new), Optional.of(original.getPrimitiveTopology()),
++            original.pushConstantSize());
++        final var builder = RenderPipeline.builder(snippet)
++            .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/end_sky"))
++            .withVertexShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_end_sky"))
++            .withFragmentShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_end_sky"));
++        if (!original.getBindGroupLayouts().contains(BindGroupLayouts.FOG)) builder.withBindGroupLayout(BindGroupLayouts.FOG);
++        return BedrockShaderPipelines.register(builder.build(), original);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java
+new file mode 100644
+index 0000000..3059e2e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java
+@@ -0,0 +1,87 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.fog;
++
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapExtractor;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockEndSkyTexture;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
++import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
++import net.minecraft.client.Camera;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.client.renderer.fog.FogData;
++import net.minecraft.world.entity.EntityTypes;
++import net.minecraft.world.level.material.FogType;
++import net.raphimc.viabedrock.api.model.FogState;
++import net.raphimc.viabedrock.protocol.data.enums.Dimension;
++import org.jetbrains.annotations.Nullable;
++
++public final class BedrockFog {
++    private static final FogSession SESSION = new FogSession();
++    private static @Nullable ClientPacketListener owner;
++
++    private BedrockFog() {
++    }
++
++    public static void register() {
++        ClientTickEvents.END_CLIENT_TICK.register(client -> {
++            if (BedrockLightmapExtractor.dimension(client) == Dimension.END) BedrockEndSkyTexture.tick();
++        });
++        PayloadTypeRegistry.clientboundPlay().register(FogPayload.TYPE, FogPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) -> {
++            BedrockEndSkyTexture.clear();
++            owner = listener;
++            final long generation = SESSION.begin();
++            ClientPlayNetworking.registerReceiver(FogPayload.TYPE, (payload, context) -> {
++                if (client.getConnection() == listener) SESSION.accept(generation, payload.state());
++            });
++        });
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> {
++            if (owner == listener) {
++                owner = null;
++                SESSION.clear();
++                BedrockEndSkyTexture.clear();
++            }
++        });
++    }
++
++    public static @Nullable FogState.Distance air(final Camera camera, final ClientLevel level) {
++        final var minecraft = Minecraft.getInstance();
++        if (owner == null || owner != minecraft.getConnection()
++                || !supported(BedrockLightmapExtractor.dimension(minecraft), camera.getFluidInCamera(),
++                    level.getRainLevel(1F), level.getThunderLevel(1F))) return null;
++        return SESSION.snapshot().resolve("air");
++    }
++
++    public static boolean endSky() {
++        final var minecraft = Minecraft.getInstance();
++        return minecraft.level != null && BedrockLightmapExtractor.dimension(minecraft) == Dimension.END
++            && air(minecraft.gameRenderer.mainCamera(), minecraft.level) != null;
++    }
++
++    static boolean supported(final @Nullable Dimension dimension, final FogType medium, final float rain, final float thunder) {
++        return dimension != null && medium == FogType.NONE && rain <= 0 && thunder <= 0;
++    }
++
++    public static void applyDistance(final FogData fog, final Camera camera, final ClientLevel level, final float renderDistance) {
++        final var air = air(camera, level);
++        if (air == null) return;
++        if (BedrockLightmapExtractor.dimension(Minecraft.getInstance()) == Dimension.END) {
++            // Native retains an admitted dragon across a distant teleport, until its actor lifetime ends.
++            // Keep the dragon's environment distance instead of deriving its lifetime from the boss bar.
++            for (final var entity : level.entitiesForRendering()) {
++                if (entity.getType() == EntityTypes.ENDER_DRAGON && entity.isAlive()) return;
++            }
++        }
++        fog.environmentalStart = air.start(renderDistance);
++        fog.environmentalEnd = air.end(renderDistance);
++        fog.skyEnd = Math.min(renderDistance, fog.environmentalEnd);
++        fog.cloudEnd = Math.min(fog.cloudEnd, fog.environmentalEnd);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogPayload.java
+new file mode 100644
+index 0000000..f57a2cf
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.fog;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.FogState;
++
++public record FogPayload(FogState state) implements CustomPacketPayload {
++    public static final Type<FogPayload> TYPE = new Type<>(Identifier.parse(FogState.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, FogPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> FogState.TYPE.write(buffer, payload.state),
++            buffer -> new FogPayload(FogState.TYPE.read(buffer)));
++
++    @Override
++    public Type<FogPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSession.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSession.java
+new file mode 100644
+index 0000000..9664237
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSession.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.fog;
++
++import net.raphimc.viabedrock.api.model.FogState;
++
++/** Queued network callbacks cannot restore a previous connection's resources or commands. */
++final class FogSession {
++    private long generation;
++    private FogState snapshot = FogState.EMPTY;
++
++    long begin() {
++        this.snapshot = FogState.EMPTY;
++        return ++this.generation;
++    }
++
++    boolean accept(final long generation, final FogState snapshot) {
++        if (generation != this.generation) return false;
++        this.snapshot = snapshot;
++        return true;
++    }
++
++    void clear() {
++        this.begin();
++    }
++
++    FogState snapshot() {
++        return this.snapshot;
++    }
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_end_sky.fsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_end_sky.fsh
+new file mode 100644
+index 0000000..3909d5b
+--- /dev/null
++++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_end_sky.fsh
+@@ -0,0 +1,12 @@
++#version 330
++#extension GL_ARB_separate_shader_objects : require
++
++#include <minecraft:fog.glsl>
++uniform sampler2D Sampler0;
++layout(location = 0) in vec2 texCoord0;
++layout(location = 0) out vec4 fragColor;
++
++void main() {
++    // Native 1.26.60.5 EndSky multiplies the grayscale texture by twice the fog color.
++    fragColor = vec4(texture(Sampler0, texCoord0).rgb * FogColor.rgb * 2.0, 1.0);
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_end_sky.vsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_end_sky.vsh
+new file mode 100644
+index 0000000..afd7b44
+--- /dev/null
++++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_end_sky.vsh
+@@ -0,0 +1,14 @@
++#version 330
++#extension GL_ARB_separate_shader_objects : require
++
++#include <minecraft:dynamictransforms.glsl>
++#include <minecraft:projection.glsl>
++
++layout(location = 0) in vec3 Position;
++layout(location = 1) in vec2 UV0;
++layout(location = 0) out vec2 texCoord0;
++
++void main() {
++    gl_Position = ProjMat * ModelViewMat * vec4(Position, 1.0);
++    texCoord0 = UV0;
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 13433c2..7529378 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -139,6 +139,9 @@
+     "features.render.MixinBedrockLightmap",
+     "features.render.MixinBedrockLightmapPipelines",
+     "features.render.MixinBedrockVisionFog",
++    "features.render.MixinBedrockFog",
++    "features.render.MixinBedrockEndSky",
++    "features.render.MixinBedrockEndSkyPipeline",
+     "features.render.MixinBedrockRidingMetadata",
+     "features.render.MixinBedrockRidingPosition",
+     "features.render.MixinEntityRenderDispatcher",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java
+new file mode 100644
+index 0000000..f501a29
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java
+@@ -0,0 +1,22 @@
++package com.viaversion.viafabricplus.bedrock.render.fog;
++
++import net.minecraft.world.level.material.FogType;
++import net.raphimc.viabedrock.protocol.data.enums.Dimension;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockFogTest {
++    @Test
++    void dryAirCommandsDoNotReplaceUnverifiedFluidOrWeatherDistanceRules() {
++        for (final Dimension dimension : Dimension.values()) {
++            assertTrue(BedrockFog.supported(dimension, FogType.NONE, 0, 0));
++            assertFalse(BedrockFog.supported(dimension, FogType.NONE, 0.5F, 0));
++            assertFalse(BedrockFog.supported(dimension, FogType.NONE, 0, 0.5F));
++            for (final FogType fluid : new FogType[]{FogType.WATER, FogType.LAVA, FogType.POWDER_SNOW}) {
++                assertFalse(BedrockFog.supported(dimension, fluid, 0, 0));
++            }
++        }
++        assertFalse(BedrockFog.supported(null, FogType.NONE, 0, 0));
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSessionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSessionTest.java
+new file mode 100644
+index 0000000..f2068ad
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSessionTest.java
+@@ -0,0 +1,41 @@
++package com.viaversion.viafabricplus.bedrock.render.fog;
++
++import net.raphimc.viabedrock.api.model.FogState;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class FogSessionTest {
++    @Test
++    void oldCallbacksCannotRestoreResourcesAfterReplacementOrDisconnect() {
++        final var session = new FogSession();
++        final long first = session.begin();
++        final var old = new FogState(List.of(new FogState.Layer("test:old", Map.of(
++                "air", new FogState.Distance(0, 16, 0xFFFFFF, false)))));
++        assertTrue(session.accept(first, old));
++        final long replacement = session.begin();
++        assertSame(FogState.EMPTY, session.snapshot());
++        assertFalse(session.accept(first, old));
++        final var current = new FogState(List.of(new FogState.Layer("test:current", Map.of(
++                "air", new FogState.Distance(0, 128, 0, false)))));
++        assertTrue(session.accept(replacement, current));
++        assertSame(current, session.snapshot());
++        session.clear();
++        assertFalse(session.accept(replacement, current));
++        assertSame(FogState.EMPTY, session.snapshot());
++    }
++
++    @Test
++    void emptyUpdatesRemoveEarlierLayersWithinOneConnection() {
++        final var session = new FogSession();
++        final long generation = session.begin();
++        assertTrue(session.accept(generation, new FogState(List.of(new FogState.Layer("test:air", Map.of(
++                "air", new FogState.Distance(0, 16, 0, false)))))));
++        assertNotNull(session.snapshot().resolve("air"));
++        assertTrue(session.accept(generation, FogState.EMPTY));
++        assertNull(session.snapshot().resolve("air"));
++    }
++}
+-- 
+2.56.0

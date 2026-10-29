@@ -187,7 +187,9 @@ Player and persona controller assets do not establish the engine's new armor mas
    Fresh direct Java and ViaProxy day/night controls fade gradually and preserve immediate restoration after forced cancellation.
    Native night fog brightness and the precise fade curve still differ.
    Dragon-dependent fog distances now have native controls, described below. Changed block picking still needs focused native checks.
-   Core currently cancels `PLAYER_FOG`, so fog commands also need a native stack consumer before the dragon comparison can pass.
+   Core now retains `PLAYER_FOG` snapshots and resolves complete distance settings against the selected resources.
+   The add-on consumes dry-air commands through a connection-owned receiver.
+   Native dragon distances, base biome overrides, and transition timing remain open.
    Existing lightmap and collision code cannot establish those fixes by itself.
    A live actor-picking fixture exposed missing hand fields in actor-use transactions and the explicit attack swing.
    The protocol patch now supplies both fields and shares outgoing swings through one factory.
@@ -206,6 +208,22 @@ Player and persona controller assets do not establish the engine's new armor mas
    evidence; generated IDs or Java fallbacks do not establish parity.
 
 ### Native fog controls in 26.60
+
+The command consumer carries fixed and render-relative distances, colors, and empty resets through the negotiated `viabedrock:fog` channel.
+A water-only top layer preserves the lower air setting.
+Listener replacement and disconnect retire previous commands.
+Fluid and weather distances retain their existing paths.
+
+The native End sky uses a grayscale texture instead of Java's purple texture.
+Matching 26.60.5 shader bytecode multiplies this texture by `SkyColor`.
+Live white and red controls read approximately twice the fog RGB at that binding, with alpha 2.
+The add-on selects the licensed texture through the world resource library, below server pack overrides.
+It decodes off-thread and uploads during client ticks, before any GPU render pass.
+Fresh direct and ViaProxy recordings confirm white/red sky colors, fixed distances, water-only fallback, removal, and empty resets.
+Both 180-second recordings finish normally.
+Native sky motion, pixel sampling, transition timing, and the complete dragon distance rule remain unverified.
+The current guard preserves Java's 1,024-block dragon environment, which differs from the native reference.
+
 
 Native 1.26.60.5 and BDS 1.26.60.6 use protocol 2225 for these controls.
 The client uses Fancy graphics, a 1280 × 720 window, and GUI scale 2.
