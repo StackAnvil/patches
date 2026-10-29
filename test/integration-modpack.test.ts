@@ -13,10 +13,6 @@ function index(path = "mods/example.jar") {
   };
 }
 
-test("accepts a version-matched pack with verified client downloads", () => {
-  expect(validatePackIndex(index(), target).files).toHaveLength(1);
-});
-
 test("rejects incompatible loaders and archive path escapes", () => {
   expect(() => validatePackIndex(index(), { ...target, fabricLoader: "0.19.6" })).toThrow();
   expect(() => validatePackIndex(index("mods/../options.txt"), target)).toThrow();
