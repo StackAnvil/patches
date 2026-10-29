@@ -1,40 +1,48 @@
-From 2427adad72c1bd34d9621db2f83a5d3f6b9ff58f Mon Sep 17 00:00:00 2001
+From 647413695f50eb0e6ec39882a27dbfdbf46a3a79 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 29 Oct 2026 01:28:02 +0100
 Subject: [PATCH] feat(fog): apply native command stacks to dry air
 
-Accept versioned resolved fog snapshots through a connection-owned receiver. Retire commands on disconnect or listener replacement and reject callbacks from older generations. Apply fixed and render-relative air distances and colors through the existing fog pipeline so later camera, vision, and void modifiers remain intact.
+Accept versioned resolved fog snapshots through a connection-owned receiver.
+Retire commands on disconnect or listener replacement and reject callbacks
+from older generations. Apply fixed and render-relative air distances and
+colors through the existing pipeline, preserving later camera, vision and
+void modifiers.
 
-Native Bedrock 1.26.60.5 protocol 2225 controls establish command-medium precedence and short-distance fog in the End after dragon death or a fresh distant join. The native journal retains a previously admitted dragon across a distant teleport, so preserve the tracked live dragon environment instead of using boss-bar visibility as its lifetime. Native dragon distance values, transition timing, fluids, weather, and complete rendering parity still require matching comparisons.
+Use admitted living Ender Dragon actors rather than boss-bar visibility to
+select the native End distance override. Matching Bedrock 1.26.60.5 protocol
+2225 RenderChunk bytecode and indexed FogAndDistanceControl reads establish
+start 0 and end min(100,effective render distance). Native controls measure
+100 blocks at render distance 192 and 80 blocks at effective distance 80. Death
+restores the 16-block command in both controls. The distance rule also
+applies without a command; it does not replace the ordinary color path.
 
 Render command-colored End skies with the licensed grayscale texture from
-this world's selected native resource library, below accepted server pack
-overrides. Native 1.26.60.5 EndSky fragment bytecode multiplies that texture
-by SkyColor. Matching live white and red controls read approximately twice
-the fog RGB with alpha 2 at the SkyColor binding. Ignore Java's fixed dark
-vertex tint and use the fog buffer for the command color. Keep the original
-sky if the native texture is unavailable.
+the world's selected native resource library below accepted server pack
+overrides. Matching EndSky bytecode multiplies the texture by SkyColor;
+live white and red controls read twice the fog RGB with alpha 2. Ignore
+Java's fixed dark vertex tint and retain the original sky without a native
+texture. Decode off-thread and upload before render passes during client
+ticks. Retire textures with their connection and resource generation.
 
-Decode off-thread, upload during the client tick before any render pass,
-and retire textures with their connection and resource generation. Never
-upload from the sky render callback. Sky UV motion, native transitions,
-base biome distances, and dragon distance values remain unverified.
+Base biome distances, exact native transitions, sky UV motion and sampling,
+fluids and weather remain separate comparison work.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |  2 +
- .../appearance/BedrockEndSkyTexture.java      | 96 +++++++++++++++++++
- .../features/render/MixinBedrockEndSky.java   | 32 +++++++
- .../render/MixinBedrockEndSkyPipeline.java    | 25 +++++
- .../features/render/MixinBedrockFog.java      | 43 +++++++++
- .../render/fog/BedrockEndSkyPipeline.java     | 38 ++++++++
- .../bedrock/render/fog/BedrockFog.java        | 87 +++++++++++++++++
- .../bedrock/render/fog/FogPayload.java        | 24 +++++
- .../bedrock/render/fog/FogSession.java        | 33 +++++++
- .../shaders/core/bedrock_end_sky.fsh          | 12 +++
- .../shaders/core/bedrock_end_sky.vsh          | 14 +++
- .../viafabricplus-bedrock.mixins.json         |  3 +
- .../bedrock/render/fog/BedrockFogTest.java    | 22 +++++
- .../bedrock/render/fog/FogSessionTest.java    | 41 ++++++++
- 14 files changed, 472 insertions(+)
+ .../bedrock/ViaFabricPlusBedrock.java         |   2 +
+ .../appearance/BedrockEndSkyTexture.java      |  96 ++++++++++++++++
+ .../features/render/MixinBedrockEndSky.java   |  32 ++++++
+ .../render/MixinBedrockEndSkyPipeline.java    |  25 +++++
+ .../features/render/MixinBedrockFog.java      |  43 +++++++
+ .../render/fog/BedrockEndSkyPipeline.java     |  38 +++++++
+ .../bedrock/render/fog/BedrockFog.java        | 106 ++++++++++++++++++
+ .../bedrock/render/fog/FogPayload.java        |  24 ++++
+ .../bedrock/render/fog/FogSession.java        |  33 ++++++
+ .../shaders/core/bedrock_end_sky.fsh          |  12 ++
+ .../shaders/core/bedrock_end_sky.vsh          |  14 +++
+ .../viafabricplus-bedrock.mixins.json         |   3 +
+ .../bedrock/render/fog/BedrockFogTest.java    |  58 ++++++++++
+ .../bedrock/render/fog/FogSessionTest.java    |  46 ++++++++
+ 14 files changed, 532 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEndSkyTexture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockEndSky.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockEndSkyPipeline.java
@@ -334,10 +342,10 @@ index 0000000..09d62f3
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java
 new file mode 100644
-index 0000000..3059e2e
+index 0000000..96e16cd
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,106 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -392,11 +400,13 @@ index 0000000..3059e2e
 +    }
 +
 +    public static @Nullable FogState.Distance air(final Camera camera, final ClientLevel level) {
-+        final var minecraft = Minecraft.getInstance();
-+        if (owner == null || owner != minecraft.getConnection()
-+                || !supported(BedrockLightmapExtractor.dimension(minecraft), camera.getFluidInCamera(),
-+                    level.getRainLevel(1F), level.getThunderLevel(1F))) return null;
-+        return SESSION.snapshot().resolve("air");
++        return active(BedrockLightmapExtractor.dimension(Minecraft.getInstance()), camera, level)
++            ? SESSION.snapshot().resolve("air") : null;
++    }
++
++    private static boolean active(final @Nullable Dimension dimension, final Camera camera, final ClientLevel level) {
++        return owner != null && owner == Minecraft.getInstance().getConnection()
++            && supported(dimension, camera.getFluidInCamera(), level.getRainLevel(1F), level.getThunderLevel(1F));
 +    }
 +
 +    public static boolean endSky() {
@@ -410,19 +420,36 @@ index 0000000..3059e2e
 +    }
 +
 +    public static void applyDistance(final FogData fog, final Camera camera, final ClientLevel level, final float renderDistance) {
-+        final var air = air(camera, level);
-+        if (air == null) return;
-+        if (BedrockLightmapExtractor.dimension(Minecraft.getInstance()) == Dimension.END) {
++        final Dimension dimension = BedrockLightmapExtractor.dimension(Minecraft.getInstance());
++        if (!active(dimension, camera, level)) return;
++        boolean livingDragon = false;
++        if (dimension == Dimension.END) {
 +            // Native retains an admitted dragon across a distant teleport, until its actor lifetime ends.
-+            // Keep the dragon's environment distance instead of deriving its lifetime from the boss bar.
 +            for (final var entity : level.entitiesForRendering()) {
-+                if (entity.getType() == EntityTypes.ENDER_DRAGON && entity.isAlive()) return;
++                if (entity.getType() == EntityTypes.ENDER_DRAGON && entity.isAlive()) {
++                    livingDragon = true;
++                    break;
++                }
 +            }
 +        }
-+        fog.environmentalStart = air.start(renderDistance);
-+        fog.environmentalEnd = air.end(renderDistance);
-+        fog.skyEnd = Math.min(renderDistance, fog.environmentalEnd);
-+        fog.cloudEnd = Math.min(fog.cloudEnd, fog.environmentalEnd);
++        final Range range = range(dimension, livingDragon, SESSION.snapshot().resolve("air"), renderDistance);
++        if (range == null) return;
++        fog.environmentalStart = range.start;
++        fog.environmentalEnd = range.end;
++        fog.skyEnd = Math.min(renderDistance, range.end);
++        fog.cloudEnd = Math.min(fog.cloudEnd, range.end);
++    }
++
++    static @Nullable Range range(final @Nullable Dimension dimension, final boolean livingDragon,
++                                 final @Nullable FogState.Distance command, final float renderDistance) {
++        if (dimension == null) return null;
++        // Native 1.26.60.5 uniforms establish 0..100 blocks, capped by the effective render distance.
++        // The dragon replaces distances even without a command, while the ordinary color path remains intact.
++        if (dimension == Dimension.END && livingDragon) return new Range(0, Math.min(100, renderDistance));
++        return command == null ? null : new Range(command.start(renderDistance), command.end(renderDistance));
++    }
++
++    record Range(float start, float end) {
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogPayload.java
@@ -548,13 +575,20 @@ index 13433c2..7529378 100644
      "features.render.MixinEntityRenderDispatcher",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java
 new file mode 100644
-index 0000000..f501a29
+index 0000000..e147fca
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,58 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
 +package com.viaversion.viafabricplus.bedrock.render.fog;
 +
++import java.util.Map;
 +import net.minecraft.world.level.material.FogType;
++import net.raphimc.viabedrock.api.model.FogState;
 +import net.raphimc.viabedrock.protocol.data.enums.Dimension;
 +import org.junit.jupiter.api.Test;
 +
@@ -573,13 +607,47 @@ index 0000000..f501a29
 +        }
 +        assertFalse(BedrockFog.supported(null, FogType.NONE, 0, 0));
 +    }
++
++    @Test
++    void livingEndDragonCapsDistanceWithOrWithoutFogCommands() {
++        for (final var observed : Map.of(80F, 80F, 192F, 100F).entrySet()) {
++            final float renderDistance = observed.getKey();
++            final var expected = new BedrockFog.Range(0, observed.getValue());
++            assertEquals(expected, BedrockFog.range(Dimension.END, true, null, renderDistance));
++            for (final var command : new FogState.Distance[]{
++                new FogState.Distance(0, 16, 0xFFFFFF, false),
++                new FogState.Distance(0, 128, 0xFF0000, false),
++                new FogState.Distance(-0.25F, 0.75F, 0, true)
++            }) {
++                assertEquals(expected, BedrockFog.range(Dimension.END, true, command, renderDistance));
++                assertEquals(new BedrockFog.Range(command.start(renderDistance), command.end(renderDistance)),
++                    BedrockFog.range(Dimension.END, false, command, renderDistance));
++            }
++            assertNull(BedrockFog.range(Dimension.END, false, null, renderDistance));
++        }
++    }
++
++    @Test
++    void dragonOverrideDoesNotEscapeTheEndOrAnAcceptedNativeContext() {
++        final var command = new FogState.Distance(0, 16, 0, false);
++        assertNull(BedrockFog.range(null, true, command, 192));
++        for (final Dimension dimension : new Dimension[]{Dimension.OVERWORLD, Dimension.NETHER}) {
++            assertNull(BedrockFog.range(dimension, true, null, 192));
++            assertEquals(new BedrockFog.Range(0, 16), BedrockFog.range(dimension, true, command, 192));
++        }
++    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSessionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSessionTest.java
 new file mode 100644
-index 0000000..f2068ad
+index 0000000..683dabd
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSessionTest.java
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,46 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
 +package com.viaversion.viafabricplus.bedrock.render.fog;
 +
 +import net.raphimc.viabedrock.api.model.FogState;

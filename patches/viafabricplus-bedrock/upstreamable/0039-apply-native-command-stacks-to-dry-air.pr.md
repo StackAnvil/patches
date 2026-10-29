@@ -7,12 +7,19 @@ The negotiated payload supplies definitions from the world-selected pack stack f
 Apply command air colors before the existing vision, void, and camera modifiers.
 Apply fixed or render-relative distances through Java's existing atmospheric fog buffer.
 Fluid, weather, and status-effect distances retain their current paths until matching native controls establish their rules.
-A tracked living Ender Dragon retains the existing dragon environment distance instead of using boss-bar visibility as its lifetime.
+A tracked living Ender Dragon uses start 0 and end `min(100, effective render distance)`, independent of command presence.
+Boss-bar visibility does not define that actor lifetime.
 
 Native Bedrock 1.26.60.5 against BDS 1.26.60.6 uses protocol 2225.
 The native near-to-far journal retains each admitted dragon actor until death.
 The fresh distant journal contains no dragon spawn and honors the short command distance.
-These observations support actor lifetime as the guard. They do not establish an exact dragon fog curve or a universal distance threshold.
+Matching `RenderChunk` vertex bytecode establishes the distance calculation and the `FogAndDistanceControl` binding.
+Owned native reads resolve the end fraction and render-distance scale to 100 blocks at effective distance 192.
+A second native process requests 64 blocks, clamps to an effective 80, and uses an 80-block dragon distance.
+Server-confirmed spawns establish the same 100-block override without commands and above red command fog.
+Teleporting the admitted actor far away preserves 100 blocks. Death restores the 16-block command.
+Three sealed journals each contain one dragon admission and its later removal.
+The override does not establish a universal admission radius or an exact transition curve.
 
 Focused tests cover connection-generation rejection, replacement, empty resets, and fluid/weather boundaries.
 Core tests cover stack priority, ownership, distance units, and the shared payload.
@@ -31,8 +38,14 @@ A water-only top entry preserves the lower air setting. Removing entries restore
 The shared fog buffer confirms these distances at the actual renderer return.
 The sky changes from Java purple to grayscale white or red, then returns to Java's sky after command removal.
 Both 180-second recordings finish normally, without texture upload errors.
-The full add-on build passes 1,297 cases, including 145 optional skips, with no failures or errors.
+The full add-on build passes 1,299 cases, including 145 optional skips, with no failures or errors.
 No native sky pixel-equivalence claim follows from these controls.
-Native transition timing, sky motion, vanilla biome distances, and numeric dragon distances also remain open.
-The tracked-dragon guard currently preserves Java's 1,024-block environment distance, which differs from the native reference.
+Fresh direct and ViaProxy recordings each finish normally after ten dragon phases over 180 seconds.
+Both routes report 100 blocks without commands and above white 16/128-block and red 32-block settings.
+A distant teleport retains 100 blocks. Death restores 128 blocks, followed by a successful 16-block control and empty reset.
+All twenty captures retain the matched camera position and rotation.
+A steady white-fog marker control matches native within one RGB value per channel. Java End flash frames are excluded from that comparison.
+Two policy regressions cover the observed 80/192-block cases, command precedence, restoration, and dimension scope.
+Native transition timing, sky motion, pixel sampling, and vanilla biome distances remain open.
+The no-command fallback outside the dragon override still uses Java's existing environment.
 This patch does not establish full fog parity.

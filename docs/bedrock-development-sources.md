@@ -189,7 +189,8 @@ Player and persona controller assets do not establish the engine's new armor mas
    Dragon-dependent fog distances now have native controls, described below. Changed block picking still needs focused native checks.
    Core now retains `PLAYER_FOG` snapshots and resolves complete distance settings against the selected resources.
    The add-on consumes dry-air commands through a connection-owned receiver.
-   Native dragon distances, base biome overrides, and transition timing remain open.
+   The native dragon distance cap now has matching native and Java controls.
+   Base biome overrides and transition timing remain open.
    Existing lightmap and collision code cannot establish those fixes by itself.
    A live actor-picking fixture exposed missing hand fields in actor-use transactions and the explicit attack swing.
    The protocol patch now supplies both fields and shares outgoing swings through one factory.
@@ -221,8 +222,16 @@ The add-on selects the licensed texture through the world resource library, belo
 It decodes off-thread and uploads during client ticks, before any GPU render pass.
 Fresh direct and ViaProxy recordings confirm white/red sky colors, fixed distances, water-only fallback, removal, and empty resets.
 Both 180-second recordings finish normally.
-Native sky motion, pixel sampling, transition timing, and the complete dragon distance rule remain unverified.
-The current guard preserves Java's 1,024-block dragon environment, which differs from the native reference.
+Native sky motion, pixel sampling, transition timing, and base biome distances remain unverified.
+
+The dragon override uses start 0 and end `min(100, effective render distance)`.
+Matching `RenderChunk` vertex bytecode establishes the distance formula and the native `FogAndDistanceControl` binding.
+Owned native uniform reads measure 100 blocks at effective render distance 192 and 80 blocks at effective distance 80.
+Native controls also establish 100 blocks without commands and above red command fog.
+Teleporting the admitted actor far away preserves the override. Death restores the short command distance.
+Fresh direct and ViaProxy recordings each finish normally after ten corresponding phases.
+Their actual renderer buffers report 100 blocks during the override and restore the 128-block or 16-block command after death.
+These controls replace Java's previous 1,024-block dragon fallback.
 
 
 Native 1.26.60.5 and BDS 1.26.60.6 use protocol 2225 for these controls.
@@ -247,14 +256,15 @@ describes this nearby-dragon override and the dead or distant cases.
 
 After a fresh connection, a living dragon roughly 345 blocks away does not override the 16-block command distance.
 Moving a previously nearby dragon 512 blocks away removes its boss bar but retains the distance override in the earlier session.
-These results distinguish connection history from distance. They do not establish the exact threshold or the rule that clears retained fog state.
+The journals retain admitted actors until death. A fresh distant connection contains no dragon admission.
+These results distinguish actor lifetime from boss-bar visibility. They do not establish a universal admission radius.
 Raised-platform captures, unsettled transitions, and frames with the inactivity overlay are excluded from the distance comparison.
 The separate resource-pack override of the vanilla End fog identifier remains unverified.
 
-The Java implementation still cancels `PLAYER_FOG` and retains only fog colors from resource definitions.
-Its boss-bar packets also set all Java flags to zero.
-The native evidence therefore does not establish Java parity or justify a boss-bar-only distance rule.
-Command stack transport, distance definitions, rendering, and the distant-dragon lifecycle remain open.
+The Java implementation now consumes complete command snapshots and native distance settings.
+The add-on selects the dragon override from living admitted actors, independently of Java boss-bar flags.
+The native cap and command restoration have matching direct and ViaProxy controls.
+Exact transitions, base biome overrides, and broader sky and lighting parity remain open.
 
 ## Current implementation goal
 

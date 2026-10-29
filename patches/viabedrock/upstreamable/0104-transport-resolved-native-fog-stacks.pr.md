@@ -16,5 +16,5 @@ Coverage includes medium precedence, immutable ownership, resource replacement, 
 The full core build passes 2,066 cases, including 176 optional skips, with no failures or errors.
 Fresh direct and ViaProxy command controls reach the actual client fog buffer.
 They cover fixed distances, colors, water-only fallback, removal, and empty resets.
-The native dragon distance and exact transition behavior remain open.
+The add-on applies the separately verified native dragon distance cap. Exact transition behavior remains open.
 This patch supplies transport and resource interpretation; it does not establish complete native fog rendering parity.
