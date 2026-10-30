@@ -20,7 +20,7 @@ Regression coverage includes `MixinIrisJavaAlphaTest`, `BedrockAcceptedResources
 
 Native controls establish selected appearances, classic armor masks, and one owned outerwear/chest case. One update after disabling the trusted-skins filter replaces the body and face atlases at five camera blocks. Those bindings remain at 120 camera blocks. Both players stay five blocks apart, so this does not establish distance-driven LOD.
 
-A fresh Java login control delivers every field of the captured owned persona, apart from named tint ordering, but native displays Alex. The trusted-skins filter is off. A later classic update with fresh skin IDs also leaves Alex visible. These controls rule out post-login timing alone. They do not establish profile parity or justify a renderer change.
+A fresh Java login control delivers every field of the captured owned persona, apart from named tint ordering, but native displays Alex. The trusted-skins filter is off. A later classic update with fresh skin IDs also leaves Alex visible. The native observer stays connected across both Java logins. These controls do not isolate native caching, establish profile parity, or justify a renderer change.
 
 Rapid replacements under each trust policy, distinct LOD selection, other wardrobe categories, broader remote skins, first-person composition, and complete rendering parity remain open.
 
