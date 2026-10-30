@@ -1,4 +1,4 @@
-From d078b57533ae39f0105f4c866bbb201e7b374319 Mon Sep 17 00:00:00 2001
+From da36bfe306a5593c2caee6a93d01019c4360f62e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -393,6 +393,20 @@ packet. Preserve the picked proxy ID, resolve its native owner lifetime,
 and retain the ordinary attack path when the capability or matching pick
 is absent. Native 1.26.60.5 protocol2225 captures establish world-space
 attack hits and main-hand framing; do not add actor hull or eye offsets.
+
+Use the shared native float trigonometry for the active Bedrock camera's
+view and head rays. Java 26.3 uses double table indexing and different
+angle reduction, shifting non-cardinal picks even with identical facing.
+Keep the Java result for other entities and ordinary Java connections.
+Both the interpolated block/entity ray and attack-range head ray use the
+same native calculation; bucket interaction also consumes the view ray.
+
+Native Bedrock 1.26.60.5 protocol 2225 against BDS 1.26.60.6 supplies three
+empty-hand armor-stand attack controls. Use the actual outgoing facing
+and predicted eye, not nominal teleport inputs. Java differs by up to
+0.000275 blocks; native float math matches within one float step. The
+regression checks two independent entry faces and fails with Java math.
+This does not establish matching eye precision, hulls or all reach rules.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -476,7 +490,7 @@ attack hits and main-hand framing; do not add actor hull or eye offsets.
  .../render/MixinLivingEntityBodyRotation.java |   28 +
  .../render/MixinLivingEntityRenderer.java     |   26 +
  .../render/MixinNativeActorAttack.java        |   29 +
- .../render/MixinNativeActorPickingEntity.java |   41 +
+ .../render/MixinNativeActorPickingEntity.java |   58 +
  .../MixinNativeActorPickingLocalPlayer.java   |   31 +
  .../render/MixinNativeChunkFluid.java         |   29 +
  .../features/render/MixinNativeFluidMesh.java |   44 +
@@ -489,7 +503,7 @@ attack hits and main-hand framing; do not add actor hull or eye offsets.
  .../sound/MixinBedrockSoundEngine.java        |   50 +
  .../sound/MixinBedrockSoundManager.java       |   16 +
  .../sound/MixinMinecraftServerSounds.java     |   22 +
- .../bedrock/render/BedrockActorPicking.java   |   95 ++
+ .../bedrock/render/BedrockActorPicking.java   |  115 ++
  .../render/BedrockActorPickingState.java      |   99 ++
  .../bedrock/render/BedrockActorState.java     |  100 ++
  .../bedrock/render/BedrockAnimatedModel.java  |  190 +++
@@ -583,7 +597,7 @@ attack hits and main-hand framing; do not add actor hull or eye offsets.
  .../appearance/BedrockTintMaskTest.java       |   61 +
  .../appearance/NativeAssetFixture.java        |   86 ++
  .../render/BedrockActorAttackTest.java        |   75 ++
- .../render/BedrockActorPickingStateTest.java  |   94 ++
+ .../render/BedrockActorPickingStateTest.java  |  116 ++
  .../bedrock/render/BedrockActorStateTest.java |  207 ++++
  .../render/BedrockAnimatedModelTest.java      |   87 ++
  .../render/BedrockBoneTransformTest.java      |   69 ++
@@ -603,7 +617,7 @@ attack hits and main-hand framing; do not add actor hull or eye offsets.
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
  .../render/NativeActorColorPayloadTest.java   |   50 +
- 209 files changed, 24869 insertions(+), 16 deletions(-)
+ 209 files changed, 24928 insertions(+), 16 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -12047,10 +12061,10 @@ index 0000000..ffb802a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingEntity.java
 new file mode 100644
-index 0000000..9b9784e
+index 0000000..62a9be5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingEntity.java
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,58 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -12061,6 +12075,7 @@ index 0000000..9b9784e
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorPicking;
 +import net.minecraft.world.entity.Entity;
 +import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.Vec3;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.injection.At;
 +import org.spongepowered.asm.mixin.injection.Inject;
@@ -12068,6 +12083,22 @@ index 0000000..9b9784e
 +
 +@Mixin(Entity.class)
 +public abstract class MixinNativeActorPickingEntity {
++    @Inject(method = "getViewVector", at = @At("HEAD"), cancellable = true)
++    private void nativeViewVector(final float partialTick, final CallbackInfoReturnable<Vec3> cir) {
++        final Entity entity = (Entity) (Object) this;
++        if (BedrockActorPicking.nativeCamera(entity)) {
++            cir.setReturnValue(BedrockActorPicking.viewDirection(entity.getViewXRot(partialTick), entity.getViewYRot(partialTick)));
++        }
++    }
++
++    @Inject(method = "getHeadLookAngle", at = @At("HEAD"), cancellable = true)
++    private void nativeHeadLookAngle(final CallbackInfoReturnable<Vec3> cir) {
++        final Entity entity = (Entity) (Object) this;
++        if (BedrockActorPicking.nativeCamera(entity)) {
++            cir.setReturnValue(BedrockActorPicking.viewDirection(entity.getXRot(), entity.getYHeadRot()));
++        }
++    }
++
 +    @Inject(method = "getBoundingBox", at = @At("HEAD"), cancellable = true)
 +    private void nativePickingBounds(final CallbackInfoReturnable<AABB> cir) {
 +        final AABB bounds = BedrockActorPicking.bounds((Entity) (Object) this);
@@ -12568,10 +12599,10 @@ index 0000000..9433e74
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPicking.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPicking.java
 new file mode 100644
-index 0000000..773c5f9
+index 0000000..3ef6648
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPicking.java
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,115 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -12579,19 +12610,24 @@ index 0000000..773c5f9
 + */
 +package com.viaversion.viafabricplus.bedrock.render;
 +
++import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockRenderingMetadata;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.network.Connection;
 +import net.minecraft.world.entity.Entity;
 +import net.minecraft.world.phys.AABB;
 +import net.minecraft.world.phys.EntityHitResult;
 +import net.minecraft.world.phys.HitResult;
-+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.BedrockProtocolVersion;
 +import net.raphimc.viabedrock.api.model.NativeActorAttack;
++import net.raphimc.viabedrock.api.model.NativeActorPickingMessage;
++import net.raphimc.viabedrock.api.util.BedrockTrigonometry;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
++
 +import java.util.UUID;
 +import java.util.function.Function;
-+import net.raphimc.viabedrock.api.model.NativeActorPickingMessage;
-+
 +import java.util.function.Predicate;
 +
 +/** Negotiated picking targets on the current connection; actor physics stay untouched. */
@@ -12661,6 +12697,21 @@ index 0000000..773c5f9
 +        final var position = hit.getLocation();
 +        return new NativeActorAttack(target.getId(), uuid, lifetime,
 +                new Position3f((float) position.x, (float) position.y, (float) position.z));
++    }
++
++    public static boolean nativeCamera(final Entity entity) {
++        return Minecraft.getInstance().getCameraEntity() == entity
++                && (BedrockProtocolVersion.BEDROCK_LATEST.equals(ViaFabricPlus.api().targetVersion())
++                || BedrockRenderingMetadata.active());
++    }
++
++    public static Vec3 viewDirection(final float pitch, final float yaw) {
++        // Native float lookup and angle reduction differ from Java's double-indexed table.
++        final float yawRadians = -yaw * .017453292F - (float) Math.PI;
++        final float pitchRadians = -pitch * .017453292F;
++        final float horizontal = -BedrockTrigonometry.cosine(pitchRadians);
++        return new Vec3(horizontal * BedrockTrigonometry.sine(yawRadians),
++                BedrockTrigonometry.sine(pitchRadians), horizontal * BedrockTrigonometry.cosine(yawRadians));
 +    }
 +
 +    public static void clear() {
@@ -25103,10 +25154,10 @@ index 0000000..63597cb
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPickingStateTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPickingStateTest.java
 new file mode 100644
-index 0000000..0b60266
+index 0000000..cce4acf
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPickingStateTest.java
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,116 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -25114,9 +25165,10 @@ index 0000000..0b60266
 + */
 +package com.viaversion.viafabricplus.bedrock.render;
 +
-+import net.minecraft.world.phys.Vec3;
 +import net.raphimc.viabedrock.api.model.NativeActorPickingMessage;
 +import org.junit.jupiter.api.Test;
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.Vec3;
 +
 +import java.util.HashMap;
 +import java.util.List;
@@ -25126,6 +25178,27 @@ index 0000000..0b60266
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class BedrockActorPickingStateTest {
++    @Test
++    void matchesNativeNonCardinalPickingRays() {
++        // Bedrock 1.26.60.5 observer journal, BDS 1.26.60.6. Use the recorded facing, not teleport inputs.
++        final AABB bounds = new AABB(-497.8500061035156D, 63.9D, -113.8499984741211D,
++                -497.1499938964844D, 66.075D, -113.1500015258789D);
++        final float[][] controls = {
++                {12.997085571289062F, -17.001373291015625F, -498.5F, 65.62001037597656F, -116.5F,
++                        -497.6894836425781F, 64.98037719726562F, -113.8499984741211F},
++                {9.997711181640625F, -68.0053939819336F, -499.5F, 65.62001037597656F, -114.5F,
++                        -497.8500061035156F, 65.30632019042969F, -113.83372497558594F}
++        };
++        for (final float[] control : controls) {
++            final Vec3 start = new Vec3(control[2], control[3], control[4]);
++            final Vec3 end = start.add(BedrockActorPicking.viewDirection(control[0], control[1]).scale(5D));
++            final Vec3 hit = bounds.clip(start, end).orElseThrow();
++            assertEquals(control[5], (float) hit.x, Math.ulp(control[5]));
++            assertEquals(control[6], (float) hit.y, Math.ulp(control[6]));
++            assertEquals(control[7], (float) hit.z, Math.ulp(control[7]));
++        }
++    }
++
 +    @Test
 +    void keepsIndependentExactRectanglesRatherThanTheirEnvelopeOrUnion() {
 +        final var state = new BedrockActorPickingState();

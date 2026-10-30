@@ -28,4 +28,6 @@ Regression coverage includes `BedrockActorAnimationTest`, `BedrockActorQueriesTe
 
 Native current/older/current cat and audio controls establish selected resource paths. Complete pose alignment, audio, particle, query, and visual parity remain unfinished.
 
+Three native 26.60 non-cardinal picking controls establish the camera ray calculation. Direct and proxy runs use matching vectors and preserve non-camera behavior. Outgoing hit coordinates differ by at most 0.000031 blocks. Eye precision, hull geometry, and broader reach rules still need comparison.
+
 The [owning patch](0008-share-native-actor-and-resource-runtime.patch) retains implementation rationale and versioned evidence.
