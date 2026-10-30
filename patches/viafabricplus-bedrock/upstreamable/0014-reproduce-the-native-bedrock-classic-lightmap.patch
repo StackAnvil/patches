@@ -1,4 +1,4 @@
-From 67ae4eccd0c4b0855f06300d49ac4c780eb07561 Mon Sep 17 00:00:00 2001
+From 0f5d6c3befe2fd1b507ea901e9b89ecdfd84598b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(render): reproduce native Bedrock classic lighting
@@ -23,16 +23,26 @@ Use immutable frame inputs to preserve Java refresh behavior while updating
 changed native inputs. Ordinary Java sessions retain their original renderer;
 End light-image inputs and enhanced native lighting remain outside this port.
 
-Defer Overworld air-fog blindness dimming until after night-vision RGB
-normalization. The vanilla ordering cancels the fade on its first nonzero
-frame and makes the sky jump to bright fog. Native 1.26.60.5 against
-BDS 1.26.60.6 fades back during the final second in day and night controls.
-Interpolate the remaining effect duration within each client tick. Native
-26.60 fog samples contain fractional visibility between ticks; the original
-Java method returns only 0.05 increments and ignores its partial-tick input.
-Preserve infinite duration, immediate cancellation, void darkness, and alpha.
-Other fog media, dimensions, and the Darkness effect retain their paths.
-Precise native effect timing and full sky-color parity remain open.
+Attenuate both Overworld air-fog RGB and night-vision strength by the
+squared tick-based blindness visibility. Cap reciprocal brightness at 255.
+This preserves native gradual expiry instead of normalizing the first
+nonzero dimmed color directly to full brightness.
+
+Synchronized 1.26.60.5 Fancy color and distance captures establish all 19
+expiry steps at noon and midnight, plus blindness without night vision.
+The native distance ladder matches Java: 1.25..5 blocks while blinded,
+then (5 + 187 * visibility) with start at one quarter of that distance for
+192-block rendering. Expiry restores the pack's ordinary 64-block range.
+Color updates are tick-based too. Earlier fractional color values were
+the combined blend, not evidence for partial-tick interpolation. Remove
+that approximation and the post-normalization dimming it accompanied.
+
+Native RGB equals dimmed * lerp(1, 1 / max(maxChannel, 1/255),
+nightVisionStrength * visibilitySquared). Daytime low-light steps exercise
+the gain cap; all native day/night vectors match this calculation within
+0.000002. Preserve cancellation, infinite duration, void darkness, alpha,
+and the existing other-dimension, medium, and Darkness paths. Native
+sky sampling and broader effect combinations remain open.
 ---
  .../access/IBedrockLightmapState.java         | 14 ++++
  .../access/IBedrockLightmapWeather.java       | 11 +++
@@ -45,7 +55,7 @@ Precise native effect timing and full sky-color parity remain open.
  .../MixinBedrockRenderingResources.java       | 24 ++++++
  .../render/MixinBedrockRenderingSession.java  | 22 ++++++
  .../features/render/MixinBedrockVignette.java | 28 +++++++
- .../render/MixinBedrockVisionFog.java         | 65 ++++++++++++++++
+ .../render/MixinBedrockVisionFog.java         | 60 +++++++++++++++
  .../light/BedrockLightmapExtractor.java       | 66 ++++++++++++++++
  .../render/light/BedrockLightmapMath.java     | 74 ++++++++++++++++++
  .../light/BedrockLightmapParameters.java      | 60 +++++++++++++++
@@ -54,7 +64,7 @@ Precise native effect timing and full sky-color parity remain open.
  .../viafabricplus-bedrock.mixins.json         | 10 +++
  .../render/light/BedrockLightmapMathTest.java | 77 +++++++++++++++++++
  .../light/BedrockLightmapParametersTest.java  | 38 +++++++++
- 20 files changed, 779 insertions(+)
+ 20 files changed, 774 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapWeather.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmap.java
@@ -428,10 +438,10 @@ index 0000000..75b1d93
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVisionFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVisionFog.java
 new file mode 100644
-index 0000000..ee4d2ce
+index 0000000..3eff7e2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVisionFog.java
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,60 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -450,50 +460,45 @@ index 0000000..ee4d2ce
 +import net.minecraft.client.renderer.fog.FogRenderer;
 +import net.minecraft.client.renderer.fog.environment.BlindnessFogEnvironment;
 +import net.minecraft.client.renderer.fog.environment.FogEnvironment;
-+import net.minecraft.util.Mth;
-+import net.minecraft.world.effect.MobEffectInstance;
 +import net.minecraft.world.effect.MobEffects;
 +import net.minecraft.world.entity.LivingEntity;
 +import net.minecraft.world.level.material.FogType;
 +import net.raphimc.viabedrock.protocol.data.enums.Dimension;
-+import org.joml.Vector4f;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.injection.At;
-+import org.spongepowered.asm.mixin.injection.Inject;
-+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 +
 +@Mixin(FogRenderer.class)
 +public abstract class MixinBedrockVisionFog {
 +
 +    @WrapOperation(method = "computeFogColor", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/fog/environment/FogEnvironment;getModifiedDarkness(Lnet/minecraft/world/entity/LivingEntity;FF)F"))
-+    private float nativeBlindnessDimming(final FogEnvironment environment, final LivingEntity entity, final float voidDarkness,
-+                                       final float partialTick, final Operation<Float> original,
-+                                       @Local(argsOnly = true) final Camera camera,
-+                                       @Share("blindnessVisibility") final LocalRef<Float> visibility) {
-+        float darkness = original.call(environment, entity, voidDarkness, partialTick);
-+        if (environment instanceof BlindnessFogEnvironment && !entity.hasEffect(MobEffects.DARKNESS) && camera.getFluidInCamera() == FogType.NONE
++    private float captureBlindnessVisibility(final FogEnvironment environment, final LivingEntity entity, final float voidDarkness,
++                                            final float partialTick, final Operation<Float> original,
++                                            @Local(argsOnly = true) final Camera camera,
++                                            @Share("blindnessVisibility") final LocalRef<Float> visibility) {
++        final float darkness = original.call(environment, entity, voidDarkness, partialTick);
++        if (environment instanceof BlindnessFogEnvironment && entity.hasEffect(MobEffects.NIGHT_VISION)
++            && !entity.hasEffect(MobEffects.DARKNESS) && camera.getFluidInCamera() == FogType.NONE
 +            && BedrockLightmapExtractor.dimension(Minecraft.getInstance()) == Dimension.OVERWORLD) {
-+            final MobEffectInstance effect = entity.getEffect(MobEffects.BLINDNESS);
-+            if (effect != null && !effect.isInfiniteDuration()) {
-+                darkness = Math.max(voidDarkness, Mth.clamp((effect.getDuration() - partialTick) / 20F, 0F, 1F));
-+            }
-+            if (entity.hasEffect(MobEffects.NIGHT_VISION)) {
-+                // Normalizing already dimmed RGB cancels the fade as soon as a channel becomes nonzero.
-+                visibility.set(1F - darkness);
-+                return 0F;
-+            }
++            // Native fades night-vision strength as well as the fog RGB, using the same tick-based visibility.
++            final float remaining = 1F - darkness;
++            visibility.set(remaining * remaining);
 +        }
 +        return darkness;
 +    }
 +
-+    @Inject(method = "computeFogColor", at = @At("TAIL"))
-+    private void dimAfterNightVision(final CallbackInfo ci, @Local(argsOnly = true) final Vector4f color,
-+                                    @Share("blindnessVisibility") final LocalRef<Float> visibility) {
-+        final Float remaining = visibility.get();
-+        if (remaining != null) {
-+            final float factor = remaining * remaining;
-+            color.mul(factor, factor, factor, 1F);
-+        }
++    @WrapOperation(method = "computeFogColor", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/GameRenderer;nightVisionScale(Lnet/minecraft/world/entity/LivingEntity;F)F"))
++    private float fadeNightVision(final LivingEntity entity, final float partialTick, final Operation<Float> original,
++                                 @Share("blindnessVisibility") final LocalRef<Float> visibility) {
++        final float strength = original.call(entity, partialTick);
++        return visibility.get() != null ? strength * visibility.get() : strength;
++    }
++
++    @WrapOperation(method = "computeFogColor", at = @At(value = "INVOKE", target = "Ljava/lang/Math;max(FF)F", ordinal = 1))
++    private float boundBlindnessNormalization(final float red, final float greenBlue, final Operation<Float> original,
++                                             @Share("blindnessVisibility") final LocalRef<Float> visibility) {
++        final float maximum = original.call(red, greenBlue);
++        // Current native controls cap reciprocal brightness at 255, including the first two daytime expiry steps.
++        return visibility.get() != null ? Math.max(maximum, 1F / 255F) : maximum;
 +    }
 +
 +}
