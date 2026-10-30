@@ -1,11 +1,11 @@
-From 84f64df8918beebfb479252c2eb098f1a889204a Mon Sep 17 00:00:00 2001
+From 408ccb75f8215d4e355ad759d367be45117239f9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 29 Oct 2026 01:28:02 +0100
 Subject: [PATCH] feat(fog): apply native biome and command settings
 
 Accept resolved fog snapshots through a connection-owned receiver. Select
 the camera's received biome key from the snapshot, below command settings
-and above the existing core default policy. Apply fixed and render-relative
+and above pack-defined data defaults. Apply fixed and render-relative
 air distances and colors through the atmospheric pipeline, preserving later
 camera, vision and void modifiers and existing fluid/weather paths.
 
@@ -25,28 +25,36 @@ upload during client ticks before render passes. Dispatch disconnect GPU
 retirement to the client executor and check listener ownership inside the
 task so an old disconnect cannot clear a replacement session.
 
+Modulate Overworld fog by the current world clock before later vision
+modifiers. The raw pack RGB override previously skipped native night
+dimming. Native 1.26.60.5 Fancy controls with #204060 establish midnight
+RGB (0.0075294, 0.0150588, 0.0338824), then (2/9, 4/9, 1) with night vision.
+The old direct renderer instead returned raw RGB, then (1/3, 2/3, 1).
+Daylight and twilight vectors protect the clock phase and channel factors;
+other dimensions keep their existing color path.
+
 Focused regressions cover resource/session retirement, empty commands,
 medium boundaries and the observed dragon cap. Spatial biome blending,
-legacy default bindings, engine-specific vanilla rules, exact transitions,
+directional sunrise tint, engine-specific vanilla rules, exact transitions,
 End sky motion/sampling, fluids and weather still need native comparisons.
 
 BREAKING CHANGE: The fog receiver requires the matching core payload version 2.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
- .../appearance/BedrockEndSkyTexture.java      |  96 +++++++++++++++
+ .../appearance/BedrockEndSkyTexture.java      |  96 ++++++++++++++
  .../features/render/MixinBedrockEndSky.java   |  32 +++++
  .../render/MixinBedrockEndSkyPipeline.java    |  25 ++++
- .../features/render/MixinBedrockFog.java      |  43 +++++++
+ .../features/render/MixinBedrockFog.java      |  44 +++++++
  .../render/fog/BedrockEndSkyPipeline.java     |  38 ++++++
- .../bedrock/render/fog/BedrockFog.java        | 111 ++++++++++++++++++
+ .../bedrock/render/fog/BedrockFog.java        | 124 ++++++++++++++++++
  .../bedrock/render/fog/FogPayload.java        |  24 ++++
- .../bedrock/render/fog/FogSession.java        |  33 ++++++
+ .../bedrock/render/fog/FogSession.java        |  33 +++++
  .../shaders/core/bedrock_end_sky.fsh          |  12 ++
- .../shaders/core/bedrock_end_sky.vsh          |  14 +++
+ .../shaders/core/bedrock_end_sky.vsh          |  14 ++
  .../viafabricplus-bedrock.mixins.json         |   3 +
- .../bedrock/render/fog/BedrockFogTest.java    |  58 +++++++++
- .../bedrock/render/fog/FogSessionTest.java    |  66 +++++++++++
- 14 files changed, 557 insertions(+)
+ .../bedrock/render/fog/BedrockFogTest.java    |  77 +++++++++++
+ .../bedrock/render/fog/FogSessionTest.java    |  66 ++++++++++
+ 14 files changed, 590 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEndSkyTexture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockEndSky.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockEndSkyPipeline.java
@@ -253,10 +261,10 @@ index 0000000..4a06cb8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFog.java
 new file mode 100644
-index 0000000..4b9c3cf
+index 0000000..55e86fd
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFog.java
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,44 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -267,14 +275,15 @@ index 0000000..4b9c3cf
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 +import com.viaversion.viafabricplus.bedrock.render.fog.BedrockFog;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapExtractor;
 +import net.minecraft.client.Camera;
 +import net.minecraft.client.DeltaTracker;
++import net.minecraft.client.Minecraft;
 +import net.minecraft.client.multiplayer.ClientLevel;
 +import net.minecraft.client.renderer.fog.FogData;
 +import net.minecraft.client.renderer.fog.FogRenderer;
 +import net.minecraft.client.renderer.fog.environment.AtmosphericFogEnvironment;
 +import net.minecraft.client.renderer.fog.environment.FogEnvironment;
-+import org.joml.Vector3f;
 +import org.joml.Vector3fc;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.injection.At;
@@ -288,7 +297,7 @@ index 0000000..4b9c3cf
 +        final var air = BedrockFog.air(camera, level);
 +        if (air == null) return color;
 +        // Preserve the later void, blindness, darkness, night-vision and camera-effect modifiers.
-+        return new Vector3f((air.color() >> 16 & 255) / 255F, (air.color() >> 8 & 255) / 255F, (air.color() & 255) / 255F);
++        return BedrockFog.color(air.color(), BedrockLightmapExtractor.dimension(Minecraft.getInstance()), level.getOverworldClockTime());
 +    }
 +
 +    @WrapOperation(method = "setupFog", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/fog/environment/FogEnvironment;setupFog(Lnet/minecraft/client/renderer/fog/FogData;Lnet/minecraft/client/Camera;Lnet/minecraft/client/multiplayer/ClientLevel;FLnet/minecraft/client/DeltaTracker;)V"))
@@ -346,10 +355,10 @@ index 0000000..09d62f3
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java
 new file mode 100644
-index 0000000..43e1a96
+index 0000000..729644b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,124 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -358,6 +367,7 @@ index 0000000..43e1a96
 +package com.viaversion.viafabricplus.bedrock.render.fog;
 +
 +import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapExtractor;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapMath;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockEndSkyTexture;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 +import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -368,11 +378,13 @@ index 0000000..43e1a96
 +import net.minecraft.client.multiplayer.ClientLevel;
 +import net.minecraft.client.multiplayer.ClientPacketListener;
 +import net.minecraft.client.renderer.fog.FogData;
++import net.minecraft.util.Mth;
 +import net.minecraft.world.entity.EntityTypes;
 +import net.minecraft.world.level.material.FogType;
 +import net.raphimc.viabedrock.api.model.FogState;
 +import net.raphimc.viabedrock.protocol.data.enums.Dimension;
 +import org.jetbrains.annotations.Nullable;
++import org.joml.Vector3f;
 +
 +public final class BedrockFog {
 +    private static final FogSession SESSION = new FogSession();
@@ -426,6 +438,16 @@ index 0000000..43e1a96
 +
 +    static boolean supported(final @Nullable Dimension dimension, final FogType medium, final float rain, final float thunder) {
 +        return dimension != null && medium == FogType.NONE && rain <= 0 && thunder <= 0;
++    }
++
++    public static Vector3f color(final int color, final Dimension dimension, final long time) {
++        final Vector3f rgb = new Vector3f((color >> 16 & 255) / 255F, (color >> 8 & 255) / 255F, (color & 255) / 255F);
++        if (dimension == Dimension.OVERWORLD) {
++            final float angle = BedrockLightmapMath.overworldAngle(time, 0F);
++            final float daylight = Mth.clamp((float) Math.cos(angle * ((float) Math.PI * 2F)) * 2F + 0.5F, 0F, 1F);
++            rgb.mul(daylight * 0.94F + 0.06F, daylight * 0.94F + 0.06F, daylight * 0.91F + 0.09F);
++        }
++        return rgb;
 +    }
 +
 +    public static void applyDistance(final FogData fog, final Camera camera, final ClientLevel level, final float renderDistance) {
@@ -584,10 +606,10 @@ index 4a42549..f6bc0fa 100644
      "features.render.MixinEntityRenderDispatcher",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java
 new file mode 100644
-index 0000000..e147fca
+index 0000000..cee16d4
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,77 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -604,6 +626,25 @@ index 0000000..e147fca
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class BedrockFogTest {
++    @Test
++    void overworldFogUsesNativeDayNightModulationBeforeVisionEffects() {
++        final var day = BedrockFog.color(0x204060, Dimension.OVERWORLD, 6000);
++        assertEquals(0.1254902035F, day.x(), 0.000001F);
++        assertEquals(0.2509804070F, day.y(), 0.000001F);
++        assertEquals(0.3764707744F, day.z(), 0.000001F);
++        final var night = BedrockFog.color(0x204060, Dimension.OVERWORLD, 18000);
++        assertEquals(0.0075294119F, night.x(), 0.000001F);
++        assertEquals(0.0150588239F, night.y(), 0.000001F);
++        assertEquals(0.0338823721F, night.z(), 0.000001F);
++        final var dusk = BedrockFog.color(0x204060, Dimension.OVERWORLD, 13000);
++        assertEquals(0.0522189364F, dusk.x(), 0.00001F);
++        assertEquals(0.1044378728F, dusk.y(), 0.00001F);
++        assertEquals(0.1636722237F, dusk.z(), 0.00001F);
++        for (final Dimension dimension : new Dimension[]{Dimension.NETHER, Dimension.END}) {
++            assertEquals(day, BedrockFog.color(0x204060, dimension, 18000));
++        }
++    }
++
 +    @Test
 +    void dryAirCommandsDoNotReplaceUnverifiedFluidOrWeatherDistanceRules() {
 +        for (final Dimension dimension : Dimension.values()) {

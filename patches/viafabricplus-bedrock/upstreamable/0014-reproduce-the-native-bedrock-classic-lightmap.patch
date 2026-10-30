@@ -1,4 +1,4 @@
-From 83409def9ddbfc413379ca9ca40e069dc61ef436 Mon Sep 17 00:00:00 2001
+From 67ae4eccd0c4b0855f06300d49ac4c780eb07561 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(render): reproduce native Bedrock classic lighting
@@ -27,10 +27,12 @@ Defer Overworld air-fog blindness dimming until after night-vision RGB
 normalization. The vanilla ordering cancels the fade on its first nonzero
 frame and makes the sky jump to bright fog. Native 1.26.60.5 against
 BDS 1.26.60.6 fades back during the final second in day and night controls.
-Reuse the existing darkness factor and preserve alpha. Other fog media,
-dimensions, and the Darkness effect retain their current paths.
-Native fog colors and the precise native fade envelope still differ;
-this ordering correction does not establish complete fog parity.
+Interpolate the remaining effect duration within each client tick. Native
+26.60 fog samples contain fractional visibility between ticks; the original
+Java method returns only 0.05 increments and ignores its partial-tick input.
+Preserve infinite duration, immediate cancellation, void darkness, and alpha.
+Other fog media, dimensions, and the Darkness effect retain their paths.
+Precise native effect timing and full sky-color parity remain open.
 ---
  .../access/IBedrockLightmapState.java         | 14 ++++
  .../access/IBedrockLightmapWeather.java       | 11 +++
@@ -43,7 +45,7 @@ this ordering correction does not establish complete fog parity.
  .../MixinBedrockRenderingResources.java       | 24 ++++++
  .../render/MixinBedrockRenderingSession.java  | 22 ++++++
  .../features/render/MixinBedrockVignette.java | 28 +++++++
- .../render/MixinBedrockVisionFog.java         | 58 ++++++++++++++
+ .../render/MixinBedrockVisionFog.java         | 65 ++++++++++++++++
  .../light/BedrockLightmapExtractor.java       | 66 ++++++++++++++++
  .../render/light/BedrockLightmapMath.java     | 74 ++++++++++++++++++
  .../light/BedrockLightmapParameters.java      | 60 +++++++++++++++
@@ -52,7 +54,7 @@ this ordering correction does not establish complete fog parity.
  .../viafabricplus-bedrock.mixins.json         | 10 +++
  .../render/light/BedrockLightmapMathTest.java | 77 +++++++++++++++++++
  .../light/BedrockLightmapParametersTest.java  | 38 +++++++++
- 20 files changed, 772 insertions(+)
+ 20 files changed, 779 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapWeather.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmap.java
@@ -426,10 +428,10 @@ index 0000000..75b1d93
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVisionFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVisionFog.java
 new file mode 100644
-index 0000000..86d0279
+index 0000000..ee4d2ce
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVisionFog.java
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,65 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -448,6 +450,8 @@ index 0000000..86d0279
 +import net.minecraft.client.renderer.fog.FogRenderer;
 +import net.minecraft.client.renderer.fog.environment.BlindnessFogEnvironment;
 +import net.minecraft.client.renderer.fog.environment.FogEnvironment;
++import net.minecraft.util.Mth;
++import net.minecraft.world.effect.MobEffectInstance;
 +import net.minecraft.world.effect.MobEffects;
 +import net.minecraft.world.entity.LivingEntity;
 +import net.minecraft.world.level.material.FogType;
@@ -462,17 +466,22 @@ index 0000000..86d0279
 +public abstract class MixinBedrockVisionFog {
 +
 +    @WrapOperation(method = "computeFogColor", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/fog/environment/FogEnvironment;getModifiedDarkness(Lnet/minecraft/world/entity/LivingEntity;FF)F"))
-+    private float deferBlindnessDimming(final FogEnvironment environment, final LivingEntity entity, final float voidDarkness,
++    private float nativeBlindnessDimming(final FogEnvironment environment, final LivingEntity entity, final float voidDarkness,
 +                                       final float partialTick, final Operation<Float> original,
 +                                       @Local(argsOnly = true) final Camera camera,
 +                                       @Share("blindnessVisibility") final LocalRef<Float> visibility) {
-+        final float darkness = original.call(environment, entity, voidDarkness, partialTick);
-+        if (environment instanceof BlindnessFogEnvironment && entity.hasEffect(MobEffects.NIGHT_VISION)
-+            && !entity.hasEffect(MobEffects.DARKNESS) && camera.getFluidInCamera() == FogType.NONE
++        float darkness = original.call(environment, entity, voidDarkness, partialTick);
++        if (environment instanceof BlindnessFogEnvironment && !entity.hasEffect(MobEffects.DARKNESS) && camera.getFluidInCamera() == FogType.NONE
 +            && BedrockLightmapExtractor.dimension(Minecraft.getInstance()) == Dimension.OVERWORLD) {
-+            // Normalizing already dimmed RGB cancels the fade as soon as a channel becomes nonzero.
-+            visibility.set(1F - darkness);
-+            return 0F;
++            final MobEffectInstance effect = entity.getEffect(MobEffects.BLINDNESS);
++            if (effect != null && !effect.isInfiniteDuration()) {
++                darkness = Math.max(voidDarkness, Mth.clamp((effect.getDuration() - partialTick) / 20F, 0F, 1F));
++            }
++            if (entity.hasEffect(MobEffects.NIGHT_VISION)) {
++                // Normalizing already dimmed RGB cancels the fade as soon as a channel becomes nonzero.
++                visibility.set(1F - darkness);
++                return 0F;
++            }
 +        }
 +        return darkness;
 +    }

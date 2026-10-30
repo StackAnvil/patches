@@ -1,4 +1,4 @@
-From eed17b9054762e2cd8aad951035b52e30fae31e5 Mon Sep 17 00:00:00 2001
+From 9c60fdf9655d557f771d1f73f81f199186ec4c73 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] fix(world): preserve native Bedrock world clock semantics
@@ -19,8 +19,11 @@ changes, resend its current full tick count and paused or running rate.
 Resuming after a long pause must continue from the paused value rather than
 resetting to the last server time or counting ticks spent paused. A new
 legacy SetTime replaces the snapshot. Explicit Overworld SyncWorldClocks
-updates clear legacy tracking and retain their own rates; updates to other
-clocks remain independent.
+updates replace legacy tracking while retaining the wire pause state.
+Project the daylight-cycle rule as an additional Overworld pause constraint.
+Re-anchor effective time when the rule changes, without counting paused
+ticks or resuming an explicitly paused clock. Other named clocks remain
+independent.
 
 Numerical tests cover long pauses, resume without a jump, new server times,
 independent explicit clocks, and full-count packet serialization.
@@ -35,17 +38,25 @@ clock state sync before StartGame and its initialization registry afterward.
 Clock handling must therefore remain available during world configuration,
 including a supplemental custom-block pack load. Numerical tests cover
 latest updates, elapsed ticks, paused clocks and legacy fallback selection.
+
+Native 1.26.60.5 Fancy and BDS 1.26.60.6 confirm the explicit-clock rule.
+With doDayLightCycle=false, BDS repeatedly sends time 13000 with IsPaused
+false. Native remote fog remains at the fixed twilight color, while the
+old Java client advances between syncs and drifts by 225 ticks. Apply the
+rule at initial clock publication as well as later updates and rule changes.
+Focused packet-to-state tests cover this sequence, resume anchoring, wire
+pause preservation, and unrelated clock progress. Raw captures stay private.
 ---
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
- .../protocol/packet/JoinPackets.java          |  18 +-
- .../protocol/packet/WorldPackets.java         | 114 ++++++++++++-
+ .../protocol/packet/JoinPackets.java          |  16 +-
+ .../protocol/packet/WorldPackets.java         | 120 +++++++++-
  .../protocol/storage/GameRulesStorage.java    |   3 +
  .../protocol/storage/JoinGameStorage.java     |   2 +-
- .../protocol/storage/WorldClockTracker.java   | 129 ++++++++++++++
- .../packet/InitialClockStateTest.java         |  65 +++++++
- .../protocol/packet/WorldPacketsTest.java     | 103 ++++++++++++
- .../storage/WorldClockTrackerTest.java        | 158 ++++++++++++++++++
- 9 files changed, 581 insertions(+), 13 deletions(-)
+ .../protocol/storage/WorldClockTracker.java   | 152 +++++++++++++
+ .../packet/InitialClockStateTest.java         |  74 +++++++
+ .../protocol/packet/WorldPacketsTest.java     | 103 +++++++++
+ .../storage/WorldClockTrackerTest.java        | 209 ++++++++++++++++++
+ 9 files changed, 669 insertions(+), 12 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/WorldClockTracker.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/InitialClockStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java
@@ -115,7 +126,7 @@ index 65176e12..da0f2171 100644
  
      static DimensionDefinition readDimensionDefinition(final PacketWrapper wrapper) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
-index 5f991ba9..7012db5a 100644
+index bc6037b80..3b818fe4a 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 @@ -19,14 +19,17 @@ package net.raphimc.viabedrock.protocol.packet;
@@ -182,7 +193,7 @@ index 5f991ba9..7012db5a 100644
  
          protocol.registerServerbound(ServerboundPackets26_3.SIGN_UPDATE, ServerboundBedrockPackets.BLOCK_ENTITY_DATA, wrapper -> {
              final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
-@@ -574,6 +596,83 @@ public final class WorldPackets {
+@@ -574,6 +596,89 @@ public final class WorldPackets {
          });
      }
  
@@ -201,6 +212,7 @@ index 5f991ba9..7012db5a 100644
 +    static List<JavaClockUpdate> initialClockUpdates(final WorldClockTracker tracker, final CompoundTag registry,
 +                                                    final int clientTick, final long gameTime, final long legacyTime, final boolean legacyRunning) {
 +        final List<JavaClockUpdate> updates = new ArrayList<>();
++        tracker.updateDayCycle(gameTime, clientTick, legacyRunning);
 +        for (WorldClockTracker.ClockUpdate update : tracker.currentClocks(clientTick)) {
 +            final int id = javaWorldClockId(registry, update.name());
 +            if (id >= 0) {
@@ -221,11 +233,16 @@ index 5f991ba9..7012db5a 100644
 +        return player != null ? player.age() : 0;
 +    }
 +
-+    public static void updateLegacyDayCycle(final UserConnection user, final boolean running) {
++    public static void updateDayCycle(final UserConnection user, final boolean running) {
 +        final long gameTime = currentJavaGameTime(user);
-+        user.get(WorldClockTracker.class).updateLegacyDayCycle(gameTime, running).ifPresent(update -> {
++        user.get(WorldClockTracker.class).updateDayCycle(gameTime, currentClientTick(user), running).ifPresent(update -> {
++            final CompoundTag registry = user.get(GameSessionStorage.class).getJavaRegistries().getCompoundTag(RegistryKeys.WORLD_CLOCK);
++            final int id = javaWorldClockId(registry, update.name());
++            if (id < 0) {
++                return;
++            }
 +            final PacketWrapper setTime = PacketWrapper.create(ClientboundPackets26_3.SET_TIME, user);
-+            writeJavaTime(setTime, gameTime, List.of(new JavaClockUpdate(0, update.time(), !update.paused())));
++            writeJavaTime(setTime, gameTime, List.of(new JavaClockUpdate(id, update.time(), !update.paused())));
 +            setTime.send(BedrockProtocol.class);
 +        });
 +    }
@@ -266,7 +283,7 @@ index 5f991ba9..7012db5a 100644
      static long packSectionPosition(final BlockPosition section) {
          return (section.x() & 0x3FFFFFL) << 42 | (section.z() & 0x3FFFFFL) << 20 | (section.y() & 0xFFFFFL);
      }
-@@ -581,4 +680,7 @@ public final class WorldPackets {
+@@ -581,4 +686,7 @@ public final class WorldPackets {
      private WorldPackets() {
      }
  
@@ -275,7 +292,7 @@ index 5f991ba9..7012db5a 100644
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java
-index 9dcfed5b..8f8bd5ed 100644
+index 9dcfed5b7..e1c58934f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java
 @@ -27,6 +27,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -291,7 +308,7 @@ index 9dcfed5b..8f8bd5ed 100644
                      } else if (gameRule.name().equalsIgnoreCase("doLimitedCrafting")) {
                          PacketFactory.sendJavaGameEvent(this.user(), GameEventType.LIMITED_CRAFTING, (boolean) gameRule.value() ? 1F : 0F);
 +                    } else if (gameRule.name().equalsIgnoreCase("doDayLightCycle")) {
-+                        WorldPackets.updateLegacyDayCycle(this.user(), (boolean) gameRule.value());
++                        WorldPackets.updateDayCycle(this.user(), (boolean) gameRule.value());
                      }
                  }
              }
@@ -308,10 +325,10 @@ index 85bfa586..cdad57cf 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/WorldClockTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/WorldClockTracker.java
 new file mode 100644
-index 00000000..2614181c
+index 000000000..70d00ae8c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/WorldClockTracker.java
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,152 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -346,20 +363,39 @@ index 00000000..2614181c
 +    private final Map<Long, String> clockNames = new HashMap<>();
 +    private final Map<Long, ClockSample> clocks = new LinkedHashMap<>();
 +    private LegacyClock legacyOverworld;
++    private boolean daylightCycle = true;
 +
 +    public void setLegacyTime(final long gameTime, final long time, final boolean running) {
-+        this.clocks.values().removeIf(clock -> Key.namespaced(clock.update().name()).equals("minecraft:overworld"));
++        this.clocks.values().removeIf(clock -> Key.namespaced(clock.wireUpdate().name()).equals("minecraft:overworld"));
 +        this.legacyOverworld = new LegacyClock(gameTime, time, running);
++        this.daylightCycle = running;
 +    }
 +
-+    public Optional<ClockUpdate> updateLegacyDayCycle(final long gameTime, final boolean running) {
-+        if (this.legacyOverworld == null || this.legacyOverworld.running() == running) {
++    public Optional<ClockUpdate> updateDayCycle(final long gameTime, final int clientTick, final boolean running) {
++        if (this.legacyOverworld != null) {
++            this.daylightCycle = running;
++            if (this.legacyOverworld.running() == running) {
++                return Optional.empty();
++            }
++            final long time = this.legacyOverworld.time() + (this.legacyOverworld.running()
++                ? Math.max(0L, gameTime - this.legacyOverworld.gameTime()) : 0L);
++            this.setLegacyTime(gameTime, time, running);
++            return Optional.of(new ClockUpdate("minecraft:overworld", time, !running));
++        }
++        if (this.daylightCycle == running) {
 +            return Optional.empty();
 +        }
-+        final long time = this.legacyOverworld.time() + (this.legacyOverworld.running()
-+            ? Math.max(0L, gameTime - this.legacyOverworld.gameTime()) : 0L);
-+        this.setLegacyTime(gameTime, time, running);
-+        return Optional.of(new ClockUpdate("minecraft:overworld", time, !running));
++        ClockUpdate changed = null;
++        for (Map.Entry<Long, ClockSample> entry : this.clocks.entrySet()) {
++            final ClockSample sample = entry.getValue();
++            if (Key.namespaced(sample.wireUpdate().name()).equals("minecraft:overworld")) {
++                final ClockUpdate current = this.project(sample, clientTick);
++                changed = new ClockUpdate(sample.wireUpdate().name(), current.time(), sample.wireUpdate().paused());
++                entry.setValue(new ClockSample(changed, clientTick));
++            }
++        }
++        this.daylightCycle = running;
++        return changed != null ? Optional.of(this.resolve(changed, 0L)) : Optional.empty();
 +    }
 +
 +    public List<ClockUpdate> readUpdates(final PacketWrapper wrapper) throws InformativeException {
@@ -381,7 +417,7 @@ index 00000000..2614181c
 +                final ClockUpdate update = new ClockUpdate(name, time, paused);
 +                this.clockNames.put(id, name);
 +                this.clocks.put(id, new ClockSample(update, clientTick));
-+                updates.add(update);
++                updates.add(this.resolve(update, 0L));
 +
 +                final int markerCount = readCount(wrapper);
 +                for (int j = 0; j < markerCount; j++) {
@@ -403,7 +439,7 @@ index 00000000..2614181c
 +                if (name != null) {
 +                    final ClockUpdate update = new ClockUpdate(name, time, paused);
 +                    this.clocks.put(id, new ClockSample(update, clientTick));
-+                    updates.add(update);
++                    updates.add(this.resolve(update, 0L));
 +                }
 +            }
 +        }
@@ -414,13 +450,17 @@ index 00000000..2614181c
 +    }
 +
 +    public List<ClockUpdate> currentClocks(final int clientTick) {
-+        final List<ClockUpdate> updates = new ArrayList<>(this.clocks.size());
-+        for (ClockSample sample : this.clocks.values()) {
-+            final ClockUpdate update = sample.update();
-+            final long elapsed = update.paused() ? 0L : Math.max(0L, (long) clientTick - sample.clientTick());
-+            updates.add(new ClockUpdate(update.name(), update.time() + elapsed, update.paused()));
-+        }
-+        return List.copyOf(updates);
++        return this.clocks.values().stream().map(sample -> this.project(sample, clientTick)).toList();
++    }
++
++    private ClockUpdate project(final ClockSample sample, final int clientTick) {
++        return this.resolve(sample.wireUpdate(), Math.max(0L, (long) clientTick - sample.clientTick()));
++    }
++
++    private ClockUpdate resolve(final ClockUpdate update, final long elapsed) {
++        // Native Overworld rendering also honors the game rule when the explicit wire clock is unpaused.
++        final boolean paused = update.paused() || (!this.daylightCycle && Key.namespaced(update.name()).equals("minecraft:overworld"));
++        return new ClockUpdate(update.name(), update.time() + (paused ? 0L : elapsed), paused);
 +    }
 +
 +    private static int readCount(final PacketWrapper wrapper) throws InformativeException {
@@ -434,7 +474,7 @@ index 00000000..2614181c
 +    public record ClockUpdate(String name, long time, boolean paused) {
 +    }
 +
-+    private record ClockSample(ClockUpdate update, int clientTick) {
++    private record ClockSample(ClockUpdate wireUpdate, int clientTick) {
 +    }
 +
 +    private record LegacyClock(long gameTime, long time, boolean running) {
@@ -443,10 +483,10 @@ index 00000000..2614181c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InitialClockStateTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InitialClockStateTest.java
 new file mode 100644
-index 00000000..4306d9ee
+index 000000000..7e7620224
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/InitialClockStateTest.java
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,74 @@
 +package net.raphimc.viabedrock.protocol.packet;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
@@ -465,12 +505,21 @@ index 00000000..4306d9ee
 +final class InitialClockStateTest {
 +
 +    @Test
++    void initialExplicitOverworldHonorsTheRuleReceivedAfterItsRegistry() throws Exception {
++        final var tracker = new WorldClockTracker();
++        initialize(tracker, "minecraft:overworld", 13_000, false);
++        assertEquals(List.of(new WorldPackets.JavaClockUpdate(0, 13_000L, false)),
++            WorldPackets.initialClockUpdates(tracker, registry(), 0, 5_000L, 6_000L, false));
++        assertEquals(List.of(new WorldClockTracker.ClockUpdate("minecraft:overworld", 13_000L, true)), tracker.currentClocks(500));
++    }
++
++    @Test
 +    void explicitClockSurvivesJoinAndGameruleChangesWithoutLegacyOverwrite() throws Exception {
 +        final var tracker = new WorldClockTracker();
 +        initialize(tracker, "overworld", 72_045, true);
 +        assertEquals(List.of(new WorldPackets.JavaClockUpdate(0, 72_045L, false)),
 +            WorldPackets.initialClockUpdates(tracker, registry(), 60, 5_000L, 6_000L, true));
-+        assertTrue(tracker.updateLegacyDayCycle(5_020L, true).isEmpty());
++        assertTrue(tracker.updateDayCycle(5_020L, 0, true).isEmpty());
 +        assertEquals(72_045L, tracker.currentClocks(600).get(0).time());
 +    }
 +
@@ -481,7 +530,7 @@ index 00000000..4306d9ee
 +        assertEquals(List.of(new WorldPackets.JavaClockUpdate(0, 6_000L, false),
 +                new WorldPackets.JavaClockUpdate(1, 50_040L, true)),
 +            WorldPackets.initialClockUpdates(tracker, registry(), 40, 5_000L, 6_000L, false));
-+        assertEquals(6_000L, tracker.updateLegacyDayCycle(7_000L, true).orElseThrow().time());
++        assertEquals(6_000L, tracker.updateDayCycle(7_000L, 0, true).orElseThrow().time());
 +        initialize(tracker, "minecraft:unmapped_clock", 99_000, true);
 +        assertEquals(List.of(new WorldPackets.JavaClockUpdate(0, 7_000L, true)),
 +            WorldPackets.initialClockUpdates(tracker, registry(), 0, 7_000L, 7_000L, true));
@@ -623,10 +672,10 @@ index 00000000..acb10056
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/WorldClockTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/WorldClockTrackerTest.java
 new file mode 100644
-index 00000000..758654ff
+index 000000000..bc219977c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/WorldClockTrackerTest.java
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,209 @@
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
@@ -643,6 +692,54 @@ index 00000000..758654ff
 +import static org.junit.jupiter.api.Assertions.assertTrue;
 +
 +class WorldClockTrackerTest {
++
++    @Test
++    void daylightRuleFreezesExplicitOverworldAcrossSyncsAndResumesWithoutPausedElapsedTicks() throws Exception {
++        final var tracker = new WorldClockTracker();
++        final ByteBuf payload = Unpooled.buffer();
++        try {
++            BedrockTypes.UNSIGNED_VAR_INT.write(payload, 1);
++            BedrockTypes.UNSIGNED_VAR_INT.write(payload, 2);
++            for (int i = 0; i < 2; i++) {
++                BedrockTypes.UNSIGNED_VAR_LONG.write(payload, 42L + i);
++                BedrockTypes.STRING.write(payload, i == 0 ? "minecraft:overworld" : "test:season");
++                BedrockTypes.VAR_INT.write(payload, i == 0 ? 13_000 : 6_000);
++                Types.BOOLEAN.write(payload, false);
++                BedrockTypes.UNSIGNED_VAR_INT.write(payload, 0);
++            }
++            tracker.readUpdates(new PacketWrapperImpl(ClientboundBedrockPackets.SYNC_WORLD_CLOCKS, payload, null), 100);
++            assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", 13_000L, true),
++                tracker.updateDayCycle(0L, 100, false).orElseThrow());
++            assertEquals(List.of(new WorldClockTracker.ClockUpdate("minecraft:overworld", 13_000L, true),
++                new WorldClockTracker.ClockUpdate("test:season", 6_400L, false)), tracker.currentClocks(500));
++
++            payload.clear();
++            BedrockTypes.UNSIGNED_VAR_INT.write(payload, 0);
++            BedrockTypes.UNSIGNED_VAR_INT.write(payload, 1);
++            BedrockTypes.UNSIGNED_VAR_LONG.write(payload, 42L);
++            BedrockTypes.VAR_INT.write(payload, 13_000);
++            Types.BOOLEAN.write(payload, false);
++            assertEquals(List.of(new WorldClockTracker.ClockUpdate("minecraft:overworld", 13_000L, true)),
++                tracker.readUpdates(new PacketWrapperImpl(ClientboundBedrockPackets.SYNC_WORLD_CLOCKS, payload, null), 500));
++            assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", 13_000L, false),
++                tracker.updateDayCycle(0L, 700, true).orElseThrow());
++            assertEquals(13_010L, tracker.currentClocks(710).getFirst().time());
++
++            payload.clear();
++            BedrockTypes.UNSIGNED_VAR_INT.write(payload, 0);
++            BedrockTypes.UNSIGNED_VAR_INT.write(payload, 1);
++            BedrockTypes.UNSIGNED_VAR_LONG.write(payload, 42L);
++            BedrockTypes.VAR_INT.write(payload, 13_100);
++            Types.BOOLEAN.write(payload, true);
++            tracker.readUpdates(new PacketWrapperImpl(ClientboundBedrockPackets.SYNC_WORLD_CLOCKS, payload, null), 710);
++            tracker.updateDayCycle(0L, 720, false);
++            assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", 13_100L, true),
++                tracker.updateDayCycle(0L, 730, true).orElseThrow());
++            assertEquals(13_100L, tracker.currentClocks(740).getFirst().time());
++        } finally {
++            payload.release();
++        }
++    }
 +
 +    @Test
 +    void retainsLatestExplicitStateAcrossJoinAndAdvancesOnlyRunningClocks() throws Exception {
@@ -677,9 +774,10 @@ index 00000000..758654ff
 +            BedrockTypes.UNSIGNED_VAR_LONG.write(sync, 42L);
 +            BedrockTypes.VAR_INT.write(sync, 96_000);
 +            Types.BOOLEAN.write(sync, false);
-+            assertEquals(List.of(new WorldClockTracker.ClockUpdate("minecraft:overworld", 96_000L, false)),
++            assertEquals(List.of(new WorldClockTracker.ClockUpdate("minecraft:overworld", 96_000L, true)),
 +                tracker.readUpdates(new PacketWrapperImpl(ClientboundBedrockPackets.SYNC_WORLD_CLOCKS, sync, null), 7_000));
-+            assertTrue(tracker.updateLegacyDayCycle(201L, true).isEmpty());
++            assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", 96_000L, false),
++                tracker.updateDayCycle(201L, 7_000, true).orElseThrow());
 +            assertTrue(tracker.currentClocks(7_010).contains(new WorldClockTracker.ClockUpdate("minecraft:overworld", 96_010L, false)));
 +        } finally {
 +            initialization.release();
@@ -692,19 +790,19 @@ index 00000000..758654ff
 +        final WorldClockTracker tracker = new WorldClockTracker();
 +        tracker.setLegacyTime(100L, 48_001L, true);
 +        assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", 48_021L, true),
-+            tracker.updateLegacyDayCycle(120L, false).orElseThrow());
-+        assertTrue(tracker.updateLegacyDayCycle(10_000L, false).isEmpty());
++            tracker.updateDayCycle(120L, 0, false).orElseThrow());
++        assertTrue(tracker.updateDayCycle(10_000L, 0, false).isEmpty());
 +        assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", 48_021L, false),
-+            tracker.updateLegacyDayCycle(20_000L, true).orElseThrow());
++            tracker.updateDayCycle(20_000L, 0, true).orElseThrow());
 +        assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", 48_052L, true),
-+            tracker.updateLegacyDayCycle(20_031L, false).orElseThrow());
++            tracker.updateDayCycle(20_031L, 0, false).orElseThrow());
 +    }
 +
 +    @Test
 +    void appliesNewServerTimeWhilePausedAndKeepsUnrelatedExplicitClocksIndependent() throws Exception {
 +        final WorldClockTracker tracker = new WorldClockTracker();
 +        tracker.setLegacyTime(100L, 12_445L, true);
-+        assertEquals(12_445L, tracker.updateLegacyDayCycle(100L, false).orElseThrow().time());
++        assertEquals(12_445L, tracker.updateDayCycle(100L, 0, false).orElseThrow().time());
 +        tracker.setLegacyTime(500L, -6_000L, false);
 +        final ByteBuf initialization = Unpooled.buffer();
 +        try {
@@ -717,8 +815,8 @@ index 00000000..758654ff
 +            BedrockTypes.UNSIGNED_VAR_INT.write(initialization, 0);
 +            tracker.readUpdates(new PacketWrapperImpl(ClientboundBedrockPackets.SYNC_WORLD_CLOCKS, initialization, null));
 +            assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", -6_000L, false),
-+                tracker.updateLegacyDayCycle(25_000L, true).orElseThrow());
-+            assertEquals(-5_960L, tracker.updateLegacyDayCycle(25_040L, false).orElseThrow().time());
++                tracker.updateDayCycle(25_000L, 0, true).orElseThrow());
++            assertEquals(-5_960L, tracker.updateDayCycle(25_040L, 0, false).orElseThrow().time());
 +        } finally {
 +            initialization.release();
 +        }
@@ -757,7 +855,8 @@ index 00000000..758654ff
 +                    new WorldClockTracker.ClockUpdate("minecraft:the_end", 6_000, true)),
 +                    tracker.readUpdates(new PacketWrapperImpl(ClientboundBedrockPackets.SYNC_WORLD_CLOCKS, initialization, null)));
 +            assertEquals(0, initialization.readableBytes());
-+            assertTrue(tracker.updateLegacyDayCycle(200L, false).isEmpty());
++            assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", 18_000L, true),
++                tracker.updateDayCycle(200L, 0, false).orElseThrow());
 +        } finally {
 +            initialization.release();
 +        }
@@ -775,10 +874,11 @@ index 00000000..758654ff
 +
 +            assertEquals(List.of(
 +                    new WorldClockTracker.ClockUpdate("minecraft:the_end", 6_100, true),
-+                    new WorldClockTracker.ClockUpdate("minecraft:overworld", 1_000, false)),
++                    new WorldClockTracker.ClockUpdate("minecraft:overworld", 1_000, true)),
 +                    tracker.readUpdates(new PacketWrapperImpl(ClientboundBedrockPackets.SYNC_WORLD_CLOCKS, sync, null)));
 +            assertEquals(0, sync.readableBytes());
-+            assertTrue(tracker.updateLegacyDayCycle(300L, true).isEmpty());
++            assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", 1_000L, false),
++                tracker.updateDayCycle(300L, 0, true).orElseThrow());
 +        } finally {
 +            sync.release();
 +        }
