@@ -835,7 +835,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
           "net.pistonmaster.stackanvil.replay.ReplayServer",
           recording,
           String(replayPort),
-          ...(client === "native" ? ["--native"] : []),
+          ...(client === "addon" ? [] : ["--nethernet"]),
         ],
         directory,
         log,

@@ -29,13 +29,13 @@ final class LocalBedrockServer {
     private LocalBedrockServer() {}
 
     static ServerBootstrap bootstrap(EventLoopGroup loops, int port, String name,
-                                     boolean nativeClient, boolean offline, InetAddress iceAddress) throws Exception {
+                                     boolean netherNet, boolean offline, InetAddress iceAddress) throws Exception {
         if (iceAddress != null && (iceAddress.isAnyLocalAddress() || iceAddress.isMulticastAddress()
                 || NetworkInterface.getByInetAddress(iceAddress) == null)) {
             throw new IllegalArgumentException("Native ICE must use a specific address on this host");
         }
         ServerBootstrap bootstrap = new ServerBootstrap().group(loops);
-        if (nativeClient) {
+        if (netherNet) {
             PongData pong = new PongData.Builder().setServerName(name)
                     .setProtocol(ProtocolConstants.BEDROCK_PROTOCOL_VERSION)
                     .setVersion(ProtocolConstants.BEDROCK_VERSION_NAME).setLevelName(name)
