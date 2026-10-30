@@ -51,7 +51,7 @@ import {
   requestReplayJavaStop,
   stopReplayJavaProcesses,
 } from "./session-cleanup.ts";
-import { hiveTarget, publicTarget } from "./targets.ts";
+import { hiveTarget, publicTarget, viaProxyTarget } from "./targets.ts";
 import {
   hasGameplayAcknowledgments,
   clientSessionFailed,
@@ -861,7 +861,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
           "--bind-address",
           `127.0.0.1:${bind}`,
           "--target-address",
-          target!,
+          viaProxyTarget(target!),
           "--target-version",
           "Bedrock 1.26.60",
           "--auth-method",
