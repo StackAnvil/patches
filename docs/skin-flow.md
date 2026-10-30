@@ -40,7 +40,8 @@ Keep account tokens, profile data, downloaded packs, and captures private.
 ## Validation
 
 Use controlled appearances with distinct pixels, geometry, animation, and tint metadata.
-Check the server echo and the rendered result independently.
+Check the server echo, observer delivery, and rendered result independently.
+Record the native trusted-skins setting. Delivery and the serialized trust flag alone do not prove that native accepts an appearance.
 Include a second actor when the change concerns remote skins or ownership.
 Use the [capture lab](capture-lab.md) and [server replay](server-replay.md) for bounded visual comparisons.
 
