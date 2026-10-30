@@ -60,7 +60,7 @@ This setup allowance does not change production networking or server movement ch
 
 ### Record with the official client
 
-Prepare BedrockOnLinux through the capture lab, then use a Bedrock 1.26.51 installation:
+Prepare BedrockOnLinux through the capture lab, then use a Bedrock 1.26.60 installation:
 
 ```bash
 bun run capture prepare-launcher
@@ -77,7 +77,9 @@ The launcher allows 45 seconds after termination for native cleanup, including t
 An unfinished pack export still fails the capture and preserves its raw journal.
 
 For NetherNet recordings, the relay connects to the HTTP signaling endpoint with the same authenticated session key.
-The native client connects to the relay over loopback RakNet. Gameplay packet bytes remain untranslated.
+The native client connects to the relay over loopback NetherNet with a temporary server identity.
+The first connection can show a local trust prompt. Gameplay packet bytes remain untranslated.
+Cancelled trust prompts and failed transport handshakes do not consume the recording.
 NetherNet uses DTLS. The relay applies the Bedrock AES stream only to RakNet, matching the core transport behavior.
 Transport tests verify compressed batches on both backends and RakNet encryption counters.
 
@@ -95,7 +97,8 @@ bun run server-replay selftest
 
 Allow enough time for client startup, pack conversion, and the full recorded scene. The scene clock starts at the recorded resource-pack stack. Earlier scene packets keep their order and arrive immediately after local pack negotiation. This skips the captured download delay and preserves world timing. A recorded subchunk reply batch waits until at least one entry matches a local request. Clients can group or omit requests differently, so the replay does not require every recorded batch entry to be requested. It sends the whole batch unchanged. This also lets slower clients finish loading packs before replies arrive. The scene clock pauses during that wait; a batch with no matching request fails after 15 seconds. Packet bytes and order stay unchanged.
 
-The replay server binds only to loopback. It creates a fresh offline handshake and serves packs through a loopback HTTP endpoint. It preserves the captured entity IDs, skins, world data, and packet order. Server transfers and recorded disconnects do not run.
+The replay server binds only to loopback. Native replay uses NetherNet, and Java replay uses RakNet.
+It creates a fresh offline handshake and serves packs through a loopback HTTP endpoint. It preserves the captured entity IDs, skins, world data, and packet order. Server transfers and recorded disconnects do not run.
 
 The default replay connects the Fabric add-on directly to the local Bedrock replay server. This exercises its native skin and entity renderer. A separate recorder mod exists only in the private test instance.
 

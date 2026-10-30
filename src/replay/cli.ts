@@ -815,7 +815,7 @@ Live add-on recordings accept --allow-transfers to save each connection separate
             join(directory, "replay-self-uuid.txt"),
           ]);
       }
-      const udp = await port(true);
+      const replayPort = await port(client !== "native");
       const log = join(directory, "replay.log");
       const child = service(
         "java",
@@ -825,15 +825,16 @@ Live add-on recordings accept --allow-transfers to save each connection separate
           `${classes}${delimiter}${jar}`,
           "net.pistonmaster.stackanvil.replay.ReplayServer",
           recording,
-          String(udp),
+          String(replayPort),
+          ...(client === "native" ? ["--native"] : []),
         ],
         directory,
         log,
       );
       await ready(child, log, /StackAnvil replay ready/);
-      target = `127.0.0.1:${udp}`;
+      target = `${client === "native" ? "nethernet://" : ""}127.0.0.1:${replayPort}`;
     }
-    const bind = client === "addon" ? undefined : await port(client === "native");
+    const bind = client === "addon" ? undefined : await port();
     const proxyLog = join(directory, "proxy.log");
     let child: ChildProcess | undefined;
     if (client === "proxy") {
