@@ -49,7 +49,7 @@ public final class ReplayServer {
         EventLoopGroup loops = new MultiThreadIoEventLoopGroup(2, NioIoHandler.newFactory());
         try {
             int port = Integer.parseInt(args[1]);
-            Channel server = LocalBedrockServer.bootstrap(loops, port, "StackAnvil recorded scene", nativeClient, true)
+            Channel server = LocalBedrockServer.bootstrap(loops, port, "StackAnvil recorded scene", nativeClient, true, null)
                     .childHandler(new ChannelInitializer<Channel>() {
                         @Override protected void initChannel(Channel channel) {
                             if (!nativeClient) channel.pipeline().addLast("rak-message", new MessageCodec());

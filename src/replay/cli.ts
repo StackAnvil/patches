@@ -15,7 +15,7 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, delimiter } from "node:path";
-import { createServer } from "node:net";
+import { createServer, isIP } from "node:net";
 import { createSocket } from "node:dgram";
 import { promisify } from "node:util";
 import { Effect } from "effect";
@@ -644,7 +644,8 @@ async function main(): Promise<void> {
 Form fixtures combine a protocol-2193 bootstrap, captured form JSON, and declared decrypted packs.
 The default is a read-only verbose preview. Apply creates a fresh private directory only.
 Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and zero audio remain enabled.
-Live add-on recordings accept --allow-transfers to save each connection separately.`);
+Live add-on recordings accept --allow-transfers to save each connection separately.
+Live native recordings accept --native-ice-address <local-ip> for a specific host interface.`);
     return;
   }
   if (mode === "selftest") {
@@ -704,6 +705,14 @@ Live add-on recordings accept --allow-transfers to save each connection separate
   };
   const seconds = Number(option("--seconds") ?? 120);
   const client = option("--client") ?? (mode === "replay" ? "addon" : "proxy");
+  const nativeIceAddress = option("--native-ice-address");
+  if (
+    args.includes("--native-ice-address") &&
+    (mode !== "record" || client !== "native" || !nativeIceAddress || !isIP(nativeIceAddress))
+  )
+    throw new Error(
+      "--native-ice-address requires a live native recording and a local IP address.",
+    );
   const transportOnly = args.includes("--transport-only");
   const guiScale = option("--gui-scale") === undefined ? undefined : Number(option("--gui-scale"));
   const softwareRendering = args.includes("--software-rendering");
@@ -889,6 +898,7 @@ Live add-on recordings accept --allow-transfers to save each connection separate
           destination.slice(separator + 1),
           account,
           ...(netherNet ? ["--nethernet"] : []),
+          ...(nativeIceAddress ? ["--ice-address", nativeIceAddress] : []),
         ],
         directory,
         proxyLog,

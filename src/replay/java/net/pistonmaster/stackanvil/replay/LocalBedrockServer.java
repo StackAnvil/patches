@@ -15,18 +15,25 @@ import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
 import org.cloudburstmc.netty.util.nethernet.TokenTrust;
 
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 
-/** Transport setup for loopback recorders and replay servers. */
+/** Transport setup for local recorders and replay servers. */
 final class LocalBedrockServer {
     private LocalBedrockServer() {}
 
     static ServerBootstrap bootstrap(EventLoopGroup loops, int port, String name,
-                                     boolean nativeClient, boolean offline) throws Exception {
+                                     boolean nativeClient, boolean offline, InetAddress iceAddress) throws Exception {
+        if (iceAddress != null && (iceAddress.isAnyLocalAddress() || iceAddress.isMulticastAddress()
+                || NetworkInterface.getByInetAddress(iceAddress) == null)) {
+            throw new IllegalArgumentException("Native ICE must use a specific address on this host");
+        }
         ServerBootstrap bootstrap = new ServerBootstrap().group(loops);
         if (nativeClient) {
             PongData pong = new PongData.Builder().setServerName(name)
@@ -42,9 +49,11 @@ final class LocalBedrockServer {
                     // Offline replay cannot fetch or refresh an online identity.
                     .setTokenTrust(offline ? TokenTrust.ANY : TokenTrust.MINECRAFT_AUTH)
                     .setMotd(pong).build();
-            return bootstrap.channelFactory(NetherNetChannelFactory.server(signaling))
+            bootstrap.channelFactory(NetherNetChannelFactory.server(signaling))
                     // The first local connection can wait for the native TOFU prompt.
                     .option(NetherChannelOption.NETHER_SERVER_RTC_HANDSHAKE_TIMEOUT_SECONDS, 120);
+            if (iceAddress != null) bootstrap.option(NetherChannelOption.NETHER_SERVER_ICE_ADDRESS, new InetSocketAddress(iceAddress, 0));
+            return bootstrap;
         }
         String motd = "MCPE;" + name + ";" + ProtocolConstants.BEDROCK_PROTOCOL_VERSION + ";"
                 + ProtocolConstants.BEDROCK_VERSION_NAME + ";0;1;1;Replay;Survival;1;" + port + ";" + port + ";";

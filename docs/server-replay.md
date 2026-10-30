@@ -73,6 +73,7 @@ Use `--native-home /absolute/path/to/installation` to select another prepared in
 The native client and saved MinecraftAuth account must belong to the same Xbox account. The relay verifies multiplayer tokens against the official issuer's published signing keys and binds native client properties to the authenticated client key. It preserves those properties and authenticates the upstream connection with a fresh session key. It records decrypted packets without translating gameplay. Pack reconstruction checks hashes and decrypts selected assets for replay. Missing bytes from a cached pack fail the capture. Pack parsing errors preserve the raw recording for offline repair. Success requires pack export to finish before shutdown.
 
 The shutdown hook closes active connections and waits for their event-loop cleanup.
+Handler removal also finishes export when a WebRTC disconnect omits the inactive callback.
 The launcher allows 45 seconds after termination for native cleanup, including the 35-second pack download limit.
 An unfinished pack export still fails the capture and preserves its raw journal.
 
@@ -80,6 +81,11 @@ For NetherNet recordings, the relay connects to the HTTP signaling endpoint with
 The native client connects to the relay over loopback NetherNet with a temporary server identity.
 The first connection can show a local trust prompt. Gameplay packet bytes remain untranslated.
 Cancelled trust prompts and failed transport handshakes do not consume the recording.
+On the tested BedrockOnLinux 26.60 build, a loopback-only WebRTC candidate fails before gameplay.
+For live recordings, `--native-ice-address <local-ip>` binds WebRTC to a specific address on this host.
+This option exposes an ephemeral UDP port on that interface. HTTP signaling stays on loopback.
+Wildcard, multicast, and nonlocal addresses are rejected. Offline replay does not accept this option.
+Native replay remains unverified on this build.
 NetherNet uses DTLS. The relay applies the Bedrock AES stream only to RakNet, matching the core transport behavior.
 Transport tests verify compressed batches on both backends and RakNet encryption counters.
 

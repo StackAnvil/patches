@@ -28,6 +28,7 @@ import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
 import org.cloudburstmc.netty.util.nethernet.TokenTrust;
 
 import java.nio.file.*;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
@@ -73,18 +74,25 @@ public final class NativeCaptureSelfTest {
     }
 
     private static void nativeFrontendRetry() throws Exception {
+        PrintStream console = System.out;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
         Path directory = Files.createTempDirectory("stackanvil-native-frontend");
         PrivateFiles.protectDirectory(directory);
         EventLoopGroup loops = new MultiThreadIoEventLoopGroup(2, NioIoHandler.newFactory());
         Channel server = null;
         List<Channel> clients = new ArrayList<>();
+        System.setOut(new PrintStream(output, true, StandardCharsets.UTF_8));
         try {
             int port;
             try (ServerSocket available = new ServerSocket(0, 1, new InetSocketAddress("127.0.0.1", 0).getAddress())) {
                 port = available.getLocalPort();
             }
             NativeCaptureProxy capture = new NativeCaptureProxy(directory, new InetSocketAddress("127.0.0.1", 9), "offline", true, loops);
-            server = capture.bind(port);
+            try {
+                capture.bind(port, InetAddress.ofLiteral("0.0.0.0"));
+                throw new AssertionError("Native capture accepted a wildcard ICE address");
+            } catch (IllegalArgumentException expected) { }
+            server = capture.bind(port, InetAddress.ofLiteral("127.0.0.1"));
             for (boolean requestSettings : List.of(false, true)) {
                 CompletableFuture<Integer> response = new CompletableFuture<>();
                 Channel client = new Bootstrap().group(loops)
@@ -126,10 +134,14 @@ public final class NativeCaptureSelfTest {
             for (Channel client : clients) client.close().syncUninterruptibly();
             if (server != null) server.close().syncUninterruptibly();
             loops.shutdownGracefully().syncUninterruptibly();
+            System.setOut(console);
+            console.print(output.toString(StandardCharsets.UTF_8));
             try (var files = Files.walk(directory)) {
                 for (Path file : files.sorted(Comparator.reverseOrder()).toList()) Files.delete(file);
             }
         }
+        if (!output.toString(StandardCharsets.UTF_8).contains("StackAnvil native pack observation complete"))
+            throw new AssertionError("Native disconnect did not finish capture export");
     }
 
     private static void offlineSignalingIdentity(String clientJwt, KeyPair nativeKey) throws Exception {
