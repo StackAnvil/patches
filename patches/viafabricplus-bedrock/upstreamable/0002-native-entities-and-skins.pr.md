@@ -18,6 +18,8 @@ Prerequisites:
 
 Regression coverage includes `MixinIrisJavaAlphaTest`, `BedrockAcceptedResourcesTest`, `BedrockActorDepthGpuTest`, `BedrockActorGlintFramesTest`.
 
-Native and replay controls establish selected appearances. Armor masking, profile/LOD changes, remote skins, first-person composition, and complete rendering parity remain open.
+Native and replay controls establish selected appearances, classic armor masks, and one owned outerwear/chest case. A free-camera fixture keeps players five blocks apart while native draws retain the original persona body and face atlases through 120 camera blocks.
+
+Rapid profile changes in that fixture receive server echoes at Java while native draws retain the previous bindings. Delivery to the native observer remains unverified. Distinct LOD selection, other wardrobe categories, broader remote skins, first-person composition, and complete rendering parity remain open.
 
 The [owning patch](0002-native-entities-and-skins.patch) retains implementation rationale and versioned evidence.

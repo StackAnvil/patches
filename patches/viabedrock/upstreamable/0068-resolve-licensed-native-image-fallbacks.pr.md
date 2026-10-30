@@ -2,11 +2,14 @@
 
 ## Purpose
 
-Bedrock 1.26.51.1 protocol 2193 accepts Hive item atlas aliases to vanilla images which the server does not resend. The bundled metadata archives intentionally contain no images, leaving these aliases unresolved during Java conversion.
+Select vanilla metadata, licensed images, actor dependencies, and audio by the world's advertised base-game version.
+Apply server assets above those selected resources, including image aliases that servers do not resend.
 
 ## Design constraints
 
 Resolve licensed images beneath server assets from the selected native resource context. Keep acquisition, version validation, cache identity, and fallback ownership explicit.
+
+Legacy fog bindings stay separate from modern biome metadata. Vanilla legacy files stop at base version 1.21.40. Server legacy files still load.
 
 Prerequisites:
 
@@ -16,8 +19,13 @@ Prerequisites:
 
 ## Validation and remaining limits
 
-Regression coverage includes `BaseGameVersionTest`, `BuiltinActorResourcesTest`, `NativeActorLibraryTest`, `SoundTranslationsTest`.
+Regression coverage includes `BaseGameVersionTest`, `BuiltinActorResourcesTest`, `NativeActorLibraryTest`, `SoundTranslationsTest`, and `BiomeDefinitionsTest`.
 
-Resource-selection and fallback tests protect known cases. Missing licensed resources and broader native rendering comparisons remain limits.
+Native 1.26.60.5 Fancy controls cover legacy fog inheritance, replacement, and clearing over modern definitions.
+Remote current/1.20.0/current controls also admit unqualified server legacy biome keys. All fog identifiers in these controls remain qualified.
+Homogeneous neighboring bindings separate name admission from spatial blending.
+Four direct and ViaProxy recordings confirm the advertised current and older contexts and match the settled blue 48-block binding.
+Color differences stay below 0.00001 RGBA and distance differences below 0.001 blocks. All recordings exit normally.
+Missing licensed resources and broader rendering comparisons remain limits.
 
 The [owning patch](0068-resolve-licensed-native-image-fallbacks.patch) retains implementation rationale and versioned evidence.

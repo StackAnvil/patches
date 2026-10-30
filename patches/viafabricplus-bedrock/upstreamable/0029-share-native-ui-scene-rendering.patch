@@ -1,4 +1,4 @@
-From 0d1e7a40e547044c3d6b6b2191bae16da88c83ee Mon Sep 17 00:00:00 2001
+From 65e075ccca9ef9a6584006ac6725c9e129493bbe Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -496,8 +496,7 @@ the original pack boundary to distinguish extended vanilla metadata from
 legacy server textures. Exercise provider, storage admission, conversion,
 and immutable library reuse together instead of testing only the file
 filter. Native 1.26.60.5 controls cover mixed-language and legacy packs.
-All sixteen current scale-2 labels match after the atlas correction;
-scale-1 rasterization remains open.
+Matching native scale-1 and scale-2 controls establish atlas sampling.
 
 Retain native Unicode advances, bearings and atlas coordinates.
 Bedrock 1.26.60.5 uses fractional narrow advances, fixed wide ranges and
@@ -511,8 +510,8 @@ lazily on the render thread and released when the provider closes.
 Retain colored pixels and source-cell bounds. Unique texture identities
 keep retired providers separate from replacement providers during reload.
 Scope this to converted viabedrock glyph pages; Java fonts and bitmap
-layout conversion retain their own paths. Native scale-1 rasterization
-remains a separate comparison limit rather than an inferred epsilon fix.
+layout conversion retain their own paths. Native capture comparisons
+establish rasterization separately from metrics.
 
 Use the measured ten-unit bitmap line advance. Label dimensions and line
 alignment retain rounded widths; only glyph advances remain fractional.
@@ -556,6 +555,23 @@ world text and styled glyph metrics with their existing owners.
 The native captures reproduce 16 current and 16 legacy fixture masks.
 An offscreen framebuffer regression covers fractional origins at both
 Java GUI scales, since a default EGL surface hid the edge disagreement.
+
+Quantize nearest-point GUI bitmap addresses to the native n.8 texel grid,
+then fetch the integer texel. Matching 1.26.60.5 native and Java GPU draws
+isolate one missing accent pixel to float interpolation landing two steps
+below a texel boundary. Integer fetches avoid another normalized-coordinate
+rounding step on non-power-of-two atlases. Preserve Unicode's linear path.
+
+Native post-VS replays retain all 16 current scale-1, current scale-2, and
+legacy scale-2 masks on Intel and software rendering. The corrected Java
+draw also matches 16/16. A focused GPU regression uses the captured sample,
+its exact boundary, and a distinct neighboring texel on 128- and 384-pixel
+atlases. It fails before the correction.
+
+At 1280x720, direct and ViaProxy recordings match all 16 current labels at
+native UI scales 1 and 2 and all 16 legacy labels at scale 2, before and
+after Java GUI scale changes and resource reloads. Broader viewports and
+TrueType comparisons remain separate limits.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../appearance/BedrockBoneAnimation.java      |   3 +
@@ -627,7 +643,7 @@ Java GUI scales, since a default EGL surface hid the edge disagreement.
  .../bedrock/settings/NativeUiScale.java       |  27 +
  .../viafabricplus-bedrock/lang/en_us.json     |   2 +
  .../shaders/core/bedrock_actor.fsh            |   8 +
- .../shaders/core/bedrock_bitmap_font.fsh      |  22 +
+ .../shaders/core/bedrock_bitmap_font.fsh      |  26 +
  .../shaders/core/bedrock_bitmap_font.vsh      |  29 +
  .../viafabricplus-bedrock.accesswidener       |   1 +
  .../viafabricplus-bedrock.mixins.json         |  11 +-
@@ -640,7 +656,7 @@ Java GUI scales, since a default EGL surface hid the edge disagreement.
  .../render/BedrockShaderPipelinesTest.java    |  24 +
  .../render/font/BedrockBitmapFontTest.java    | 239 +++++
  .../render/font/BedrockBitmapGlyphTest.java   |  71 ++
- .../font/BedrockBitmapShaderGpuTest.java      | 220 ++++
+ .../font/BedrockBitmapShaderGpuTest.java      | 291 ++++++
  .../bedrock/screen/ui/AnimationPrograms.java  |  23 +
  .../screen/ui/NativeHudOverlayStateTest.java  | 153 +++
  .../screen/ui/NativeUiActorCameraTest.java    | 102 ++
@@ -669,7 +685,7 @@ Java GUI scales, since a default EGL surface hid the edge disagreement.
  .../ui/NativeUiTextureAnimationTest.java      | 108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |  86 ++
  .../screen/ui/NativeUiViewportTest.java       |  95 ++
- 112 files changed, 12477 insertions(+), 36 deletions(-)
+ 112 files changed, 12552 insertions(+), 36 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -8339,10 +8355,10 @@ index 88f77b0..2628d69 100644
  }
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_bitmap_font.fsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_bitmap_font.fsh
 new file mode 100644
-index 0000000..a83b21c
+index 0000000..caf1dcd
 --- /dev/null
 +++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_bitmap_font.fsh
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,26 @@
 +#version 330
 +#extension GL_ARB_separate_shader_objects : require
 +#include <minecraft:dynamictransforms.glsl>
@@ -8358,10 +8374,14 @@ index 0000000..a83b21c
 +    // Preserve the unshifted sample position while selecting native top-edge coverage.
 +    vec2 sourceUv = glyphUv - dFdy(glyphUv) * sign(dFdy(glyphGuiY)) / 256.0;
 +    vec2 uv = clamp(sourceUv, glyphBounds.xy, glyphBounds.zw);
-+    vec4 color = texture(Sampler0, uv);
 +#ifdef BITMAP_SMOOTH
++    vec4 color = texture(Sampler0, uv);
 +    color = clamp((color - 0.3) * 5.000000476837158, 0.0, 1.0);
 +    color = color * color * (3.0 - 2.0 * color);
++#else
++    // Preserve native point addresses when float interpolation lands just below a texel boundary.
++    vec2 texels = roundEven(uv * vec2(textureSize(Sampler0, 0)) * 256.0) / 256.0;
++    vec4 color = texelFetch(Sampler0, ivec2(floor(texels)), 0);
 +#endif
 +    fragColor = color * vertexColor * ColorModulator;
 +}
@@ -9248,10 +9268,10 @@ index 0000000..f6651d3
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapShaderGpuTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapShaderGpuTest.java
 new file mode 100644
-index 0000000..17577c8
+index 0000000..0e8ffc2
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapShaderGpuTest.java
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,291 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9262,9 +9282,11 @@ index 0000000..17577c8
 +import com.viaversion.viafabricplus.bedrock.render.EglTestContext;
 +import java.io.IOException;
 +import java.nio.charset.StandardCharsets;
++import java.util.List;
 +import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 +import org.lwjgl.system.MemoryStack;
++import org.lwjgl.system.MemoryUtil;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.lwjgl.opengl.GL33C.*;
@@ -9439,9 +9461,78 @@ index 0000000..17577c8
 +        });
 +    }
 +
++    @Test
++    void retainsTheNativeAccentPixelAtAPointSampleBoundary() {
++        EglTestContext.run(() -> {
++            final String vertex = """
++                #version 330
++                #extension GL_ARB_separate_shader_objects : require
++                uniform vec2 SampleUv;
++                layout(location = 0) out vec4 vertexColor;
++                layout(location = 1) out vec2 glyphUv;
++                layout(location = 2) flat out vec4 glyphBounds;
++                layout(location = 3) noperspective out float glyphGuiY;
++                void main() {
++                    vec2 corner = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
++                    gl_Position = vec4(corner * 2.0 - 1.0, 0.0, 1.0);
++                    vertexColor = vec4(1.0);
++                    glyphUv = SampleUv;
++                    glyphBounds = vec4(0.0, 0.0, 1.0, 1.0);
++                    glyphGuiY = 0.0;
++                }
++                """;
++            final int program = program(false, false, vertex), vao = glGenVertexArrays(), atlas = glGenTextures();
++            final var texels = MemoryUtil.memCalloc(384 * 384 * 4);
++            try (var stack = MemoryStack.stackPush()) {
++                glBindTexture(GL_TEXTURE_2D, atlas);
++                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++                glBindVertexArray(vao);
++                glUseProgram(program);
++                glUniform1i(glGetUniformLocation(program, "Sampler0"), 0);
++                glUniform4f(glGetUniformLocation(program, "ColorModulator"), 1, 1, 1, 1);
++                glViewport(0, 0, 1, 1);
++                glDisable(GL_BLEND);
++                glDisable(GL_DEPTH_TEST);
++                glDisable(GL_CULL_FACE);
++                record Sample(float v, int channel) { }
++                final var pixel = stack.malloc(4);
++                for (final int size : new int[] {128, 384}) {
++                    texels.clear();
++                    texels.limit(size * size * 4);
++                    texels.putInt((3 * size + 2) * 4, -1);
++                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, texels);
++                    // Captured Java coordinate at the missing À pixel, its boundary, and a distinct texel.
++                    final var samples = List.of(new Sample(0.0234374962747097F * 128F / size, 255),
++                        new Sample(3F / size, 255), new Sample((3F - 1F / 256F) / size, 0));
++                    for (final Sample sample : samples) {
++                        glUniform2f(glGetUniformLocation(program, "SampleUv"), 2F / size, sample.v());
++                        glDrawArrays(GL_TRIANGLES, 0, 3);
++                        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
++                        for (int channel = 0; channel < 4; channel++) {
++                            assertEquals(sample.channel(), Byte.toUnsignedInt(pixel.get(channel)),
++                                "Atlas size " + size + ", texture V=" + sample.v());
++                        }
++                    }
++                    texels.putInt((3 * size + 2) * 4, 0);
++                }
++            } finally {
++                MemoryUtil.memFree(texels);
++                glUseProgram(0);
++                glDeleteTextures(atlas);
++                glDeleteVertexArrays(vao);
++                glDeleteProgram(program);
++            }
++        });
++    }
++
 +    private static int program(final boolean smooth, final boolean feedback) {
++        return program(smooth, feedback, resource("vsh", smooth));
++    }
++
++    private static int program(final boolean smooth, final boolean feedback, final String vertexSource) {
 +        final int program = glCreateProgram();
-+        final int vertex = shader(GL_VERTEX_SHADER, resource("vsh", smooth));
++        final int vertex = shader(GL_VERTEX_SHADER, vertexSource);
 +        final int fragment = shader(GL_FRAGMENT_SHADER, resource("fsh", smooth));
 +        try {
 +            glAttachShader(program, vertex);

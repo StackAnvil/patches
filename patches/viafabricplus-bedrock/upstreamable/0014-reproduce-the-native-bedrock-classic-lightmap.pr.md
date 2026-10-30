@@ -1,46 +1,31 @@
-Java 26.3 applies a different lightmap gamma transform from Bedrock 1.26.51.1. Its Nether brightness calculation also applies ambient light at a different stage.
+# Native classic lighting and vision effects
 
-This patch uses a dedicated shader for supported Bedrock Overworld and Nether sessions. It reproduces the classic native light-image calculation, including its float table, colored block light, sunrise tint, weather factor, quartic gamma, and byte truncation. Nether keeps the native white sky and full sky factor.
+## Purpose
 
-Direct Bedrock connections activate the pipeline through their protocol state. ViaProxy sessions activate it through versioned metadata in an accepted converted server pack. Local packs and unsupported metadata cannot activate it. Reload preparation retains the applied context until the replacement resources apply. Local disconnect clears the context after Minecraft removes server packs. A stale asynchronous reload completion cannot restore it.
+Use native classic lighting for accepted Bedrock Overworld and Nether sessions on direct and ViaProxy routes.
+Remove Java's extra low-light vignette and preserve gradual blindness expiry with night vision.
 
-The patch also omits Java's low-light vignette on supported Bedrock sessions. Native Hive reference surfaces have uniform texture colors. A fit across 18,140 Java white-item pixels explains the extra vignette within 0.33 encoded RGB bytes. This overlay darkened the world and held items toward the screen edges. The fit identifies that overlay. It does not prove complete image parity.
+## Design constraints
 
-Immutable render snapshots refresh the lightmap when inputs change between ticks. This covers brightness changes, darkness animation, and transitions between supported and unsupported connections. The shader joins the normal resource reload pipeline. Its uniform buffer closes with its owning lightmap.
+Only accepted server metadata or a direct Bedrock connection activates this pipeline.
+Keep resource ownership through reload preparation, replacement, and disconnect. Reject stale completions.
+Use immutable frame inputs and retire GPU resources with their owning lightmap.
 
-Native evidence comes from the official Bedrock 1.26.51.1 executable, identified by SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`. The port follows scalar builder `146619c50`, table initializer `142313be0`, Overworld producers `1423122e0`/`14230e620`/`146235f20`, and Nether producer `14692cd30`. Caller `1448018f0` fixes both bias stages on and the white boost off. The native contribution fixes the previous boss value to zero, so the port omits that inactive branch.
-
-Validation passed eight targeted tests for inputs, snapshot equality, and uniform packing. A private Mesa EGL check compiled the actual fragment shader and rendered all 256 light combinations. All 11,520 pixels across 45 scenarios matched an independent float32 reference byte for byte. Fractional cosine inputs also matched native reference vectors.
-
-The End retains the existing Java pipeline because its animated native sky producer is incomplete. Darkness uses Java's effect blend lifecycle, whose exact native fade timing remains unverified. Enhanced lighting and resource-pack lighting overrides remain outside this port. The GPU checks establish the calculation for supplied inputs, not complete visual parity with a running native client.
-
-A saved native Hive session exposed a separate clock error. It sends `SetTime` 12445, then `GameRulesChanged` with `dodaylightcycle=false`. Java previously stored the rule without changing its clock rate, so the scene drifted into night. Core clock patch `0014` now pauses and resumes legacy time at its current value. Explicit `SyncWorldClocks` rates remain independent. A measured night-floor value alone did not establish visual success for this fixed-time lobby.
-
-Official-client loopback replay now provides a controlled reference without another public join. Verification requires the complete scene payload SHA-256, completed pack reconstruction, local-player initialization, gameplay input, and a reference screenshot. Its `reference-captured` result remains distinct from add-on rendering verification.
-
-The ViaProxy route uses the accepted server-pack metadata for lighting, but it still lacks native actor and player geometry. Its replay therefore requires `--transport-only`. Actor material and controller lighting controls belong to the separate actor rendering patches.
-
-Targeted metadata regressions cover accepted server packs, rejected local packs, strict protocol numbers, reload replacement, disconnect, and stale completion. The dependency-ordered build passes. The complete add-on suite passes with all private fixtures enabled after integrating the latest main changes. The full CubeConverter suite passes eight tests, and the core suite passes its clock and renderer regressions with both Checkstyle tasks. Tooling checks and all 50 tooling tests pass.
-
-Complete loopback replays preserve the original Hive scene payload SHA-256. The direct add-on passes native actor and player rendering assertions. Actual ViaProxy frame observations hold time at 12445 and confirm the native lightmap stays active after the initial pack reload. Static scenery registration validates the color comparison within about one native pixel. Full difference maps still include changing actors, HUD, clouds, and resolution differences.
-
-The corrected terrain is much closer to the official reference. The sky still differs, and held-item sampling and directional shading remain incomplete. The final Java compass color is explained by its measured block light and quad normal. A brightness gain cannot resolve these separate inputs. Native assets, decompiler output, recordings, and screenshots remain private.
-
-The 26.60 combined-vision comparison exposes a separate fog-color ordering error.
-Java normalizes RGB after blindness dimming, which cancels the fade when a channel first becomes nonzero.
-Defer that dimming until after night-vision normalization for supported Overworld air fog.
-Reuse the existing darkness factor and preserve alpha.
+For Overworld air, retain tick-based blindness dimming and attenuate night-vision strength by the same squared visibility.
+Cap reciprocal brightness at 255. Preserve alpha, infinite duration, cancellation, and void darkness.
 Other dimensions, fog media, and the Darkness effect retain their existing paths.
 
-Five complete native 1.26.60.5 / BDS 1.26.60.6 controls cover natural blindness expiry
-with and without night vision in daylight and darkness, plus forced cancellation.
-Native restores the sky gradually during natural expiry and immediately after forced cancellation.
-Fresh direct Java and ViaProxy controls confirm that the correction removes the bright-fog jump and preserves cancellation.
-The original Java recording jumps from black to a blue value of 254 on its first visible fade frame.
-Native and corrected Java recordings begin at values from 1 through 3 instead.
-Native fog brightness and the precise fade curve still differ, especially at night.
-These results establish the ordering correction, not complete native fog parity.
+## Validation and remaining limits
 
-The final ViaProxy comparison measures the same 12,039 pixels across three aligned terrain regions. Encoded RGB errors fall from 33.9 to 6.1 on the left masonry, 41.6 to 11.6 on the castle, and 36.1 to 10.0 on the pavement. Their weighted error drops 73.7%. This is a result for those regions, not an overall pixel parity score. Pavement edge alignment is validated locally but lies outside the building feature hull. Sky gradients and clouds remain different. The separate core fog patch corrects inherited air color without claiming a complete sky port.
+The native 1.26.51.1 scalar builder supplies the light-image calculation and its input rules.
+Private GPU fixtures cover supplied light combinations, gamma, weather, and native float vectors.
+Synchronized native 1.26.60.5 Fancy color and distance controls establish 19 expiry steps at noon and midnight.
+Native updates remain tick-based. The combined blend creates fractional color values; these do not establish interpolation between ticks.
+The verified blend matches every native expiry step within 0.000002, including the gain cap at low brightness.
+Blindness alone and the distance curve match the existing Java calculation.
+The complete add-on build and its core dependencies pass.
+Fresh direct and ViaProxy renderer samples match the native expiry curve within 0.00001 RGBA, including low-brightness gain limits.
+The recordings verify cancellation after 20 server ticks and restoration of the pack's ordinary fog range. Both exit normally.
 
-A reload keeps the accepted metadata active during preparation. This prevents a temporary return to Java rendering or physics in ViaProxy sessions. Removal becomes effective when the replacement resources apply. Central local disconnect also clears this metadata when Minecraft removes server packs. Reconfiguration that retains those packs keeps its context. Targeted tests cover retained state during preparation, removal at apply, and stale completion after cleanup.
+End light-image inputs, enhanced lighting, resource-pack lighting overrides, other effect combinations, and full sky sampling remain open.
+The [owning patch](0014-reproduce-the-native-bedrock-classic-lightmap.patch) retains implementation rationale and versioned evidence.

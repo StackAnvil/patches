@@ -18,6 +18,8 @@ Prerequisites:
 
 Regression coverage includes `BedrockBitmapFontResourcesTest`, `BedrockGuiActorAppearanceTest`, `BedrockGuiActorContextTest`, `BedrockResourceLibraryTest`.
 
-Current-font controls match 15/16 labels at native UI scale 1 and 16/16 at scale 2. Legacy scale-2 controls match 16/16 on both routes. One scale-1 pixel, broader viewports, and TrueType comparisons remain open.
+At 1280 × 720, all 16 current-font labels match native 26.60 at UI scales 1 and 2. All 16 legacy labels match at UI scale 2. Direct and ViaProxy controls pass Java GUI scale changes and resource reloads. The point-sampling GPU regression fails before the correction and passes on Intel and software rendering.
+
+Broader viewports and TrueType comparisons remain open.
 
 The [owning patch](0029-share-native-ui-scene-rendering.patch) retains implementation rationale and versioned evidence.
