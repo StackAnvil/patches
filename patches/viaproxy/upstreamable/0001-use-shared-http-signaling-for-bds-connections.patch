@@ -1,4 +1,4 @@
-From 9feddd65881191701b95ef30adf3126830867a3a Mon Sep 17 00:00:00 2001
+From 6b1a0a3b2e349af136daecfadc9dbbdc69c6e5fd Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 01:02:37 +0200
 Subject: [PATCH] fix(bedrock): use shared HTTP signaling for BDS connections
@@ -13,8 +13,12 @@ one real Java LoginHello before opening that backend, then use the core
 self-signed AuthData token and key for both SDP and game login. Preserve
 normal proxy login validation and online-mode verification after the
 backend handshake. Cancel the bounded wait on disconnect or malformed
-input, and do not retain another packet queue. Online accounts and
-RakNet keep their existing connection path.
+input, and do not retain another packet queue. Online accounts keep their existing identity path.
+
+Upstream now routes ordinary Bedrock socket addresses through HTTP
+NetherNet and removes the separate HTTP address type. Apply the identity
+gate to those addresses while excluding LAN discovery and Xbox routes.
+Keep the route regression aligned with this transport selection.
 
 EmbeddedChannel tests cover one-Hello consumption, deadline cancellation,
 disconnect cleanup and rejection of unexpected input. Exact offline
@@ -22,14 +26,14 @@ BDS1.26.51.1 opens the self-signed transport while rejecting unsigned
 SDP with numeric37; initialized proxy gameplay remains a separate gate.
 ---
  build.gradle                                  |   6 +
- .../client2proxy/Client2ProxyHandler.java     |  67 ++++++-
+ .../client2proxy/Client2ProxyHandler.java     |  68 ++++++-
  .../proxy/session/BedrockProxyConnection.java |  22 ++-
- .../OfflineHttpIdentityLoginTest.java         | 163 ++++++++++++++++++
- 4 files changed, 255 insertions(+), 3 deletions(-)
+ .../OfflineHttpIdentityLoginTest.java         | 167 ++++++++++++++++++
+ 4 files changed, 260 insertions(+), 3 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viaproxy/proxy/client2proxy/OfflineHttpIdentityLoginTest.java
 
 diff --git a/build.gradle b/build.gradle
-index 212df3e..a8fa603 100644
+index a0d31e8..d9ed6ba 100644
 --- a/build.gradle
 +++ b/build.gradle
 @@ -65,6 +65,8 @@ repositories {
@@ -38,10 +42,10 @@ index 212df3e..a8fa603 100644
  dependencies {
 +    testImplementation "org.junit.jupiter:junit-jupiter:6.1.3"
 +    testRuntimeOnly "org.junit.platform:junit-platform-launcher:6.1.3"
-     includeInJar "com.viaversion:viaversion-common:5.12.2-SNAPSHOT"
-     includeInJar "com.viaversion:viabackwards-common:5.12.2-SNAPSHOT"
+     includeInJar "com.viaversion:viaversion-common:5.12.3-SNAPSHOT"
+     includeInJar "com.viaversion:viabackwards-common:5.12.3-SNAPSHOT"
      includeInJar "com.viaversion:viarewind-common:4.2.1-SNAPSHOT"
-@@ -129,6 +131,10 @@ application {
+@@ -126,6 +128,10 @@ application {
      mainClass = "net.raphimc.viaproxy.ViaProxy"
  }
  
@@ -53,10 +57,10 @@ index 212df3e..a8fa603 100644
      manifest {
          attributes(
 diff --git a/src/main/java/net/raphimc/viaproxy/proxy/client2proxy/Client2ProxyHandler.java b/src/main/java/net/raphimc/viaproxy/proxy/client2proxy/Client2ProxyHandler.java
-index 6adff42..263e88f 100644
+index 1e5b0a3..ba79abd 100644
 --- a/src/main/java/net/raphimc/viaproxy/proxy/client2proxy/Client2ProxyHandler.java
 +++ b/src/main/java/net/raphimc/viaproxy/proxy/client2proxy/Client2ProxyHandler.java
-@@ -35,6 +35,9 @@ import net.raphimc.netminecraft.constants.ConnectionState;
+@@ -34,6 +34,9 @@ import net.raphimc.netminecraft.constants.ConnectionState;
  import net.raphimc.netminecraft.constants.IntendedState;
  import net.raphimc.netminecraft.packet.Packet;
  import net.raphimc.netminecraft.packet.impl.handshaking.C2SHandshakingClientIntentionPacket;
@@ -66,9 +70,15 @@ index 6adff42..263e88f 100644
  import net.raphimc.netminecraft.packet.impl.status.S2CStatusPongResponsePacket;
  import net.raphimc.netminecraft.packet.impl.status.S2CStatusResponsePacket;
  import net.raphimc.viabedrock.api.BedrockProtocolVersion;
-@@ -64,10 +67,15 @@ import java.net.SocketAddress;
+@@ -56,15 +59,21 @@ import net.raphimc.viaproxy.proxy.util.*;
+ import net.raphimc.viaproxy.saves.impl.accounts.ClassicAccount;
+ import net.raphimc.viaproxy.util.*;
+ import net.raphimc.viaproxy.util.logging.Logger;
++import net.raphimc.viaproxy.util.address.NetherNetLanAddress;
+ 
+ import java.net.InetSocketAddress;
+ import java.net.SocketAddress;
  import java.util.List;
- import java.util.concurrent.CompletableFuture;
  import java.util.function.Supplier;
 +import java.util.function.Consumer;
 +import java.util.concurrent.ScheduledFuture;
@@ -82,7 +92,7 @@ index 6adff42..263e88f 100644
  
      @Override
      public void channelActive(ChannelHandlerContext ctx) throws Exception {
-@@ -80,6 +88,7 @@ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
+@@ -77,6 +86,7 @@ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
      @Override
      public void channelInactive(ChannelHandlerContext ctx) throws Exception {
          super.channelInactive(ctx);
@@ -90,7 +100,7 @@ index 6adff42..263e88f 100644
          if (this.proxyConnection instanceof DummyProxyConnection) return;
  
          try {
-@@ -92,6 +101,18 @@ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
+@@ -89,6 +99,18 @@ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
      protected void channelRead0(ChannelHandlerContext ctx, Packet packet) throws Exception {
          if (this.proxyConnection.isClosed()) return;
  
@@ -109,7 +119,7 @@ index 6adff42..263e88f 100644
          if (this.proxyConnection.getC2pConnectionState() == ConnectionState.HANDSHAKING) {
              if (packet instanceof C2SHandshakingClientIntentionPacket) this.handleHandshake((C2SHandshakingClientIntentionPacket) packet);
              else throw new IllegalStateException("Unexpected packet in HANDSHAKING state");
-@@ -239,10 +260,39 @@ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
+@@ -230,10 +252,39 @@ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
      }
  
      private void connect(final SocketAddress serverAddress, final ProtocolVersion serverVersion, final ProtocolVersion clientVersion, final IntendedState intendedState, final HostAndPort clientHandshakeAddress, final UserOptions userOptions, final String[] handshakeParts) {
@@ -128,7 +138,7 @@ index 6adff42..263e88f 100644
 +
 +    static boolean requiresHttpIdentityLogin(final SocketAddress serverAddress, final ProtocolVersion serverVersion, final IntendedState intendedState, final boolean hasBedrockAccount) {
 +        return intendedState.getConnectionState() == ConnectionState.LOGIN && serverVersion.equals(BedrockProtocolVersion.BEDROCK_LATEST)
-+                && serverAddress instanceof NetherNetHttpAddress && !hasBedrockAccount;
++                && serverAddress instanceof InetSocketAddress && !(serverAddress instanceof NetherNetLanAddress) && !hasBedrockAccount;
 +    }
 +
 +    private void clearPendingIdentityLogin() {
@@ -150,7 +160,7 @@ index 6adff42..263e88f 100644
          } else {
              proxyConnection = new ProxyConnection(new Proxy2ServerChannelInitializer(handlerSupplier), this.proxyConnection.getC2P());
          }
-@@ -318,7 +368,20 @@ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
+@@ -309,7 +360,20 @@ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
                                  userConnection.get(CookieStorage.class).cookies().putAll(TransferDataHolder.removeCookieStorage(this.proxyConnection.getC2P()).cookies());
                              }
                              this.proxyConnection.setP2sConnectionState(intendedState.getConnectionState());
@@ -173,26 +183,25 @@ index 6adff42..263e88f 100644
                      });
                  });
 diff --git a/src/main/java/net/raphimc/viaproxy/proxy/session/BedrockProxyConnection.java b/src/main/java/net/raphimc/viaproxy/proxy/session/BedrockProxyConnection.java
-index 3901b23..8b76455 100644
+index 76ff505..c546b38 100644
 --- a/src/main/java/net/raphimc/viaproxy/proxy/session/BedrockProxyConnection.java
 +++ b/src/main/java/net/raphimc/viaproxy/proxy/session/BedrockProxyConnection.java
-@@ -25,6 +25,7 @@ import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
+@@ -27,6 +27,7 @@ import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
  import net.raphimc.minecraftauth.bedrock.model.MinecraftMultiplayerToken;
  import net.raphimc.netminecraft.util.EventLoops;
  import net.raphimc.netminecraft.util.TransportType;
 +import net.raphimc.viabedrock.netty.nethernet.BedrockHttpSignaling;
- import net.raphimc.viabedrock.netty.raknet.MessageCodec;
- import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
  import net.raphimc.viaproxy.ViaProxy;
-@@ -38,17 +39,34 @@ import org.cloudburstmc.netty.channel.raknet.RakClientChannel;
- import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
+ import net.raphimc.viaproxy.saves.impl.accounts.BedrockAccount;
+ import net.raphimc.viaproxy.util.address.NetherNetLanAddress;
+@@ -37,16 +38,33 @@ import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
+ import org.cloudburstmc.netty.channel.nethernet.signaling.*;
  import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
  
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import net.raphimc.viabedrock.protocol.storage.AuthData;
 +
  import java.net.SocketAddress;
- import java.util.concurrent.ThreadLocalRandom;
  
  public class BedrockProxyConnection extends ProxyConnection {
  
@@ -218,17 +227,17 @@ index 3901b23..8b76455 100644
 +
      @Override
      public void initialize(final TransportType transportType, final Bootstrap bootstrap) {
-         bootstrap
-@@ -101,7 +119,7 @@ public class BedrockProxyConnection extends ProxyConnection {
-     protected void initializeNetherNet(final TransportType transportType, final Bootstrap bootstrap) {
          final NetherNetClientSignaling netherNetSignaling;
-         if (this.serverAddress instanceof NetherNetHttpAddress) {
+@@ -66,7 +84,7 @@ public class BedrockProxyConnection extends ProxyConnection {
+                 return;
+             }
+         } else {
 -            netherNetSignaling = new NetherNetHTTPClientSignaling();
 +            netherNetSignaling = new BedrockHttpSignaling();
-         } else if (this.serverAddress instanceof NetherNetLanAddress) {
-             netherNetSignaling = new NetherNetDiscoverySignaling();
-         } else if (this.serverAddress instanceof NetherNetXboxAddress || this.serverAddress instanceof NetherNetXboxJsonRpcAddress) {
-@@ -126,6 +144,8 @@ public class BedrockProxyConnection extends ProxyConnection {
+         }
+ 
+         final OperatorIdentity identity;
+@@ -74,6 +92,8 @@ public class BedrockProxyConnection extends ProxyConnection {
              final BedrockAuthManager authManager = bedrockAccount.getAuthManager();
              final MinecraftMultiplayerToken multiplayerToken = authManager.getMinecraftMultiplayerToken().getUpToDateUnchecked();
              identity = OperatorIdentity.fromToken(authManager.getSessionKeyPair(), multiplayerToken.getToken(), "https://authorization.franchise.minecraft-services.net/");
@@ -239,10 +248,10 @@ index 3901b23..8b76455 100644
          }
 diff --git a/src/test/java/net/raphimc/viaproxy/proxy/client2proxy/OfflineHttpIdentityLoginTest.java b/src/test/java/net/raphimc/viaproxy/proxy/client2proxy/OfflineHttpIdentityLoginTest.java
 new file mode 100644
-index 0000000..93742f0
+index 0000000..eacfe4c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viaproxy/proxy/client2proxy/OfflineHttpIdentityLoginTest.java
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,167 @@
 +/*
 + * This file is part of ViaProxy - https://github.com/RaphiMC/ViaProxy
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -264,7 +273,9 @@ index 0000000..93742f0
 +import net.raphimc.viaproxy.proxy.session.DummyProxyConnection;
 +import net.raphimc.viaproxy.proxy.session.UserOptions;
 +import net.raphimc.viaproxy.proxy.util.ChannelUtil;
-+import net.raphimc.viaproxy.util.address.NetherNetHttpAddress;
++import net.raphimc.viaproxy.util.address.NetherNetLanAddress;
++import net.raphimc.viaproxy.util.address.NetherNetXboxAddress;
++import net.raphimc.viaproxy.util.address.NetherNetXboxJsonRpcAddress;
 +import org.junit.jupiter.api.AfterEach;
 +import org.junit.jupiter.api.BeforeEach;
 +import org.junit.jupiter.api.Test;
@@ -300,12 +311,14 @@ index 0000000..93742f0
 +
 +    @Test
 +    void onlyOfflineBedrockHttpLoginAndTransferRequireAnEarlyIdentity() {
-+        final SocketAddress http = new NetherNetHttpAddress("127.0.0.1", 19132);
-+        final SocketAddress rakNet = new InetSocketAddress("127.0.0.1", 19132);
++        final SocketAddress http = new InetSocketAddress("127.0.0.1", 19132);
++        final List<SocketAddress> nonHttp = List.of(new NetherNetLanAddress("127.0.0.1", 19132), new NetherNetXboxAddress("123"), new NetherNetXboxJsonRpcAddress("123"));
 +        for (final IntendedState state : List.of(IntendedState.LOGIN, IntendedState.TRANSFER)) {
 +            assertTrue(Client2ProxyHandler.requiresHttpIdentityLogin(http, BedrockProtocolVersion.BEDROCK_LATEST, state, false));
 +            assertFalse(Client2ProxyHandler.requiresHttpIdentityLogin(http, BedrockProtocolVersion.BEDROCK_LATEST, state, true));
-+            assertFalse(Client2ProxyHandler.requiresHttpIdentityLogin(rakNet, BedrockProtocolVersion.BEDROCK_LATEST, state, false));
++            for (final SocketAddress address : nonHttp) {
++                assertFalse(Client2ProxyHandler.requiresHttpIdentityLogin(address, BedrockProtocolVersion.BEDROCK_LATEST, state, false));
++            }
 +            assertFalse(Client2ProxyHandler.requiresHttpIdentityLogin(http, ProtocolVersion.v26_3, state, false));
 +        }
 +        assertFalse(Client2ProxyHandler.requiresHttpIdentityLogin(http, BedrockProtocolVersion.BEDROCK_LATEST, IntendedState.STATUS, false));
@@ -377,7 +390,7 @@ index 0000000..93742f0
 +        final var method = Client2ProxyHandler.class.getDeclaredMethod("connect", SocketAddress.class, ProtocolVersion.class, ProtocolVersion.class,
 +                IntendedState.class, HostAndPort.class, UserOptions.class, String[].class);
 +        method.setAccessible(true);
-+        method.invoke(handler, new NetherNetHttpAddress("127.0.0.1", 19132), BedrockProtocolVersion.BEDROCK_LATEST,
++        method.invoke(handler, new InetSocketAddress("127.0.0.1", 19132), BedrockProtocolVersion.BEDROCK_LATEST,
 +                ProtocolVersion.v26_3, IntendedState.LOGIN, HostAndPort.fromParts("127.0.0.1", 25565), new UserOptions(null, null), new String[]{"127.0.0.1"});
 +        assertNotNull(field("pendingIdentityLogin").get(handler));
 +    }
