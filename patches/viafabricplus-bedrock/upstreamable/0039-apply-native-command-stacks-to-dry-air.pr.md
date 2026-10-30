@@ -25,5 +25,5 @@ Focused tests and the complete four-project build pass.
 Fresh direct and ViaProxy renderer samples match native day, midnight, night-vision, and fixed twilight RGBA within 0.00001.
 Both recordings exit normally.
 
-Directional sunrise tint, spatial biome blending, precise effect distances and timing, End sky sampling, fluids, and weather remain open.
+Directional sunrise tint, spatial biome blending, timed command transitions, other status effects, End sky sampling, fluids, and weather remain open.
 The [owning patch](0039-apply-native-command-stacks-to-dry-air.patch) retains implementation rationale and native evidence.
