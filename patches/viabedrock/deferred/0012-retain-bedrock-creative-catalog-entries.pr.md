@@ -54,10 +54,18 @@ Every raw change clears selection and refreshes search immediately, including ca
 This refresh preserves population cursors and dirty tabs.
 Policy reinstallation preserves source rows, grouping and header expansion.
 
-The factory requires an active container owner and retains its opening generation.
-A later opening cannot reuse the old model, even when both openings use the same inventory object.
-Effective filtering and cursor participation remain explicit inputs.
-This API does not derive profile preferences or create a frontend screen.
+`NativePlayerRecipeState` constructs the real model for an installed E-key opening, including while its native acknowledgment is pending.
+The read-only context uses cached player sources and the connection's actual recipes.
+The acknowledgment preserves the model, query, selected output, and captured ability policies.
+Acknowledged container identity and generation still control item actions.
+A workbench model retains its exact container generation.
+Retired openings cannot read replacement sources or retire a later workbench model.
+
+Real profile settings update filtering and the selected tab.
+Missing profile preferences remain absent; the initial filtering value follows the observed current native constructor.
+Source, recipe, unlock, ability, rule, and preference changes invalidate the retained collections.
+Catalog replacement refreshes source collections while preserving the backend's installed policies and owned query.
+This state does not create a frontend screen.
 
 The reference uses Bedrock 1.26.51.1, build 51061372, protocol 2193.
 The original collection constructor, stored search callbacks, query setter, selected-stack operations, normalization, complete collection refresh and recipe counter execute together.
@@ -68,11 +76,15 @@ They include invalid UTF-8 bytes and queries beyond inline string capacity.
 The probes supply model and map backing, four source rows, an empty grouping registry, actor and recipe backing, text producers and CRT services.
 Native collection buffers and query temporaries return to the retained allocation baseline after their explicit destruction.
 These controls do not establish complete backend registration or controller lifetime.
-Frontend edit delivery and installed player-screen publication remain unfinished.
+Current 1.26.60.5 constructor and controller instruction mapping confirms the captured fields and initial filtering value.
+It does not establish native construction timing relative to the network acknowledgment or frame-level population timing.
+Unpositioned pending player contexts retain the documented fallback crafting tags.
+Frontend edit delivery and authored player-screen publication remain unfinished.
 The ordinary Java picker remains installed.
 
-All 104 core patches replay, and the four-project build passes 3,019 tests with 152 optional skips and no failures.
+Five lifecycle regression cases exercise pending source changes, retained search policies, stale acknowledgments, profile/catalog updates, and same-object workbench reopening.
+The full four-project build passes 3,106 tests with 325 optional skips and no failures.
 Both Checkstyle tasks pass.
-All 29 packaged checks pass against the built core JAR, with 34 production class origins verified.
-Both embedded consumers contain the same 1,544 core classes and 199 assets.
-The add-on also matches all 1,193 compiled client classes.
+All 105 core patches replay to the exact built source tree.
+Both embedded consumers contain the same 1,599 core classes, including the new context and lifecycle state.
+These tests establish Java ownership and observable collection state; they do not establish complete native screen parity.

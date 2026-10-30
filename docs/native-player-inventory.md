@@ -17,6 +17,18 @@ Bind clicks, data, and closes to the connection, menu object, menu ID, and openi
 A stale reply must not operate on a replacement screen.
 Keep global player-inventory reconciliation independent of a retired temporary menu.
 
+The installed opening also owns a read-only recipe context while the native acknowledgment is pending.
+It reads the real cached crafting grid, hotbar, inventory, and cursor.
+The acknowledgment retains this model and its captured search policy.
+Item requests still require the acknowledged container and its generation.
+A workbench model belongs to its exact container generation.
+
+`NativePlayerRecipeState` advances the retained collections and refreshes them when sources, recipes, unlocks, rules, or preferences change.
+Catalog replacement refreshes source collections without reconstructing the backend or replacing its query and selected output.
+Missing profile preferences remain absent.
+The backend starts with the observed native filtering value, then accepts actual profile settings.
+No selected tab is inferred from Java recipe-book defaults.
+
 The same negotiated messages serve direct and ViaProxy connections.
 Late capability announcements must not duplicate a legacy opening.
 Java creative inventory shares the native opening lifetime while retaining its item picker.
@@ -60,7 +72,9 @@ Use the [source guide](bedrock-development-sources.md) for versioned native refe
 
 ## Remaining limits
 
-Complete installed player/controller publication and native recipe admission remain unfinished.
+Authored player/controller publication and native recipe admission remain unfinished.
+The retained model alone does not replace the installed Java inventory screen.
+Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.
 The original inventory-background, rollback, food-use, and locator-bar reports remain unresolved.
