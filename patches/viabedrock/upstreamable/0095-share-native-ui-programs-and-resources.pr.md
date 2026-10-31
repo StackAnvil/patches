@@ -16,6 +16,11 @@ Prerequisites:
 
 Regression coverage includes `NativeContainerActionTest`, `NativeContainerDataTest`, `NativeContainerMessageTest`, `NativeCookingActionResultTest`.
 
+`InventoryStackCount` provides native count text separately from numeric binding quantities.
+Bedrock 1.26.60.5 (protocol 2225) hides counts below two, uses decimal text through 99, and displays `99+` above that.
+All 536 complete native formatter controls match the packaged Java producer.
+The controls supply caller storage and CRT string operations; they do not establish source quantities or visual parity.
+
 Program compilation, resource, and transport tests cover supported content. Transport acceptance does not establish screen interaction or visual parity.
 
 The [owning patch](0095-share-native-ui-programs-and-resources.patch) retains implementation rationale and versioned evidence.

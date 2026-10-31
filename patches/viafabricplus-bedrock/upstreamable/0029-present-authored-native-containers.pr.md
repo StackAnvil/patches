@@ -16,6 +16,9 @@ Prerequisites:
 
 Regression coverage includes `BedrockNativeContainerScreenTest`, `NativeContainerButtonTest`, `NativeContainerGeometryTest`, `NativeContainerInputTest`.
 
+Authored slot labels use [shared native count text](../../viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.pr.md).
+The consumer regression keeps raw binding quantities and genuine quickcraft preview text independent of display capping.
+
 Widget, lifecycle, and recorded menu controls cover admitted scenes. Complete player/cooking integration, live transfers, and the original E-key background report remain unresolved.
 
 The [owning patch](0029-present-authored-native-containers.patch) retains implementation rationale and versioned evidence.
