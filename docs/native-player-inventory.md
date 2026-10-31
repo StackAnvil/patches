@@ -92,9 +92,14 @@ Installed direct and ViaProxy checks retain the Survival recipe layout, includin
 Both routes return from Help with a carried stack and confirm its placement through server responses.
 Inactive item icons use separate lighting and opacity. The default disabled light multiplier is 0.25.
 Typed overrides and RGB conversion match selected native instruction controls. Complete material and pixel parity remain unverified.
-Bundle previews still restore ordinary controls.
+Storage bars read a native weight snapshot independently of Java bundle contents.
+Installed direct and ViaProxy controls retain a server-issued empty bundle in the Survival menu after reopening.
+Filled-bundle bars still need installed native comparison.
+Unknown storage snapshots restore ordinary controls.
+Hovering or carrying storage items also restores ordinary controls until native tooltips and selection are complete.
 Unsupported visible Help glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
-Bulk recipe actions, Creative cursor replacement, and complete installed native parity remain unfinished.
+Large Creative catalogs exceed the current scene work budget. Viewport expansion remains unfinished.
+Initial bundle insertion, bulk recipe actions, Creative cursor replacement, and complete installed native parity remain unfinished.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.

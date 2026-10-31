@@ -18,6 +18,12 @@ Prerequisites:
 
 Regression coverage includes `NativeItemNamesTest`, `NativeItemStackingTest`, `NativeContainerLegacyActionsTest`, `NativeContainerTransferTest`.
 
+`NativeItemStorageData` publishes storage weight independently of Java bundle contents.
+It reads typed definition components, cached weight, and actual dynamic contents. Missing containers remain unknown.
+The original 1.26.60.5 producer executes 159 controls; 24 representative cases ship as regression data.
+The controls supply Item queries, typed NBT lookup, container/vector backing, and descriptor storage.
+Component defaults, tooltip selection, source timing, and complete installed pixels remain unverified.
+
 Packet, menu-lifetime, and action tests cover supported adapters. Complete installed player/cooking controllers and live native parity remain unfinished.
 
 The [owning patch](0095-integrate-authored-native-ui-presentation.patch) retains implementation rationale and versioned evidence.

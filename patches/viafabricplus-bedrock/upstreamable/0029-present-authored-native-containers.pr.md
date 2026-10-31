@@ -33,9 +33,13 @@ Both routes open translated Help and return on Escape.
 Server responses confirm placement of the retained eight-log cursor stack.
 Inactive recipe icons carry separate lighting and opacity through extraction, cached atlas entries, and oversized item submission.
 Regressions retain a real unavailable recipe and restore both properties after nested extraction failures.
-Bundle previews still restore ordinary controls.
+Closed storage-item previews and bars read the core's native weight snapshot.
+The default-screen regression retains an empty bundle alongside an inactive recipe.
+Installed direct and ViaProxy controls retain a server-issued empty bundle in Survival after reopening.
+Unknown snapshots restore ordinary controls. Hovering or carrying storage items also restores ordinary controls until native tooltip rendering and selection are complete.
 Unsupported visible glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
 Rejected presentations remain retired until the next opening, so subsequent updates do not repeat the failed installation.
-Bulk recipe actions, Creative cursor replacement, complete cooking integration, live transfers, and the original E-key background report remain unresolved.
+Full Creative catalog expansion, initial bundle insertion, bulk recipe actions, and Creative cursor replacement remain unresolved.
+Complete cooking integration, live transfers, filled-bundle pixels, and the original E-key background report also remain unresolved.
 
 The [owning patch](0029-present-authored-native-containers.patch) retains implementation rationale and versioned evidence.
