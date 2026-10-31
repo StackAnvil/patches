@@ -1,4 +1,4 @@
-From ffa0baba5f2a9936927377fe51ae7b74577120df Mon Sep 17 00:00:00 2001
+From 7205493233fb38b23c228e0d4b96cfe69fa4e22a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -583,12 +583,25 @@ session reduces render-thread overlap-search samples. Static recipe,
 slot-grid and crafting-background pixels remain identical before and
 after the replacement. Software-renderer timing is diagnostic evidence,
 not a performance guarantee for player hardware or native pixel parity.
+
+Suppress gameplay HUD extraction while an authored native container is the
+current screen. Official Bedrock 1.26.60.5 (protocol 2225), with a log in
+the main hand and shield in the offhand, keeps both held items behind the
+Survival inventory but hides the gameplay hotbar, health and hunger.
+The installed add-on control incorrectly draws those HUD elements there.
+
+Gate the HUD call by the current native-container screen instead of
+changing the local HUD setting or server visibility state. Closing or
+replacing the screen restores normal HUD extraction immediately. Keep
+world and first-person item rendering independent of this screen rule.
+This does not establish shield-pose or complete inventory pixel parity.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../access/IBedrockGuiItemStyle.java          |   14 +
  .../MixinNativeContainerGeometry.java         |   46 +
  .../MixinNativeContainerScreenAdmission.java  |   28 +
  .../features/misc/MixinInventoryScreen.java   |   61 -
+ .../render/MixinNativeContainerHud.java       |   28 +
  .../MixinNativeContainerPresentation.java     |   26 +
  .../render/MixinNativeGuiItemAtlas.java       |   28 +
  .../render/MixinNativeGuiItemExtraction.java  |   32 +
@@ -638,7 +651,7 @@ not a performance guarantee for player hardware or native pixel parity.
  .../PlayerInventoryScreenClosePayload.java    |   22 +
  .../PlayerInventoryScreenLifecycle.java       |   74 +
  .../PlayerInventoryScreenRequestPayload.java  |   22 +
- .../viafabricplus-bedrock.mixins.json         |    8 +-
+ .../viafabricplus-bedrock.mixins.json         |    9 +-
  .../BedrockNativeContainerScreenTest.java     |  605 +++++++
  .../container/NativeContainerButtonTest.java  |  280 ++++
  .../NativeContainerGeometryTest.java          |  389 +++++
@@ -659,11 +672,12 @@ not a performance guarantee for player hardware or native pixel parity.
  .../NativePlayerPresentationTest.java         |  153 ++
  .../container/NativePlayerScreenTest.java     |  269 ++++
  .../PlayerInventoryScreenLifecycleTest.java   |   95 ++
- 75 files changed, 10151 insertions(+), 62 deletions(-)
+ 76 files changed, 10180 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerScreenAdmission.java
  delete mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/misc/MixinInventoryScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerHud.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerPresentation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeGuiItemAtlas.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeGuiItemExtraction.java
@@ -929,6 +943,40 @@ index 1349cd6..0000000
 -    }
 -
 -}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerHud.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerHud.java
+new file mode 100644
+index 0000000..1933bb3
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerHud.java
+@@ -0,0 +1,28 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
++import com.viaversion.viafabricplus.bedrock.screen.container.BedrockNativeContainerScreen;
++import net.minecraft.client.DeltaTracker;
++import net.minecraft.client.gui.Gui;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.Hud;
++import net.minecraft.client.gui.screens.Screen;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(Gui.class)
++public abstract class MixinNativeContainerHud {
++    @Shadow public abstract Screen screen();
++
++    @WrapWithCondition(method = "extractRenderState", at = @At(value = "INVOKE", target =
++            "Lnet/minecraft/client/gui/Hud;extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/DeltaTracker;)V"))
++    private boolean showGameplayHud(final Hud hud, final GuiGraphicsExtractor graphics, final DeltaTracker delta) {
++        return !(this.screen() instanceof BedrockNativeContainerScreen);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerPresentation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerPresentation.java
 new file mode 100644
 index 0000000..19e2421
@@ -6219,14 +6267,15 @@ index 0000000..a1d1f14
 +    public Type<PlayerInventoryScreenRequestPayload> type() { return TYPE; }
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index fef5b3f..99d0531 100644
+index fef5b3f..241b180 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -14,6 +14,11 @@
+@@ -14,6 +14,12 @@
      "features.render.MixinNativeChunkFluid",
      "features.render.MixinNativeRegionFluid",
      "compat.sodium.MixinSodiumNativeFluid",
 +    "features.render.MixinNativeContainerPresentation",
++    "features.render.MixinNativeContainerHud",
 +    "features.render.MixinNativeGuiItemState",
 +    "features.render.MixinNativeGuiItemExtraction",
 +    "features.render.MixinNativeGuiItemAtlas",
@@ -6234,7 +6283,7 @@ index fef5b3f..99d0531 100644
      "compat.iris.MixinIrisPipelines",
      "compat.iris.IrisProgramSourceConstructor",
      "compat.iris.MixinIrisEmissionPrograms",
-@@ -89,13 +94,14 @@
+@@ -89,13 +95,14 @@
      "features.creative.MixinCreativeModeInventoryScreen",
      "features.creative.MixinCreativeModeTab_ItemDisplayBuilder",
      "features.creative.MixinCreativeModeTabs",

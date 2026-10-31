@@ -56,6 +56,9 @@ Cumulative authored layers use separate Java GUI strata to bound overlap-orderin
 A same-session check preserves static recipe, slot-grid, and crafting-background pixels across this change.
 The installed Survival screen retains the translucent backdrop after its entrance animation.
 Live direct checks cover pickup, drag distribution, and return to the hotbar. The client and Bedrock server retain matching item totals.
+Authored containers suppress gameplay HUD extraction while they are the current screen.
+Official Bedrock 1.26.60.5 keeps the held log and shield visible behind the Survival inventory but hides the gameplay HUD.
+An installed control checks open, close, and reopen. The HUD returns on close, the local visibility setting stays unchanged, and every slot remains intact.
 Broader modpack timing, the reported menu overlap, and shield presentation still need verification.
 
 The [owning patch](0029-present-authored-native-containers.patch) retains implementation rationale and versioned evidence.
