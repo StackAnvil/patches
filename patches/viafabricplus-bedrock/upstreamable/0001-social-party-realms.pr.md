@@ -34,9 +34,9 @@ The packet handshake follows Mojang's [protocol 2193 destination cookie](https:/
 
 ## Validation
 
-Targeted Java tests cover permission hierarchy and Realm scoping, stable event/post merging, full comment-path likes, screenshot selection, text limits, destination identity, archive validation, upload targets, and save quota arithmetic. The standalone patch compiles against upstream dependencies and passes all 18 targeted tests. The full stack passes 924 tests with zero failures and 120 skips when run with the configured Bedrock asset bundle.
+Targeted Java tests cover permissions, Realm scoping, event merging, comment-path likes, screenshot selection, destination identity, archive validation, upload targets, and save quotas. The current full add-on suite passes with the configured Bedrock asset bundle.
 
-All 36 patches replay successfully. The feature patch applies to the pinned upstream base without setup. The packaged build passes. Private-display Java checks confirm the signed-in Realm list, unread badges, live story/event feed, comment screen, member filters and sorting controls, and Hub/server settings. The composer restores a draft after closing and reopening. Private-party creation and leaving work, and the party screen displays Join host and Travel with host controls. The test draft was discarded and the test party was left. No stories, comments, reports, or invitations were sent.
+The current stack replays in a fresh clone without cached ancestors. The packaged build passes. Earlier private-display checks covered the signed-in Realm list, unread badges, live feed, comments, member filters, and Hub settings. The composer restored drafts. Private-party creation and leaving worked, and the party screen showed Join host and Travel with host. Those observations do not establish live behavior on the updated upstream client.
 
 Live owner mutations, screenshot publication, a second-account party transfer, and pack installation remain unverified. The native launch guard prevented another native UI session after the host reboot. Gathering destinations are decoded but require a gathering client; this add-on joins Realms, external servers, and Xbox P2P sessions.
 
@@ -45,6 +45,8 @@ Live owner mutations, screenshot publication, a second-account party transfer, a
 Minecraft 26.3 numbers the left mouse button as 1. Shared action lists use `InputConstants.MOUSE_BUTTON_LEFT` so double-click activation works across social and Realm lists.
 
 The patch follows upstream convention plugins, version catalogs, and `jarInJar`. SignalR uses a current MessagePack adapter with aligned Jackson 2 dependencies to avoid loading the older bundled annotations on Jackson 3 hosts.
+
+Social services follow upstream's `features` packages. Shared list controls remain accessible to the separate friends and Realms screens. MinecraftAuth retains the snapshot API required by Realm timelines.
 
 ## Skin provider boundary
 
