@@ -88,8 +88,11 @@ The add-on buffers search edits while a command awaits its reply.
 The default player and workbench graphs resolve real slots, recipe rows, and local Help views.
 Survival Help opens Your First Craft. Creative Help opens the Encyclopedia at Creative Mode.
 Screen tests retain the opening, search, recipe sources, and carried stack across Back and Escape.
-Installed direct and ViaProxy checks reach Help in the inventory-only layout.
-Inactive recipe icons and bundle previews still restore ordinary controls.
+Installed direct and ViaProxy checks retain the Survival recipe layout, including unavailable rows, after reopening.
+Both routes return from Help with a carried stack and confirm its placement through server responses.
+Inactive item icons use separate lighting and opacity. The default disabled light multiplier is 0.25.
+Typed overrides and RGB conversion match selected native instruction controls. Complete material and pixel parity remain unverified.
+Bundle previews still restore ordinary controls.
 Unsupported visible Help glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
 Bulk recipe actions, Creative cursor replacement, and complete installed native parity remain unfinished.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.

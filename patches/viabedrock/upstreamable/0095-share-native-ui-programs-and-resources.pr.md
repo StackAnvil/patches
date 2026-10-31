@@ -21,6 +21,11 @@ Bedrock 1.26.60.5 (protocol 2225) hides counts below two, uses decimal text thro
 All 536 complete native formatter controls match the packaged Java producer.
 The controls supply caller storage and CRT string operations; they do not establish source quantities or visual parity.
 
+`InventoryItemFilter` separates disabled-item lighting from opacity and transports authored multiplier bindings.
+Current 1.26.60.5 instruction controls cover 150 typed property combinations and native RGB conversion.
+The packaged regression retains 50 object-property cases, including booleans, numeric extremes, and invalid types.
+These controls supply property lookup and ABI storage. Complete item geometry, materials, and final pixels remain unverified.
+
 Program compilation, resource, and transport tests cover supported content. Transport acceptance does not establish screen interaction or visual parity.
 
 Dynamic domain text uses the same native palette as ordinary labels.

@@ -28,9 +28,12 @@ Default player and workbench graphs retain all 46 menu slots and real recipe row
 Help uses the native How to Play or Encyclopedia graph and the client key bindings.
 Screen regressions cover slot confirmation, keyboard Back, Escape, repeated Help openings, and a retained carried stack.
 Model regressions retain the opening and pending search across Help and source updates.
-Live direct and ViaProxy checks reach Help in the inventory-only layout.
-The proxy control resolves navigation labels, returns on Escape, and confirms an eight-log pickup with a successful server response.
-Inactive recipe icons and bundle previews still restore ordinary controls.
+Live direct and ViaProxy checks retain the real Survival recipe layout and its inactive row after reopening.
+Both routes open translated Help and return on Escape.
+Server responses confirm placement of the retained eight-log cursor stack.
+Inactive recipe icons carry separate lighting and opacity through extraction, cached atlas entries, and oversized item submission.
+Regressions retain a real unavailable recipe and restore both properties after nested extraction failures.
+Bundle previews still restore ordinary controls.
 Unsupported visible glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
 Rejected presentations remain retired until the next opening, so subsequent updates do not repeat the failed installation.
 Bulk recipe actions, Creative cursor replacement, complete cooking integration, live transfers, and the original E-key background report remain unresolved.
