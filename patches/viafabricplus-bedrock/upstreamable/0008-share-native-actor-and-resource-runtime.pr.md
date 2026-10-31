@@ -24,8 +24,17 @@ Prerequisites:
 
 ## Validation and remaining limits
 
-Regression coverage includes `BedrockActorAnimationTest`, `BedrockActorQueriesTest`, `BedrockActorRenderSelectionTest`, `BedrockActorScaleTest`.
+Regression coverage includes `BedrockActorAnimationTest`, `BedrockActorQueriesTest`, `BedrockActorRenderSelectionTest`, `BedrockActorScaleTest`, and `BedrockActorPickingStateTest`.
 
 Native current/older/current cat and audio controls establish selected resource paths. Complete pose alignment, audio, particle, query, and visual parity remain unfinished.
+
+Three native 26.60 non-cardinal picking controls establish the camera ray calculation.
+Direct and proxy runs use matching vectors and preserve non-camera behavior.
+Outgoing hit coordinates differ by at most 0.000031 blocks for those controls.
+
+Current-pin direct and proxy runs match seven native armor-stand reach outcomes and eight block reach outcomes.
+Block controls cover stone, fence, diagonal approach, Survival, and Creative, with fresh reticle samples before every accepted input.
+Small differences in facing and eye height remain. These outcomes do not establish equal ray coordinates or complete picking parity.
+Other actor shapes and multipart target ordering remain open.
 
 The [owning patch](0008-share-native-actor-and-resource-runtime.patch) retains implementation rationale and versioned evidence.

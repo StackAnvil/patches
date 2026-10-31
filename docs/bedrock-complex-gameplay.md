@@ -53,7 +53,8 @@ Do not append each test run to a shared document.
 
 ## Current limits
 
-Water-edge falls, combined vision effects, native picking, and broader correction replay need focused comparisons.
+The [movement validation](../patches/viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md) records native water-boundary fall controls.
+Other fluid movement, combined vision effects, native picking, and broader correction replay need further comparisons.
 Server-authoritative mount behavior, mixed item use, and network conditions also remain partial.
 A test-driver defect and a production mismatch are separate findings.
 Neither one establishes parity for an unobserved result.

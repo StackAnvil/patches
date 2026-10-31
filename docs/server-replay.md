@@ -60,7 +60,7 @@ This setup allowance does not change production networking or server movement ch
 
 ### Record with the official client
 
-Prepare BedrockOnLinux through the capture lab, then use a Bedrock 1.26.51 installation:
+Prepare BedrockOnLinux through the capture lab, then use a Bedrock 1.26.60 installation:
 
 ```bash
 bun run capture prepare-launcher
@@ -73,11 +73,19 @@ Use `--native-home /absolute/path/to/installation` to select another prepared in
 The native client and saved MinecraftAuth account must belong to the same Xbox account. The relay verifies multiplayer tokens against the official issuer's published signing keys and binds native client properties to the authenticated client key. It preserves those properties and authenticates the upstream connection with a fresh session key. It records decrypted packets without translating gameplay. Pack reconstruction checks hashes and decrypts selected assets for replay. Missing bytes from a cached pack fail the capture. Pack parsing errors preserve the raw recording for offline repair. Success requires pack export to finish before shutdown.
 
 The shutdown hook closes active connections and waits for their event-loop cleanup.
+Handler removal also finishes export when a WebRTC disconnect omits the inactive callback.
 The launcher allows 45 seconds after termination for native cleanup, including the 35-second pack download limit.
 An unfinished pack export still fails the capture and preserves its raw journal.
 
 For NetherNet recordings, the relay connects to the HTTP signaling endpoint with the same authenticated session key.
-The native client connects to the relay over loopback RakNet. Gameplay packet bytes remain untranslated.
+The native client connects to the relay over loopback NetherNet with a temporary server identity.
+The first connection can show a local trust prompt. Gameplay packet bytes remain untranslated.
+Cancelled trust prompts and failed transport handshakes do not consume the recording.
+On the tested BedrockOnLinux 26.60 build, a loopback-only WebRTC candidate fails before gameplay.
+For live recordings, `--native-ice-address <local-ip>` binds WebRTC to a specific address on this host.
+This option exposes an ephemeral UDP port on that interface. HTTP signaling stays on loopback.
+Wildcard, multicast, and nonlocal addresses are rejected. Offline replay does not accept this option.
+Native replay remains unverified on this build.
 NetherNet uses DTLS. The relay applies the Bedrock AES stream only to RakNet, matching the core transport behavior.
 Transport tests verify compressed batches on both backends and RakNet encryption counters.
 
@@ -95,7 +103,8 @@ bun run server-replay selftest
 
 Allow enough time for client startup, pack conversion, and the full recorded scene. The scene clock starts at the recorded resource-pack stack. Earlier scene packets keep their order and arrive immediately after local pack negotiation. This skips the captured download delay and preserves world timing. A recorded subchunk reply batch waits until at least one entry matches a local request. Clients can group or omit requests differently, so the replay does not require every recorded batch entry to be requested. It sends the whole batch unchanged. This also lets slower clients finish loading packs before replies arrive. The scene clock pauses during that wait; a batch with no matching request fails after 15 seconds. Packet bytes and order stay unchanged.
 
-The replay server binds only to loopback. It creates a fresh offline handshake and serves packs through a loopback HTTP endpoint. It preserves the captured entity IDs, skins, world data, and packet order. Server transfers and recorded disconnects do not run.
+The replay server binds only to loopback. Native replay uses NetherNet, and Java replay uses RakNet.
+It creates a fresh offline handshake and serves packs through a loopback HTTP endpoint. It preserves the captured entity IDs, skins, world data, and packet order. Server transfers and recorded disconnects do not run.
 
 The default replay connects the Fabric add-on directly to the local Bedrock replay server. This exercises its native skin and entity renderer. A separate recorder mod exists only in the private test instance.
 

@@ -1,11 +1,20 @@
 # Inherit native air fog defaults
 
-Biomes without an air fog color currently receive Java's `#C0D8FF`. Bedrock 1.26.51.1 supplies `#ABD2FF` through `minecraft:fog_default` instead.
+## Purpose
 
-Use an explicit biome air color first, then the effective resource pack's default air color, then `#ABD2FF` if both are absent. The synthetic `the_void` biome follows the same default. This preserves server overrides and valid black colors. Water fog behavior stays unchanged.
+Biomes without an air color inherit the pack-defined data default before the native `#ABD2FF` fallback.
+The synthetic `the_void` biome uses the same default.
 
-The installed 1.26.51.1 vanilla fog archives contain `#ABD2FF` in their default fog settings. The 1.19.0 overlay archive has SHA-256 `74fd138548bcead6bd466ac26a5e10f7ad3988def3dff9277b7aceb94fe59e94`; its `default_fog_setting.json` entry has SHA-256 `373bd242339101bea36d7f1cc3cbb5b03d8b5a8d23d7759e46d0950d3549f45b`. All three bundled overlays defining `minecraft:fog_default` also contain this air color. A private Java probe loads all 60 configured vanilla packs into `ResourcePackStorage`; the effective parsed default air color is `0xABD2FF`, or RGB `(171, 210, 255)`.
+## Design constraints
 
-Validation: the full core suite passes with 281 tests executed, none skipped, and no failures. Both main and test Checkstyle tasks pass. Focused tests cover explicit biome precedence, black, inherited defaults, missing air entries, and the final fallback.
+Resolve the actual legacy default binding instead of assuming the asset name `minecraft:fog_default`.
+Preserve explicit biome colors, including black. Keep water fog separate.
 
-This patch corrects the air fog input. It does not port the complete native sky shader or establish complete sky pixel parity.
+## Validation and remaining limits
+
+`JavaRegistriesFogTest` covers color precedence and missing media.
+Native 1.26.60.5 Fancy controls confirm a custom green default beneath a replacement water-only biome binding.
+The resource and transport patches cover binding selection and distance composition.
+Complete native sky shading remains separate.
+
+The [owning patch](0070-inherit-native-air-fog-defaults.patch) retains the rationale and native evidence.

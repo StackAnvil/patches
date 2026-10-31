@@ -1,4 +1,4 @@
-From 1c8c6cfb6b362f9c66de94917ce4ea74df5faaa8 Mon Sep 17 00:00:00 2001
+From 4802a495a7a5357544ec2ca60c0cee4484e75c61 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(entities): bridge authoritative native picking hitboxes
@@ -32,10 +32,7 @@ Ordinary Java entity hits are relative to the displayed entity base, not
 Bedrock's actor origin. Convert them through javaPosition so boats and
 players do not add their hull/eye offsets to outgoing world hits.
 Protocol 2225 captures from native 1.26.60.5 and BDS 1.26.60.6 show a boat
-hit at Y64.555, while the old Java path reports Y64.93747. Removing the
-0.375 origin offset leaves a separate hull-picking difference of about
-0.0075; this change does not establish exact hull geometry parity.
-Regression tests cover boat movement, player origins, and proxy aliases.
+hit at Y64.555, while the old Java path reports Y64.93747. Regression tests cover boat movement, player origins, and proxy aliases.
 
 Native 1.26.60.5 protocol2225 captures include the picked world position
 in actor attacks. Java's attack packet omits that position, so an optional
@@ -52,20 +49,44 @@ the selected plane. Reuse the nonphysical picking proxies when the native
 geometry bridge is negotiated, retain authored hitboxes as the first
 choice, and leave physical dimensions and ordinary Java fallback intact.
 Replay existing actors when the capability arrives after their spawn.
+
+Bedrock 1.26.60.5 / protocol2225 and BDS1.26.60.6 native controls
+admit block centers inside 5.7 blocks and reject centers outside that
+radius, independently of the stone or fence hit surface and diagonal
+approach. Send the native maximum range to Java at join and after mode
+changes; abilities alone leave Java at 4.5 block and 3 entity reach.
+Native entity candidates use 3 blocks in Survival and 5.7 in Creative.
+
+Separate reach admission from the physical fallback's 0.1 surface pad.
+Settled native armor-stand attacks reach the padded face at 2.89 blocks,
+but 2.91 only swings, for empty hand and sword. Creative admits 5.6,
+but 5.61 only swings. Version the picking channel so a frontend never
+interprets the old surface-only snapshot as physical reach metadata.
+Authored boxes retain zero padding and their existing geometry.
+
+Advertise the negotiated attack capability after the play join even in
+an empty world. The frontend uses that same v2 negotiation to enable
+block-center admission; older proxy cores keep their original picker.
 ---
  .../api/model/NativeActorAttack.java          |  57 +++
  .../api/model/NativeActorHitboxes.java        | 104 +++++
- .../api/model/NativeActorPickingMessage.java  | 111 ++++++
+ .../api/model/NativeActorPickingMessage.java  | 121 ++++++
+ .../api/model/entity/ClientPlayerEntity.java  |  17 +
  .../viabedrock/api/model/entity/Entity.java   |  13 +
  .../protocol/packet/ClientPlayerPackets.java  |  49 ++-
+ .../protocol/packet/JoinPackets.java          |   1 +
  .../protocol/packet/MultiStatePackets.java    |  17 +
- .../protocol/storage/EntityTracker.java       | 115 ++++++
- .../storage/InteractionHitboxProxies.java     | 171 +++++++++
- .../api/model/NativeActorAttackTest.java      |  65 ++++
+ .../protocol/rewriter/GameTypeRewriter.java   |   6 +
+ .../protocol/storage/EntityTracker.java       | 125 ++++++
+ .../storage/InteractionHitboxProxies.java     | 171 ++++++++
+ .../api/model/NativeActorAttackTest.java      |  65 +++
  .../api/model/NativeActorHitboxesTest.java    | 123 ++++++
- .../model/NativeActorPickingMessageTest.java  |  79 ++++
- .../storage/InteractionHitboxProxiesTest.java | 356 ++++++++++++++++++
- 12 files changed, 1244 insertions(+), 16 deletions(-)
+ .../model/NativeActorPickingMessageTest.java  |  84 ++++
+ .../ClientPlayerInteractionRangeTest.java     |  86 ++++
+ .../UnderwaterMovementTransportTest.java      |   3 +
+ .../packet/CompletedFramePositionTest.java    |   6 +-
+ .../storage/InteractionHitboxProxiesTest.java | 379 ++++++++++++++++++
+ 18 files changed, 1409 insertions(+), 18 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorAttack.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorHitboxes.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessage.java
@@ -73,6 +94,7 @@ Replay existing actors when the capability arrives after their spawn.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorAttackTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorHitboxesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessageTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerInteractionRangeTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorAttack.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorAttack.java
@@ -250,10 +272,10 @@ index 00000000..deaab833
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessage.java
 new file mode 100644
-index 00000000..466dff8b
+index 00000000..46d9b3bf
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessage.java
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,121 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -269,17 +291,18 @@ index 00000000..466dff8b
 +import java.util.ArrayList;
 +import java.util.HashSet;
 +import java.util.List;
++import java.util.Objects;
 +import java.util.UUID;
 +
 +/** Separate picking geometry; physical actor dimensions are not changed. */
 +public sealed interface NativeActorPickingMessage permits NativeActorPickingMessage.Snapshot, NativeActorPickingMessage.Remove {
 +
-+    String CHANNEL = "viabedrock:actor_picking";
++    String CHANNEL = "viabedrock:actor_picking_v2";
 +    int MAX_PAYLOAD_BYTES = 32 + NativeActorHitboxes.MAX_BOXES * 32 + 16;
 +    Type<NativeActorPickingMessage> TYPE = new Type<>(NativeActorPickingMessage.class) {
 +        @Override
 +        public NativeActorPickingMessage read(final ByteBuf buffer) {
-+            if (buffer.readableBytes() > MAX_PAYLOAD_BYTES || Types.VAR_INT.readPrimitive(buffer) != 1
++            if (buffer.readableBytes() > MAX_PAYLOAD_BYTES || Types.VAR_INT.readPrimitive(buffer) != 2
 +                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
 +                throw new IllegalArgumentException("Unsupported native actor picking state");
 +            }
@@ -288,6 +311,7 @@ index 00000000..466dff8b
 +            final UUID lifetime = Types.UUID.read(buffer);
 +            final NativeActorPickingMessage message;
 +            if (kind == 0) {
++                final float reachPadding = buffer.readFloat();
 +                final int count = Types.VAR_INT.readPrimitive(buffer);
 +                if (count < 0 || count > NativeActorHitboxes.MAX_BOXES) {
 +                    throw new IllegalArgumentException("Invalid native picking part count");
@@ -296,7 +320,7 @@ index 00000000..466dff8b
 +                for (int i = 0; i < count; i++) {
 +                    parts.add(new Part(Types.UUID.read(buffer), buffer.readFloat(), buffer.readFloat(), buffer.readFloat()));
 +                }
-+                message = new Snapshot(owner, lifetime, parts);
++                message = new Snapshot(owner, lifetime, reachPadding, parts);
 +            } else if (kind == 1) {
 +                message = new Remove(owner, lifetime);
 +            } else {
@@ -310,12 +334,13 @@ index 00000000..466dff8b
 +
 +        @Override
 +        public void write(final ByteBuf buffer, final NativeActorPickingMessage message) {
-+            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, 2);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            buffer.writeByte(message instanceof Snapshot ? 0 : 1);
 +            Types.UUID.write(buffer, message.owner());
 +            Types.UUID.write(buffer, message.lifetime());
 +            if (message instanceof Snapshot snapshot) {
++                buffer.writeFloat(snapshot.reachPadding());
 +                Types.VAR_INT.writePrimitive(buffer, snapshot.parts().size());
 +                for (Part part : snapshot.parts()) {
 +                    Types.UUID.write(buffer, part.proxy());
@@ -331,7 +356,7 @@ index 00000000..466dff8b
 +
 +    record Part(UUID proxy, float widthX, float height, float widthZ) {
 +        public Part {
-+            java.util.Objects.requireNonNull(proxy);
++            Objects.requireNonNull(proxy);
 +            for (float dimension : new float[]{widthX, height, widthZ}) {
 +                if (!Float.isFinite(dimension) || dimension < 0F || dimension >= 2E9F) {
 +                    throw new IllegalArgumentException("Invalid native picking dimension");
@@ -340,16 +365,23 @@ index 00000000..466dff8b
 +        }
 +    }
 +
-+    record Snapshot(UUID owner, UUID lifetime, List<Part> parts) implements NativeActorPickingMessage {
++    /** Reach excludes this surface padding; authored picking boxes carry zero. */
++    record Snapshot(UUID owner, UUID lifetime, float reachPadding, List<Part> parts) implements NativeActorPickingMessage {
 +        public Snapshot {
-+            java.util.Objects.requireNonNull(owner);
-+            java.util.Objects.requireNonNull(lifetime);
++            Objects.requireNonNull(owner);
++            Objects.requireNonNull(lifetime);
 +            parts = List.copyOf(parts);
++            if (!Float.isFinite(reachPadding) || reachPadding < 0F) {
++                throw new IllegalArgumentException("Invalid native picking reach padding");
++            }
 +            final var ids = new HashSet<UUID>();
 +            if (parts.size() > NativeActorHitboxes.MAX_BOXES) {
 +                throw new IllegalArgumentException("Too many native picking parts");
 +            }
 +            for (Part part : parts) {
++                if (2F * reachPadding > Math.min(part.widthX(), Math.min(part.height(), part.widthZ()))) {
++                    throw new IllegalArgumentException("Native picking reach padding exceeds part dimensions");
++                }
 +                if (part.proxy().equals(owner) || !ids.add(part.proxy())) {
 +                    throw new IllegalArgumentException("Invalid native picking proxy identity");
 +                }
@@ -359,12 +391,47 @@ index 00000000..466dff8b
 +
 +    record Remove(UUID owner, UUID lifetime) implements NativeActorPickingMessage {
 +        public Remove {
-+            java.util.Objects.requireNonNull(owner);
-+            java.util.Objects.requireNonNull(lifetime);
++            Objects.requireNonNull(owner);
++            Objects.requireNonNull(lifetime);
 +        }
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+index 69840f6e..dab4e369 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+@@ -131,6 +131,20 @@ public class ClientPlayerEntity extends PlayerEntity {
+         attributes.send(BedrockProtocol.class);
+     }
+ 
++    /** Java does not derive these attributes from translated Bedrock abilities. */
++    public void sendInteractionRanges() {
++        final PacketWrapper attributes = PacketWrapper.create(ClientboundPackets26_3.UPDATE_ATTRIBUTES, this.user);
++        attributes.write(Types.VAR_INT, this.javaId); // entity id
++        attributes.write(Types.VAR_INT, 2); // attribute count
++        attributes.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaEntityAttributes().get(Attributes.BLOCK_INTERACTION_RANGE));
++        attributes.write(Types.DOUBLE, (double) 5.7F);
++        attributes.write(Types.VAR_INT, 0); // modifier count
++        attributes.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaEntityAttributes().get(Attributes.ENTITY_INTERACTION_RANGE));
++        attributes.write(Types.DOUBLE, GameTypeRewriter.isCreativeMode(this.gameType, this.gameSession.getLevelGameType()) ? (double) 5.7F : 3D);
++        attributes.write(Types.VAR_INT, 0); // modifier count
++        attributes.send(BedrockProtocol.class);
++    }
++
+     @Override
+     public void tick() {
+         super.tick();
+@@ -609,6 +623,9 @@ public class ClientPlayerEntity extends PlayerEntity {
+ 
+     public void updateJavaGameMode() {
+         this.javaGameMode = GameTypeRewriter.getEffectiveGameMode(this.gameType, this.gameSession.getLevelGameType());
++        if (this.initiallySpawned) {
++            this.sendInteractionRanges();
++        }
+         final VehiclePredictionStorage vehicles = this.user.get(VehiclePredictionStorage.class);
+         if (vehicles != null) {
+             vehicles.invalidate(this);
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 index 4c89abb2..b47f5471 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
@@ -505,6 +572,18 @@ index 718884c8..841a7cb8 100644
              wrapper.read(Types.BOOLEAN); // using secondary action
          });
          protocol.registerServerbound(ServerboundPackets26_3.MOVE_PLAYER_STATUS_ONLY, null, wrapper -> {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index 5c54c4e1..f73214cc 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -607,6 +607,7 @@ public final class JoinPackets {
+         clientPlayer.createTeam();
+         clientPlayer.sendInitialEntityData();
+         clientPlayer.sendStepHeight();
++        clientPlayer.sendInteractionRanges();
+         clientPlayer.updateAttributes(clientPlayer.attributes().values().toArray(new EntityAttribute[0]));
+         user.get(InventoryTracker.class).getArmorContainer().sendAttributes();
+         clientPlayer.setAbilities(clientPlayer.abilities());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 index 1cacdb35..41e73dde 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
@@ -554,11 +633,36 @@ index 1cacdb35..41e73dde 100644
              if (NativeCustomEntityMessage.channel(channels::contains) != null
                      && wrapper.user().has(EntityTracker.class)) {
                  wrapper.user().get(EntityTracker.class).sendNativeCustomEntitySnapshot();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/GameTypeRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/GameTypeRewriter.java
+index d06a858b..a62995d1 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/GameTypeRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/GameTypeRewriter.java
+@@ -22,6 +22,12 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
+ 
+ public final class GameTypeRewriter {
+ 
++    /** Native creative permission does not inherit the level mode for Undefined. */
++    public static boolean isCreativeMode(final GameType playerGameType, final GameType levelGameType) {
++        return playerGameType == GameType.Creative
++                || playerGameType == GameType.Default && levelGameType == GameType.Creative;
++    }
++
+     public static GameMode getEffectiveGameMode(final GameType playerGameType, final GameType levelGameType) {
+         GameType effectiveGameType = playerGameType;
+         if (effectiveGameType == GameType.Undefined || effectiveGameType == GameType.Default) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-index 81763394..74ce9352 100644
+index 81763394..934d83c9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-@@ -41,6 +41,10 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
+@@ -29,6 +29,7 @@ import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
+ import com.viaversion.viaversion.api.minecraft.item.Item;
+ import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
+ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
+ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
+ import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
+@@ -41,6 +42,10 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
  import net.raphimc.viabedrock.ViaBedrock;
  import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
  import net.raphimc.viabedrock.api.model.BlockState;
@@ -569,7 +673,7 @@ index 81763394..74ce9352 100644
  import net.raphimc.viabedrock.api.model.entity.*;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
-@@ -48,10 +52,13 @@ import net.raphimc.viabedrock.protocol.packet.NpcDialoguePackets;
+@@ -48,10 +53,13 @@ import net.raphimc.viabedrock.protocol.packet.NpcDialoguePackets;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorLinkType;
  import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
  import net.raphimc.viabedrock.protocol.model.EntityLink;
@@ -583,7 +687,7 @@ index 81763394..74ce9352 100644
  import java.util.LinkedHashMap;
  import java.util.LinkedHashSet;
  import java.util.List;
-@@ -66,8 +73,11 @@ public class EntityTracker extends StoredObject {
+@@ -66,8 +74,11 @@ public class EntityTracker extends StoredObject {
      private final EntityReferenceTracker references = new EntityReferenceTracker(this::getEntityByUid);
  
      private final AtomicInteger idCounter = new AtomicInteger(2);
@@ -595,7 +699,7 @@ index 81763394..74ce9352 100644
      private ClientPlayerEntity clientPlayerEntity = null;
      private final Long2ObjectMap<Entity> entities = new Long2ObjectOpenHashMap<>();
      private final Long2ObjectMap<Long> runtimeIdToUniqueId = new Long2ObjectOpenHashMap<>();
-@@ -79,6 +89,8 @@ public class EntityTracker extends StoredObject {
+@@ -79,6 +90,8 @@ public class EntityTracker extends StoredObject {
  
      public EntityTracker(final UserConnection user) {
          super(user);
@@ -604,7 +708,7 @@ index 81763394..74ce9352 100644
      }
  
      public Entity addEntity(final long uniqueId, final long runtimeId, final String type, final EntityTypes26_3 javaType) {
-@@ -336,6 +348,7 @@ public class EntityTracker extends StoredObject {
+@@ -336,6 +349,7 @@ public class EntityTracker extends StoredObject {
      public void markNativeActorsJoined() {
          this.nativeActorsJoined = true;
          this.sendNativeActorSnapshots();
@@ -612,11 +716,12 @@ index 81763394..74ce9352 100644
          this.sendMovementEffectSnapshots();
          this.sendUnderwaterMovementSnapshots();
          this.sendFlightMovementSnapshot();
-@@ -355,6 +368,52 @@ public class EntityTracker extends StoredObject {
+@@ -355,6 +369,61 @@ public class EntityTracker extends StoredObject {
          this.entities.values().forEach(entity -> entity.sendNativeActorSnapshot(true));
      }
  
 +    public void sendNativePickingSnapshots() {
++        this.advertiseNativeAttack();
 +        this.entities.values().forEach(entity -> {
 +            if (!(entity instanceof ClientPlayerEntity)) {
 +                this.pickingHitboxes.update(entity.uniqueId(), entity.position(), this.resolvedPickingHitboxes(entity));
@@ -626,14 +731,14 @@ index 81763394..74ce9352 100644
 +    }
 +
 +    private boolean nativePickingAvailable() {
-+        return this.nativeActorsJoined && this.user().getProtocolInfo().getServerState() == com.viaversion.viaversion.api.protocol.packet.State.PLAY
++        return this.nativeActorsJoined && this.user().getProtocolInfo().getServerState() == State.PLAY
 +                && this.user().has(ChannelStorage.class)
 +                && NativeActorMessage.hasStateChannel(this.user().get(ChannelStorage.class)::hasChannel)
 +                && this.user().get(ChannelStorage.class).hasChannel(NativeActorPickingMessage.CHANNEL);
 +    }
 +
-+    private void sendNativePickingSnapshot(final Entity entity, final boolean force) {
-+        if (entity instanceof ClientPlayerEntity || !this.nativePickingAvailable()) {
++    private void advertiseNativeAttack() {
++        if (!this.nativePickingAvailable()) {
 +            return;
 +        }
 +        if (!this.nativeAttackAdvertised) {
@@ -643,12 +748,20 @@ index 81763394..74ce9352 100644
 +            register.send(BedrockProtocol.class);
 +            this.nativeAttackAdvertised = true;
 +        }
++    }
++
++    private void sendNativePickingSnapshot(final Entity entity, final boolean force) {
++        if (entity instanceof ClientPlayerEntity || !this.nativePickingAvailable()) {
++            return;
++        }
++        this.advertiseNativeAttack();
 +        final var actor = entity.nativeActorSnapshot();
 +        final var parts = this.pickingHitboxes.parts(entity.uniqueId()).stream().map(proxy -> {
 +            final var size = proxy.box().dimensions();
 +            return new NativeActorPickingMessage.Part(proxy.uuid(), size.x(), size.y(), size.z());
 +        }).toList();
-+        final var snapshot = new NativeActorPickingMessage.Snapshot(entity.javaUuid(), actor.lifetime(), parts);
++        final var snapshot = new NativeActorPickingMessage.Snapshot(entity.javaUuid(), actor.lifetime(),
++                entity.pickingHitboxes().isEmpty() ? .1F : 0F, parts);
 +        if (force || !snapshot.equals(this.publishedPicking.get(entity.uniqueId()))) {
 +            this.sendNativePickingMessage(snapshot);
 +            this.publishedPicking.put(entity.uniqueId(), snapshot);
@@ -665,7 +778,7 @@ index 81763394..74ce9352 100644
      public void sendMovementEffectSnapshots() {
          if (this.nativeActorsJoined) {
              this.entities.values().forEach(Entity::sendMovementEffectSnapshot);
-@@ -407,12 +466,38 @@ public class EntityTracker extends StoredObject {
+@@ -407,12 +476,38 @@ public class EntityTracker extends StoredObject {
  
      public void entitySpawned(final Entity entity) {
          EntityReferenceTracker.sendUpdates(this.user(), this.references.actorSpawned(entity));
@@ -704,7 +817,7 @@ index 81763394..74ce9352 100644
                  EntityReferenceTracker.sendUpdates(user, tracker.references.actorRemoved(entity));
              }
          }
-@@ -423,10 +508,40 @@ public class EntityTracker extends StoredObject {
+@@ -423,10 +518,40 @@ public class EntityTracker extends StoredObject {
      }
  
      public Entity getEntityByJid(final int javaId) {
@@ -1124,10 +1237,10 @@ index 00000000..6292b78f
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessageTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessageTest.java
 new file mode 100644
-index 00000000..5f5c2427
+index 00000000..1dd99220
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorPickingMessageTest.java
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,84 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1138,6 +1251,7 @@ index 00000000..5f5c2427
 +import io.netty.buffer.Unpooled;
 +import org.junit.jupiter.api.Test;
 +
++import java.util.Collections;
 +import java.util.List;
 +import java.util.UUID;
 +
@@ -1151,8 +1265,10 @@ index 00000000..5f5c2427
 +        final UUID lifetime = UUID.randomUUID();
 +        final var parts = List.of(new NativeActorPickingMessage.Part(UUID.randomUUID(), 1F, 2F, .25F),
 +                new NativeActorPickingMessage.Part(UUID.randomUUID(), 0F, 0F, 2F));
-+        for (var message : List.of(new NativeActorPickingMessage.Snapshot(owner, lifetime, parts),
-+                new NativeActorPickingMessage.Snapshot(owner, lifetime, List.of()), new NativeActorPickingMessage.Remove(owner, lifetime))) {
++        for (var message : List.of(new NativeActorPickingMessage.Snapshot(owner, lifetime, 0F, parts),
++                new NativeActorPickingMessage.Snapshot(owner, lifetime, .1F, List.of(
++                        new NativeActorPickingMessage.Part(UUID.randomUUID(), .7F, 2.175F, .7F))),
++                new NativeActorPickingMessage.Snapshot(owner, lifetime, 0F, List.of()), new NativeActorPickingMessage.Remove(owner, lifetime))) {
 +            final var buffer = Unpooled.buffer();
 +            try {
 +                NativeActorPickingMessage.TYPE.write(buffer, message);
@@ -1171,18 +1287,20 @@ index 00000000..5f5c2427
 +        assertThrows(IllegalArgumentException.class, () -> new NativeActorPickingMessage.Part(UUID.randomUUID(), Float.NaN, 1F, 1F));
 +        assertThrows(IllegalArgumentException.class, () -> new NativeActorPickingMessage.Part(UUID.randomUUID(), 1F, -1F, 1F));
 +        final var part = new NativeActorPickingMessage.Part(UUID.randomUUID(), 1F, 2F, 1F);
-+        assertThrows(IllegalArgumentException.class, () -> new NativeActorPickingMessage.Snapshot(owner, lifetime, List.of(part, part)));
-+        assertThrows(IllegalArgumentException.class, () -> new NativeActorPickingMessage.Snapshot(owner, lifetime,
++        assertThrows(IllegalArgumentException.class, () -> new NativeActorPickingMessage.Snapshot(owner, lifetime, Float.NaN, List.of(part)));
++        assertThrows(IllegalArgumentException.class, () -> new NativeActorPickingMessage.Snapshot(owner, lifetime, .6F, List.of(part)));
++        assertThrows(IllegalArgumentException.class, () -> new NativeActorPickingMessage.Snapshot(owner, lifetime, 0F, List.of(part, part)));
++        assertThrows(IllegalArgumentException.class, () -> new NativeActorPickingMessage.Snapshot(owner, lifetime, 0F,
 +                List.of(new NativeActorPickingMessage.Part(owner, 1F, 2F, 1F))));
-+        assertThrows(IllegalArgumentException.class, () -> new NativeActorPickingMessage.Snapshot(owner, lifetime,
-+                java.util.Collections.nCopies(NativeActorHitboxes.MAX_BOXES + 1, part)));
++        assertThrows(IllegalArgumentException.class, () -> new NativeActorPickingMessage.Snapshot(owner, lifetime, 0F,
++                Collections.nCopies(NativeActorHitboxes.MAX_BOXES + 1, part)));
 +    }
 +
 +    @Test
 +    void rejectsTruncatedTrailingAndWrongVersionData() {
 +        final var source = Unpooled.buffer();
 +        try {
-+            NativeActorPickingMessage.TYPE.write(source, new NativeActorPickingMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(),
++            NativeActorPickingMessage.TYPE.write(source, new NativeActorPickingMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), 0F,
 +                    List.of(new NativeActorPickingMessage.Part(UUID.randomUUID(), 1F, 2F, 1F))));
 +            for (int length = 0; length < source.readableBytes(); length++) {
 +                final var truncated = source.copy(0, length);
@@ -1195,10 +1313,10 @@ index 00000000..5f5c2427
 +            source.writeByte(0);
 +            assertThrows(IllegalArgumentException.class, () -> NativeActorPickingMessage.TYPE.read(source));
 +            source.readerIndex(0);
-+            source.setByte(0, 2);
++            source.setByte(0, 1);
 +            assertThrows(IllegalArgumentException.class, () -> NativeActorPickingMessage.TYPE.read(source));
 +            source.readerIndex(0);
-+            source.setByte(0, 1);
++            source.setByte(0, 2);
 +            source.setByte(1, 0);
 +            assertThrows(IllegalArgumentException.class, () -> NativeActorPickingMessage.TYPE.read(source));
 +        } finally {
@@ -1207,12 +1325,142 @@ index 00000000..5f5c2427
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerInteractionRangeTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerInteractionRangeTest.java
+new file mode 100644
+index 00000000..d976fecc
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerInteractionRangeTest.java
+@@ -0,0 +1,86 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.entity;
++
++import com.google.common.collect.HashBiMap;
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.Protocol;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GameType;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class ClientPlayerInteractionRangeTest {
++
++    @Test
++    void publishesNativeReachAtJoinAndOnModeChanges() throws Exception {
++        Class.forName("com.viaversion.viaversion.api.minecraft.data.StructuredDataKey");
++        final var attributes = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("javaEntityAttributes");
++        attributes.setAccessible(true);
++        final Object previous = attributes.get(BedrockProtocol.MAPPINGS);
++        final var user = mock(UserConnection.class);
++        final var info = mock(ProtocolInfo.class);
++        final var session = mock(GameSessionStorage.class);
++        when(user.getProtocolInfo()).thenReturn(info);
++        when(info.getServerState()).thenReturn(State.CONFIGURATION);
++        when(user.get(GameSessionStorage.class)).thenReturn(session);
++        when(session.getLevelGameType()).thenReturn(GameType.Survival);
++        final var player = new ClientPlayerEntity(user, 1, UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0));
++        final List<PacketWrapper> sent = new ArrayList<>();
++        try (var packets = mockStatic(PacketWrapper.class)) {
++            attributes.set(BedrockProtocol.MAPPINGS, HashBiMap.create(Map.of(
++                    "minecraft:block_interaction_range", 10, "minecraft:entity_interaction_range", 11)));
++            packets.when(() -> PacketWrapper.create(ClientboundPackets26_3.UPDATE_ATTRIBUTES, user)).thenAnswer(invocation ->
++                    new PacketWrapperImpl(ClientboundPackets26_3.UPDATE_ATTRIBUTES, null, user) {
++                        @Override
++                        public void send(final Class<? extends Protocol> protocol, final boolean skipCurrentPipeline) {
++                            sent.add(this);
++                        }
++                    });
++            player.setGameType(GameType.Survival);
++            assertTrue(sent.isEmpty());
++            player.setInitiallySpawned();
++            player.sendInteractionRanges();
++            player.setGameType(GameType.Creative);
++            player.setGameType(GameType.Survival);
++            player.setGameType(GameType.Default);
++            when(session.getLevelGameType()).thenReturn(GameType.Creative);
++            player.updateJavaGameMode();
++            player.setGameType(GameType.Undefined);
++            final double[] ranges = {3D, (double) 5.7F, 3D, 3D, (double) 5.7F, 3D};
++            assertEquals(ranges.length, sent.size());
++            for (int i = 0; i < ranges.length; i++) {
++                final PacketWrapper packet = sent.get(i);
++                assertEquals(player.javaId(), packet.get(Types.VAR_INT, 0));
++                assertEquals(2, packet.get(Types.VAR_INT, 1));
++                assertEquals(10, packet.get(Types.VAR_INT, 2));
++                assertEquals((double) 5.7F, packet.get(Types.DOUBLE, 0));
++                assertEquals(0, packet.get(Types.VAR_INT, 3));
++                assertEquals(11, packet.get(Types.VAR_INT, 4));
++                assertEquals(ranges[i], packet.get(Types.DOUBLE, 1));
++                assertEquals(0, packet.get(Types.VAR_INT, 5));
++            }
++        } finally {
++            attributes.set(BedrockProtocol.MAPPINGS, previous);
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/UnderwaterMovementTransportTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/UnderwaterMovementTransportTest.java
+index ea6a1711..34524b67 100644
+--- a/src/test/java/net/raphimc/viabedrock/api/model/entity/UnderwaterMovementTransportTest.java
++++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/UnderwaterMovementTransportTest.java
+@@ -68,6 +68,9 @@ class UnderwaterMovementTransportTest {
+                     if (method.getName().equals("getProtocolInfo")) {
+                         return info;
+                     }
++                    if (method.getName().equals("has")) {
++                        return arguments[0] == EntityTracker.class || arguments[0] == ChannelStorage.class;
++                    }
+                     if (method.getName().equals("get")) {
+                         if (arguments[0] == EntityTracker.class) {
+                             return trackers[0];
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
+index 00721e22..f0ffff45 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
+@@ -82,6 +82,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
+ import static org.mockito.ArgumentMatchers.eq;
+ import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
+ import static org.mockito.Mockito.doAnswer;
++import static org.mockito.Mockito.doNothing;
+ import static org.mockito.Mockito.doReturn;
+ import static org.mockito.Mockito.mock;
+ import static org.mockito.Mockito.mockStatic;
+@@ -919,8 +920,9 @@ class CompletedFramePositionTest {
+             if (vehicleEnabled) {
+                 this.channels.addChannels(List.of(VehiclePredictionContext.CHANNEL, NativeActorMessage.CURRENT_CHANNEL));
+             }
+-            this.player = this.tracker.addEntity(new ClientPlayerEntity(this.user, 1, UUID.randomUUID(),
+-                    new PlayerAbilities(1, (byte) 0, (byte) 0)), false);
++            this.player = this.tracker.addEntity(spy(new ClientPlayerEntity(this.user, 1, UUID.randomUUID(),
++                    new PlayerAbilities(1, (byte) 0, (byte) 0))), false);
++            doNothing().when(this.player).sendInteractionRanges();
+             if (spawned) {
+                 this.player.setInitiallySpawned();
+             }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java
 new file mode 100644
-index 00000000..92a082a3
+index 00000000..57e5b9d8
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InteractionHitboxProxiesTest.java
-@@ -0,0 +1,356 @@
+@@ -0,0 +1,379 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1228,6 +1476,11 @@ index 00000000..92a082a3
 +import net.raphimc.viabedrock.api.model.NativeActorPickingMessage;
 +import net.raphimc.viabedrock.api.model.NativeActorAttack;
 +import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.protocol.Protocol;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
 +import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 +import net.raphimc.viabedrock.api.model.entity.BoatEntity;
 +import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
@@ -1242,6 +1495,7 @@ index 00000000..92a082a3
 +import org.junit.jupiter.api.Test;
 +
 +import java.lang.reflect.Proxy;
++import java.nio.charset.StandardCharsets;
 +import java.util.ArrayList;
 +import java.util.List;
 +import java.util.Map;
@@ -1251,6 +1505,7 @@ index 00000000..92a082a3
 +import java.util.concurrent.atomic.AtomicReference;
 +
 +import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.mockStatic;
 +
 +class InteractionHitboxProxiesTest {
 +
@@ -1469,6 +1724,22 @@ index 00000000..92a082a3
 +        assertEquals(false, available.invoke(tracker));
 +        channels.addChannels(List.of(NativeActorPickingMessage.CHANNEL));
 +        assertEquals(true, available.invoke(tracker));
++        final var registrations = new AtomicInteger();
++        final PacketWrapper registration = new PacketWrapperImpl(ClientboundPackets26_3.CUSTOM_PAYLOAD, null, user) {
++            @Override
++            public void send(final Class<? extends Protocol> protocol, final boolean skipCurrentPipeline) {
++                registrations.incrementAndGet();
++            }
++        };
++        try (var wrappers = mockStatic(PacketWrapper.class)) {
++            wrappers.when(() -> PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user)).thenReturn(registration);
++            tracker.sendNativePickingSnapshots();
++            assertEquals(1, registrations.get());
++            assertEquals("minecraft:register", registration.get(Types.STRING, 0));
++            assertArrayEquals(NativeActorAttack.CHANNEL.getBytes(StandardCharsets.UTF_8), registration.get(Types.REMAINING_BYTES, 0));
++            tracker.sendNativePickingSnapshots();
++            assertEquals(1, registrations.get());
++        }
 +        final var boat = new BoatEntity(null, 7, 42, "minecraft:boat", 9, UUID.randomUUID(), EntityTypes26_3.OAK_BOAT);
 +        assertTrue(tracker.resolvedPickingHitboxes(boat).isEmpty());
 +        boat.entityData().put(ActorDataIds.RESERVED_053, new EntityData(53, EntityDataTypesBedrock.FLOAT, 1.4F));
@@ -1542,7 +1813,7 @@ index 00000000..92a082a3
 +        publishedField.setAccessible(true);
 +        @SuppressWarnings("unchecked")
 +        final var published = (Map<Long, NativeActorPickingMessage.Snapshot>) publishedField.get(tracker);
-+        published.put(boat.uniqueId(), new NativeActorPickingMessage.Snapshot(boat.javaUuid(), lifetime, List.of()));
++        published.put(boat.uniqueId(), new NativeActorPickingMessage.Snapshot(boat.javaUuid(), lifetime, 0F, List.of()));
 +        final var attack = new NativeActorAttack(boat.javaId(), boat.javaUuid(), lifetime, new Position3f(10F, 20F, 30F));
 +        assertSame(boat, tracker.nativeAttackTarget(attack));
 +        assertNull(tracker.nativeAttackTarget(new NativeActorAttack(boat.javaId(), UUID.randomUUID(), lifetime, attack.position())));
@@ -1559,7 +1830,7 @@ index 00000000..92a082a3
 +        assertNull(tracker.nativeAttackTarget(aliasAttack));
 +        published.remove(boat.uniqueId());
 +        assertNull(tracker.nativeAttackTarget(attack));
-+        published.put(boat.uniqueId(), new NativeActorPickingMessage.Snapshot(boat.javaUuid(), lifetime, List.of()));
++        published.put(boat.uniqueId(), new NativeActorPickingMessage.Snapshot(boat.javaUuid(), lifetime, 0F, List.of()));
 +        channels.removeChannels(List.of(NativeActorPickingMessage.CHANNEL));
 +        assertNull(tracker.nativeAttackTarget(attack));
 +    }

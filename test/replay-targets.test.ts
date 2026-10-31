@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { hiveTarget, publicTarget } from "../src/replay/targets.ts";
+import { hiveTarget, publicTarget, viaProxyTarget } from "../src/replay/targets.ts";
 
 test("accepts catalog endpoints and keeps their transport", () => {
   expect(publicTarget("20.101.55.176:30787")).toBe("20.101.55.176:30787");
@@ -35,4 +35,10 @@ test("recognizes Hive targets without matching unrelated suffixes", () => {
     "nothivebedrock.cloud:19132",
   ])
     expect(hiveTarget(publicTarget(address))).toBe(false);
+});
+
+test("passes NetherNet hosts and ports to ViaProxy as socket addresses", () => {
+  expect(viaProxyTarget(publicTarget("nethernet://127.0.0.1:5701"))).toBe("127.0.0.1:5701");
+  expect(viaProxyTarget(publicTarget("nethernet://[::1]:5701"))).toBe("[::1]:5701");
+  expect(viaProxyTarget(publicTarget("example.org:19132"))).toBe("example.org:19132");
 });

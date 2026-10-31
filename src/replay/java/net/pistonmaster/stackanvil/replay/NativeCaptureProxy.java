@@ -63,14 +63,22 @@ public final class NativeCaptureProxy {
     private final AtomicBoolean used = new AtomicBoolean();
     private final ChannelGroup connections = new DefaultChannelGroup(ImmediateEventExecutor.INSTANCE, true);
 
-    private NativeCaptureProxy(Path directory, InetSocketAddress target, String account, boolean netherNet, EventLoopGroup loops) {
+    NativeCaptureProxy(Path directory, InetSocketAddress target, String account, boolean netherNet, EventLoopGroup loops) {
         this.directory = directory; this.target = target; this.account = account; this.netherNet = netherNet; this.loops = loops;
     }
 
     public static void main(String[] args) {
         try {
-            if (args.length != 5 && (args.length != 6 || !args[5].equals("--nethernet"))) {
-                throw new IllegalArgumentException("NativeCaptureProxy <private-directory> <loopback-port> <host> <port> <account-json|offline> [--nethernet]");
+            if (args.length < 5) {
+                throw new IllegalArgumentException("NativeCaptureProxy <private-directory> <loopback-port> <host> <port> <account-json|offline> [--nethernet] [--ice-address <local-ip>]");
+            }
+            boolean netherNet = false;
+            InetAddress iceAddress = null;
+            for (int index = 5; index < args.length; index++) {
+                if (args[index].equals("--nethernet") && !netherNet) netherNet = true;
+                else if (args[index].equals("--ice-address") && iceAddress == null && index + 1 < args.length)
+                    iceAddress = InetAddress.ofLiteral(args[++index]);
+                else throw new IllegalArgumentException("Unknown or repeated native capture option");
             }
             Path directory = Path.of(args[0]).toAbsolutePath();
             Files.createDirectories(directory);
@@ -80,22 +88,8 @@ public final class NativeCaptureProxy {
             if (args[4].equals("offline") && !target.getAddress().isLoopbackAddress()) throw new IllegalArgumentException("Offline identity is restricted to a local backend");
             EventLoopGroup loops = new MultiThreadIoEventLoopGroup(2, NioIoHandler.newFactory());
             try {
-                NativeCaptureProxy proxy = new NativeCaptureProxy(directory, target, args[4], args.length == 6, loops);
-                String motd = "MCPE;StackAnvil native recorder;" + ProtocolConstants.BEDROCK_PROTOCOL_VERSION + ";" + ProtocolConstants.BEDROCK_VERSION_NAME + ";0;1;1;Capture;Survival;1;" + args[1] + ";" + args[1] + ";";
-                Channel server = new ServerBootstrap().group(loops).channelFactory(RakChannelFactory.server(NioDatagramChannel.class))
-                        .option(RakChannelOption.RAK_ADVERTISEMENT, Unpooled.copiedBuffer(motd, StandardCharsets.UTF_8))
-                        .option(RakChannelOption.RAK_SUPPORTED_PROTOCOLS, new int[]{ProtocolConstants.BEDROCK_RAKNET_PROTOCOL_VERSION})
-                        .option(RakChannelOption.RAK_MAX_CONNECTIONS, 1)
-                        // Native login data fragments arrive in bursts over this loopback-only connection.
-                        .option(RakChannelOption.RAK_PACKET_LIMIT, 4096)
-                        .childHandler(new ChannelInitializer<Channel>() {
-                            @Override protected void initChannel(Channel channel) {
-                                if (!proxy.used.compareAndSet(false, true)) { channel.close(); return; }
-                                proxy.connections.add(channel);
-                                pipeline(channel, true);
-                                channel.pipeline().addLast("native-capture", proxy.new Session());
-                            }
-                        }).bind("127.0.0.1", Integer.parseInt(args[1])).sync().channel();
+                NativeCaptureProxy proxy = new NativeCaptureProxy(directory, target, args[4], netherNet, loops);
+                Channel server = proxy.bind(Integer.parseInt(args[1]), iceAddress);
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> closeCapture(server, proxy.connections, loops), "native-capture-shutdown"));
                 System.out.println("StackAnvil native capture ready on " + server.localAddress());
                 server.closeFuture().sync();
@@ -105,6 +99,17 @@ public final class NativeCaptureProxy {
             System.err.println("Native capture failed: " + error.getClass().getSimpleName());
             System.exit(1);
         }
+    }
+
+    Channel bind(int port, InetAddress iceAddress) throws Exception {
+        return LocalBedrockServer.bootstrap(loops, port, "StackAnvil native recorder", true, account.equals("offline"), iceAddress)
+                .childHandler(new ChannelInitializer<Channel>() {
+                    @Override protected void initChannel(Channel channel) {
+                        connections.add(channel);
+                        pipeline(channel, false);
+                        channel.pipeline().addLast("native-capture", new Session());
+                    }
+                }).bind("127.0.0.1", port).sync().channel();
     }
 
     static void closeCapture(Channel server, ChannelGroup connections, EventLoopGroup loops) {
@@ -189,8 +194,6 @@ public final class NativeCaptureProxy {
 
         @Override public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
             upstream = ctx.channel();
-            journal = new PacketJournal(directory.resolve("packets.sbr"), ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
-            packs = new NativeCapturePacks(directory);
         }
 
         @Override protected void channelRead0(ChannelHandlerContext ctx, ByteBuf input) throws Exception {
@@ -198,6 +201,10 @@ public final class NativeCaptureProxy {
             int id = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(view) & 1023;
             if (phase == 0 && id == 193) {
                 if (view.readInt() != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) throw new IllegalArgumentException("Native version differs from journal protocol");
+                // A failed RTC handshake or a cancelled trust prompt must not consume the recording.
+                if (!used.compareAndSet(false, true)) { ctx.close(); return; }
+                journal = new PacketJournal(directory.resolve("packets.sbr"), ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
+                packs = new NativeCapturePacks(directory);
                 ByteBuf settings = ctx.alloc().buffer();
                 Types.VAR_INT.writePrimitive(settings, 143);
                 settings.writeShortLE(0).writeShortLE(0).writeBoolean(false).writeByte(0).writeFloatLE(0);
@@ -320,11 +327,16 @@ public final class NativeCaptureProxy {
             if (downstream != null) downstream.close();
         }
         @Override public void exceptionCaught(ChannelHandlerContext ctx, Throwable error) { fail(error); }
-        @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception { finishCapture(); }
+        @Override public void handlerRemoved(ChannelHandlerContext ctx) throws Exception { finishCapture(); }
+
+        private void finishCapture() throws Exception {
             synchronized (this) {
                 if (closing) return;
                 closing = true;
-                if (journal != null) journal.close();
+                // NetherNet can remove the handler after its data channel already became inactive.
+                if (journal == null) return;
+                journal.close();
             }
             if (downstream != null) downstream.close();
             if (packs != null) {

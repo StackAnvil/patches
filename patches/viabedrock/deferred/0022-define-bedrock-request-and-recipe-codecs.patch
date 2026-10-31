@@ -1,4 +1,4 @@
-From 804968bc09f8efc3d3a1e95c180565ce25041ff5 Mon Sep 17 00:00:00 2001
+From 9e9493dc95f6cf49535576b905d4f8294cee2dff Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 27 Oct 2026 21:08:16 +0100
 Subject: [PATCH] feat(inventory): define Bedrock request and recipe codecs
@@ -47,8 +47,21 @@ and descriptor decoding, packet/error retirement and static cleanup run;
 only valid read-only byte I/O and standard CRT/heap/synchronization services
 are hosted. The controls use empty result vectors and declared registry
 backing, not physical network delivery, concrete admission or installed UI.
+
+Encode CraftRecipeAuto separately from ordinary grid crafting. Official
+Bedrock 1.26.60.5, protocol 2225, sends action 13 with Cereal variant 11
+when Shift-clicking a workbench recipe. With 30 oak and two birch planks,
+the selected chest candidate requests three crafts and eight explicit
+named oak ingredients before results, consumption and placement actions.
+Keep its descriptor union separate from CraftingData's string-map format;
+preserve unsigned short ingredient counts and signed short Molang versions.
+
+A byte-for-byte native action fixture protects the ingredient boundary.
+Schema vectors cover the remaining descriptor variants and width limits.
+The codec enables native bulk requests; it does not publish a player screen
+or establish complete recipe-action behavior.
 ---
- .../inventory/ItemStackRequestAction.java     | 124 ++++++++++
+ .../inventory/ItemStackRequestAction.java     | 149 +++++++++++
  .../model/inventory/ItemStackRequestInfo.java |  28 +++
  .../inventory/ItemStackRequestSlotInfo.java   |  23 ++
  .../ItemStackResponseContainerInfo.java       |  25 ++
@@ -65,7 +78,7 @@ backing, not physical network delivery, concrete admission or installed UI.
  .../protocol/model/recipe/SmithingRecipe.java |  78 ++++++
  .../protocol/storage/CraftingDataStorage.java |  39 +++
  .../protocol/types/InventoryTypes.java        |  23 +-
- .../types/inventory/ItemStackActionType.java  |  89 +++++++
+ .../types/inventory/ItemStackActionType.java  | 118 +++++++++
  .../ItemStackContainerResponseType.java       |  56 +++++
  .../inventory/ItemStackRequestResultType.java |  74 ++++++
  .../types/inventory/ItemStackRequestType.java |  45 ++++
@@ -76,12 +89,13 @@ backing, not physical network delivery, concrete admission or installed UI.
  .../item/NetworkItemStackDescriptorType.java  |   2 +-
  .../types/recipe/CraftingDataReader.java      | 175 +++++++++++++
  .../recipe/NetworkItemDescriptorType.java     | 101 ++++++++
+ .../inventory/ItemStackAutoCraftTypeTest.java |  91 +++++++
  .../types/inventory/ItemStackCodecTest.java   | 232 ++++++++++++++++++
  .../ItemStackRequestResultTypeTest.java       |  55 +++++
  .../types/item/NetworkItemCountTest.java      |  87 +++++++
  .../types/recipe/CraftingDataReaderTest.java  |  85 +++++++
  .../recipe/NetworkItemDescriptorTypeTest.java | 144 +++++++++++
- 33 files changed, 2294 insertions(+), 5 deletions(-)
+ 34 files changed, 2439 insertions(+), 5 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestInfo.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestSlotInfo.java
@@ -107,6 +121,7 @@ backing, not physical network delivery, concrete admission or installed UI.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackSlotResponseType.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReader.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorType.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackAutoCraftTypeTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackCodecTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackRequestResultTypeTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/item/NetworkItemCountTest.java
@@ -115,10 +130,10 @@ backing, not physical network delivery, concrete admission or installed UI.
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java b/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java
 new file mode 100644
-index 00000000..7b9310f5
+index 00000000..93f73370
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,149 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -132,10 +147,11 @@ index 00000000..7b9310f5
 +
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackRequestActionType;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
 +
 +import java.util.List;
 +
-+public sealed interface ItemStackRequestAction permits ItemStackRequestAction.TakeAction, ItemStackRequestAction.PlaceAction, ItemStackRequestAction.SwapAction, ItemStackRequestAction.DropAction, ItemStackRequestAction.DestroyAction, ItemStackRequestAction.ConsumeAction, ItemStackRequestAction.BeaconPaymentAction, ItemStackRequestAction.CraftRecipeAction, ItemStackRequestAction.CraftCreativeAction, ItemStackRequestAction.CraftRecipeOptionalAction, ItemStackRequestAction.CraftResultsDeprecatedAction, ItemStackRequestAction.CraftLoomAction {
++public sealed interface ItemStackRequestAction permits ItemStackRequestAction.TakeAction, ItemStackRequestAction.PlaceAction, ItemStackRequestAction.SwapAction, ItemStackRequestAction.DropAction, ItemStackRequestAction.DestroyAction, ItemStackRequestAction.ConsumeAction, ItemStackRequestAction.BeaconPaymentAction, ItemStackRequestAction.CraftRecipeAction, ItemStackRequestAction.CraftRecipeAutoAction, ItemStackRequestAction.CraftCreativeAction, ItemStackRequestAction.CraftRecipeOptionalAction, ItemStackRequestAction.CraftResultsDeprecatedAction, ItemStackRequestAction.CraftLoomAction {
 +
 +    ItemStackRequestActionType getType();
 +
@@ -202,6 +218,30 @@ index 00000000..7b9310f5
 +        @Override
 +        public ItemStackRequestActionType getType() {
 +            return ItemStackRequestActionType.CraftRecipe;
++        }
++    }
++
++    record CraftRecipeAutoAction(int recipeNetworkId, int numberOfRequestedCrafts,
++                                 List<ItemDescriptor> ingredients) implements ItemStackRequestAction {
++        public CraftRecipeAutoAction {
++            if (recipeNetworkId == 0 || numberOfRequestedCrafts < 1 || numberOfRequestedCrafts > 255) {
++                throw new IllegalArgumentException("Invalid automatic craft request");
++            }
++            ingredients = List.copyOf(ingredients);
++            for (final ItemDescriptor ingredient : ingredients) {
++                if (ingredient.amount() < 1 || ingredient.amount() > 65535) {
++                    throw new IllegalArgumentException("Automatic craft ingredient count is outside the unsigned short range");
++                }
++                if (ingredient instanceof ItemDescriptor.MolangDescriptor molang
++                        && (molang.molangVersion() < Short.MIN_VALUE || molang.molangVersion() > Short.MAX_VALUE)) {
++                    throw new IllegalArgumentException("Automatic craft Molang version is outside the signed short range");
++                }
++            }
++        }
++
++        @Override
++        public ItemStackRequestActionType getType() {
++            return ItemStackRequestActionType.CraftRecipeAuto;
 +        }
 +    }
 +
@@ -1193,10 +1233,10 @@ index e37cc63f..0a587c29 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackActionType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackActionType.java
 new file mode 100644
-index 00000000..eeca9439
+index 00000000..17d19209
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackActionType.java
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,118 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1214,6 +1254,7 @@ index 00000000..eeca9439
 +
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +import net.raphimc.viabedrock.protocol.types.InventoryTypes;
 +import net.raphimc.viabedrock.protocol.types.array.ArrayType;
@@ -1267,6 +1308,13 @@ index 00000000..eeca9439
 +        } else if (value instanceof ItemStackRequestAction.CraftRecipeAction action) {
 +            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, action.recipeNetworkId());
 +            buffer.writeByte(action.numberOfRequestedCrafts());
++        } else if (value instanceof ItemStackRequestAction.CraftRecipeAutoAction action) {
++            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, action.recipeNetworkId());
++            buffer.writeByte(action.numberOfRequestedCrafts());
++            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, action.ingredients().size());
++            for (final ItemDescriptor ingredient : action.ingredients()) {
++                writeIngredient(buffer, ingredient);
++            }
 +        } else if (value instanceof ItemStackRequestAction.CraftCreativeAction action) {
 +            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, action.creativeItemNetworkId());
 +            buffer.writeByte(action.numberOfRequestedCrafts());
@@ -1283,6 +1331,27 @@ index 00000000..eeca9439
 +            throw new IllegalArgumentException(
 +                    "Unsupported item stack action: " + value.getClass().getSimpleName());
 +        }
++    }
++
++    private static void writeIngredient(final ByteBuf buffer, final ItemDescriptor ingredient) {
++        // StackRequest uses a descriptor union, unlike CraftingData's string map.
++        final int type = ingredient.getType().getValue();
++        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, type);
++        buffer.writeByte(type);
++        switch (ingredient) {
++            case ItemDescriptor.ItemNameDescriptor named -> {
++                BedrockTypes.STRING.write(buffer, named.fullName());
++                BedrockTypes.VAR_INT.write(buffer, named.auxValue());
++            }
++            case ItemDescriptor.MolangDescriptor molang -> {
++                BedrockTypes.STRING.write(buffer, molang.tagExpression());
++                buffer.writeShortLE(molang.molangVersion());
++            }
++            case ItemDescriptor.ItemTagDescriptor tag -> BedrockTypes.STRING.write(buffer, tag.itemTag());
++            case ItemDescriptor.InvalidDescriptor _ -> { }
++            default -> throw new IllegalArgumentException("Unsupported automatic craft ingredient");
++        }
++        buffer.writeShortLE(ingredient.amount());
 +    }
 +
 +}
@@ -1998,6 +2067,103 @@ index 00000000..a485cb82
 +        if (amount < 0 || amount > 64) {
 +            throw new IllegalArgumentException("CraftingData ingredient counts must be between zero and 64");
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackAutoCraftTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackAutoCraftTypeTest.java
+new file mode 100644
+index 00000000..75faa496
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackAutoCraftTypeTest.java
+@@ -0,0 +1,91 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.types.inventory;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.HexFormat;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++class ItemStackAutoCraftTypeTest {
++
++    @Test
++    void workbenchBulkCraftMatchesNative2225IngredientDescriptors() {
++        // Official 1.26.60.5: Shift-click Chest with 30 oak and two birch planks.
++        // The selected candidate crafts three chests with eight named oak ingredients.
++        final var oak = new ItemDescriptor.ItemNameDescriptor("minecraft:oak_planks", 0);
++        final var ingredients = new ArrayList<ItemDescriptor>(List.of(oak, oak, oak, oak, oak, oak, oak, oak));
++        final var action = new ItemStackRequestAction.CraftRecipeAutoAction(4065, 3, ingredients);
++        ingredients.clear();
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            new ItemStackActionType(new ItemStackRequestResultType(id -> null, 0)).write(buffer, action);
++            final byte[] actual = new byte[buffer.readableBytes()];
++            buffer.readBytes(actual);
++            assertArrayEquals(HexFormat.of().parseHex("""
++                0b0de11f03080101146d696e6563726166743a6f616b5f706c616e6b730001000101146d696e6563726166743a6f616b5f706c61
++                6e6b730001000101146d696e6563726166743a6f616b5f706c616e6b730001000101146d696e6563726166743a6f616b5f706c61
++                6e6b730001000101146d696e6563726166743a6f616b5f706c616e6b730001000101146d696e6563726166743a6f616b5f706c61
++                6e6b730001000101146d696e6563726166743a6f616b5f706c616e6b730001000101146d696e6563726166743a6f616b5f706c61
++                6e6b73000100
++                """.replaceAll("\\s", "")), actual);
++            assertEquals(8, action.ingredients().size());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void descriptorUnionPreservesUnsignedCountsAndMolangVersion() {
++        // Protocol-2225 RecipeIngredient schema, distinct from CraftingData's map/count format.
++        final var action = new ItemStackRequestAction.CraftRecipeAutoAction(-1, 255, List.of(
++                new ItemDescriptor.InvalidDescriptor(),
++                new ItemDescriptor.MolangDescriptor("q.all_tags('x')", 13, 300),
++                new ItemDescriptor.ItemTagDescriptor("planks", 65535)));
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            new ItemStackActionType(new ItemStackRequestResultType(id -> null, 0)).write(buffer, action);
++            final byte[] actual = new byte[buffer.readableBytes()];
++            buffer.readBytes(actual);
++            assertArrayEquals(HexFormat.of().parseHex(
++                    "0b0dffffffff0fff030000010002020f712e616c6c5f7461677328277827290d002c01030306706c616e6b73ffff"), actual);
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void automaticCraftRejectsValuesThatWouldWrapOnTheWire() {
++        final var ingredient = new ItemDescriptor.ItemNameDescriptor("minecraft:oak_planks", 0);
++        assertThrows(IllegalArgumentException.class,
++                () -> new ItemStackRequestAction.CraftRecipeAutoAction(0, 1, List.of(ingredient)));
++        for (final int count : new int[]{0, 256}) {
++            assertThrows(IllegalArgumentException.class,
++                    () -> new ItemStackRequestAction.CraftRecipeAutoAction(1, count, List.of(ingredient)));
++        }
++        for (final int amount : new int[]{0, 65536}) {
++            assertThrows(IllegalArgumentException.class,
++                    () -> new ItemStackRequestAction.CraftRecipeAutoAction(1, 1, List.of(ingredient.withAmount(amount))));
++        }
++        assertThrows(IllegalArgumentException.class,
++                () -> new ItemStackRequestAction.CraftRecipeAutoAction(1, 1,
++                        List.of(new ItemDescriptor.MolangDescriptor("q.all_tags('x')", 65549, 1))));
 +    }
 +
 +}

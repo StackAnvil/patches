@@ -16,6 +16,30 @@ Prerequisites:
 
 Regression coverage includes `BedrockNativeContainerScreenTest`, `NativeContainerButtonTest`, `NativeContainerGeometryTest`, `NativeContainerInputTest`.
 
-Widget, lifecycle, and recorded menu controls cover admitted scenes. Complete player/cooking integration, live transfers, and the original E-key background report remain unresolved.
+Authored slot labels use [shared native count text](../../viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.pr.md).
+The consumer regression keeps raw binding quantities and genuine quickcraft preview text independent of display capping.
+
+Player and workbench snapshots retain actual menu slots, recipe identities, and full item previews.
+Commands carry the opening, generation, snapshot revision, and request sequence.
+Buffered search edits survive an acknowledgment that advances the container generation.
+Late replies and hover exits cannot affect a replacement opening or selection.
+
+Default player and workbench graphs retain all 46 menu slots and real recipe rows.
+Help uses the native How to Play or Encyclopedia graph and the client key bindings.
+Screen regressions cover slot confirmation, keyboard Back, Escape, repeated Help openings, and a retained carried stack.
+Model regressions retain the opening and pending search across Help and source updates.
+Live direct and ViaProxy checks retain the real Survival recipe layout and its inactive row after reopening.
+Both routes open translated Help and return on Escape.
+Server responses confirm placement of the retained eight-log cursor stack.
+Inactive recipe icons carry separate lighting and opacity through extraction, cached atlas entries, and oversized item submission.
+Regressions retain a real unavailable recipe and restore both properties after nested extraction failures.
+Closed storage-item previews and bars read the core's native weight snapshot.
+The default-screen regression retains an empty bundle alongside an inactive recipe.
+Installed direct and ViaProxy controls retain a server-issued empty bundle in Survival after reopening.
+Unknown snapshots restore ordinary controls. Hovering or carrying storage items also restores ordinary controls until native tooltip rendering and selection are complete.
+Unsupported visible glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
+Rejected presentations remain retired until the next opening, so subsequent updates do not repeat the failed installation.
+Full Creative catalog expansion, initial bundle insertion, bulk recipe actions, and Creative cursor replacement remain unresolved.
+Complete cooking integration, live transfers, filled-bundle pixels, and the original E-key background report also remain unresolved.
 
 The [owning patch](0029-present-authored-native-containers.patch) retains implementation rationale and versioned evidence.

@@ -36,3 +36,8 @@ export function hiveTarget(address: string): boolean {
     host.endsWith(".hivebedrock.network")
   );
 }
+
+/** ViaProxy selects HTTP NetherNet for ordinary socket addresses. */
+export function viaProxyTarget(address: string): string {
+  return address.startsWith("nethernet://") ? address.slice("nethernet://".length) : address;
+}

@@ -16,6 +16,22 @@ Prerequisites:
 
 Regression coverage includes `NativeContainerActionTest`, `NativeContainerDataTest`, `NativeContainerMessageTest`, `NativeCookingActionResultTest`.
 
+`InventoryStackCount` provides native count text separately from numeric binding quantities.
+Bedrock 1.26.60.5 (protocol 2225) hides counts below two, uses decimal text through 99, and displays `99+` above that.
+All 536 complete native formatter controls match the packaged Java producer.
+The controls supply caller storage and CRT string operations; they do not establish source quantities or visual parity.
+
+`InventoryItemFilter` separates disabled-item lighting from opacity and transports authored multiplier bindings.
+Current 1.26.60.5 instruction controls cover 150 typed property combinations and native RGB conversion.
+The packaged regression retains 50 object-property cases, including booleans, numeric extremes, and invalid types.
+These controls supply property lookup and ABI storage. Complete item geometry, materials, and final pixels remain unverified.
+
 Program compilation, resource, and transport tests cover supported content. Transport acceptance does not establish screen interaction or visual parity.
 
+Dynamic domain text uses the same native palette as ordinary labels.
+Help regressions cover translated components and exported program round trips.
+
 The [owning patch](0095-share-native-ui-programs-and-resources.patch) retains implementation rationale and versioned evidence.
+
+View bindings can read an authored `toggle_view_binding_name` alias.
+A regression checks section visibility when the destination has a different local toggle value.

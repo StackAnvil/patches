@@ -15,6 +15,7 @@ import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.util.concurrent.ImmediateEventExecutor;
 import net.raphimc.viabedrock.api.util.CryptUtil;
 import net.raphimc.viabedrock.netty.CompressionCodec;
+import net.raphimc.viabedrock.netty.nethernet.BedrockHttpSignaling;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketCompressionAlgorithm;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ResourcePackResponse;
@@ -22,9 +23,14 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
 import org.cloudburstmc.netty.channel.raknet.packet.RakMessage;
 import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
+import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
+import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
+import org.cloudburstmc.netty.util.nethernet.TokenTrust;
 
 import java.nio.file.*;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.io.*;
 import java.util.zip.*;
@@ -62,8 +68,80 @@ public final class NativeCaptureSelfTest {
         packHttpClose(200);
         packHttpClose(503);
         captureShutdown();
+        nativeFrontendRetry();
         if (args.length == 2) smoke(Integer.parseInt(args[0]), Path.of(args[1]));
-        System.out.println("PASS native relay JWT claim preservation, trusted multiplayer identity and proof of possession, ECDH, transport framing, and encrypted chunk-pack export" + (args.length == 2 ? ", local backend reached StartGame" : ""));
+        System.out.println("PASS native relay JWT claim preservation, trusted multiplayer identity and proof of possession, ECDH, transport framing, NetherNet reconnect admission, and encrypted chunk-pack export" + (args.length == 2 ? ", local backend reached StartGame" : ""));
+    }
+
+    private static void nativeFrontendRetry() throws Exception {
+        PrintStream console = System.out;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        Path directory = Files.createTempDirectory("stackanvil-native-frontend");
+        PrivateFiles.protectDirectory(directory);
+        EventLoopGroup loops = new MultiThreadIoEventLoopGroup(2, NioIoHandler.newFactory());
+        Channel server = null;
+        List<Channel> clients = new ArrayList<>();
+        System.setOut(new PrintStream(output, true, StandardCharsets.UTF_8));
+        try {
+            int port;
+            try (ServerSocket available = new ServerSocket(0, 1, new InetSocketAddress("127.0.0.1", 0).getAddress())) {
+                port = available.getLocalPort();
+            }
+            NativeCaptureProxy capture = new NativeCaptureProxy(directory, new InetSocketAddress("127.0.0.1", 9), "offline", true, loops);
+            try {
+                capture.bind(port, InetAddress.ofLiteral("0.0.0.0"));
+                throw new AssertionError("Native capture accepted a wildcard ICE address");
+            } catch (IllegalArgumentException expected) { }
+            server = capture.bind(port, InetAddress.ofLiteral("127.0.0.1"));
+            for (boolean requestSettings : List.of(false, true)) {
+                CompletableFuture<Integer> response = new CompletableFuture<>();
+                Channel client = new Bootstrap().group(loops)
+                        .channelFactory(NetherNetChannelFactory.client(new BedrockHttpSignaling()))
+                        .option(NetherChannelOption.NETHER_CLIENT_IDENTITY, NativeCaptureProxy.Identity.selfSigned(UUID.randomUUID()).signaling())
+                        .option(NetherChannelOption.NETHER_CLIENT_SERVER_TRUST, TokenTrust.ANY)
+                        .handler(new ChannelInitializer<Channel>() {
+                            @Override protected void initChannel(Channel channel) {
+                                NativeCaptureProxy.pipeline(channel, false);
+                                channel.pipeline().addLast(new SimpleChannelInboundHandler<ByteBuf>() {
+                                    @Override public void channelActive(ChannelHandlerContext ctx) {
+                                        if (requestSettings) {
+                                            ByteBuf request = ctx.alloc().buffer();
+                                            Types.VAR_INT.writePrimitive(request, 193);
+                                            request.writeInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
+                                            ctx.writeAndFlush(request);
+                                        }
+                                    }
+                                    @Override protected void channelRead0(ChannelHandlerContext ctx, ByteBuf packet) {
+                                        response.complete(Types.VAR_INT.readPrimitive(packet));
+                                    }
+                                    @Override public void exceptionCaught(ChannelHandlerContext ctx, Throwable error) {
+                                        response.completeExceptionally(error);
+                                        ctx.close();
+                                    }
+                                });
+                            }
+                        }).connect("127.0.0.1", port).sync().channel();
+                clients.add(client);
+                if (requestSettings) {
+                    if (response.get(15, TimeUnit.SECONDS) != 143) throw new AssertionError("Native frontend did not answer network settings");
+                    if (!Files.isRegularFile(directory.resolve("packets.sbr"))) throw new AssertionError("Admitted capture has no journal");
+                } else if (Files.exists(directory.resolve("packets.sbr"))) {
+                    throw new AssertionError("Transport setup consumed the capture before a game packet");
+                }
+                client.close().sync();
+            }
+        } finally {
+            for (Channel client : clients) client.close().syncUninterruptibly();
+            if (server != null) server.close().syncUninterruptibly();
+            loops.shutdownGracefully().syncUninterruptibly();
+            System.setOut(console);
+            console.print(output.toString(StandardCharsets.UTF_8));
+            try (var files = Files.walk(directory)) {
+                for (Path file : files.sorted(Comparator.reverseOrder()).toList()) Files.delete(file);
+            }
+        }
+        if (!output.toString(StandardCharsets.UTF_8).contains("StackAnvil native pack observation complete"))
+            throw new AssertionError("Native disconnect did not finish capture export");
     }
 
     private static void offlineSignalingIdentity(String clientJwt, KeyPair nativeKey) throws Exception {

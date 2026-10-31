@@ -40,7 +40,8 @@ Keep account tokens, profile data, downloaded packs, and captures private.
 ## Validation
 
 Use controlled appearances with distinct pixels, geometry, animation, and tint metadata.
-Check the server echo and the rendered result independently.
+Check the server echo, observer delivery, and rendered result independently.
+Record the native trusted-skins setting. Delivery and the serialized trust flag alone do not prove that native accepts an appearance.
 Include a second actor when the change concerns remote skins or ownership.
 Use the [capture lab](capture-lab.md) and [server replay](server-replay.md) for bounded visual comparisons.
 
@@ -54,7 +55,7 @@ The owning patch notes describe their specific validation and limits:
 
 ## Remaining limits
 
-Native armor masking and profile/LOD texture changes still need matching fixtures.
+Other wardrobe categories, rapid profile changes, and distinct LOD texture selection still need matching fixtures.
 Enchanted shields, complete first-person appearance, live mounts, remote skins, and motion timing remain partial or unverified.
 Platform purchases, complete account synchronization, and broader emote parity remain open.
 Keep current status in the [compatibility page](bedrock-coverage.md), not a chronological skin journal.
