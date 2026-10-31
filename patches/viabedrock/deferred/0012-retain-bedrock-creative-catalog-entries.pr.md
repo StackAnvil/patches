@@ -102,3 +102,12 @@ These controls do not execute the complete native cache wrapper or establish ins
 
 Five lifecycle regression cases exercise pending source changes, retained search policies, stale acknowledgments, profile/catalog updates, and same-object workbench reopening.
 These tests establish Java ownership and observable collection state; they do not establish complete native screen parity.
+
+Creative catalog cells use the current effective game mode for permission.
+They remain active without recipe ingredients, while retained availability and captured search policies stay unchanged.
+The Bedrock 1.26.60.5 background callback bypasses recipe-disabled colors in Creative.
+A protocol-2225 native capture selects a trapped chest through CraftCreative and takes the resulting stack to the cursor.
+Current native background controls cover explicit and inherited Creative modes.
+A snapshot regression checks active Creative cells without ingredients and restores recipe restrictions in Survival.
+The full build passes with 3,153 passing tests and 325 skipped tests. Fresh-clone replay passes for all 105 core patches.
+A live add-on check removes the red disabled backgrounds. Catalog selection still sends no item request and needs further action-path work.

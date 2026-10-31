@@ -1,4 +1,4 @@
-From 6e667d7fc79c738b7d4ccf52660435bee5fefb3e Mon Sep 17 00:00:00 2001
+From 072fe85252faeea27e4dee5ae5c4e285adf64941 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -226,6 +226,19 @@ subsequent ranges follow the real viewport rather than removing catalog
 rows or changing search results. Other callers keep full expansion.
 A 2,000-cell Creative source regression checks distant ranges, actual menu
 slots and exported-program replay without replacing the source model.
+
+Keep Creative catalog cells active independently of recipe ingredients.
+Bedrock 1.26.60.5 background callback 14506bb30 bypasses the disabled
+recipe gate in Creative mode. A matching protocol-2225 native capture
+selects an unavailable trapped-chest recipe through CraftCreative, then
+takes its stack to the cursor. Applying the collection's recipe-disabled
+flag to published Creative cells colored every uncraftable entry red and
+rejected the click before it could reach that request path.
+
+Use the current effective raw game mode for cell permission while leaving
+retained availability, captured search policies, row identities and source
+counts intact. A snapshot regression checks Creative cells with no recipe
+ingredients and restores recipe gating after returning to Survival.
 ---
  .../model/NativePlayerInventoryAction.java    |  88 ++++
  .../model/NativePlayerInventoryMessage.java   | 271 ++++++++++
@@ -251,12 +264,12 @@ slots and exported-program replay without replacing the source model.
  .../ui/PlayerInventoryUiTest.java             | 126 +++++
  .../protocol/model/CreativeCatalogTest.java   | 382 ++++++++++++++
  .../protocol/packet/InventoryPacketsTest.java | 267 ++++++++--
- .../rewriter/PlayerRecipeModelTest.java       | 412 +++++++++++++++
+ .../rewriter/PlayerRecipeModelTest.java       | 450 +++++++++++++++++
  ...egisteredPlayerRecipeAvailabilityTest.java |   5 +-
  .../RegisteredPlayerRecipeSearchTest.java     |   3 +-
  .../storage/CreativeInventoryActionTest.java  | 214 ++++++++
  .../storage/InventoryRequestTrackerTest.java  |  83 +++
- 29 files changed, 4101 insertions(+), 170 deletions(-)
+ 29 files changed, 4139 insertions(+), 170 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryResult.java
@@ -2659,7 +2672,7 @@ index 04ad1756..4a6f0c14 100644
      private void updateInventoryOptions() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 new file mode 100644
-index 00000000..255ff6db
+index 00000000..94c66ad6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 @@ -0,0 +1,471 @@
@@ -3026,6 +3039,7 @@ index 00000000..255ff6db
 +        final var recipes = this.user().get(CraftingDataTracker.class);
 +        final var resources = this.user().get(ResourcePackStorage.class);
 +        final var catalog = items.creativeCatalog();
++        final boolean creative = GameTypeRewriter.isCreativeMode(this.inputs.gameType, this.inputs.levelGameType);
 +        final var counts = new ArrayList<Integer>();
 +        for (final var view : List.of(CreativeInventoryModel.View.CONSTRUCTION, CreativeInventoryModel.View.EQUIPMENT,
 +                CreativeInventoryModel.View.ITEMS, CreativeInventoryModel.View.NATURE)) {
@@ -3055,7 +3069,7 @@ index 00000000..255ff6db
 +                final int id = cells.size();
 +                final int modifier = row instanceof RecipeCollection.Header<?, ?> header ? header.expanded() ? 2 : 1 : 0;
 +                final int source = entry != null && entry.catalogEntry() != null ? entry.catalogEntry().netId() : 0;
-+                final boolean disabled = collection.disabled(id, new RecipeCollection.Eligibility<CreativeCatalog.CollectionEntry, CreativeCatalog.Group>() {
++                final boolean disabled = !creative && collection.disabled(id, new RecipeCollection.Eligibility<CreativeCatalog.CollectionEntry, CreativeCatalog.Group>() {
 +                    @Override
 +                    public int evaluate(final RecipeCollection.Row<CreativeCatalog.CollectionEntry, CreativeCatalog.Group> ignored) {
 +                        return state;
@@ -3084,7 +3098,6 @@ index 00000000..255ff6db
 +                            "#container_item_background_texture", new JsonPrimitive(texture))));
 +            }
 +        }
-+        final boolean creative = GameTypeRewriter.isCreativeMode(this.inputs.gameType, this.inputs.levelGameType);
 +        final boolean filtering = this.preferences == null || this.preferences.filtering();
 +        final String key = switch (tab) {
 +            case 1 -> "craftingScreen.tab.construction";
@@ -4374,10 +4387,10 @@ index 19fe63ab..8cc84c93 100644
  }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
 new file mode 100644
-index 00000000..90b84689
+index 00000000..c5f9da3a
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
-@@ -0,0 +1,412 @@
+@@ -0,0 +1,450 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4397,6 +4410,8 @@ index 00000000..90b84689
 +import net.raphimc.viabedrock.protocol.model.InventoryOptions;
 +import net.raphimc.viabedrock.protocol.storage.InventoryOptionsStorage;
 +import net.raphimc.viabedrock.protocol.storage.NativePlayerRecipeState;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.api.resourcepack.ui.PlayerInventoryUi;
 +import net.raphimc.viabedrock.protocol.storage.PlayerInventoryScreenTracker;
 +import net.raphimc.viabedrock.api.resourcepack.ui.RecipeCollection;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.AbilitiesIndex;
@@ -4459,6 +4474,42 @@ index 00000000..90b84689
 +        context.inventory.inventory().setCurrentContainerClosed(false);
 +        context.inventory.inventory().setCurrentContainer(context.inventory.owner());
 +        assertThrows(IllegalStateException.class, () -> context.model.outputCount(output));
++    }
++
++    @Test
++    void creativeCatalogCellsRemainActiveWithoutCraftingIngredients() throws Exception {
++        final var f = installed(true, false);
++        final var user = f.context.items.user();
++        final var player = user.get(EntityTracker.class).getClientPlayer();
++        final var session = mock(GameSessionStorage.class);
++        when(user.get(GameSessionStorage.class)).thenReturn(session);
++        when(session.getLevelGameType()).thenReturn(GameType.Survival);
++        when(player.gameType()).thenReturn(GameType.Creative);
++        final var resources = mock(ResourcePackStorage.class, RETURNS_DEEP_STUBS);
++        when(user.get(ResourcePackStorage.class)).thenReturn(resources);
++        when(resources.getTexts().translate(anyString())).thenAnswer(call -> call.getArgument(0));
++        doReturn(javaItem()).when(f.context.items).javaItem(any(BedrockItem.class));
++        user.get(CraftingDataTracker.class).updateCraftingDataList(List.of(), true);
++        f.context.inventory.inventory().getInventoryContainer().setItem(9, BedrockItem.empty());
++        f.screens.request(new PlayerInventoryScreenRequest(1, true));
++        for (int tick = 0; tick < 20; tick++) {
++            f.state.tick();
++        }
++        final var snapshot = NativePlayerRecipeState.class.getDeclaredMethod("snapshot");
++        snapshot.setAccessible(true);
++        final var presentation = snapshot.invoke(f.state);
++        final var state = presentation.getClass().getDeclaredMethod("state");
++        state.setAccessible(true);
++        final var creative = (PlayerInventoryUi.State) state.invoke(presentation);
++        assertFalse(creative.cells().isEmpty());
++        assertTrue(creative.cells().stream().allMatch(cell -> !cell.disabled()));
++        assertEquals("textures/ui/recipe_book_item_bg", creative.cells().getFirst().presentation()
++                .get("#container_item_background_texture").getAsString());
++        when(player.gameType()).thenReturn(GameType.Survival);
++        f.state.tick();
++        final var survival = (PlayerInventoryUi.State) state.invoke(snapshot.invoke(f.state));
++        assertTrue(survival.cells().stream().allMatch(PlayerInventoryUi.Cell::disabled));
++        assertEquals(creative.cells().getFirst().availability(), survival.cells().getFirst().availability());
 +    }
 +
 +    @Test
