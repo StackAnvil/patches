@@ -1,4 +1,4 @@
-From e9f6d54aa627ff9b5f38d702bacfef33319ab4c5 Mon Sep 17 00:00:00 2001
+From 1d462dae8614109151bc563b54ee79503e0af80e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -657,6 +657,28 @@ game cards. Correct the capacity boundary on either rescaling axis while
 keeping measurably larger cells on the next row. The reduced fractional
 fixture fails before the correction. This reconstructs the observed layout
 constraint and does not claim the native internal rounding algorithm.
+
+Skip child-state selection for leaf controls after recording their own
+opacity and enabled draw state. Leaf controls have no named children to
+exclude. This avoids repeated JSON lookups and empty-set allocation in
+the inventory's per-frame traversal while preserving authored output.
+A current Survival inventory profile identifies this traversal as a hot
+render path; shared presentation and layout regressions remain unchanged.
+
+Honor scale_from_starting_alpha when creating alpha animation tracks.
+Capture the control's authored alpha once, retain it with the animation
+across scene refreshes, and multiply the sampled value after interpolation.
+Apply that scale to the potential-opacity bound as well. Absolute tracks
+keep their existing behavior.
+
+The default 1.26.60.5 Survival backdrop authors alpha 0.4 and requests this
+scaling on its entrance fade. Ignoring the flag replaces 0.4 with 1.0 and
+hides the entire world. The pinned native factory at 141c62bd0 captures
+ImageComponent alpha into the alpha track, and updater 141c5e330 multiplies
+the interpolation result by that captured value. The native clone retains
+the scale. A reduced fade and scene-refresh regression fails before this
+correction and covers scaled bounds, the settled backdrop and absolute
+animation controls afterward.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    2 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -696,7 +718,7 @@ constraint and does not claim the native internal rounding algorithm.
  .../screen/ui/NativeUiActorCamera.java        |   60 +
  .../screen/ui/NativeUiActorPortraits.java     |  258 +++++
  .../screen/ui/NativeUiAnimationLifecycle.java |  131 +++
- .../bedrock/screen/ui/NativeUiAnimations.java |  382 +++++++
+ .../bedrock/screen/ui/NativeUiAnimations.java |  383 +++++++
  .../bedrock/screen/ui/NativeUiAseprite.java   |   54 +
  .../bedrock/screen/ui/NativeUiButton.java     |  167 +++
  .../screen/ui/NativeUiCollectionWindow.java   |   92 ++
@@ -748,7 +770,7 @@ constraint and does not claim the native internal rounding algorithm.
  .../screen/ui/NativeUiActorCameraTest.java    |  102 ++
  .../screen/ui/NativeUiActorPortraitsTest.java |  164 +++
  .../ui/NativeUiAnimationLifecycleTest.java    |  155 +++
- .../screen/ui/NativeUiAnimationsTest.java     |  264 +++++
+ .../screen/ui/NativeUiAnimationsTest.java     |  286 +++++
  .../screen/ui/NativeUiAsepriteTest.java       |  108 ++
  .../bedrock/screen/ui/NativeUiButtonTest.java |  127 +++
  .../ui/NativeUiCollectionWindowTest.java      |  144 +++
@@ -772,7 +794,7 @@ constraint and does not claim the native internal rounding algorithm.
  .../ui/NativeUiTextureAnimationTest.java      |  108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |   86 ++
  .../screen/ui/NativeUiViewportTest.java       |   95 ++
- 114 files changed, 13000 insertions(+), 36 deletions(-)
+ 114 files changed, 13023 insertions(+), 36 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -3581,10 +3603,10 @@ index 0000000..687730c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java
 new file mode 100644
-index 0000000..6bc0cbe
+index 0000000..057c0e9
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java
-@@ -0,0 +1,382 @@
+@@ -0,0 +1,383 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3715,9 +3737,9 @@ index 0000000..6bc0cbe
 +            final JsonObject program = node.properties().getAsJsonObject("animation_program");
 +            if (program != null) {
 +                for (final var value : program.getAsJsonArray("tracks")) {
-+                    final Definition definition = new Definition(value.getAsJsonObject());
++                    final Definition definition = new Definition(value.getAsJsonObject(), node.number("alpha", 1));
 +                    this.definitions.add(definition);
-+                    if (definition.alpha) this.potential = Math.max(this.potential, Math.max(definition.track.from, definition.track.to));
++                    if (definition.alpha) this.potential = Math.max(this.potential, Math.max(definition.track.from, definition.track.to) * definition.alphaScale);
 +                }
 +                for (final var root : program.getAsJsonArray("roots")) this.active.add(root.getAsInt());
 +            }
@@ -3846,7 +3868,7 @@ index 0000000..6bc0cbe
 +                this.u = new TextureCoordinate(0, 1, definition.uvFrom.x + (definition.uvTo.x - definition.uvFrom.x) * factor);
 +                this.v = new TextureCoordinate(0, 1, definition.uvFrom.y + (definition.uvTo.y - definition.uvFrom.y) * factor);
 +            }
-+            if (definition.alpha) this.current = reset ? definition.track.from : definition.track.value(elapsed);
++            if (definition.alpha) this.current = (reset ? definition.track.from : definition.track.value(elapsed)) * definition.alphaScale;
 +            if (definition.colorFrom != null && this.node.type().equals("image"))
 +                this.color = reset ? definition.colorFrom : definition.colorFrom.interpolate(definition.colorTo, definition.track.factor(elapsed));
 +            if (definition.from == null) return;
@@ -3873,16 +3895,17 @@ index 0000000..6bc0cbe
 +        final Vector from, to;
 +        final NativeUiColor colorFrom, colorTo;
 +        final boolean alpha, image, flipbook, aseprite, looping, reversible, vertical, resettable;
-+        final float fps;
++        final float fps, alphaScale;
 +        final int frames;
 +        final Uv uvFrom, uvTo;
 +        final boolean waitForRender;
 +        final int next;
 +        final String play, reset, end, destroy;
 +
-+        Definition(final JsonObject value) {
++        Definition(final JsonObject value, final float startingAlpha) {
 +            this.type = NativeUiScene.string(value, "anim_type", "");
 +            this.alpha = this.type.equals("alpha");
++            this.alphaScale = this.alpha && flag(value, "scale_from_starting_alpha", false) ? startingAlpha : 1;
 +            this.flipbook = this.type.equals("flip_book");
 +            this.aseprite = this.type.equals("aseprite_flip_book");
 +            this.image = this.aseprite || this.flipbook || this.type.equals("uv") || this.type.equals("color");
@@ -6816,7 +6839,7 @@ index 0000000..81c52c3
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiPresentation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiPresentation.java
 new file mode 100644
-index 0000000..1279cdc
+index 0000000..99d79fd
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiPresentation.java
 @@ -0,0 +1,162 @@
@@ -6939,7 +6962,7 @@ index 0000000..1279cdc
 +        // Native image opacity is local unless the owner explicitly enables propagation.
 +        // Dialogs use transparent image owners whose labels and buttons remain opaque.
 +        final Opacity childAlpha = node.flag("propagate_alpha", false) ? alpha : inheritedAlpha;
-+        if (childAlpha.potential == 0) return;
++        if (childAlpha.potential == 0 || box.children().isEmpty()) return;
 +        final boolean isHovered = node.interactive() && hovered.test(box);
 +        final Set<String> excluded = new HashSet<>();
 +        if (!node.type().equals("slider") && !node.type().equals("slider_box") && !retainedButtons.test(node)) {
@@ -10475,10 +10498,10 @@ index 0000000..e407bbc
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationsTest.java
 new file mode 100644
-index 0000000..7b0e4d0
+index 0000000..90d8eea
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationsTest.java
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,286 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -10489,11 +10512,33 @@ index 0000000..7b0e4d0
 +import com.google.gson.JsonArray;
 +import com.google.gson.JsonObject;
 +import java.util.List;
++import java.util.Map;
 +import org.junit.jupiter.api.Test;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +
 +final class NativeUiAnimationsTest {
++    @Test
++    void entranceFadeRetainsTheAuthoredBackdropOpacityAcrossSceneRefreshes() {
++        final var fade = track("alpha", 1, 0, 1);
++        fade.addProperty("scale_from_starting_alpha", true);
++        final var node = animated(fade);
++        node.properties().addProperty("alpha", .4F);
++        final var animations = new NativeUiAnimations();
++        assertEquals(0, animations.opacityAt(node, 0).current());
++        assertEquals(.4F, animations.opacityAt(node, 0).potential());
++        assertEquals(.2F, animations.opacityAt(node, 500_000_000).current(), .000001F);
++        final var replacement = new NativeUiScene.Node(node.name(), node.type(), node.properties().deepCopy(),
++                node.children(), node.action());
++        animations.reconcile(Map.of(node, replacement), 500_000_000);
++        assertEquals(.4F, animations.opacityAt(replacement, 1_000_000_000).current(), .000001F);
++
++        fade.addProperty("scale_from_starting_alpha", false);
++        final var absolute = animated(fade);
++        absolute.properties().addProperty("alpha", .4F);
++        assertEquals(.5F, new NativeUiAnimations().opacityAt(absolute, 500_000_000).current(), .000001F);
++    }
++
 +    @Test
 +    void treatsUnsetAnimationBindingsAsOmittedProperties() {
 +        final var explicit = track("alpha", 2, 1, 1);

@@ -32,6 +32,12 @@ Overlapping windows retain animation clocks by source identity.
 These controls do not establish identical native pooling or frame timing.
 Broader viewports, complete inventory pixels, entrance timing, and TrueType comparisons remain open.
 
+Alpha tracks honor `scale_from_starting_alpha` and retain their initial scale across scene refreshes.
+Native Bedrock 1.26.60.5 captures ImageComponent alpha when creating the track and multiplies the interpolated value by that scale.
+The default Survival backdrop uses this flag with opacity 0.4. Ignoring it makes the settled backdrop opaque.
+A regression fails before the correction and covers the fade, potential-opacity bound, retained clock, and absolute-track behavior.
+Leaf controls skip child-state selection after contributing their own draw state.
+
 The [owning patch](0029-share-native-ui-scene-rendering.patch) retains implementation rationale and versioned evidence.
 
 Local image controls honor `allow_debug_missing_texture: false` when the resource is absent.

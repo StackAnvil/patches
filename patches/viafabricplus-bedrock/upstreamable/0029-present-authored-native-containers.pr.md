@@ -46,6 +46,16 @@ They cover distant scrolling, resize, original action IDs, and keyboard navigati
 Creative hotbar destruction restores ordinary controls before item changes or requests.
 Passive hover notifications do not trigger the fallback for unsupported recipe actions.
 Full Creative catalog expansion, initial bundle insertion, bulk recipe actions, and Creative cursor replacement remain unresolved.
-Complete cooking integration, live transfers, filled-bundle pixels, and the original E-key background report also remain unresolved.
+Complete cooking integration, live transfers, and filled-bundle pixels also remain unresolved.
+
+Stable frames reuse parsed hit regions and input ancestor geometry.
+Relayout, changed painter order, enablement, or a zero-opacity transition rebuilds the affected regions.
+Collection windows rescan after layout or keyboard focus changes, and rendering uses the shared draw order directly.
+Input, scrolling, focus, and screen regressions cover these boundaries. A hit-region regression checks hidden, disabled, moved, and removed controls.
+Cumulative authored layers use separate Java GUI strata to bound overlap-ordering work.
+A same-session check preserves static recipe, slot-grid, and crafting-background pixels across this change.
+The installed Survival screen retains the translucent backdrop after its entrance animation.
+Live direct checks cover pickup, drag distribution, and return to the hotbar. The client and Bedrock server retain matching item totals.
+Broader modpack timing, the reported menu overlap, and shield presentation still need verification.
 
 The [owning patch](0029-present-authored-native-containers.patch) retains implementation rationale and versioned evidence.

@@ -1,4 +1,4 @@
-From fd96c68c8fe2aa3322774497e0db78b08f56fa31 Mon Sep 17 00:00:00 2001
+From ffa0baba5f2a9936927377fe51ae7b74577120df Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -548,6 +548,41 @@ closed catalog can render without authorizing destruction. Both mapped
 host commands and Java quick-move on those authored hotbar slots restore
 ordinary controls before changing items or sending a request. Test both
 recipe-book and Creative layouts, including the refused destruction path.
+
+Retain input ancestor geometry while the immutable layout root is unchanged.
+Invalidate it when the scene is prepared again, and continue updating the
+current draw visibility and viewport on every input-layout call. Collection
+windows likewise need rescanning only after layout or keyboard focus changes.
+Render the shared presentation's stable layer order directly instead of
+allocating and sorting a second list for each frame.
+
+A Survival inventory JFR profile identifies collection metadata and repeated
+input traversal among the render-thread costs. Existing pointer, focus,
+scrolling, relayout and screen lifecycle regressions validate these cache
+boundaries; hardware performance and native visual parity need live checks.
+
+Reuse parsed container hit regions while draw boxes, painter order,
+enablement and the positive-opacity boundary remain unchanged. Box
+identity covers immutable layout bounds, clips and scene action mappings.
+Scene refreshes and relayouts create new boxes and rebuild validation;
+hover branches and zero-opacity transitions invalidate the cached regions.
+This removes per-frame action-map parsing from stable inventories without
+retaining input targets after they become hidden, disabled or moved.
+A regression covers active fades, hidden and disabled slots, restored
+controls, layout movement and removal from the draw list.
+
+Start a Java GUI stratum at each cumulative authored layer boundary.
+The shared presentation already orders these layers, so the renderer need
+not search earlier layers again to recover overlap order for every quad.
+Equal-layer controls retain authored order and ordinary overlap handling.
+This bounds Java's GUI ordering work without changing native hit regions
+or inventory packet ownership.
+
+A controlled replacement of this method in the same isolated Survival
+session reduces render-thread overlap-search samples. Static recipe,
+slot-grid and crafting-background pixels remain identical before and
+after the replacement. Software-renderer timing is diagnostic evidence,
+not a performance guarantee for player hardware or native pixel parity.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../access/IBedrockGuiItemStyle.java          |   14 +
@@ -560,7 +595,7 @@ recipe-book and Creative layouts, including the refused destruction path.
  .../render/MixinNativeGuiItemState.java       |   20 +
  .../render/MixinNativeGuiOversizedItem.java   |   31 +
  .../container/BedrockFurnacePreferences.java  |   60 +
- .../BedrockNativeContainerScreen.java         | 1242 +++++++++++++++
+ .../BedrockNativeContainerScreen.java         | 1254 +++++++++++++++
  .../container/BedrockNativeContainers.java    |  278 ++++
  .../container/BedrockNativeCooking.java       |  145 ++
  .../BedrockNativePlayerInventory.java         |  155 ++
@@ -569,8 +604,8 @@ recipe-book and Creative layouts, including the refused destruction path.
  .../NativeContainerCurrentPayload.java        |   30 +
  .../container/NativeContainerDataPayload.java |   30 +
  .../NativeContainerFamiliesPayload.java       |   30 +
- .../container/NativeContainerGeometry.java    |  258 +++
- .../container/NativeContainerInput.java       |  501 ++++++
+ .../container/NativeContainerGeometry.java    |  272 ++++
+ .../container/NativeContainerInput.java       |  506 ++++++
  .../container/NativeContainerPayload.java     |   22 +
  .../container/NativeContainerPending.java     |   65 +
  .../NativeContainerPresentation.java          |   44 +
@@ -606,7 +641,7 @@ recipe-book and Creative layouts, including the refused destruction path.
  .../viafabricplus-bedrock.mixins.json         |    8 +-
  .../BedrockNativeContainerScreenTest.java     |  605 +++++++
  .../container/NativeContainerButtonTest.java  |  280 ++++
- .../NativeContainerGeometryTest.java          |  366 +++++
+ .../NativeContainerGeometryTest.java          |  389 +++++
  .../container/NativeContainerInputTest.java   |  542 +++++++
  ...veContainerPresentationControllerTest.java |   91 ++
  .../container/NativeContainerScrollTest.java  |   51 +
@@ -624,7 +659,7 @@ recipe-book and Creative layouts, including the refused destruction path.
  .../NativePlayerPresentationTest.java         |  153 ++
  .../container/NativePlayerScreenTest.java     |  269 ++++
  .../PlayerInventoryScreenLifecycleTest.java   |   95 ++
- 75 files changed, 10097 insertions(+), 62 deletions(-)
+ 75 files changed, 10151 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerScreenAdmission.java
@@ -1129,10 +1164,10 @@ index 0000000..1583ce0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..d5ea53e
+index 0000000..c7fbef6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
-@@ -0,0 +1,1242 @@
+@@ -0,0 +1,1254 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1156,7 +1191,6 @@ index 0000000..d5ea53e
 +import com.viaversion.viafabricplus.injection.access.core.IConnection;
 +import java.util.ArrayList;
 +import java.util.Collections;
-+import java.util.Comparator;
 +import java.util.HashMap;
 +import java.util.HashSet;
 +import java.util.IdentityHashMap;
@@ -1232,6 +1266,8 @@ index 0000000..d5ea53e
 +    private long layoutRevision;
 +    private long nativeInputRevision;
 +    private NativeUiLayout.Box root;
++    private NativeUiLayout.Box windowRoot;
++    private NativeUiScene.Node windowFocus;
 +    private NativeContainerGeometry geometry;
 +    private List<NativeUiPresentation.Draw> draws = List.of();
 +    private long previousPresentationRevision = -1;
@@ -1390,8 +1426,12 @@ index 0000000..d5ea53e
 +    }
 +
 +    private boolean updateWindows() {
-+        return this.presentation instanceof NativePlayerPresentation player && !player.helping()
-+                && player.windows(NativeUiCollectionWindow.visible(this.root, this.nativeInput.focused()));
++        if (!(this.presentation instanceof NativePlayerPresentation player) || player.helping()) return false;
++        final var focused = this.nativeInput.focused();
++        if (this.windowRoot == this.root && this.windowFocus == focused) return false;
++        this.windowRoot = this.root;
++        this.windowFocus = focused;
++        return player.windows(NativeUiCollectionWindow.visible(this.root, focused));
 +    }
 +
 +    private void refreshScene(final List<ContainerUi.Slot> slots) {
@@ -1456,9 +1496,7 @@ index 0000000..d5ea53e
 +        this.root = new NativeUiLayout(this.renderer, animations).layout(this.scene, this.width, this.height, this.scroll.offsets(this.scene));
 +        this.draws = NativeUiPresentation.draws(this.root, box -> box.node() == this.nativeInput.focused() || box.visibleBounds().contains(pointerX, pointerY), node -> animations.opacityAt(node, now), this.nativeInput::hasButtonState);
 +        if (this.authoredController()) this.nativeInput.layout(this.root, this.draws, this.width, this.height);
-+        this.geometry = new NativeContainerGeometry(this.draws, this.menu.slots.size(), this.recipeActions,
-+                this.presentation instanceof NativeCookingPresentation, this.presentation instanceof NativePlayerPresentation);
-+        this.requireCoverage();
++        this.updateGeometry();
 +        this.reconcileSearch();
 +        this.vanillaCursor.clear();
 +        this.cursor(this.root, false);
@@ -1612,6 +1650,13 @@ index 0000000..d5ea53e
 +        return handled;
 +    }
 +
++    private void updateGeometry() {
++        if (this.geometry != null && this.geometry.reusableFor(this.draws)) return;
++        this.geometry = new NativeContainerGeometry(this.draws, this.menu.slots.size(), this.recipeActions,
++                this.presentation instanceof NativeCookingPresentation, this.presentation instanceof NativePlayerPresentation);
++        this.requireCoverage();
++    }
++
 +    private void requireCoverage() {
 +        if (this.presentation instanceof NativePlayerPresentation) return;
 +        if (this.presentation instanceof NativeCookingPresentation cooking
@@ -1759,18 +1804,20 @@ index 0000000..d5ea53e
 +            this.draws = NativeUiPresentation.draws(this.root, box -> box.visibleBounds().contains(mouseX, mouseY),
 +                node -> this.lifecycle.animations().opacityAt(node, now), this.nativeInput::hasButtonState);
 +            if (this.authoredController()) this.nativeInput.layout(this.root, this.draws, this.width, this.height);
-+            this.geometry = new NativeContainerGeometry(this.draws, this.menu.slots.size(), this.recipeActions,
-+                    this.presentation instanceof NativeCookingPresentation, this.presentation instanceof NativePlayerPresentation);
-+            this.requireCoverage();
++            this.updateGeometry();
 +            this.hoveredSlot = this.nativeHoveredSlot(mouseX, mouseY);
 +            if (this.hoveredSlot != null) NativeInventoryItemPresentation.requireTooltip(this.hoveredSlot.getItem());
-+            final List<NativeUiPresentation.Draw> ordered = new ArrayList<>(this.draws);
-+            ordered.sort(Comparator.comparingDouble(draw -> draw.box().layer()));
 +            this.previews.clear();
-+            for (final var draw : ordered) {
++            float layer = Float.NaN;
++            for (final var draw : this.draws) {
 +                final var box = draw.box();
 +                if (this.vanillaCursor.contains(box.node())) continue;
 +                if (draw.alpha() <= 0 || box.visibleBounds().width() <= 0 || box.visibleBounds().height() <= 0) continue;
++                // Authored layers already establish painter order. Bound Java's overlap search to each layer.
++                if (layer != box.layer()) {
++                    graphics.nextStratum();
++                    layer = box.layer();
++                }
 +                final var clip =
 +                        box.node().type().equals("label") ? box.visibleBounds() : box.clip();
 +                graphics.enableScissor(Math.round(clip.x()), Math.round(clip.y()),
@@ -3215,10 +3262,10 @@ index 0000000..3387649
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerGeometry.java
 new file mode 100644
-index 0000000..e0257f3
+index 0000000..3c762e5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerGeometry.java
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,272 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3246,6 +3293,7 @@ index 0000000..e0257f3
 +    static final Set<String> RECIPE_AUXILIARY_ACTIONS = Set.of("button.drop_one", "button.drop_all", "button.shape_drawing");
 +    private static final Set<String> RECIPE_MAPPING_FIELDS = Set.of("from_button_id", "to_button_id", "mapping_type", "ignored", "consume_event");
 +    private final List<ControlRegion> controls;
++    private final List<NativeUiPresentation.Draw> draws;
 +    private final Set<Integer> registered = new HashSet<>();
 +    private boolean navigation;
 +
@@ -3265,6 +3313,7 @@ index 0000000..e0257f3
 +
 +    NativeContainerGeometry(final List<NativeUiPresentation.Draw> draws, final int slotCount,
 +                            final Map<Integer, Set<String>> recipeActions, final boolean cooking, final boolean player) {
++        this.draws = List.copyOf(draws);
 +        final Set<Integer> reinjected = new HashSet<>();
 +        if (cooking) for (final var draw : draws) {
 +            final var input = NativeUiInput.parse(draw.box().node().properties());
@@ -3301,6 +3350,18 @@ index 0000000..e0257f3
 +        final var frontToBack = new ArrayList<>(regions.reversed());
 +        frontToBack.sort(Comparator.comparingDouble(ControlRegion::layer).reversed());
 +        this.controls = List.copyOf(frontToBack);
++    }
++
++    /** Box identity retains bounds, clipping, layers and the prepared scene's action mappings. */
++    boolean reusableFor(final List<NativeUiPresentation.Draw> draws) {
++        if (this.draws.size() != draws.size()) return false;
++        for (int index = 0; index < draws.size(); index++) {
++            final var previous = this.draws.get(index);
++            final var current = draws.get(index);
++            if (previous.box() != current.box() || previous.enabled() != current.enabled()
++                    || (previous.alpha() > 0) != (current.alpha() > 0)) return false;
++        }
++        return true;
 +    }
 +
 +    private static Set<String> closeInputs(final NativeUiScene.Node node) {
@@ -3479,10 +3540,10 @@ index 0000000..e0257f3
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerInput.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerInput.java
 new file mode 100644
-index 0000000..96ca210
+index 0000000..12b7fec
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerInput.java
-@@ -0,0 +1,501 @@
+@@ -0,0 +1,506 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3521,6 +3582,7 @@ index 0000000..96ca210
 +    private Map<NativeUiScene.Node, NativeUiScene.Node> replacements = Map.of();
 +    private List<Frame> frames = List.of();
 +    private NativeUiLayout.Box root;
++    private NativeUiLayout.Box geometryRoot;
 +    private NativeUiScene.Node focused;
 +    private float pointerX = -1, pointerY = -1;
 +    private float inputX = -1, inputY = -1;
@@ -3547,6 +3609,7 @@ index 0000000..96ca210
 +        this.nodes = nodes;
 +        this.entries = current;
 +        this.indexed = indexed;
++        this.geometryRoot = null;
 +        this.replacements = replacements;
 +        // Every component exists before the deferred name resolver can invoke a child callback.
 +        this.updateComponents(root, true, true);
@@ -3558,7 +3621,10 @@ index 0000000..96ca210
 +        this.viewportWidth = viewportWidth;
 +        this.viewportHeight = viewportHeight;
 +        this.root = root;
-+        this.geometry(root, List.of());
++        if (this.geometryRoot != root) {
++            this.geometry(root, List.of());
++            this.geometryRoot = root;
++        }
 +        if (!this.replacements.isEmpty()) {
 +            this.history.remap(this.replacements, this.targets());
 +            this.replacements = Map.of();
@@ -7083,10 +7149,10 @@ index 0000000..5a97c2d
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerGeometryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerGeometryTest.java
 new file mode 100644
-index 0000000..8d089b7
+index 0000000..e120ebc
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeContainerGeometryTest.java
-@@ -0,0 +1,366 @@
+@@ -0,0 +1,389 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7112,6 +7178,29 @@ index 0000000..8d089b7
 +import org.junit.jupiter.api.Test;
 +
 +final class NativeContainerGeometryTest {
++    @Test
++    void retainedHitRegionsFollowVisibilityEnablementAndLayoutChanges() {
++        final var slot = draw(0, true, 1, 0, 0, 18, new NativeUiLayout.Rect(0, 0, 100, 100), 1);
++        var geometry = new NativeContainerGeometry(List.of(slot), 1);
++        assertEquals(0, geometry.hovered(1, 1));
++        final var fading = new NativeUiPresentation.Draw(slot.box(), .4F, 1, true);
++        assertTrue(geometry.reusableFor(List.of(fading)));
++        assertEquals(0, geometry.hovered(1, 1));
++        for (final var hidden : List.of(new NativeUiPresentation.Draw(slot.box(), 0, 1, true),
++                new NativeUiPresentation.Draw(slot.box(), 1, 1, false))) {
++            assertFalse(geometry.reusableFor(List.of(hidden)));
++            final var inactive = new NativeContainerGeometry(List.of(hidden), 1);
++            assertEquals(-1, inactive.hovered(1, 1));
++            assertFalse(inactive.reusableFor(List.of(slot)));
++        }
++        final var moved = draw(0, true, 1, 40, 0, 18, new NativeUiLayout.Rect(0, 0, 100, 100), 1);
++        assertFalse(geometry.reusableFor(List.of(moved)));
++        geometry = new NativeContainerGeometry(List.of(moved), 1);
++        assertEquals(-1, geometry.hovered(1, 1));
++        assertEquals(0, geometry.hovered(41, 1));
++        assertFalse(geometry.reusableFor(List.of()));
++    }
++
 +    @Test
 +    void layoutPreferencesPreserveTheirNativeFamilyAndRejectForcedProfiles() {
 +        final var toggle = preference();
