@@ -82,7 +82,11 @@ Current 1.26.60.5 constructor and controller instruction mapping confirms the ca
 It does not establish native construction timing relative to the network acknowledgment or frame-level population timing.
 Unpositioned pending player contexts retain the documented fallback crafting tags.
 The add-on retains snapshot identity and buffers search edits while a command awaits its reply.
-Default player and workbench scenes retain ordinary controls because Help and some renderer bindings remain unsupported.
+Player snapshots include both real Help graphs and their translations.
+The current native callback selects How to Play topic 5 for Survival and Encyclopedia topic 47 for Creative.
+A physical 1.26.60.5 capture confirms the Survival Your First Craft topic.
+Translated Help paragraphs replace both plain text and rendered components, preserving the native color palette.
+Program round trips retain these components and navigation labels from authored topic and category variables. Full installed Help lifetimes and glyph appearance remain unverified.
 Bulk recipe selection, Creative cursor replacement, and complete installed action parity remain unfinished.
 
 The retained model exposes output quantity separately from availability and action admission.

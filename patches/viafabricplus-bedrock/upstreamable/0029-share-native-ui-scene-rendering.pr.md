@@ -20,6 +20,12 @@ Regression coverage includes `BedrockBitmapFontResourcesTest`, `BedrockGuiActorA
 
 At 1280 × 720, all 16 current-font labels match native 26.60 at UI scales 1 and 2. All 16 legacy labels match at UI scale 2. Direct and ViaProxy controls pass Java GUI scale changes and resource reloads. The point-sampling GPU regression fails before the correction and passes on Intel and software rendering.
 
-Broader viewports and TrueType comparisons remain open.
+Unanchored manual-grid cells use their grid origins.
+The regression uses the native four-row armor shape, which previously shifted down and overlapped the main inventory.
+Explicit anchors and full-parent percentage dimensions retain separate regression coverage.
+Live player and horse portraits apply control opacity when Java composites their GUI textures.
+Color controls cover premultiplied RGB and alpha, transparent frames, and independent perspectives.
+The existing independent actor material-coverage path remains separate.
+Broader viewports, complete inventory pixels, entrance timing, and TrueType comparisons remain open.
 
 The [owning patch](0029-share-native-ui-scene-rendering.patch) retains implementation rationale and versioned evidence.

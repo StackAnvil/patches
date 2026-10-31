@@ -24,8 +24,14 @@ Commands carry the opening, generation, snapshot revision, and request sequence.
 Buffered search edits survive an acknowledgment that advances the container generation.
 Late replies and hover exits cannot affect a replacement opening or selection.
 
-The default player and workbench scenes retain ordinary controls.
-Their Help command and remaining renderer bindings need implementation before the add-on admits those hosts.
+Default player and workbench graphs retain all 46 menu slots and real recipe rows.
+Help uses the native How to Play or Encyclopedia graph and the client key bindings.
+Screen regressions cover slot confirmation, keyboard Back, Escape, repeated Help openings, and a retained carried stack.
+Model regressions retain the opening and pending search across Help and source updates.
+Live direct and ViaProxy checks reach Help in the inventory-only layout.
+The proxy control resolves navigation labels, returns on Escape, and confirms an eight-log pickup with a successful server response.
+Inactive recipe icons and bundle previews still restore ordinary controls.
+Unsupported visible glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
 Rejected presentations remain retired until the next opening, so subsequent updates do not repeat the failed installation.
 Bulk recipe actions, Creative cursor replacement, complete cooking integration, live transfers, and the original E-key background report remain unresolved.
 
