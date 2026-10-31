@@ -14,6 +14,13 @@ Prerequisites:
 
 ## Validation and remaining limits
 
+Grid factories populate each collection once and respect the bound maximum item count. Relative cell templates use the defining namespace.
+The captured Lifeboat Navigator now resolves eight main cells, matching native Bedrock 1.26.60.5, instead of 46 duplicated cells.
+Reduced regressions cover factory ownership, template lookup, and item limits.
+The rebuilt add-on shows two columns and four rows during a live join.
+World Games, Mini Games, and SkyWars open through their authored controls. Selecting Solo reaches the waiting lobby.
+The recorded replies retain the original button indices. Complete native appearance remains unverified.
+
 Regression coverage includes `NativeContainerActionTest`, `NativeContainerDataTest`, `NativeContainerMessageTest`, `NativeCookingActionResultTest`.
 
 `InventoryStackCount` provides native count text separately from numeric binding quantities.
