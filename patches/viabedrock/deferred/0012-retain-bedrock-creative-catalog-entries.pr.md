@@ -82,9 +82,13 @@ Unpositioned pending player contexts retain the documented fallback crafting tag
 Frontend edit delivery and authored player-screen publication remain unfinished.
 The ordinary Java picker remains installed.
 
+The retained model exposes output quantity separately from availability and action admission.
+Candidate recipes share source consumption in priority order. Count reads retain the native crafting-input, cursor, and player-inventory order.
+Creative counts follow the current game mode, independently of the model's captured Instabuild policies.
+A 1.26.60.5 capture supplies observed totals of 44 planks, three crafting tables, and four chests.
+The last example crafts three chests when Shift-clicked, so the displayed total is not an action quantity.
+Targeted tests cover these totals, candidate overlap, live source changes, game-mode inheritance, and retired openings.
+These controls do not execute the complete native cache wrapper or establish installed player-screen parity.
+
 Five lifecycle regression cases exercise pending source changes, retained search policies, stale acknowledgments, profile/catalog updates, and same-object workbench reopening.
-The full four-project build passes 3,106 tests with 325 optional skips and no failures.
-Both Checkstyle tasks pass.
-All 105 core patches replay to the exact built source tree.
-Both embedded consumers contain the same 1,599 core classes, including the new context and lifecycle state.
 These tests establish Java ownership and observable collection state; they do not establish complete native screen parity.

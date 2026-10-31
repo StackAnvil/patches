@@ -50,6 +50,10 @@ Read the current definition after ordered updates.
 Preserve raw search text separately from normalized matching text.
 A change in raw text can retire selection even when normalized text is unchanged.
 
+`PlayerRecipeModel.outputCount` reads the displayed recipe quantity separately from collection availability.
+Survival counts combine candidate recipes and share their source budget. Creative counts read the current game mode and source output amount.
+The displayed total can exceed the quantity that one selected candidate can craft.
+
 ## Actions and presentation
 
 Core owns requests, network stack IDs, transfer quantities, prediction, and server response reconciliation.
