@@ -37,6 +37,8 @@ Native Bedrock 1.26.60.5 captures ImageComponent alpha when creating the track a
 The default Survival backdrop uses this flag with opacity 0.4. Ignoring it makes the settled backdrop opaque.
 A regression fails before the correction and covers the fade, potential-opacity bound, retained clock, and absolute-track behavior.
 Leaf controls skip child-state selection after contributing their own draw state.
+Animation updates reuse an index of controls with authored tracks. Root replacement and binding refreshes rebuild that index.
+The scoped-clock regression checks that an update leaves unrelated registered controls unchanged.
 
 The [owning patch](0029-share-native-ui-scene-rendering.patch) retains implementation rationale and versioned evidence.
 

@@ -1,4 +1,4 @@
-From 48912212b3ae8cf4fcdd9908bc098ca659f4dbeb Mon Sep 17 00:00:00 2001
+From f524a4ca7cc76d9ca5ae529cac7a00151a959f35 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -701,6 +701,21 @@ before image decoding. A private corpus probe checks all 126 matched JPEGs
 from the captured MegaSMP packs, covering 53,564,211 pixels with no decoded
 pixel differences. These CPU controls do not establish complete native or
 GPU visual parity; installed pack admission and rendering remain live gates.
+
+Index each resolved subtree's track-bearing animation managers once rather
+than visiting every static control during every lifecycle update. Keep
+preorder manager execution, advance hidden tracks and retain the complete
+entry map for independent events and opacity sampling. Rebuild the index
+when its root changes or binding reconciliation replaces control entries.
+
+An installed Survival inventory profile spends render-thread time walking
+child iterators and looking up animation entries, although only a small
+fraction of its controls have tracks. Removing that repeated tree walk
+keeps scene output and animation behavior intact. A scoped-clock regression
+ensures an update cannot advance another registered subtree. Existing
+native alpha, event, replacement and destruction controls remain the
+behavioral contract; this does not establish complete UI frame-time parity
+on other hardware or resolve the separate menu-overlap and shield reports.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    2 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -740,7 +755,7 @@ GPU visual parity; installed pack admission and rendering remain live gates.
  .../screen/ui/NativeUiActorCamera.java        |   60 +
  .../screen/ui/NativeUiActorPortraits.java     |  258 +++++
  .../screen/ui/NativeUiAnimationLifecycle.java |  131 +++
- .../bedrock/screen/ui/NativeUiAnimations.java |  383 +++++++
+ .../bedrock/screen/ui/NativeUiAnimations.java |  398 +++++++
  .../bedrock/screen/ui/NativeUiAseprite.java   |   54 +
  .../bedrock/screen/ui/NativeUiButton.java     |  167 +++
  .../screen/ui/NativeUiCollectionWindow.java   |   92 ++
@@ -793,7 +808,7 @@ GPU visual parity; installed pack admission and rendering remain live gates.
  .../screen/ui/NativeUiActorCameraTest.java    |  102 ++
  .../screen/ui/NativeUiActorPortraitsTest.java |  164 +++
  .../ui/NativeUiAnimationLifecycleTest.java    |  155 +++
- .../screen/ui/NativeUiAnimationsTest.java     |  286 +++++
+ .../screen/ui/NativeUiAnimationsTest.java     |  301 +++++
  .../screen/ui/NativeUiAsepriteTest.java       |  108 ++
  .../bedrock/screen/ui/NativeUiButtonTest.java |  127 +++
  .../ui/NativeUiCollectionWindowTest.java      |  144 +++
@@ -818,7 +833,7 @@ GPU visual parity; installed pack admission and rendering remain live gates.
  .../ui/NativeUiTextureAnimationTest.java      |  108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |   86 ++
  .../screen/ui/NativeUiViewportTest.java       |   95 ++
- 116 files changed, 13204 insertions(+), 36 deletions(-)
+ 116 files changed, 13234 insertions(+), 36 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -3629,10 +3644,10 @@ index 0000000..687730c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java
 new file mode 100644
-index 0000000..057c0e9
+index 0000000..6279edb
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java
-@@ -0,0 +1,383 @@
+@@ -0,0 +1,398 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3654,6 +3669,8 @@ index 0000000..057c0e9
 +public final class NativeUiAnimations {
 +    private final Map<NativeUiScene.Node, Entry> entries = new IdentityHashMap<>();
 +    private final BiPredicate<NativeUiScene.Node, String> destroy;
++    private NativeUiScene.Node indexedRoot;
++    private List<Entry> managers = List.of();
 +    private long layoutRevision;
 +
 +    public long layoutRevision() { return this.layoutRevision; }
@@ -3676,6 +3693,8 @@ index 0000000..057c0e9
 +        }
 +        this.entries.clear();
 +        this.entries.putAll(retained);
++        this.indexedRoot = null;
++        this.managers = List.of();
 +        this.layoutRevision++;
 +    }
 +
@@ -3727,8 +3746,19 @@ index 0000000..057c0e9
 +    }
 +
 +    void advance(final NativeUiScene.Node node, final long elapsed) {
-+        this.entries.computeIfAbsent(node, value -> new Entry(value, 0)).advance(elapsed);
-+        for (final var child : node.children()) advance(child, elapsed);
++        if (this.indexedRoot != node) {
++            final List<Entry> managers = new ArrayList<>();
++            this.collectManagers(node, managers);
++            this.managers = List.copyOf(managers);
++            this.indexedRoot = node;
++        }
++        for (final var manager : this.managers) manager.advance(elapsed);
++    }
++
++    private void collectManagers(final NativeUiScene.Node node, final List<Entry> managers) {
++        final Entry entry = this.entries.computeIfAbsent(node, value -> new Entry(value, 0));
++        if (!entry.definitions.isEmpty()) managers.add(entry);
++        for (final var child : node.children()) this.collectManagers(child, managers);
 +    }
 +
 +    /** Events affect the receiving control and its descendants, not unrelated scrolling panels. */
@@ -10628,10 +10658,10 @@ index 0000000..e407bbc
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationsTest.java
 new file mode 100644
-index 0000000..90d8eea
+index 0000000..81427b5
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationsTest.java
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,301 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -10648,6 +10678,21 @@ index 0000000..90d8eea
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +
 +final class NativeUiAnimationsTest {
++    @Test
++    void advancingOneSubtreeDoesNotAdvanceAnotherRegisteredControl() {
++        final var first = animated(track("alpha", 1, 0, 1));
++        final var second = animated(track("alpha", 1, 0, 1));
++        final var animations = new NativeUiAnimations();
++        animations.opacityAt(second, 0);
++        animations.advance(first, 500_000_000);
++        assertEquals(.5F, animations.opacityAt(first, 500_000_000).current());
++        assertEquals(.25F, animations.opacityAt(second, 250_000_000).current());
++        animations.advance(second, 750_000_000);
++        animations.advance(first, 750_000_000);
++        assertEquals(.75F, animations.opacityAt(first, 750_000_000).current());
++        assertEquals(.75F, animations.opacityAt(second, 750_000_000).current());
++    }
++
 +    @Test
 +    void entranceFadeRetainsTheAuthoredBackdropOpacityAcrossSceneRefreshes() {
 +        final var fade = track("alpha", 1, 0, 1);
