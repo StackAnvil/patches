@@ -52,3 +52,9 @@ Fractional grid capacity tolerates a one-ULP round-down at an exact fit on eithe
 The rebuilt add-on opens Enchanted's authored hub with all five trending cards and the three lower game cards.
 A physical OP SMP selection sends original response index 2 and receives Transfer, matching native. The destination connection times out.
 Complete gameplay after transfer, final typography, screen overlays, and animation parity remain unverified.
+
+Local native UI JPEGs use a bounded reloadable texture. The texture manager owns upload, replacement, reload, and retirement.
+Tests compare decoded pixels with the previous PNG conversion, check replacement resources after reload, and reject oversized headers before decoding.
+A private control checks all 126 matched JPEGs in the captured MegaSMP packs without a decoded pixel difference.
+An installed-client GPU control renders the captured bundle banner with identical pixels through the JPEG and previous PNG paths, including after resource reload.
+The full four-project build passes. These controls do not establish complete native screen appearance or frame timing.

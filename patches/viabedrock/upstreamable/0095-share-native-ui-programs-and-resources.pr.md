@@ -67,3 +67,9 @@ The current native pack uses a 963 × 5,916 logo atlas and a 5,880 × 480 backgr
 A shared dimension policy bounds conversion and client decoding. An encoded-strip regression preserves its endpoint pixels.
 The rebuilt add-on opens the authored hub menu with all five trending cards and the three lower game cards.
 A physical OP SMP selection sends the native original response index 2. The destination connection times out after Transfer; gameplay there remains unverified.
+
+Validated native UI JPEGs retain their original encoding in converted packs.
+Program export preserves the selected format and pack-layer precedence. PNG preference within a pack and TGA conversion remain unchanged.
+Regressions cover byte preservation, both override directions, program round trips, metadata, and resource export.
+The rebuilt add-on accepts MegaSMP's converted pack under Java's existing download cap and reaches a visible lobby.
+A fresh walking control remains grounded. The attempted hotbar menu input opens no screen; complete gameplay remains unverified.

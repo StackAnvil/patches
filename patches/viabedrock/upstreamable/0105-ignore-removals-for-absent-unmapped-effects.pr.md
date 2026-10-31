@@ -12,9 +12,10 @@ Packet regressions cover retained known state, complete payload consumption, kno
 Discarding other unmapped removals is an absent-state robustness policy. The native control establishes ID 38 only.
 The implementation applies alone to pinned upstream. Its packet fixture requires the shared test dependencies and JVM test-suite configuration recorded in `series.json`.
 The ordinary standalone build cannot compile that fixture until those prerequisites land.
-A fresh direct capture reaches a visible MegaSMP lobby, but it contains no MobEffect packets.
 The earlier failing recording replays all 39 removals without the unknown-effect error and preserves the complete scene payloads.
-Its rendering check fails because Java rejects the converted resource pack for exceeding its download cap. The fresh live run has the same rejection.
-Horizontal input changes position, but repeated vertical prediction corrections remain. Resource-pack loading, complete gameplay, and native movement parity need further work.
+The [shared UI resource patch](0095-share-native-ui-programs-and-resources.pr.md) fixes the separate converted-pack size failure.
+The earlier recording now passes pack admission but fails the rendering check on missing custom block mappings.
+A current fresh run receives all 39 removals with complete payload framing, loads the pack, reaches a visible lobby, and remains grounded during walking.
+Complete gameplay, custom block rendering, and native movement parity need further work.
 
 The [owning patch](0105-ignore-removals-for-absent-unmapped-effects.patch) retains the implementation rationale and versioned evidence.
