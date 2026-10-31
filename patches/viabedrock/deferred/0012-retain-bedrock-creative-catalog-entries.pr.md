@@ -109,5 +109,8 @@ The Bedrock 1.26.60.5 background callback bypasses recipe-disabled colors in Cre
 A protocol-2225 native capture selects a trapped chest through CraftCreative and takes the resulting stack to the cursor.
 Current native background controls cover explicit and inherited Creative modes.
 A snapshot regression checks active Creative cells without ingredients and restores recipe restrictions in Survival.
-The full build passes with 3,153 passing tests and 325 skipped tests. Fresh-clone replay passes for all 105 core patches.
-A live add-on check removes the red disabled backgrounds. Catalog selection still sends no item request and needs further action-path work.
+A live add-on check removes the red disabled backgrounds.
+The picker validates the full cursor stack before transfer admission while preserving the unit-sized native craft result.
+Request regressions cover stack sizes one and 64, cursor prediction, and the restoration snapshot.
+An installed add-on test selects 64 rails and places them in the hotbar; BDS accepts both requests.
+Proxy validation of this quantity fix remains open. Cursor replacement, bulk actions, and complete native screen parity remain unfinished.

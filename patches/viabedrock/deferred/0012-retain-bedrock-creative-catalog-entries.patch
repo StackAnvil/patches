@@ -1,4 +1,4 @@
-From 072fe85252faeea27e4dee5ae5c4e285adf64941 Mon Sep 17 00:00:00 2001
+From 2c5cb530c5425af3e9621ed465a41b701c3fcffc Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -239,6 +239,17 @@ Use the current effective raw game mode for cell permission while leaving
 retained availability, captured search policies, row identities and source
 counts intact. A snapshot regression checks Creative cells with no recipe
 ingredients and restores recipe gating after returning to Survival.
+
+Admit Creative catalog picks with a cursor copy sized to the requested
+stack before checking the destination. A unit catalog sample cannot
+authorize a 64-item transfer because Container validates the whole source
+quantity. Live protocol-2225 tracing reaches core with a current opening
+and idle request tracker, then rejects precisely this count mismatch.
+Keep the unit result for CraftCreative/CraftResults and use the separate
+full stack only for destination admission and cursor prediction. This
+preserves the official 1.26.60.5 captured unit-result/full-Take flow.
+A request-boundary regression checks stack sizes one and 64, the packet
+actions, cursor prediction and its pre-request restoration snapshot.
 ---
  .../model/NativePlayerInventoryAction.java    |  88 ++++
  .../model/NativePlayerInventoryMessage.java   | 271 ++++++++++
@@ -256,7 +267,7 @@ ingredients and restores recipe gating after returning to Survival.
  .../protocol/storage/CraftingDataTracker.java | 129 ++++-
  .../storage/InventoryRequestTracker.java      |  24 +
  .../protocol/storage/InventoryTracker.java    |  21 +
- .../storage/NativePlayerRecipeState.java      | 471 ++++++++++++++++++
+ .../storage/NativePlayerRecipeState.java      | 475 ++++++++++++++++++
  .../storage/PlayerInventoryScreenTracker.java |  40 +-
  .../NativePlayerInventoryMessageTest.java     | 160 ++++++
  .../container/NativeRecipeCounterTest.java    |  27 +
@@ -269,7 +280,8 @@ ingredients and restores recipe gating after returning to Survival.
  .../RegisteredPlayerRecipeSearchTest.java     |   3 +-
  .../storage/CreativeInventoryActionTest.java  | 214 ++++++++
  .../storage/InventoryRequestTrackerTest.java  |  83 +++
- 29 files changed, 4139 insertions(+), 170 deletions(-)
+ .../storage/NativePlayerCreativePickTest.java |  66 +++
+ 30 files changed, 4209 insertions(+), 170 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryResult.java
@@ -285,6 +297,7 @@ ingredients and restores recipe gating after returning to Survival.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CreativeInventoryActionTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativePlayerCreativePickTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java b/src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
 new file mode 100644
@@ -2672,10 +2685,10 @@ index 04ad1756..4a6f0c14 100644
      private void updateInventoryOptions() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 new file mode 100644
-index 00000000..94c66ad6
+index 00000000..6bdac2db
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,475 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3010,7 +3023,12 @@ index 00000000..94c66ad6
 +        }
 +        final var result = entry.catalogEntry().bedrockItem().copy();
 +        final int count = Math.min(255, this.user().get(ItemRewriter.class).maxStackSize(result));
-+        if (count <= 0 || !hud.canPlaceItem(0, result, count)) {
++        if (count <= 0) {
++            return false;
++        }
++        final var cursor = result.copy();
++        cursor.setAmount(count);
++        if (!hud.canPlaceItem(0, cursor, count)) {
 +            return false;
 +        }
 +        final var requests = this.user().get(InventoryRequestTracker.class);
@@ -3024,8 +3042,7 @@ index 00000000..94c66ad6
 +        requests.addRequest(new InventoryRequestStorage(request, 0, hud.copy(), List.of()));
 +        requests.setPredictingClick(true);
 +        try {
-+            result.setAmount(count);
-+            hud.setItem(0, result);
++            hud.setItem(0, cursor);
 +        } finally {
 +            requests.setPredictingClick(false);
 +        }
@@ -5206,5 +5223,77 @@ index b69f1868..037328f2 100644
      @Test
      void successfulResponseUpdatesNameAndCountWithoutTreatingDurabilityCorrectionAsDamage() {
          final BedrockItem current = new BedrockItem(276);
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativePlayerCreativePickTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativePlayerCreativePickTest.java
+new file mode 100644
+index 00000000..746f0b54
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativePlayerCreativePickTest.java
+@@ -0,0 +1,66 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.model.container.player.HudContainer;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.CreativeCatalog;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++import org.mockito.ArgumentCaptor;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class NativePlayerCreativePickTest {
++
++    @ParameterizedTest
++    @ValueSource(ints = {1, 64})
++    void takesTheFullCreativeStackWhileKeepingTheCraftResultAtOne(final int maximum) throws Exception {
++        final var user = mock(UserConnection.class);
++        final var inventory = mock(InventoryTracker.class);
++        final var requests = mock(InventoryRequestTracker.class);
++        final var items = mock(ItemRewriter.class);
++        when(user.get(InventoryTracker.class)).thenReturn(inventory);
++        when(user.get(InventoryRequestTracker.class)).thenReturn(requests);
++        when(user.get(ItemRewriter.class)).thenReturn(items);
++        when(items.maxStackSize(any())).thenReturn(maximum);
++        when(requests.nextRequestId()).thenReturn(-1);
++        final var hud = new HudContainer(user);
++        when(inventory.getHudContainer()).thenReturn(hud);
++        final var sample = new BedrockItem(66, (short) 0, (byte) 1);
++        final var catalog = new CreativeCatalog.Entry(1808, 0, sample, null, false, true);
++        final var state = new NativePlayerRecipeState(user);
++        final var pick = NativePlayerRecipeState.class.getDeclaredMethod("pickCreative", CreativeCatalog.CollectionEntry.class);
++        pick.setAccessible(true);
++        try (var packets = mockStatic(PacketFactory.class)) {
++            assertEquals(true, pick.invoke(state, new CreativeCatalog.CollectionEntry(sample.copy(), catalog)));
++            final var saved = ArgumentCaptor.forClass(InventoryRequestStorage.class);
++            verify(requests).addRequest(saved.capture());
++            final ItemStackRequestInfo request = saved.getValue().requestInfo();
++            assertEquals(new ItemStackRequestAction.CraftCreativeAction(1808, 1), request.actions().get(0));
++            final var result = assertInstanceOf(ItemStackRequestAction.CraftResultsDeprecatedAction.class, request.actions().get(1));
++            assertEquals(1, result.timesCrafted());
++            assertEquals(1, result.resultItems().getFirst().amount());
++            final var take = assertInstanceOf(ItemStackRequestAction.TakeAction.class, request.actions().get(2));
++            assertEquals(maximum, take.count());
++            assertEquals(ContainerEnumName.CreatedOutputContainer, take.source().container().name());
++            assertEquals(50, take.source().slot());
++            assertEquals(ContainerEnumName.CursorContainer, take.destination().container().name());
++            assertEquals(maximum, hud.getItem(0).amount());
++            assertTrue(saved.getValue().prevCursorContainer().getItem(0).isEmpty());
++            assertEquals(1, sample.amount());
++            packets.verify(() -> PacketFactory.sendBedrockInventoryRequest(eq(user), any(ItemStackRequestInfo[].class)));
++        }
++    }
++
++}
 -- 
 2.56.0
