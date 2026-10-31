@@ -1,4 +1,4 @@
-From 1c6228f5d2e776e04e1fa10e7c53d5f3c2125367 Mon Sep 17 00:00:00 2001
+From dab41b4ae2e767e90f88af2ed251d19d63a63bd3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -363,6 +363,14 @@ must observe the same state snapshot even when no Java pack is loaded.
 Return isolated snapshots through the registered runtime-state owner, so
 equal serialized states and caller mutation cannot transfer component data.
 Keep recipe-specific interpretation in its crafting consumer patch.
+
+Wait for both Java protocol states to agree before synthetic keepalives
+can enter configuration or play. During a resource-pack reconfiguration,
+the direct client temporarily has no outbound codec; an early keepalive
+then produces an EncoderException when it replies. Recheck states on the
+connection event loop, and retain translated configuration keepalives for
+Java versions without a configuration acknowledgment. A queued-transition
+regression covers suppression, acknowledgment, and legacy compatibility.
 ---
  Data Asset Sources.md                         |   27 +
  .../chunk/blockstate/BlockItemDescriptor.java |   29 +
@@ -400,6 +408,7 @@ Keep recipe-specific interpretation in its crafting consumer patch.
  .../protocol/storage/ResourcePackStorage.java |   44 +-
  .../protocol/storage/VoxelShapeRegistry.java  |  125 ++
  .../protocol/storage/WorldPacketBuffer.java   |   75 ++
+ .../protocol/task/KeepAliveTask.java          |   10 +-
  .../data/bedrock/block_item_states.json       | 1121 +++++++++++++++++
  .../data/bedrock/block_property_values.json   |  979 ++++++++++++++
  .../data/bedrock/block_registry_aliases.json  |   66 +
@@ -427,7 +436,8 @@ Keep recipe-specific interpretation in its crafting consumer patch.
  .../storage/CustomBlockPackStorageTest.java   |   31 +
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  230 ++++
- 63 files changed, 9525 insertions(+), 109 deletions(-)
+ .../protocol/task/KeepAliveTaskTest.java      |   78 ++
+ 65 files changed, 9611 insertions(+), 111 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -476,6 +486,7 @@ Keep recipe-specific interpretation in its crafting consumer patch.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBufferTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/task/KeepAliveTaskTest.java
 
 diff --git a/Data Asset Sources.md b/Data Asset Sources.md
 index 7912edc8..bd94d2dd 100644
@@ -4808,6 +4819,38 @@ index 00000000..3caaf771
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/task/KeepAliveTask.java b/src/main/java/net/raphimc/viabedrock/protocol/task/KeepAliveTask.java
+index 3f0dc0ae..c8b89e1d 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/task/KeepAliveTask.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/task/KeepAliveTask.java
+@@ -21,6 +21,7 @@ import com.viaversion.viaversion.api.Via;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+ import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
+ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundConfigurationPackets26_3;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+@@ -36,12 +37,17 @@ public class KeepAliveTask implements Runnable {
+             final State state = info.getProtocolInfo().getServerState();
+             if ((state == State.PLAY || state == State.CONFIGURATION) && info.getProtocolInfo().getPipeline().contains(BedrockProtocol.class)) {
+                 info.getChannel().eventLoop().submit(() -> {
+-                    if (!info.getChannel().isActive()) {
++                    final State currentState = info.getProtocolInfo().getServerState();
++                    if (!info.getChannel().isActive()
++                            || (info.getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_20_2)
++                                && currentState != info.getProtocolInfo().getClientState())
++                            || (currentState != State.PLAY && currentState != State.CONFIGURATION)
++                            || !info.getProtocolInfo().getPipeline().contains(BedrockProtocol.class)) {
+                         return;
+                     }
+ 
+                     try {
+-                        final PacketWrapper keepAlive = PacketWrapper.create(info.getProtocolInfo().getServerState() == State.PLAY ? ClientboundPackets26_3.KEEP_ALIVE : ClientboundConfigurationPackets26_3.KEEP_ALIVE, info);
++                        final PacketWrapper keepAlive = PacketWrapper.create(currentState == State.PLAY ? ClientboundPackets26_3.KEEP_ALIVE : ClientboundConfigurationPackets26_3.KEEP_ALIVE, info);
+                         keepAlive.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // id
+                         keepAlive.send(BedrockProtocol.class);
+                     } catch (final Throwable e) {
 diff --git a/src/main/resources/assets/viabedrock/data/bedrock/block_item_states.json b/src/main/resources/assets/viabedrock/data/bedrock/block_item_states.json
 new file mode 100644
 index 00000000..450ca96e
@@ -10937,6 +10980,90 @@ index 00000000..41138f38
 +
 +        void apply(State state, PacketWrapper wrapper) throws CancelException;
 +
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/task/KeepAliveTaskTest.java b/src/test/java/net/raphimc/viabedrock/protocol/task/KeepAliveTaskTest.java
+new file mode 100644
+index 00000000..bdcf4c65
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/task/KeepAliveTaskTest.java
+@@ -0,0 +1,78 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.task;
++
++import com.viaversion.viaversion.api.Via;
++import com.viaversion.viaversion.api.ViaManager;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundConfigurationPackets26_3;
++import io.netty.channel.Channel;
++import io.netty.channel.EventLoop;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayDeque;
++import java.util.Queue;
++import java.util.Set;
++
++import static org.mockito.Mockito.*;
++
++class KeepAliveTaskTest {
++
++    @Test
++    void sendsKeepAlivesOnlyAfterBothProtocolsAcknowledgeTheTransition() throws Exception {
++        final UserConnection user = mock(UserConnection.class, RETURNS_DEEP_STUBS);
++        final Channel channel = mock(Channel.class);
++        final EventLoop loop = mock(EventLoop.class);
++        final ViaManager manager = mock(ViaManager.class, RETURNS_DEEP_STUBS);
++        final PacketWrapper packet = mock(PacketWrapper.class);
++        final Queue<Runnable> pending = new ArrayDeque<>();
++        when(user.getChannel()).thenReturn(channel);
++        when(user.getProtocolInfo().protocolVersion()).thenReturn(ProtocolVersion.v1_20_2);
++        when(channel.eventLoop()).thenReturn(loop);
++        when(channel.isActive()).thenReturn(true);
++        when(user.getProtocolInfo().getServerState()).thenReturn(State.CONFIGURATION);
++        when(user.getProtocolInfo().getClientState()).thenReturn(State.PLAY);
++        when(user.getProtocolInfo().getPipeline().contains(BedrockProtocol.class)).thenReturn(true);
++        when(manager.getConnectionManager().getConnections()).thenReturn(Set.of(user));
++        doAnswer(call -> {
++            pending.add(call.getArgument(0));
++            return null;
++        }).when(loop).submit(any(Runnable.class));
++        try (var via = mockStatic(Via.class);
++             var packets = mockStatic(PacketWrapper.class)) {
++            via.when(Via::getManager).thenReturn(manager);
++            packets.when(() -> PacketWrapper.create(ClientboundConfigurationPackets26_3.KEEP_ALIVE, user)).thenReturn(packet);
++            final KeepAliveTask task = new KeepAliveTask();
++            task.run();
++            pending.remove().run();
++            packets.verifyNoInteractions();
++
++            when(user.getProtocolInfo().getClientState()).thenReturn(State.CONFIGURATION);
++            task.run();
++            pending.remove().run();
++            verify(packet).send(BedrockProtocol.class);
++
++            task.run();
++            when(user.getProtocolInfo().getServerState()).thenReturn(State.PLAY);
++            pending.remove().run();
++            verify(packet, times(1)).send(BedrockProtocol.class);
++            packets.verify(() -> PacketWrapper.create(ClientboundConfigurationPackets26_3.KEEP_ALIVE, user), times(1));
++            packets.verifyNoMoreInteractions();
++
++            when(user.getProtocolInfo().protocolVersion()).thenReturn(ProtocolVersion.v1_20);
++            when(user.getProtocolInfo().getServerState()).thenReturn(State.CONFIGURATION);
++            when(user.getProtocolInfo().getClientState()).thenReturn(State.PLAY);
++            task.run();
++            pending.remove().run();
++            verify(packet, times(2)).send(BedrockProtocol.class);
++        }
 +    }
 +
 +}

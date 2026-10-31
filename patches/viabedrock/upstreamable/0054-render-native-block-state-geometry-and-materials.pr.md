@@ -12,6 +12,10 @@ Resolve ordered permutations and preserve original native block identities. Assi
 
 Regression coverage includes `BlockItemDescriptorsTest`, `BlockItemStatesTest`, `BlockRegistryNamesTest`, `RuntimeBlockPaletteTest`.
 
+`KeepAliveTaskTest` covers configuration acknowledgments, a transition after task scheduling, and clients without a configuration phase.
+Synthetic keepalives wait for the direct client's outbound protocol to become ready during supplemental-pack reconfiguration.
+The focused test passes. Installed Lifeboat retesting remains open.
+
 Shape, state, culling, and conversion tests cover supported definitions. Carrier capacity, unsupported materials, and complete native appearance remain limits.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.
