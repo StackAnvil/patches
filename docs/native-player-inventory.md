@@ -57,6 +57,11 @@ The add-on owns input delivery and presentation over authoritative slots and cur
 Keep player destinations, offhand permissions, item locks, and creative actions explicit.
 A fallback acknowledgment must not consume a newer menu's request.
 
+Native 1.26.60.5 classic-screen controls distinguish recipe selection from crafting.
+A normal recipe click fills the grid. Taking its output sends a separate craft request.
+A workbench recipe Shift-click uses `CraftRecipeAuto` with explicit ingredient descriptors, followed by results, consumption, and placement actions.
+The request codec supports this format. Installed authored recipe actions remain unfinished.
+
 Admit an authored player screen only when its required collections and controls are available.
 The shared UI renderer supports the local player portrait and separate body/head rotations.
 Portrait rendering alone does not establish a complete native inventory.
