@@ -55,3 +55,15 @@ The add-on accepts that scene and shows the authored Navigator GUI in a live joi
 A live add-on check opens Mini Game Selector, returns through Back, and closes through Escape.
 The journal retains the original response indices 0 and 8 and the user-close reason.
 The full build and fresh-clone replay checks pass. Final typography and complete native appearance remain unverified.
+
+Bounded relative UI paths preserve printable UTF-8 names and spaces. Converted identifiers still hash the original resource name.
+Traversal, absolute paths, drive or URI syntax, backslash separators, control characters, and unpaired surrogates remain rejected.
+A native Bedrock 1.26.60.5 capture shows Enchanted's authored hub menu and sends original response index 2 for OP SMP.
+All 58 exported pack files match the add-on capture. The native run stops after transfer selection and does not establish gameplay after transfer.
+The captured menu now resolves and passes visible-control admission with all 11 original responses.
+Regressions retain bound image pixels and metadata and preserve form actions when a printable decorative texture is absent.
+Frame strips can exceed 4,096 pixels on one side while preserving the previous 16-Mipixel total budget and source byte limits.
+The current native pack uses a 963 × 5,916 logo atlas and a 5,880 × 480 background.
+A shared dimension policy bounds conversion and client decoding. An encoded-strip regression preserves its endpoint pixels.
+The rebuilt add-on opens the authored hub menu with all five trending cards and the three lower game cards.
+A physical OP SMP selection sends the native original response index 2. The destination connection times out after Transfer; gameplay there remains unverified.
