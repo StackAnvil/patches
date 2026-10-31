@@ -41,3 +41,8 @@ The [owning patch](0095-share-native-ui-programs-and-resources.patch) retains im
 
 View bindings can read an authored `toggle_view_binding_name` alias.
 A regression checks section visibility when the destination has a different local toggle value.
+
+Authored bindings accept raw value tokens and redundant trailing closing groups.
+The captured Lifeboat protocol-2225 Navigator request resolves with all 23 original response indices.
+The add-on accepts that scene and shows the authored Navigator GUI in a live join.
+The full build passes. Click routing, final typography, and complete native appearance remain separate validation steps.
