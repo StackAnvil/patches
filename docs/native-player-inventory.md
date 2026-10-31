@@ -54,6 +54,18 @@ A change in raw text can retire selection even when normalized text is unchanged
 Survival counts combine candidate recipes and share their source budget. Creative counts read the current game mode and source output amount.
 The displayed total can exceed the quantity that one selected candidate can craft.
 
+Fixed recipe grids use cell windows over the complete retained collection.
+The source keeps its original order, item identities, and total scroll extent.
+Each view expands the visible rows and a one-row buffer on each side.
+An offscreen keyboard selection also retains its neighboring rows.
+Resize and scroll changes preserve the original collection indices and action targets.
+Window changes do not advance the authoritative snapshot revision.
+
+Only horizontal grids with fixed cell geometry support this contract.
+Row-dependent dimensions and redirected root indices restore ordinary controls.
+The node budget remains unchanged.
+These windows preserve authored geometry but do not establish identical native pooling or frame timing.
+
 ## Actions and presentation
 
 Core owns requests, network stack IDs, transfer quantities, prediction, and server response reconciliation.
@@ -98,6 +110,7 @@ Filled-bundle bars still need installed native comparison.
 Unknown storage snapshots restore ordinary controls.
 Hovering or carrying storage items also restores ordinary controls until native tooltips and selection are complete.
 Unsupported visible Help glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
+Creative hotbar destruction restores ordinary controls before item changes or requests.
 Large Creative catalogs exceed the current scene work budget. Viewport expansion remains unfinished.
 Initial bundle insertion, bulk recipe actions, Creative cursor replacement, and complete installed native parity remain unfinished.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.

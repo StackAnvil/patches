@@ -26,6 +26,12 @@ Current 1.26.60.5 instruction controls cover 150 typed property combinations and
 The packaged regression retains 50 object-property cases, including booleans, numeric extremes, and invalid types.
 These controls supply property lookup and ABI storage. Complete item geometry, materials, and final pixels remain unverified.
 
+`UiBindings.Window` selects cell views from a complete collection without changing its size or source indices.
+A separate retained range supports offscreen keyboard focus and its neighbors.
+Only fixed horizontal grids qualify. Row-dependent dimensions and redirected root indices are rejected.
+Regression coverage compares complete and windowed sources, exported programs, source replacement, and the pinned inventory grid.
+The scene node budget remains unchanged.
+
 Program compilation, resource, and transport tests cover supported content. Transport acceptance does not establish screen interaction or visual parity.
 
 Dynamic domain text uses the same native palette as ordinary labels.

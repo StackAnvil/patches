@@ -66,6 +66,9 @@ Missing profile preferences remain absent; the initial filtering value follows t
 Source, recipe, unlock, ability, rule, and preference changes invalidate the retained collections.
 Catalog replacement refreshes source collections while preserving the backend's installed policies and owned query.
 The state publishes the retained rows and full item previews through a bounded, compressed protocol-2225 snapshot.
+The view adapter can expand a fixed recipe-grid window while retaining every source row and item preview.
+Local windows preserve original recipe IDs, all real menu slots, and the authoritative snapshot revision.
+A 2,000-row Creative regression covers distant windows and exported-program round trips.
 Each snapshot carries its opening, container generation, revision, and both independent native layouts.
 Search and preference commands can use a pending opening. Item requests require the acknowledged generation.
 

@@ -1,4 +1,4 @@
-From 824a7ac150ba90ab07c8fd1231e547298da84705 Mon Sep 17 00:00:00 2001
+From 6e667d7fc79c738b7d4ccf52660435bee5fefb3e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -218,12 +218,20 @@ category variables, including their nested controls. Literal text-key
 scanning misses those concatenated keys, leaving topic/category names
 untranslated after program transport even when paragraphs and titles work.
 The translated scene round trip covers both navigation and styled text.
+
+Allow installed player presenters to request local recipe-grid windows.
+Keep the complete retained collection and all source/action identities in
+the snapshot. The initial one-cell view establishes authored geometry;
+subsequent ranges follow the real viewport rather than removing catalog
+rows or changing search results. Other callers keep full expansion.
+A 2,000-cell Creative source regression checks distant ranges, actual menu
+slots and exported-program replay without replacing the source model.
 ---
  .../model/NativePlayerInventoryAction.java    |  88 ++++
  .../model/NativePlayerInventoryMessage.java   | 271 ++++++++++
  .../model/NativePlayerInventoryResult.java    |  47 ++
  .../model/container/NativeRecipeCounter.java  |  74 +++
- .../resourcepack/ui/PlayerInventoryUi.java    | 375 ++++++++++++++
+ .../resourcepack/ui/PlayerInventoryUi.java    | 387 ++++++++++++++
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/model/CreativeCatalog.java       | 266 ++++++++++
  .../model/CreativeInventoryModel.java         | 198 ++++++++
@@ -240,15 +248,15 @@ The translated scene round trip covers both navigation and styled text.
  .../NativePlayerInventoryMessageTest.java     | 160 ++++++
  .../container/NativeRecipeCounterTest.java    |  27 +
  .../container/NativeRecipeQuantityTest.java   |  61 +++
- .../ui/PlayerInventoryUiTest.java             | 101 ++++
+ .../ui/PlayerInventoryUiTest.java             | 126 +++++
  .../protocol/model/CreativeCatalogTest.java   | 382 ++++++++++++++
- .../protocol/packet/InventoryPacketsTest.java | 268 ++++++++--
+ .../protocol/packet/InventoryPacketsTest.java | 267 ++++++++--
  .../rewriter/PlayerRecipeModelTest.java       | 412 +++++++++++++++
  ...egisteredPlayerRecipeAvailabilityTest.java |   5 +-
  .../RegisteredPlayerRecipeSearchTest.java     |   3 +-
  .../storage/CreativeInventoryActionTest.java  | 214 ++++++++
  .../storage/InventoryRequestTrackerTest.java  |  83 +++
- 29 files changed, 4065 insertions(+), 170 deletions(-)
+ 29 files changed, 4101 insertions(+), 170 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryResult.java
@@ -783,10 +791,10 @@ index fe874172..3ccb1532 100644
      /** A captured native collection. Slots in results are relative to this collection. */
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/PlayerInventoryUi.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/PlayerInventoryUi.java
 new file mode 100644
-index 00000000..fb187c33
+index 00000000..19993219
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/PlayerInventoryUi.java
-@@ -0,0 +1,375 @@
+@@ -0,0 +1,387 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -868,10 +876,15 @@ index 00000000..fb187c33
 +    }
 +
 +    public JsonObject resolve(final MenuView menu) {
++        return this.resolve(menu, null);
++    }
++
++    /** Non-null windows opt into local cell views while retaining the complete menu model. */
++    public JsonObject resolve(final MenuView menu, final Map<String, UiBindings.Window> windows) {
 +        if (this.workbench != null && this.workbench != menu.state.workbench) {
 +            throw new IllegalArgumentException("Player inventory program belongs to another family");
 +        }
-+        final var resolved = this.program.resolve(host(menu.state.workbench), new Controller(menu));
++        final var resolved = this.program.resolve(host(menu.state.workbench), new Controller(menu, windows));
 +        if (resolved.root() == null || !resolved.missingTemplates().isEmpty()) {
 +            throw new IllegalArgumentException("Incomplete authored player inventory scene");
 +        }
@@ -1054,10 +1067,12 @@ index 00000000..fb187c33
 +    private static final class Controller extends ContainerUi.Controller {
 +        private static final Set<String> RECIPE_ACTIONS = Set.of("button.recipe_select", "button.recipe_secondary", "button.recipe_tertiary");
 +        private final State state;
++        private final Map<String, UiBindings.Window> windows;
 +
-+        private Controller(final MenuView menu) {
++        private Controller(final MenuView menu, final Map<String, UiBindings.Window> windows) {
 +            super(menu.state.workbench ? 10 : 9, menu.slots, menu.cursor, new ContainerUi.Title("", false), true);
 +            this.state = menu.state;
++            this.windows = windows == null ? null : Map.copyOf(windows);
 +            final Map<Integer, ContainerUi.Slot> slots = new HashMap<>();
 +            menu.slots.forEach(slot -> slots.put(slot.javaSlot(), slot));
 +            this.collections.put("crafting_input_items", collection(slots, 1, this.state.workbench ? 9 : 4));
@@ -1105,6 +1120,11 @@ index 00000000..fb187c33
 +                        new JsonPrimitive(this.state.categoryCounts.get(index) > 0));
 +            }
 +            this.globals.put("#close_button_visible", new JsonPrimitive(true));
++        }
++
++        @Override
++        public Window window(final String key, final String collection, final Scope parent) {
++            return this.windows != null && collection.equals("recipe_book") ? this.windows.getOrDefault(key, new Window(0, 1)) : null;
 +        }
 +
 +        @Override
@@ -1884,7 +1904,7 @@ index 00000000..5b3cdb3b
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index b05868fe..9cbfd9e4 100644
+index 9d4ce882..8c64cdce 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -92,14 +92,20 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransa
@@ -1908,7 +1928,7 @@ index b05868fe..9cbfd9e4 100644
  import net.raphimc.viabedrock.protocol.model.recipe.EnchantData;
  import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
-@@ -114,6 +120,7 @@ import net.raphimc.viabedrock.protocol.types.recipe.CraftingDataReader;
+@@ -115,6 +121,7 @@ import net.raphimc.viabedrock.protocol.types.recipe.CraftingDataReader;
  
  import java.util.ArrayList;
  import java.util.List;
@@ -1916,7 +1936,7 @@ index b05868fe..9cbfd9e4 100644
  import java.util.logging.Level;
  
  public final class InventoryPackets {
-@@ -357,22 +364,33 @@ public final class InventoryPackets {
+@@ -358,22 +365,33 @@ public final class InventoryPackets {
              wrapper.cancel();
              final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
              final int groups = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
@@ -1957,7 +1977,7 @@ index b05868fe..9cbfd9e4 100644
          });
          protocol.registerClientbound(
                  ClientboundBedrockPackets.CONTAINER_OPEN,
-@@ -1148,41 +1166,7 @@ public final class InventoryPackets {
+@@ -1149,41 +1167,7 @@ public final class InventoryPackets {
          protocol.registerServerbound(
                  ServerboundPackets26_3.SET_CREATIVE_MODE_SLOT,
                  null,
@@ -2000,7 +2020,7 @@ index b05868fe..9cbfd9e4 100644
          protocol.registerServerbound(
                  ServerboundPackets26_3.CUSTOM_CLICK_ACTION,
                  ServerboundBedrockPackets.MODAL_FORM_RESPONSE,
-@@ -1294,7 +1278,7 @@ public final class InventoryPackets {
+@@ -1295,7 +1279,7 @@ public final class InventoryPackets {
                                      if (container == null) {
                                          if (containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
                                              wrapper.user().get(InventoryRequestTracker.class)
@@ -2009,7 +2029,7 @@ index b05868fe..9cbfd9e4 100644
                                          }
                                          wrapper.cancel();
                                          return;
-@@ -1866,31 +1850,126 @@ public final class InventoryPackets {
+@@ -1867,31 +1851,126 @@ public final class InventoryPackets {
          return "container." + name;
      }
  
@@ -3499,10 +3519,10 @@ index 00000000..f6d3290d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/PlayerInventoryUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/PlayerInventoryUiTest.java
 new file mode 100644
-index 00000000..ce655f04
+index 00000000..bb241279
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/PlayerInventoryUiTest.java
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,126 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3525,10 +3545,35 @@ index 00000000..ce655f04
 +import java.util.Set;
 +import java.util.UUID;
 +import java.util.stream.IntStream;
++import java.util.stream.Collectors;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class PlayerInventoryUiTest {
++
++    @Test
++    void aFullCreativeSourceRetainsOriginalActionsAndMenuSlotsAcrossDistantViewWindows() {
++        final var ui = new PlayerInventoryUi(new ResourcePackStorage(List.of()).getJsonUiProgram());
++        final var slots = IntStream.range(0, 46).mapToObj(id -> new ContainerUi.Slot(id, Map.<String, JsonElement>of(
++                "#inventory_stack_count", new JsonPrimitive(0)))).toList();
++        final var cells = IntStream.range(0, 2000).mapToObj(id -> new PlayerInventoryUi.Cell(id, id + 10, -1, 0, 0, 1, false, false, "", Map.of())).toList();
++        final var state = new PlayerInventoryUi.State(false, true, 2, 2, 5, 2, false, "", "All", "Crafting",
++                List.of(2000, 0, 0, 0), cells, "", -1);
++        final var view = new PlayerInventoryUi.MenuView(0, state, slots, Map.of());
++        final var initial = ui.resolve(view, Map.of());
++        final var grid = nodes(initial.getAsJsonObject("root")).stream().filter(node -> node.has("collection_window_key")).findFirst().orElseThrow();
++        assertEquals(2000, grid.get("collection_size").getAsInt());
++        assertEquals(1, grid.getAsJsonArray("children").size());
++        final var windows = Map.of(grid.get("collection_window_key").getAsString(), new UiBindings.Window(1700, 40));
++        final var scene = ui.resolve(view, windows);
++        final var visible = nodes(scene.getAsJsonObject("root"));
++        assertEquals(IntStream.range(1700, 1740).boxed().collect(Collectors.toSet()), visible.stream()
++                .filter(node -> node.has("recipe_id")).map(node -> node.get("recipe_id").getAsInt()).collect(Collectors.toSet()));
++        assertTrue(visible.stream().filter(node -> node.has("inventory_slot")).map(node -> node.get("inventory_slot").getAsInt())
++                .collect(Collectors.toSet()).containsAll(IntStream.range(9, 45).boxed().toList()));
++        assertEquals(scene, PlayerInventoryUi.fromProgram(ui.exportProgram(false)).resolve(view, windows));
++        assertEquals(2000, state.cells().size());
++    }
 +
 +    @Test
 +    void actualAuthoredPlayerAndWorkbenchProgramsRetainRealInventoryAndRecipeIdentities() {
@@ -3993,7 +4038,7 @@ index 00000000..b420d6ae
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
-index a17e52fd..8980e433 100644
+index 19fe63ab..8cc84c93 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
 @@ -17,15 +17,25 @@ package net.raphimc.viabedrock.protocol.packet;
@@ -4030,7 +4075,7 @@ index a17e52fd..8980e433 100644
  import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
  import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
-@@ -40,7 +51,9 @@ import org.junit.jupiter.api.Test;
+@@ -48,7 +59,9 @@ import org.junit.jupiter.api.Test;
  import org.junit.jupiter.api.BeforeAll;
  
  import java.lang.reflect.Proxy;
@@ -4040,15 +4085,7 @@ index a17e52fd..8980e433 100644
  import java.util.Map;
  import java.util.UUID;
  
-@@ -49,6 +62,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
- import static org.junit.jupiter.api.Assertions.assertNull;
- import static org.junit.jupiter.api.Assertions.assertSame;
- import static org.junit.jupiter.api.Assertions.assertTrue;
-+import static org.mockito.Mockito.*;
- 
- class InventoryPacketsTest {
- 
-@@ -57,6 +71,31 @@ class InventoryPacketsTest {
+@@ -67,6 +80,31 @@ class InventoryPacketsTest {
          Class.forName(StructuredDataKey.class.getName());
      }
  
@@ -4080,7 +4117,7 @@ index a17e52fd..8980e433 100644
      @Test
      void nativePlayerInventoryCloseAcknowledgementDoesNotCloseTheJavaCreativeScreen() {
          final CloseFixture fixture = new CloseFixture();
-@@ -219,62 +258,174 @@ class InventoryPacketsTest {
+@@ -266,62 +304,174 @@ class InventoryPacketsTest {
      }
  
      @Test
@@ -4304,7 +4341,7 @@ index a17e52fd..8980e433 100644
          }
      }
  
-@@ -285,7 +436,7 @@ class InventoryPacketsTest {
+@@ -332,7 +482,7 @@ class InventoryPacketsTest {
                  UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
                  (proxy, method, args) -> method.getName().equals("get") ? this.storage.get(args[0]) : null);
          private final ClosingInventoryTracker inventory = new ClosingInventoryTracker(this.user);
@@ -4313,7 +4350,7 @@ index a17e52fd..8980e433 100644
  
          private CloseFixture() {
              this.storage.put(InventoryTracker.class, this.inventory);
-@@ -317,4 +468,21 @@ class InventoryPacketsTest {
+@@ -364,4 +514,21 @@ class InventoryPacketsTest {
          }
      }
  

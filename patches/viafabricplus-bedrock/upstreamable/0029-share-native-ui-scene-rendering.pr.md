@@ -26,6 +26,10 @@ Explicit anchors and full-parent percentage dimensions retain separate regressio
 Live player and horse portraits apply control opacity when Java composites their GUI textures.
 Color controls cover premultiplied RGB and alpha, transparent frames, and independent perspectives.
 The existing independent actor material-coverage path remains separate.
+Fixed collection grids retain their full logical height while layout positions each instantiated cell by its original source index.
+Regressions compare complete and windowed geometry, distant scroll positions, resize, final rows, and offscreen keyboard neighbors.
+Overlapping windows retain animation clocks by source identity.
+These controls do not establish identical native pooling or frame timing.
 Broader viewports, complete inventory pixels, entrance timing, and TrueType comparisons remain open.
 
 The [owning patch](0029-share-native-ui-scene-rendering.patch) retains implementation rationale and versioned evidence.
