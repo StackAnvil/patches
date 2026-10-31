@@ -15,3 +15,8 @@ Regression coverage includes `NativeFurnaceOptionsTest`, `CookingRecipeAvailabil
 Controlled native recipe and naming references cover their declared boundaries. Complete installed player/cooking controllers and arbitrary recipe admission remain unfinished.
 
 The [owning patch](0004-expose-bedrock-recipes-and-place-ingredients.patch) retains implementation rationale and versioned evidence.
+
+Creative descriptor parsing uses the same connection-owned Item construction as inventory descriptors.
+The packet regression retains potion metadata and definition identity without inventing a Block association for wire runtime zero.
+It also reads secondary search text and preserves packet alignment after empty group icons.
+Associated Blocks at runtime zero retain their separate constructor regression.

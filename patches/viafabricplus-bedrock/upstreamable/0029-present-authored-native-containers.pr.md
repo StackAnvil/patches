@@ -39,6 +39,12 @@ Installed direct and ViaProxy controls retain a server-issued empty bundle in Su
 Unknown snapshots restore ordinary controls. Hovering or carrying storage items also restores ordinary controls until native tooltip rendering and selection are complete.
 Unsupported visible glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
 Rejected presentations remain retired until the next opening, so subsequent updates do not repeat the failed installation.
+Fixed recipe grids expand visible cells and retained keyboard neighbors over the complete catalog.
+Local window changes preserve the menu opening and authoritative revision.
+Screen regressions use 2,000 retained items in the recipe-book and Creative layouts.
+They cover distant scrolling, resize, original action IDs, and keyboard navigation.
+Creative hotbar destruction restores ordinary controls before item changes or requests.
+Passive hover notifications do not trigger the fallback for unsupported recipe actions.
 Full Creative catalog expansion, initial bundle insertion, bulk recipe actions, and Creative cursor replacement remain unresolved.
 Complete cooking integration, live transfers, filled-bundle pixels, and the original E-key background report also remain unresolved.
 

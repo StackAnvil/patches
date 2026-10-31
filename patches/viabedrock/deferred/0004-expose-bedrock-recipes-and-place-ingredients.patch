@@ -1,4 +1,4 @@
-From d7d0d970f1cbc7880dca0b388407462bc03effbb Mon Sep 17 00:00:00 2001
+From 7176feda38eaae0f109ccddeea64d2dd8952a285 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -819,6 +819,20 @@ bytes. Preserve raw query bytes through the String API as well.
 
 This supplies the query-update boundary required by the player model;
 installed screen ownership and text-edit delivery remain unfinished.
+
+Construct Creative catalog descriptors through the connection-owned native
+Item constructor, as inventory descriptors already do. The raw Creative
+reader previously attached the wire runtime value zero as a real Block to
+ordinary items. Potion secondary search then requested a Block auxiliary
+that did not exist and disconnected the session by unboxing null. Retain
+the selected definition and real optional Block association instead of
+substituting auxiliary data in the description producer. Consume the full
+header/user-data slice even when the native constructor rejects the Item.
+
+The packet regression preserves potion metadata and definition identity,
+keeps an absent Block absent, and reads secondary search text. Existing
+constructor controls retain associated Blocks at runtime zero. The live
+protocol-2225 Creative search supplied the disconnect regression.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 +
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -851,7 +865,7 @@ installed screen ownership and text-edit delivery remain unfinished.
  .../protocol/model/recipe/ShapedRecipe.java   |  65 +-
  .../model/recipe/ShapelessRecipe.java         |   6 +-
  .../protocol/model/recipe/SmithingRecipe.java |   4 +-
- .../protocol/packet/InventoryPackets.java     | 146 ++-
+ .../protocol/packet/InventoryPackets.java     | 160 +++-
  .../protocol/packet/JoinPackets.java          |   1 +
  .../protocol/packet/MultiStatePackets.java    |  55 ++
  .../protocol/rewriter/ItemRewriter.java       | 188 +++-
@@ -887,6 +901,7 @@ installed screen ownership and text-edit delivery remain unfinished.
  .../model/recipe/RecipeOwnershipTest.java     |  52 ++
  .../packet/FurnaceOptionsPacketTest.java      | 162 ++++
  .../packet/InventoryOptionsPacketTest.java    | 211 +++++
+ .../protocol/packet/InventoryPacketsTest.java |  51 +-
  .../NativeFurnaceOptionsPacketTest.java       | 214 +++++
  .../NativeRecipeConcreteCounterTest.java      | 165 ++++
  .../rewriter/NativeRecipePaletteTest.java     | 203 +++++
@@ -911,7 +926,7 @@ installed screen ownership and text-edit delivery remain unfinished.
  .../types/model/FurnaceOptionsTypeTest.java   |  75 ++
  .../types/model/InventoryOptionsTypeTest.java |  46 +
  .../types/recipe/CraftingDataReaderTest.java  |  84 +-
- 91 files changed, 12928 insertions(+), 180 deletions(-)
+ 92 files changed, 12984 insertions(+), 189 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeAvailability.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeCatalog.java
@@ -3835,7 +3850,7 @@ index 11c4d002..9dc86539 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index 20e14855..2d0e3d35 100644
+index 20e14855..0672f7a7 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -93,6 +93,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
@@ -3846,7 +3861,15 @@ index 20e14855..2d0e3d35 100644
  import net.raphimc.viabedrock.protocol.model.ItemCooldown;
  import net.raphimc.viabedrock.protocol.model.FullContainerName;
  import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
-@@ -165,11 +166,69 @@ public final class InventoryPackets {
+@@ -109,6 +110,7 @@ import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ import net.raphimc.viabedrock.protocol.types.InventoryTypes;
+ import net.raphimc.viabedrock.protocol.types.item.BedrockItemType;
++import net.raphimc.viabedrock.protocol.types.item.NetworkItemStackContext;
+ import net.raphimc.viabedrock.protocol.types.recipe.CraftingDataReader;
+ 
+ import java.util.ArrayList;
+@@ -165,11 +167,69 @@ public final class InventoryPackets {
          final short javaId = container.translateContainerData(id);
          if (javaId < 0) {
              wrapper.cancel();
@@ -3916,7 +3939,7 @@ index 20e14855..2d0e3d35 100644
      }
  
      static void handleContainerClose(final PacketWrapper wrapper) {
-@@ -527,7 +586,13 @@ public final class InventoryPackets {
+@@ -527,7 +587,13 @@ public final class InventoryPackets {
                      if (container instanceof LecternContainer lectern) {
                          lectern.sendInitialState();
                      }
@@ -3931,7 +3954,7 @@ index 20e14855..2d0e3d35 100644
                  });
          protocol.registerClientbound(
                  ClientboundBedrockPackets.CONTAINER_CLOSE,
-@@ -564,6 +629,9 @@ public final class InventoryPackets {
+@@ -564,6 +630,9 @@ public final class InventoryPackets {
                          container.markServerUpdate();
                          wrapper.user().get(InventoryRequestTracker.class)
                                  .handleAuthoritativeContent(container);
@@ -3941,7 +3964,7 @@ index 20e14855..2d0e3d35 100644
                          if (container instanceof StonecutterContainer stonecutter) {
                              stonecutter.refreshInput();
                              wrapper.cancel();
-@@ -571,6 +639,7 @@ public final class InventoryPackets {
+@@ -571,6 +640,7 @@ public final class InventoryPackets {
                          }
                          PacketFactory.writeJavaContainerSetContent(wrapper, container);
                          PacketFactory.sendJavaCursorForHudUpdate(wrapper.user(), container);
@@ -3949,7 +3972,7 @@ index 20e14855..2d0e3d35 100644
                      } else {
                          wrapper.cancel();
                      }
-@@ -599,6 +668,12 @@ public final class InventoryPackets {
+@@ -599,6 +669,12 @@ public final class InventoryPackets {
                          container.markServerUpdate();
                          wrapper.user().get(InventoryRequestTracker.class)
                                  .handleAuthoritativeSlot(container, slot);
@@ -3962,7 +3985,7 @@ index 20e14855..2d0e3d35 100644
                          if (container instanceof StonecutterContainer stonecutter && slot == 3) {
                              stonecutter.refreshInput();
                              wrapper.cancel();
-@@ -622,6 +697,7 @@ public final class InventoryPackets {
+@@ -622,6 +698,7 @@ public final class InventoryPackets {
                          }
                          wrapper.write(
                                  VersionedTypes.V26_3.item, container.getJavaItem(slot)); // item
@@ -3970,7 +3993,7 @@ index 20e14855..2d0e3d35 100644
                      } else {
                          wrapper.cancel();
                      }
-@@ -683,6 +759,14 @@ public final class InventoryPackets {
+@@ -683,6 +760,14 @@ public final class InventoryPackets {
                          inventoryTracker.removeDynamicContainer(containerName);
                      }
                  });
@@ -3985,13 +4008,13 @@ index 20e14855..2d0e3d35 100644
          protocol.registerClientbound(
                  ClientboundBedrockPackets.CRAFTING_DATA,
                  null,
-@@ -692,7 +776,27 @@ public final class InventoryPackets {
+@@ -692,7 +777,27 @@ public final class InventoryPackets {
                              wrapper.user().get(CraftingDataTracker.class);
                      final CraftingDataReader.Data data = CraftingDataReader.read(wrapper);
                      tracker.updateCraftingDataList(data.recipes(), data.clearRecipes());
 +                    wrapper.user().get(InventoryTracker.class).getInventoryContainer()
 +                            .refreshCraftingOutput();
-                     tracker.sendJavaUpdateRecipes(wrapper.user());
++                    tracker.sendJavaUpdateRecipes(wrapper.user());
 +                    NativeCookingUiState.sendUpdate(wrapper.user());
 +                });
 +        protocol.registerClientbound(
@@ -4008,12 +4031,12 @@ index 20e14855..2d0e3d35 100644
 +                    final CraftingDataTracker tracker =
 +                            wrapper.user().get(CraftingDataTracker.class);
 +                    tracker.updateUnlockedRecipes(type, ids);
-+                    tracker.sendJavaUpdateRecipes(wrapper.user());
+                     tracker.sendJavaUpdateRecipes(wrapper.user());
 +                    NativeCookingUiState.sendUpdate(wrapper.user());
                  });
          protocol.registerClientbound(
                  ClientboundBedrockPackets.CONTAINER_SET_DATA,
-@@ -905,6 +1009,46 @@ public final class InventoryPackets {
+@@ -905,6 +1010,46 @@ public final class InventoryPackets {
                          PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
                      }
                  });
@@ -4060,11 +4083,42 @@ index 20e14855..2d0e3d35 100644
          protocol.registerServerbound(
                  ServerboundPackets26_3.CONTAINER_BUTTON_CLICK,
                  null,
+@@ -1727,10 +1872,10 @@ public final class InventoryPackets {
+ 
+     private static BedrockItem readCreativeItem(final PacketWrapper wrapper, final ItemRewriter itemRewriter)
+             throws InformativeException {
+-        return readCreativeItem(wrapper, itemRewriter.getItems().getOrDefault("minecraft:shield", 0));
++        return readCreativeItem(wrapper, itemRewriter.getItems().getOrDefault("minecraft:shield", 0), itemRewriter);
+     }
+ 
+-    static BedrockItem readCreativeItem(final PacketWrapper wrapper, final int blockingId)
++    static BedrockItem readCreativeItem(final PacketWrapper wrapper, final int blockingId, final NetworkItemStackContext context)
+             throws InformativeException {
+         final int id = wrapper.read(BedrockTypes.VAR_INT);
+         final int amount = wrapper.read(BedrockTypes.UNSIGNED_SHORT_LE);
+@@ -1740,13 +1885,12 @@ public final class InventoryPackets {
+         if (id == 0) {
+             return BedrockItem.empty();
+         }
+-        final BedrockItem item = new BedrockItem(id);
+-        item.setAmount(amount);
+-        item.setData(data);
+-        item.setBlockRuntimeId(blockRuntimeId);
++        final BedrockItem item = context.createNetworkItem(id, (short) data, (byte) amount, blockRuntimeId);
+         final ByteBuf buffer = Unpooled.wrappedBuffer(userData);
+         try {
+-            BedrockItemType.readUserData(buffer, item, blockingId);
++            if (!item.isEmpty()) {
++                BedrockItemType.readUserData(buffer, item, blockingId);
++            }
+         } finally {
+             buffer.release();
+         }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 91f2662a..7d828823 100644
+index e2b41cce..1904a56d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-@@ -597,6 +597,7 @@ public final class JoinPackets {
+@@ -568,6 +568,7 @@ public final class JoinPackets {
          user.get(EntityTracker.class).sendNativeCustomEntitySnapshot();
          user.get(PlayerInputStorage.class).markJoined();
          user.get(PlayerInputStorage.class).sendSnapshot();
@@ -9742,6 +9796,87 @@ index 00000000..3560ff25
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
+index 7dccb3cc..44b29c83 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
+@@ -36,6 +36,14 @@ import net.raphimc.viabedrock.protocol.model.inventory.InventoryActionData;
+ import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
+ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import net.raphimc.viabedrock.protocol.types.item.NetworkItemStackContext;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
++import net.raphimc.viabedrock.protocol.model.ItemRegistry;
++import net.raphimc.viabedrock.protocol.model.ItemEntry;
++import net.raphimc.viabedrock.protocol.model.BaseGameVersion;
++import net.raphimc.viabedrock.protocol.model.ItemDescriptionContext;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
+ import org.junit.jupiter.api.Test;
+ import org.junit.jupiter.api.BeforeAll;
+ 
+@@ -50,6 +58,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
+ import static org.junit.jupiter.api.Assertions.assertSame;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
++import static org.mockito.Mockito.*;
++
+ class InventoryPacketsTest {
+ 
+     @BeforeAll
+@@ -107,13 +117,50 @@ class InventoryPacketsTest {
+         writeCreativeDescriptor(descriptors, 529, fireworkData);
+         final PacketWrapper wrapper = new PacketWrapperImpl(0, descriptors, null);
+ 
+-        assertTrue(InventoryPackets.readCreativeItem(wrapper, 0).isEmpty());
+-        final BedrockItem firework = InventoryPackets.readCreativeItem(wrapper, 0);
++        final var context = mock(NetworkItemStackContext.class);
++        when(context.createNetworkItem(529, (short) 0, (byte) 1, 0)).thenReturn(new BedrockItem(529));
++        assertTrue(InventoryPackets.readCreativeItem(wrapper, 0, context).isEmpty());
++        final BedrockItem firework = InventoryPackets.readCreativeItem(wrapper, 0, context);
+         assertEquals(529, firework.identifier());
+         assertEquals(1, firework.tag().getCompoundTag("Fireworks").getByte("Flight"));
+         assertEquals(0, descriptors.readableBytes());
+     }
+ 
++    @Test
++    void creativePotionMetadataStaysNonBlockAndSupportsSecondarySearchText() throws Exception {
++        final var registry = new ItemRegistry(new ItemEntry[]{new ItemEntry("minecraft:potion", 30001, false, ItemVersion.None, null)});
++        final var user = mock(UserConnection.class);
++        final var blocks = mock(BlockStateRewriter.class);
++        final var items = mock(ItemRewriter.class, CALLS_REAL_METHODS);
++        doReturn(user).when(items).user();
++        when(user.get(BlockStateRewriter.class)).thenReturn(blocks);
++        final var field = ItemRewriter.class.getDeclaredField("registry");
++        field.setAccessible(true);
++        field.set(items, registry);
++        final var data = Unpooled.buffer();
++        try {
++            BedrockTypes.VAR_INT.write(data, 30001);
++            data.writeShortLE(1);
++            BedrockTypes.UNSIGNED_VAR_INT.write(data, 5);
++            BedrockTypes.VAR_INT.write(data, 0);
++            BedrockTypes.BYTE_ARRAY.write(data, new byte[0]);
++            final var item = InventoryPackets.readCreativeItem(new PacketWrapperImpl(0, data, user), 0, items);
++            assertSame(registry.definition(30001), item.definition());
++            assertFalse(item.hasBlockState());
++            assertEquals(5, item.data());
++            final var description = registry.secondaryDescription(item, true, new ItemDescriptionContext(key -> key,
++                    () -> BaseGameVersion.INVALID, stack -> {
++                        assertFalse(stack.hasBlockState());
++                        return stack.data();
++                    }, ignored -> BedrockItem.empty(), ignored -> "", (key, value) -> Integer.toString(value)));
++            assertFalse(description.isEmpty());
++            assertEquals(0, data.readableBytes());
++            verifyNoInteractions(blocks);
++        } finally {
++            data.release();
++        }
++    }
++
+     private static void writeCreativeDescriptor(
+             final ByteBuf buffer, final int id, final byte[] userData) {
+         BedrockTypes.VAR_INT.write(buffer, id);
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeFurnaceOptionsPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeFurnaceOptionsPacketTest.java
 new file mode 100644
 index 00000000..d66d6110

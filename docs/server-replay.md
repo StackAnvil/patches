@@ -25,7 +25,10 @@ For another public server, use its current address from the in-game catalog or t
 bun run server-replay record public --target play.example.org:19132 --client addon --seconds 240
 ```
 
-Public targets also accept `nethernet://host:port`. The private manifest records the selected endpoint.
+Public targets also accept `nethernet://host:port`.
+Hosted Xbox JSON-RPC experiences use `nethernet-xbox-json-rpc://network-id` with `--client addon` or `--client proxy`.
+Resolve a fresh network ID through the catalog before connecting. These IDs have no port.
+The private manifest records the selected endpoint.
 Catalog experiences can use temporary endpoints, so resolve the address again before a later run.
 Named targets retain their configured address. Local targets still require loopback.
 The Hive guard also applies to its hostnames supplied through `record public`.

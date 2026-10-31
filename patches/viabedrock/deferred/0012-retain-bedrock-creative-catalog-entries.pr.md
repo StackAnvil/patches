@@ -66,6 +66,9 @@ Missing profile preferences remain absent; the initial filtering value follows t
 Source, recipe, unlock, ability, rule, and preference changes invalidate the retained collections.
 Catalog replacement refreshes source collections while preserving the backend's installed policies and owned query.
 The state publishes the retained rows and full item previews through a bounded, compressed protocol-2225 snapshot.
+The view adapter can expand a fixed recipe-grid window while retaining every source row and item preview.
+Local windows preserve original recipe IDs, all real menu slots, and the authoritative snapshot revision.
+A 2,000-row Creative regression covers distant windows and exported-program round trips.
 Each snapshot carries its opening, container generation, revision, and both independent native layouts.
 Search and preference commands can use a pending opening. Item requests require the acknowledged generation.
 
@@ -99,3 +102,15 @@ These controls do not execute the complete native cache wrapper or establish ins
 
 Five lifecycle regression cases exercise pending source changes, retained search policies, stale acknowledgments, profile/catalog updates, and same-object workbench reopening.
 These tests establish Java ownership and observable collection state; they do not establish complete native screen parity.
+
+Creative catalog cells use the current effective game mode for permission.
+They remain active without recipe ingredients, while retained availability and captured search policies stay unchanged.
+The Bedrock 1.26.60.5 background callback bypasses recipe-disabled colors in Creative.
+A protocol-2225 native capture selects a trapped chest through CraftCreative and takes the resulting stack to the cursor.
+Current native background controls cover explicit and inherited Creative modes.
+A snapshot regression checks active Creative cells without ingredients and restores recipe restrictions in Survival.
+A live add-on check removes the red disabled backgrounds.
+The picker validates the full cursor stack before transfer admission while preserving the unit-sized native craft result.
+Request regressions cover stack sizes one and 64, cursor prediction, and the restoration snapshot.
+An installed add-on test selects 64 rails and places them in the hotbar; BDS accepts both requests.
+Proxy validation of this quantity fix remains open. Cursor replacement, bulk actions, and complete native screen parity remain unfinished.
