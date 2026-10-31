@@ -81,8 +81,12 @@ Use the [source guide](bedrock-development-sources.md) for versioned native refe
 
 ## Remaining limits
 
-Authored player/controller publication and native recipe admission remain unfinished.
-The retained model alone does not replace the installed Java inventory screen.
+Core publishes the retained player/workbench rows and full item previews in compressed snapshots.
+Commands bind to the opening, container generation, snapshot revision, and request sequence.
+The add-on buffers search edits while a command awaits its reply.
+
+Default authored player and workbench scenes retain ordinary controls because Help and some renderer bindings remain unsupported.
+Bulk recipe actions, Creative cursor replacement, and complete installed native parity remain unfinished.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.

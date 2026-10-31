@@ -65,7 +65,9 @@ Real profile settings update filtering and the selected tab.
 Missing profile preferences remain absent; the initial filtering value follows the observed current native constructor.
 Source, recipe, unlock, ability, rule, and preference changes invalidate the retained collections.
 Catalog replacement refreshes source collections while preserving the backend's installed policies and owned query.
-This state does not create a frontend screen.
+The state publishes the retained rows and full item previews through a bounded, compressed protocol-2225 snapshot.
+Each snapshot carries its opening, container generation, revision, and both independent native layouts.
+Search and preference commands can use a pending opening. Item requests require the acknowledged generation.
 
 The reference uses Bedrock 1.26.51.1, build 51061372, protocol 2193.
 The original collection constructor, stored search callbacks, query setter, selected-stack operations, normalization, complete collection refresh and recipe counter execute together.
@@ -79,8 +81,9 @@ These controls do not establish complete backend registration or controller life
 Current 1.26.60.5 constructor and controller instruction mapping confirms the captured fields and initial filtering value.
 It does not establish native construction timing relative to the network acknowledgment or frame-level population timing.
 Unpositioned pending player contexts retain the documented fallback crafting tags.
-Frontend edit delivery and authored player-screen publication remain unfinished.
-The ordinary Java picker remains installed.
+The add-on retains snapshot identity and buffers search edits while a command awaits its reply.
+Default player and workbench scenes retain ordinary controls because Help and some renderer bindings remain unsupported.
+Bulk recipe selection, Creative cursor replacement, and complete installed action parity remain unfinished.
 
 The retained model exposes output quantity separately from availability and action admission.
 Candidate recipes share source consumption in priority order. Count reads retain the native crafting-input, cursor, and player-inventory order.

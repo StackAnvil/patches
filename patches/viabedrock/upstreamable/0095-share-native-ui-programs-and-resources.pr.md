@@ -24,3 +24,6 @@ The controls supply caller storage and CRT string operations; they do not establ
 Program compilation, resource, and transport tests cover supported content. Transport acceptance does not establish screen interaction or visual parity.
 
 The [owning patch](0095-share-native-ui-programs-and-resources.patch) retains implementation rationale and versioned evidence.
+
+View bindings can read an authored `toggle_view_binding_name` alias.
+A regression checks section visibility when the destination has a different local toggle value.
