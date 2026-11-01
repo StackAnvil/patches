@@ -114,7 +114,12 @@ Output merges existing stacks and can use a slot freed by consumption.
 An unrelated held apple stays unchanged while output fits inventory.
 When inventory is full, an empty cursor receives the output.
 Held logs increase displayed availability, but bulk crafting leaves them unchanged.
-Full occupied cursors and nonstackable outputs still need native packet controls.
+With full inventory, a full compatible cursor or an incompatible held stack prevents the craft request.
+A partially filled compatible cursor instead drops its held stack and receives the full crafted stack.
+Captured requests cover cursors with 60 and 63 planks; both produce 64 new planks.
+Native wooden-sword bulk crafting produces one sword despite ingredients for 32.
+Complete request fixtures preserve split placement, repeated source references, and cursor replacement.
+The matching server accepts these requests. These fixtures do not implement the Survival bulk planner.
 
 Admit an authored player screen only when its required collections and controls are available.
 The shared UI renderer supports the local player portrait and separate body/head rotations.
