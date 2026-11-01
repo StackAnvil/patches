@@ -21,6 +21,13 @@ BDS advertises these types; Lifeboat omits them. All 22,543 shared native state 
 The palette now follows that registration boundary. Installed add-on and ViaProxy tests spawn in air and walk through the rendered lobby.
 The authored Navigator opens on both routes. Full native appearance remains unverified.
 
+The registration names now come directly from the unmodified [CloudburstMC/Data NBT snapshot](https://github.com/CloudburstMC/Data/blob/0021592b1a4253528bad1e1d8b537e306e097557/data_driven_blocks.nbt).
+Its 98 root keys exactly match the captured list. The JSON copy and conversion step are unnecessary.
+`Data Asset Sources.md` records the source revision, checksum, license, and update procedure.
+Palette regressions read the bundled definitions and retain the native BDS and Lifeboat state IDs.
+A fresh full-stack replay and the four-project build pass.
+Core, add-on, and proxy packages retain the original NBT bytes and its license.
+
 Shape, state, culling, and conversion tests cover supported definitions. Carrier capacity, unsupported materials, and complete native appearance remain limits.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.
