@@ -18,4 +18,6 @@ The installed add-on and proxy match the rebuilt artifacts.
 The full four-project build passes 3,281 tests, with 325 skipped and no failures or errors.
 Core packet regressions cover server-confirmed difficulty changes and food admission without inventory prediction.
 
-The separate DataDriven apple admission discrepancy and the original intermittent food-use report remain open.
+The separate DataDriven food admission discrepancy and the original intermittent food-use report remain open.
+Native full-hunger Normal controls consume both `always` and `if_first` foods with `can_always_eat=false`.
+The [food-use evidence](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) describes the controls and remaining dispatch limits.

@@ -40,7 +40,16 @@ All 1,645 core classes match both packaged copies, and installed artifacts match
 ## Remaining limits
 
 The same native build consumes a DataDriven apple at full hunger on Normal despite its advertised `can_always_eat=false` component.
-That discrepancy remains open, alongside the original intermittent animation-without-feeding report.
+Controlled DataDriven foods also consume one item with that flag false and `minecraft:use_modifiers` present.
+Both explicit `start_using` modes, `always` and `if_first`, produce that result.
+The new-format fixture that omits the field receives `if_first` from BDS and also consumes one item.
+Bread remains at 16 under the same full-hunger Normal control.
+
+The [26.30 update reference](https://github.com/MicrosoftDocs/minecraft-creator/blob/main/creator/Documents/Update1.26.30.md) describes use-handler ordering for these modes.
+The current native controls disprove an `always`-only explanation, but do not establish the complete dispatch predicate.
+They do not cover food without use modifiers or competing non-food use handlers.
+The current core registry rejects the false-flag DataDriven controls, so this admission discrepancy remains open.
+The original intermittent animation-without-feeding report also remains open.
 The bread controls do not establish all custom-food constructors, ability exceptions, cycle timing, or inventory authority modes.
 Late completion for a new use of the same item also needs verification.
 
