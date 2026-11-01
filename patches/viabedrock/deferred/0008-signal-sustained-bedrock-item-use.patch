@@ -1,4 +1,4 @@
-From 7ad90993cc427d71c89a7c376744a0abadb6cbcb Mon Sep 17 00:00:00 2001
+From 63776783a37c07860529639be7955eaf0419644d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] fix(interaction): signal sustained Bedrock item use
@@ -49,17 +49,34 @@ Keep unsupported offhand use on its existing container-resynchronization
 path. The new eligibility check applies to the main-hand use transaction.
 Both raw hand paths have targeted packet controls; neither changes the
 canonical selected stack or queues a rejected use flag.
+
+Ignore hunger for ordinary food on the server-confirmed Peaceful difficulty,
+independently of the item's always-edible flag. Read current game-session
+difficulty, including live server updates, before admitting the request.
+Java client integration must also admit its local consumable predicate.
+
+Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls on protocol 2225 refuse
+full-hunger bread on Normal, consume 16->15 after switching to Peaceful,
+and refuse after switching back. The old installed add-on retains 16 and
+never enters use on Peaceful. Registered packet tests now carry those
+difficulty transitions through the food admission boundary without
+predicting any inventory consumption.
+
+The same target's DataDriven apple consumes at full hunger on Normal even
+with an advertised can_always_eat=false component. That separate component
+admission discrepancy and the original intermittent eating report remain
+open; preserve the verified Normal refusal for ordinary legacy bread.
 ---
- .../model/ItemDefinitionProperties.java       |  6 ++
- .../protocol/model/ItemFoodProperties.java    | 27 +++++
- .../protocol/model/ItemRegistry.java          |  6 ++
- .../protocol/packet/InteractionPackets.java   | 51 +++++++++-
- .../protocol/rewriter/ItemRewriter.java       | 11 +++
- .../model/ItemFoodPropertiesTest.java         | 65 ++++++++++++
- .../packet/CompletedItemUsePacketTest.java    | 98 +++++++++++++++++++
- .../packet/FoodUseAdmissionPacketTest.java    | 98 +++++++++++++++++++
- .../packet/InteractionPacketsTest.java        | 31 ++++++
- 9 files changed, 390 insertions(+), 3 deletions(-)
+ .../model/ItemDefinitionProperties.java       |   6 +
+ .../protocol/model/ItemFoodProperties.java    |  27 +++
+ .../protocol/model/ItemRegistry.java          |   6 +
+ .../protocol/packet/InteractionPackets.java   |  55 +++++-
+ .../protocol/rewriter/ItemRewriter.java       |  11 ++
+ .../model/ItemFoodPropertiesTest.java         |  65 +++++++
+ .../packet/CompletedItemUsePacketTest.java    |  98 +++++++++++
+ .../packet/FoodUseAdmissionPacketTest.java    | 165 ++++++++++++++++++
+ .../packet/InteractionPacketsTest.java        |  31 ++++
+ 9 files changed, 461 insertions(+), 3 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemFoodProperties.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemFoodPropertiesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java
@@ -99,7 +116,7 @@ index 65becabc..56ab4662 100644
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemFoodProperties.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemFoodProperties.java
 new file mode 100644
-index 00000000..c4e63834
+index 00000000..f365440d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemFoodProperties.java
 @@ -0,0 +1,27 @@
@@ -125,8 +142,8 @@ index 00000000..c4e63834
 +        return new ItemFoodProperties(true, component.get("can_always_eat") instanceof ByteTag value && value.asByte() != 0);
 +    }
 +
-+    public boolean allowsUse(final float hunger, final float maximumHunger, final boolean creative) {
-+        return !this.food || this.canAlwaysEat || creative || hunger < maximumHunger;
++    public boolean allowsUse(final float hunger, final float maximumHunger, final boolean ignoresHunger) {
++        return !this.food || this.canAlwaysEat || ignoresHunger || hunger < maximumHunger;
 +    }
 +
 +}
@@ -148,10 +165,10 @@ index a906b932..03ebaf51 100644
          return this.definitions.definitions().stream().filter(definition -> definition.receiver().component())
                  .map(NativeItemDefinitions.Definition::identifier).collect(Collectors.toUnmodifiableSet());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index 081338cb..1a911c7b 100644
+index 081338cb..19465cd8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-@@ -46,10 +46,12 @@ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+@@ -46,10 +46,14 @@ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.data.enums.Direction;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransaction_Type;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
@@ -161,10 +178,12 @@ index 081338cb..1a911c7b 100644
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.ItemFoodProperties;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Difficulty;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
  import net.raphimc.viabedrock.protocol.model.Position3f;
  import net.raphimc.viabedrock.protocol.storage.BlockUseStorage;
  import net.raphimc.viabedrock.protocol.storage.BlockInteractionSoundTracker;
-@@ -59,10 +61,17 @@ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
+@@ -59,10 +63,17 @@ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  
  import java.util.List;
@@ -182,7 +201,7 @@ index 081338cb..1a911c7b 100644
      private InteractionPackets() {
      }
  
-@@ -257,7 +266,6 @@ public final class InteractionPackets {
+@@ -257,7 +268,6 @@ public final class InteractionPackets {
              wrapper.read(Types.FLOAT); // yaw
              wrapper.read(Types.FLOAT); // pitch
  
@@ -190,11 +209,11 @@ index 081338cb..1a911c7b 100644
              if (javaHand < 0 || javaHand >= InteractionHand.values().length) {
                  wrapper.cancel();
                  return;
-@@ -278,8 +286,15 @@ public final class InteractionPackets {
+@@ -278,8 +288,15 @@ public final class InteractionPackets {
                  openBook.send(BedrockProtocol.class);
                  return;
              }
-+            if (hand == InteractionHand.MAIN_HAND && !canStartFoodUse(clientPlayer, itemRewriter.foodProperties(usedItem))) {
++            if (hand == InteractionHand.MAIN_HAND && !canStartFoodUse(clientPlayer, itemRewriter.foodProperties(usedItem), wrapper.user().get(GameSessionStorage.class))) {
 +                // Java sends USE_ITEM before its local food check. Native clients admit eating before sending.
 +                wrapper.cancel();
 +                return;
@@ -207,7 +226,7 @@ index 081338cb..1a911c7b 100644
              if (transaction == null) {
                  wrapper.cancel();
                  if (hand == InteractionHand.OFF_HAND && !"minecraft:shield".equals(itemIdentifier)) {
-@@ -371,6 +386,24 @@ public final class InteractionPackets {
+@@ -371,6 +388,24 @@ public final class InteractionPackets {
                  }
              }
          });
@@ -232,13 +251,15 @@ index 081338cb..1a911c7b 100644
          protocol.registerClientbound(ClientboundBedrockPackets.SET_ENTITY_LINK, null, wrapper -> {
              wrapper.cancel();
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-@@ -380,6 +413,15 @@ public final class InteractionPackets {
+@@ -380,6 +415,17 @@ public final class InteractionPackets {
  
      }
  
-+    static boolean canStartFoodUse(final ClientPlayerEntity player, final ItemFoodProperties food) {
++    static boolean canStartFoodUse(final ClientPlayerEntity player, final ItemFoodProperties food, final GameSessionStorage session) {
 +        final var hunger = player.attributes().get("minecraft:player.hunger");
-+        return hunger == null || food.allowsUse(hunger.computeClampedValue(), hunger.computeMaxValue(), player.javaGameMode() == GameMode.CREATIVE);
++        final boolean ignoresHunger = player.javaGameMode() == GameMode.CREATIVE
++                || session != null && session.getDifficulty() == Difficulty.Peaceful;
++        return hunger == null || food.allowsUse(hunger.computeClampedValue(), hunger.computeMaxValue(), ignoresHunger);
 +    }
 +
 +    static boolean isContinuousUseItem(final String identifier, final Set<String> tags) {
@@ -248,7 +269,7 @@ index 081338cb..1a911c7b 100644
      static void sendPassengerUpdates(final PacketWrapper source, final EntityTracker entityTracker) {
          for (Entity vehicle : entityTracker.drainPassengerUpdates()) {
              final PacketWrapper passengersPacket = PacketWrapper.create(ClientboundPackets26_3.SET_PASSENGERS,
-@@ -401,7 +443,7 @@ public final class InteractionPackets {
+@@ -401,7 +447,7 @@ public final class InteractionPackets {
  
      static BedrockInventoryTransaction beginItemUse(final ClientPlayerEntity player,
              final InteractionHand hand, final int hotbarSlot, final BedrockItem item,
@@ -257,7 +278,7 @@ index 081338cb..1a911c7b 100644
          if (item.isEmpty()) {
              return null;
          }
-@@ -413,6 +455,9 @@ public final class InteractionPackets {
+@@ -413,6 +459,9 @@ public final class InteractionPackets {
              return null;
          }
          player.setShieldBlockingHand(null);
@@ -487,10 +508,10 @@ index 00000000..45f4a6a3
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/FoodUseAdmissionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/FoodUseAdmissionPacketTest.java
 new file mode 100644
-index 00000000..2a897a27
+index 00000000..20117e06
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/FoodUseAdmissionPacketTest.java
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,165 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -507,18 +528,25 @@ index 00000000..2a897a27
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
 +import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Difficulty;
 +import net.raphimc.viabedrock.api.util.PacketFactory;
 +import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.ItemFoodProperties;
 +import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
 +import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import net.raphimc.viabedrock.protocol.model.inventory.InventoryTransactionData;
 +import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 +import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
 +import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 +import io.netty.buffer.Unpooled;
 +import org.junit.jupiter.params.ParameterizedTest;
 +import org.junit.jupiter.params.provider.EnumSource;
++import org.junit.jupiter.api.Test;
 +
 +import java.lang.reflect.Proxy;
 +import java.util.HashMap;
@@ -576,9 +604,69 @@ index 00000000..2a897a27
 +        }
 +    }
 +
++    @Test
++    void confirmedDifficultyChangesAdmitPeacefulFoodAndRestoreFullHungerRefusal() throws Exception {
++        final Map<Class<?>, Object> stores = new HashMap<>();
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> method.getName().equals("get") ? stores.get(args[0]) : null);
++        final var session = mock(GameSessionStorage.class, CALLS_REAL_METHODS);
++        stores.put(GameSessionStorage.class, session);
++        final var entities = new EntityTracker(user);
++        stores.put(EntityTracker.class, entities);
++        entities.addEntity(new ClientPlayerEntity(user, 1, UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0)), false);
++        final var requests = new InventoryRequestTracker(user);
++        requests.setPredictingClick(true);
++        stores.put(InventoryRequestTracker.class, requests);
++        final var inventory = new InventoryTracker(user);
++        stores.put(InventoryTracker.class, inventory);
++        final var held = new BedrockItem(1);
++        held.setAmount(8);
++        inventory.getInventoryContainer().setItem(0, held);
++        final var items = mock(ItemRewriter.class);
++        when(items.foodProperties(held)).thenReturn(new ItemFoodProperties(true, false));
++        stores.put(ItemRewriter.class, items);
++        final var transactions = new InventoryTransactionRewriter(user);
++        stores.put(InventoryTransactionRewriter.class, transactions);
++        final var protocol = new TestProtocol();
++        try (var packets = mockStatic(PacketFactory.class)) {
++            for (final Difficulty difficulty : new Difficulty[] {Difficulty.Normal, Difficulty.Peaceful, Difficulty.Normal}) {
++                final var update = Unpooled.buffer();
++                final var input = Unpooled.buffer();
++                try {
++                    BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(update, difficulty.getValue());
++                    protocol.clientbound(new PacketWrapperImpl(ClientboundBedrockPackets.SET_DIFFICULTY, update, user));
++                    Types.VAR_INT.writePrimitive(input, InteractionHand.MAIN_HAND.ordinal());
++                    Types.VAR_INT.writePrimitive(input, 1);
++                    input.writeFloat(0F).writeFloat(0F);
++                    final var packet = new PacketWrapperImpl(ServerboundPackets26_3.USE_ITEM, input, user);
++                    protocol.translate(packet);
++                    assertEquals(difficulty != Difficulty.Peaceful, packet.isCancelled());
++                    if (!packet.isCancelled()) {
++                        final var transaction = packet.get(transactions.getInventoryTransactionType(), 0);
++                        final var use = assertInstanceOf(InventoryTransactionData.UseItemTransactionData.class, transaction.transactionData());
++                        assertEquals(8, use.itemInHand().amount());
++                    }
++                    assertEquals(8, held.amount());
++                    assertFalse(input.isReadable());
++                } finally {
++                    update.release();
++                    input.release();
++                }
++            }
++            packets.verifyNoInteractions();
++        }
++    }
++
 +    private static final class TestProtocol extends BedrockProtocol {
 +        private TestProtocol() {
 +            InteractionPackets.register(this);
++            PlayPackets.register(this);
++        }
++
++        private void clientbound(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
 +        }
 +
 +        private void translate(final PacketWrapper packet) throws Exception {

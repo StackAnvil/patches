@@ -1,18 +1,67 @@
-From 05f4f85c21d3f482a384d270d3a99471163e5b42 Mon Sep 17 00:00:00 2001
+From c6c107e77a038d85ba56f289da466a9ad5fa8fe4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] fix(world): forward difficulty changes to Bedrock
 
-Java 26.3 sends menu difficulty changes as a VarInt. Translate valid difficulty IDs to Bedrock protocol 2193 SetDifficulty so the world options control reaches the server.
----
- .../raphimc/viabedrock/protocol/packet/PlayPackets.java  | 9 +++++++++
- 1 file changed, 9 insertions(+)
+Translate valid Java 26.3 menu difficulty IDs to Bedrock SetDifficulty.
+Retain initial StartGame difficulty and later server-confirmed updates in
+the connection's game session. Forwarding a menu request does not change
+that retained value before the server confirms it.
 
+Native Bedrock 1.26.60.5/BDS 1.26.60.6 protocol-2225 bread controls refuse
+full-hunger use on Normal, consume after a live switch to Peaceful, and
+refuse after switching back. Retaining current difficulty lets food
+admission observe those transitions instead of a join-only snapshot.
+
+The packet regression verifies Normal/Peaceful/Normal state changes,
+the forwarded Java fields, invalid menu input, and the unchanged state
+while a valid menu request awaits confirmation.
+---
+ .../protocol/packet/JoinPackets.java          |  1 +
+ .../protocol/packet/PlayPackets.java          | 13 +++
+ .../protocol/storage/GameSessionStorage.java  | 10 +++
+ .../packet/DifficultyPacketsTest.java         | 89 +++++++++++++++++++
+ 4 files changed, 113 insertions(+)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/DifficultyPacketsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index 15123622..1bfd753b 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -225,6 +225,7 @@ public final class JoinPackets {
+                 final GameType levelGameType = GameType.getByValue(wrapper.read(BedrockTypes.VAR_INT), GameType.Undefined); // level game type
+                 final boolean hardcore = wrapper.read(Types.BOOLEAN); // hardcore
+                 final Difficulty difficulty = Difficulty.getByValue(wrapper.read(BedrockTypes.VAR_INT), Difficulty.Unknown); // difficulty
++                wrapper.user().get(GameSessionStorage.class).setDifficulty(difficulty);
+                 wrapper.read(BedrockTypes.BLOCK_POSITION); // default spawn position
+                 wrapper.read(Types.BOOLEAN); // achievements disabled
+                 final EditorWorldType editorWorldType = EditorWorldType.getByValue(wrapper.read(BedrockTypes.VAR_INT)); // world editor type
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/PlayPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/PlayPackets.java
-index ad56b55e..df5536fe 100644
+index ad56b55e..74666b4f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/PlayPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/PlayPackets.java
-@@ -85,6 +85,15 @@ public final class PlayPackets {
+@@ -28,9 +28,11 @@ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CommandOriginType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Difficulty;
+ import net.raphimc.viabedrock.protocol.model.CommandOriginData;
+ import net.raphimc.viabedrock.protocol.storage.BlobCache;
+ import net.raphimc.viabedrock.protocol.storage.GameRulesStorage;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.util.Map;
+@@ -44,6 +46,8 @@ public final class PlayPackets {
+             public void register() {
+                 map(BedrockTypes.UNSIGNED_VAR_INT, Types.VAR_INT); // difficulty
+                 create(Types.BOOLEAN, false); // locked
++                handler(wrapper -> wrapper.user().get(GameSessionStorage.class).setDifficulty(
++                        Difficulty.getByValue(wrapper.get(Types.VAR_INT, 0), Difficulty.Unknown)));
+             }
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.CLIENT_CACHE_MISS_RESPONSE, null, wrapper -> {
+@@ -85,6 +89,15 @@ public final class PlayPackets {
              wrapper.user().get(GameRulesStorage.class).updateGameRules(wrapper.read(BedrockTypes.GAME_RULE_ARRAY)); // game rules
          });
  
@@ -28,5 +77,135 @@ index ad56b55e..df5536fe 100644
          protocol.registerServerbound(ServerboundPackets26_3.SET_GAME_RULE, null, wrapper -> {
              wrapper.cancel();
              final GameRulesStorage gameRules = wrapper.user().get(GameRulesStorage.class);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
+index b86fa990..fa7fddc2 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
+@@ -27,6 +27,7 @@ import net.raphimc.viabedrock.protocol.model.DimensionDefinition;
+ import net.raphimc.viabedrock.protocol.data.JavaRegistries;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ChatRestrictionLevel;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GameType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Difficulty;
+ 
+ import java.util.HashMap;
+ import java.util.HashSet;
+@@ -43,6 +44,7 @@ public class GameSessionStorage extends StoredObject {
+     private boolean flatGenerator;
+     private int movementRewindHistorySize;
+     private GameType levelGameType;
++    private Difficulty difficulty = Difficulty.Unknown;
+     private long levelTime;
+     private boolean hardcoreMode;
+     private ChatRestrictionLevel chatRestrictionLevel;
+@@ -124,6 +126,14 @@ public class GameSessionStorage extends StoredObject {
+         this.levelGameType = levelGameType;
+     }
+ 
++    public Difficulty getDifficulty() {
++        return this.difficulty;
++    }
++
++    public void setDifficulty(final Difficulty difficulty) {
++        this.difficulty = difficulty;
++    }
++
+     public long getLevelTime() {
+         return this.levelTime;
+     }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/DifficultyPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/DifficultyPacketsTest.java
+new file mode 100644
+index 00000000..bc37e712
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/DifficultyPacketsTest.java
+@@ -0,0 +1,89 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Difficulty;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class DifficultyPacketsTest {
++
++    @Test
++    void onlyServerConfirmationChangesTheRetainedDifficulty() throws Exception {
++        final var user = mock(UserConnection.class);
++        final var session = mock(GameSessionStorage.class, CALLS_REAL_METHODS);
++        session.setDifficulty(Difficulty.Normal);
++        when(user.get(GameSessionStorage.class)).thenReturn(session);
++        final var protocol = new TestProtocol();
++        final var request = Unpooled.buffer();
++        try {
++            Types.VAR_INT.writePrimitive(request, 0);
++            final var packet = new PacketWrapperImpl(ServerboundPackets26_3.CHANGE_DIFFICULTY, request, user);
++            protocol.serverbound(packet);
++            assertFalse(packet.isCancelled());
++            assertEquals(0, packet.get(BedrockTypes.UNSIGNED_VAR_INT, 0));
++            assertEquals(Difficulty.Normal, session.getDifficulty());
++        } finally {
++            request.release();
++        }
++        for (final Difficulty difficulty : new Difficulty[] {Difficulty.Peaceful, Difficulty.Normal}) {
++            final var update = Unpooled.buffer();
++            try {
++                BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(update, difficulty.getValue());
++                final var packet = new PacketWrapperImpl(ClientboundBedrockPackets.SET_DIFFICULTY, update, user);
++                protocol.clientbound(packet);
++                assertEquals(difficulty.getValue(), packet.get(Types.VAR_INT, 0));
++                assertFalse(packet.get(Types.BOOLEAN, 0));
++                assertEquals(difficulty, session.getDifficulty());
++                assertFalse(update.isReadable());
++            } finally {
++                update.release();
++            }
++        }
++        final var invalid = Unpooled.buffer();
++        try {
++            Types.VAR_INT.writePrimitive(invalid, 4);
++            final var packet = new PacketWrapperImpl(ServerboundPackets26_3.CHANGE_DIFFICULTY, invalid, user);
++            protocol.serverbound(packet);
++            assertTrue(packet.isCancelled());
++            assertEquals(Difficulty.Normal, session.getDifficulty());
++        } finally {
++            invalid.release();
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private TestProtocol() {
++            PlayPackets.register(this);
++        }
++
++        private void clientbound(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++
++        private void serverbound(final PacketWrapper packet) throws Exception {
++            final var mapping = this.serverboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++    }
++
++}
 -- 
 2.56.0

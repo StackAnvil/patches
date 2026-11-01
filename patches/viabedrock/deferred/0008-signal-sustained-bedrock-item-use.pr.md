@@ -1,87 +1,48 @@
 # Sustained item use and food admission
 
-Java sends an air-use packet before its local food eligibility check.
-Bedrock Dedicated Server accepts that transaction even at full hunger.
-Holding ordinary food therefore consumes an extra item after the Java client stops its eating animation.
-
-This patch checks advertised native food properties before sending the main-hand transaction or setting `StartUsingItem`.
-It uses the current native hunger value and maximum.
-Food with `can_always_eat` and creative use retain their existing admission.
+This patch admits main-hand food use before it sends the transaction or sets `StartUsingItem`.
+Java sends its air-use packet before its local food predicate, and BDS can accept an otherwise ineligible request.
+Admission uses the advertised native food component and current hunger limits.
+Always-edible food, Creative use, and server-confirmed Peaceful difficulty ignore hunger.
 Items without advertised food data retain their existing route.
 Unsupported offhand use retains its container resynchronization.
 
-## Target evidence
+Food definitions follow ordered component updates and connection registry identity.
+The implementation does not infer food behavior from the Java item or a fixed whitelist.
+The [food component reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/itemreference/examples/itemcomponents/minecraft_food?view=minecraft-bedrock-stable) describes `can_always_eat`.
+Native captures establish the behavior of the tested builds.
 
-The target is Bedrock 1.26.51.1, protocol 2193, with Java 26.3.
-Its recorded `ITEM_REGISTRY` supplies `minecraft:food.can_always_eat` for component and legacy items.
-The inspected definitions include apple, rotten flesh, honey, chorus fruit, and both golden apple variants.
-The implementation retains ordered component updates and resolves them through the current registry identity.
-It does not infer native food behavior from a Java item or a fixed whitelist.
+`COMPLETED_USING_ITEM` supplies a signed item ID and a use method.
+Matching held-item completions produce Java's `USE_ITEM_COMPLETE` event without changing canonical inventory counts.
+Replaced items and methods outside zero through sixteen cannot complete the current use.
+The patch body retains the original Bedrock 1.26.51.1 handler evidence and admission rationale.
 
-Microsoft documents the property in the [food component reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/itemreference/examples/itemcomponents/minecraft_food?view=minecraft-bedrock-stable).
-The target capture establishes that this property exists in the pinned version.
-This admission change uses captured metadata and server behavior, without claiming an original-instruction oracle for the complete eligibility predicate.
+## Current native boundary
 
-The existing completion handling decodes the signed item ID and use method from `COMPLETED_USING_ITEM`.
-It ignores replaced held items and methods outside the native range of zero through sixteen.
-The owning patch records the original handler trace and packet controls.
+Official Bedrock 1.26.60.5 with BDS 1.26.60.6 uses protocol 2225.
+At full hunger, bread remains at 16 on Normal and decreases to 15 after a switch to Peaceful.
+A switch back to Normal restores refusal and retains 16 bread.
+The previous installed add-on retains all 16 bread and never enters use on Peaceful.
+Core retains initial difficulty and later server confirmations.
+The client integration also admits its local consumable cycle on Peaceful, including connections through ViaProxy.
+Inventory consumption remains server-owned.
 
-## Regression controls
+Registered packet tests cover main-hand rejection, offhand resynchronization, and Normal → Peaceful → Normal admission without inventory prediction.
+Model tests cover registry replacement, hunger maxima, Creative use, and always-edible food.
+Completion tests cover signed IDs, method boundaries, and replaced items.
 
-Model tests cover omitted and replaced component definitions, registry identity replacement, native hunger maxima, creative use, and always-edible food.
-Actual packet mappings cover both raw hand paths.
-A rejected main-hand request changes neither the canonical inventory nor the queued use flag.
-Offhand requests retain the existing container resynchronization.
-Existing completion controls still cover signed IDs, method boundaries, and replaced items.
+Installed direct and ViaProxy controls each pass those three full-hunger cases and a hungry Normal control.
+Allowed cases each receive one server completion, consume one bread, and settle at the server count of 15.
+Refused cases never enter local use and retain 16 bread.
+The full four-project build passes 3,281 tests, with 325 skipped and no failures or errors.
+All 1,645 core classes match both packaged copies, and installed artifacts match the build checksums.
 
-A private BDS fixture starts with hunger four and sixteen apples.
-The original candidate consumes five apples in both grounded and delayed-correction phases.
-Each phase includes a server use start at hunger twenty.
-The fixed candidate consumes four apples and stops at hunger twenty, leaving twelve apples.
-Both ordinary-food phases record four starts, four completions, and no start at full hunger.
+## Remaining limits
 
-A separate full-hunger golden-apple phase starts with eight items and completes four uses.
-All five starts occur at full hunger; releasing the key cancels the final incomplete use.
-The server and client settle at hunger twenty with four golden apples.
-
-The direct run executes five historical replays with fifty-four physical steps.
-Three replays occur during active eating and preserve use timers of twelve, twenty-eight, and eighteen ticks.
-Every replay boundary preserves tick count, hunger, held count, and active-use state.
-The fixture samples a removed player after disconnect; those later errors are excluded from active-session evidence.
-The read-only client observers report no errors.
-
-The same three-phase fixture also passes through ViaProxy.
-Its ordinary-food phases each stop after four completions, with no start at full hunger.
-The full-hunger golden-apple phase completes four uses and cancels the fifth on release.
-The proxy and client artifacts match their full-build checksums.
-
-The proxy run executes six historical replays with fifty-five physical steps.
-Three active-use replays preserve timers of twenty-three, seventeen, and ten ticks.
-Every replay boundary preserves tick count, hunger, held count, and active-use state.
-Its private inbound control delivers 101,773 events in order, with no pending events at shutdown.
-Observed delays range from 300.003 to 304.419 milliseconds.
-The first, shorter proxy capture stops during the final hold and remains excluded from these results.
-
-The tested food candidate passes 2,520 tests across all four projects, with 215 optional skips and no failures or errors.
-All 1,411 core classes match both packaged copies.
-Offline tooling, static, and patch metadata checks pass.
-
-The combined build also preserves the newer explicit-binding renderer update.
-It passes 2,523 full-build tests, with 216 optional skips and no failures or errors.
-All 1,411 core classes match both packaged copies.
-A focused run passes 8 native binding, native slot, and Iris GPU controls without skips.
-The core source tree and proxy artifact match the live-tested candidate.
-All 119 compared movement/input entries and mixin configurations also match.
-Only two indexed production client classes change, both in the renderer.
-This comparison does not establish fresh whole-package runtime or visible rendering parity.
-
-## Boundaries
-
-These controls establish the observed ordinary-food overconsumption fix and the stated replay counter preservation.
-They do not establish all native custom-food constructors, ability exceptions, use cycles, or trajectories.
-Late completion for a new use of the same item still needs verification.
-Prediction, rejection, and reconciliation across every negotiated inventory authority mode remain unfinished.
-The full five-area production goal remains active.
+The same native build consumes a DataDriven apple at full hunger on Normal despite its advertised `can_always_eat=false` component.
+That discrepancy remains open, alongside the original intermittent animation-without-feeding report.
+The bread controls do not establish all custom-food constructors, ability exceptions, cycle timing, or inventory authority modes.
+Late completion for a new use of the same item also needs verification.
 
 This patch remains deferred behind [ViaBedrock #276](https://github.com/ViaVersionAddons/ViaBedrock/pull/276).
 It does not belong in an independent upstream PR branch.
