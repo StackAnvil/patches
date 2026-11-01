@@ -1,0 +1,324 @@
+From c7a3824fe290f9f382329811a744c1d42bdc7cde Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 14:06:07 +0100
+Subject: [PATCH] feat(connection): allow confirmed blacklisted server joins
+
+Keep ViaBedrock's server-ban warning visible and add an explicit Join
+anyway action for StackAnvil users. Show the warning before connection
+setup, including HTTP NetherNet targets, and retain Cancel as a normal
+return to the previous screen.
+
+Scope confirmation to the selected ServerAddress during synchronous
+ConnectScreen setup, then carry it on that screen's own worker and
+UserConnection. Never change disable-server-blacklist globally or retain
+approval for a reconnect, another address, or another thread. Keep the
+core blacklist check active for all connections without explicit consent.
+
+This is a StackAnvil-only opt-in, not a claim that listed servers now
+support translated clients. The upstream blacklist and its ban-risk
+warning remain authoritative. Unit tests cover attempt identity, thread
+isolation, failure cleanup, and nested setup.
+---
+ .../injection/access/IConnectScreen.java      |  9 +++
+ .../core/connection/MixinConnectScreen.java   | 67 +++++++++++++++++++
+ .../core/connection/MixinConnectScreen_1.java | 10 +++
+ .../core/connection/MixinLoginPackets.java    | 24 +++++++
+ .../network/ServerBlacklistBypass.java        | 29 ++++++++
+ .../viafabricplus-bedrock/lang/en_us.json     |  3 +
+ .../viafabricplus-bedrock.mixins.json         |  2 +
+ .../network/ServerBlacklistBypassTest.java    | 55 +++++++++++++++
+ 8 files changed, 199 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IConnectScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinLoginPackets.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/ServerBlacklistBypass.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/ServerBlacklistBypassTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IConnectScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IConnectScreen.java
+new file mode 100644
+index 0000000..8c0d8bd
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IConnectScreen.java
+@@ -0,0 +1,9 @@
++/*
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.access;
++
++public interface IConnectScreen {
++    boolean viaFabricPlusBedrock$hasBlacklistConsent();
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen.java
+new file mode 100644
+index 0000000..f7578dc
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen.java
+@@ -0,0 +1,67 @@
++/*
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.core.connection;
++
++import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.injection.access.IConnectScreen;
++import com.viaversion.viafabricplus.bedrock.injection.access.IServerAddress;
++import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.NetherNetHttpAddress;
++import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.ServerBlacklistBypass;
++import com.viaversion.viafabricplus.injection.access.core.IServerData;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.screens.ConfirmScreen;
++import net.minecraft.client.gui.screens.ConnectScreen;
++import net.minecraft.client.gui.screens.Screen;
++import net.minecraft.client.multiplayer.ServerData;
++import net.minecraft.client.multiplayer.TransferState;
++import net.minecraft.client.multiplayer.resolver.ServerAddress;
++import net.minecraft.network.chat.CommonComponents;
++import net.minecraft.network.chat.Component;
++import net.raphimc.viabedrock.api.BedrockProtocolVersion;
++import net.raphimc.viabedrock.api.util.ServerBlacklist;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Unique;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(ConnectScreen.class)
++public abstract class MixinConnectScreen implements IConnectScreen {
++    @Unique
++    private boolean viaFabricPlusBedrock$blacklistConsent;
++
++    @Inject(method = "startConnecting", at = @At("HEAD"), cancellable = true)
++    private static void warnBeforeBlacklistedConnection(final Screen parent, final Minecraft minecraft,
++            final ServerAddress address, final ServerData server, final boolean quickPlay,
++            final TransferState transfer, final CallbackInfo ci) {
++        final var forced = server == null ? null : ((IServerData) server).viaFabricPlus$forcedVersion();
++        final var version = forced != null ? forced : ViaFabricPlus.api().targetVersion();
++        if (!BedrockProtocolVersion.BEDROCK_LATEST.equals(version) || ServerBlacklistBypass.isConfirmed(address)) return;
++
++        final var transport = ((IServerAddress) (Object) address).viaFabricPlusBedrock$getNetherNetAddress();
++        final String hostname = transport instanceof NetherNetHttpAddress http ? http.host() : address.getHost();
++        if (!ServerBlacklist.isBlacklisted(hostname)) return;
++
++        minecraft.gui.setScreen(new ConfirmScreen(confirmed -> {
++            minecraft.gui.setScreen(parent);
++            if (confirmed) ServerBlacklistBypass.connectOnce(address,
++                    () -> ConnectScreen.startConnecting(parent, minecraft, address, server, quickPlay, transfer));
++        }, Component.translatable("bedrock_server_warning.viafabricplus.title"),
++                Component.translatable("bedrock_server_warning.viafabricplus.message", hostname),
++                Component.translatable("bedrock_server_warning.viafabricplus.join_anyway"), CommonComponents.GUI_CANCEL));
++        ci.cancel();
++    }
++
++    @Inject(method = "connect", at = @At("HEAD"))
++    private void retainWarningConsent(final Minecraft minecraft, final ServerAddress address, final ServerData server,
++            final TransferState transfer, final CallbackInfo ci) {
++        this.viaFabricPlusBedrock$blacklistConsent = ServerBlacklistBypass.isConfirmed(address);
++    }
++
++    @Override
++    public boolean viaFabricPlusBedrock$hasBlacklistConsent() {
++        return this.viaFabricPlusBedrock$blacklistConsent;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen_1.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen_1.java
+index 6561291..d6967f2 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen_1.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen_1.java
+@@ -27,18 +27,23 @@ import com.llamalad7.mixinextras.sugar.Local;
+ import com.viaversion.viafabricplus.ViaFabricPlus;
+ import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
+ import com.viaversion.viafabricplus.bedrock.injection.access.IEventLoopGroupHolder;
++import com.viaversion.viafabricplus.bedrock.injection.access.IConnectScreen;
++import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.ServerBlacklistBypass;
+ import com.viaversion.viafabricplus.injection.access.core.IConnection;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import java.io.IOException;
+ import java.security.KeyPair;
+ import java.util.UUID;
+ import net.minecraft.network.Connection;
++import net.minecraft.client.gui.screens.ConnectScreen;
+ import net.minecraft.server.network.EventLoopGroupHolder;
+ import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
+ import net.raphimc.minecraftauth.bedrock.model.MinecraftMultiplayerToken;
+ import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+ import net.raphimc.viabedrock.protocol.storage.AuthData;
+ import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Shadow;
+ import org.spongepowered.asm.mixin.injection.At;
+ import org.spongepowered.asm.mixin.injection.Inject;
+ import org.spongepowered.asm.mixin.injection.Redirect;
+@@ -46,6 +51,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+ 
+ @Mixin(targets = "net.minecraft.client.gui.screens.ConnectScreen$1")
+ public abstract class MixinConnectScreen_1 {
++    @Shadow @Final
++    private ConnectScreen this$0;
+ 
+     @WrapOperation(method = "run", at = @At(value = "INVOKE", target = "Ljava/lang/Exception;getMessage()Ljava/lang/String;", remap = false))
+     private String handleNullExceptionMessage(final Exception instance, final Operation<String> original) {
+@@ -67,6 +74,9 @@ public abstract class MixinConnectScreen_1 {
+         }
+ 
+         final UserConnection connection = ((IConnection) clientConnection).viaFabricPlus$getUserConnection();
++        if (((IConnectScreen) this.this$0).viaFabricPlusBedrock$hasBlacklistConsent()) {
++            connection.put(new ServerBlacklistBypass());
++        }
+         if (connection.has(AuthData.class)) {
+             return; // The identity used by NetherNet signaling is already stored for ViaBedrock login.
+         }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinLoginPackets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinLoginPackets.java
+new file mode 100644
+index 0000000..9e543f2
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinLoginPackets.java
+@@ -0,0 +1,24 @@
++/*
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.core.connection;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.llamalad7.mixinextras.sugar.Local;
++import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.ServerBlacklistBypass;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import net.raphimc.viabedrock.protocol.packet.LoginPackets;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(value = LoginPackets.class, remap = false)
++public abstract class MixinLoginPackets {
++    @WrapOperation(method = "*", at = @At(value = "INVOKE",
++            target = "Lnet/raphimc/viabedrock/api/util/ServerBlacklist;isBlacklisted(Ljava/lang/String;)Z"))
++    private static boolean requireConsentForBlacklistedServer(final String hostname, final Operation<Boolean> original,
++            @Local(argsOnly = true) final PacketWrapper wrapper) {
++        return original.call(hostname) && !wrapper.user().has(ServerBlacklistBypass.class);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/ServerBlacklistBypass.java b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/ServerBlacklistBypass.java
+new file mode 100644
+index 0000000..3d3ff32
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/ServerBlacklistBypass.java
+@@ -0,0 +1,29 @@
++/*
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.protocoltranslator.network;
++
++import com.viaversion.viaversion.api.connection.StorableObject;
++import net.minecraft.client.multiplayer.resolver.ServerAddress;
++
++/** Carries explicit warning consent into one newly created connection. */
++public final class ServerBlacklistBypass implements StorableObject {
++    private static final ThreadLocal<ServerAddress> CONFIRMED_ADDRESS = new ThreadLocal<>();
++
++    public static boolean isConfirmed(final ServerAddress address) {
++        return address != null && CONFIRMED_ADDRESS.get() == address;
++    }
++
++    /** ConnectScreen creates its worker synchronously; the worker retains its own consent flag. */
++    public static void connectOnce(final ServerAddress address, final Runnable connect) {
++        final ServerAddress previous = CONFIRMED_ADDRESS.get();
++        CONFIRMED_ADDRESS.set(address);
++        try {
++            connect.run();
++        } finally {
++            if (previous == null) CONFIRMED_ADDRESS.remove();
++            else CONFIRMED_ADDRESS.set(previous);
++        }
++    }
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+index f345d7c..40e7ae9 100644
+--- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
++++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+@@ -1,4 +1,7 @@
+ {
++  "bedrock_server_warning.viafabricplus.title": "Server compatibility warning",
++  "bedrock_server_warning.viafabricplus.message": "%s is blocked by ViaBedrock because its anti-cheat is known to ban translated clients. StackAnvil improvements do not guarantee that this server accepts your client. Join only if you accept the risk of an account ban.",
++  "bedrock_server_warning.viafabricplus.join_anyway": "Join anyway",
+   "command_block.viafabricplus.tick_delay": "Delay in ticks",
+   "command_block.viafabricplus.first_tick": "Execute on first tick",
+   "base.viafabricplus.accept": "Accept",
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index ff5a82c..86671a8 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -48,6 +48,8 @@
+     "core.access.MixinEventLoopGroupHolder",
+     "core.access.MixinServerAddress",
+     "core.connection.MixinConnectScreen_1",
++    "core.connection.MixinConnectScreen",
++    "core.connection.MixinLoginPackets",
+     "core.connection.MixinConnection",
+     "core.connection.MixinConnection_1",
+     "core.connection.MixinNetherNetDiscovery",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/ServerBlacklistBypassTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/ServerBlacklistBypassTest.java
+new file mode 100644
+index 0000000..c2c91d2
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/ServerBlacklistBypassTest.java
+@@ -0,0 +1,55 @@
++/*
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.protocoltranslator.network;
++
++import net.minecraft.client.multiplayer.resolver.ServerAddress;
++import org.junit.jupiter.api.Test;
++
++import java.util.concurrent.CompletableFuture;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class ServerBlacklistBypassTest {
++    @Test
++    void approvalAppliesOnlyToTheConfirmedAttemptDuringSynchronousConnectionSetup() {
++        final var selected = new ServerAddress("geo.hivebedrock.network", 19132);
++        final var reconnect = new ServerAddress("geo.hivebedrock.network", 19132);
++        assertFalse(ServerBlacklistBypass.isConfirmed(selected));
++        ServerBlacklistBypass.connectOnce(selected, () -> {
++            assertTrue(ServerBlacklistBypass.isConfirmed(selected));
++            assertFalse(ServerBlacklistBypass.isConfirmed(reconnect));
++            assertFalse(CompletableFuture.supplyAsync(() -> ServerBlacklistBypass.isConfirmed(selected)).join());
++        });
++        assertFalse(ServerBlacklistBypass.isConfirmed(selected));
++        assertFalse(ServerBlacklistBypass.isConfirmed(reconnect));
++    }
++
++    @Test
++    void failedConnectionSetupCannotLeaveApprovalForALaterAttempt() {
++        final var selected = new ServerAddress("geo.hivebedrock.network", 19132);
++        assertThrows(IllegalStateException.class, () -> ServerBlacklistBypass.connectOnce(selected, () -> {
++            throw new IllegalStateException("Connection setup failed");
++        }));
++        assertFalse(ServerBlacklistBypass.isConfirmed(selected));
++    }
++
++    @Test
++    void nestedConnectionSetupRestoresTheOuterAttemptWithoutApprovingAnotherAddress() {
++        final var first = new ServerAddress("geo.hivebedrock.network", 19132);
++        final var second = new ServerAddress("donutsmp.net", 19132);
++        ServerBlacklistBypass.connectOnce(first, () -> {
++            ServerBlacklistBypass.connectOnce(second, () -> {
++                assertTrue(ServerBlacklistBypass.isConfirmed(second));
++                assertFalse(ServerBlacklistBypass.isConfirmed(first));
++            });
++            assertTrue(ServerBlacklistBypass.isConfirmed(first));
++            assertFalse(ServerBlacklistBypass.isConfirmed(second));
++        });
++        assertFalse(ServerBlacklistBypass.isConfirmed(first));
++        assertFalse(ServerBlacklistBypass.isConfirmed(second));
++    }
++}
+-- 
+2.56.0
