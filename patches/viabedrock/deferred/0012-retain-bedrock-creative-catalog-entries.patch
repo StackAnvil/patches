@@ -1,4 +1,4 @@
-From 3e23298b27e16a05aceec84eebf13dae465c7982 Mon Sep 17 00:00:00 2001
+From 66fd325ee215965a74eea544905d79996832c448 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -351,6 +351,18 @@ predicted grid, inventory and cursor mutation for rejection rollback.
 Native capture and byte fixtures cover two-output cake and honey recipes.
 Broader recipe families, more than two outputs, live rejection controls and
 complete screen parity remain separate validation work.
+
+Retain the recipe query across player and workbench openings within the
+connection. Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls on protocol
+2225 retain honey-block text after complete workbench closure and inherit
+the earlier oak-planks query on the next player-inventory opening.
+
+Copy the last model's raw query before retiring it, then seed the fresh
+model with that query. Keep selected output, collections, acknowledgment,
+container generation and action sequences scoped to their existing opening.
+An explicit empty query remains empty after reopening. Retired models
+cannot alter the replacement query, and another connection starts empty.
+Native query lifetime across disconnects and world changes remains unverified.
 ---
  .../model/NativePlayerInventoryAction.java    |  94 +++
  .../model/NativePlayerInventoryMessage.java   | 271 ++++++++
@@ -371,15 +383,15 @@ complete screen parity remain separate validation work.
  .../protocol/storage/CraftingDataTracker.java | 134 +++-
  .../storage/InventoryRequestTracker.java      |  24 +
  .../protocol/storage/InventoryTracker.java    |  21 +
- .../storage/NativePlayerRecipeState.java      | 649 ++++++++++++++++++
+ .../storage/NativePlayerRecipeState.java      | 654 ++++++++++++++++++
  .../storage/PlayerInventoryScreenTracker.java |  40 +-
  .../NativePlayerInventoryMessageTest.java     | 179 +++++
  .../container/NativeRecipeCounterTest.java    |  27 +
  .../container/NativeRecipeQuantityTest.java   |  61 ++
  .../ui/PlayerInventoryUiTest.java             | 126 ++++
- .../protocol/model/CreativeCatalogTest.java   | 382 +++++++++++
+ .../protocol/model/CreativeCatalogTest.java   | 382 ++++++++++
  .../protocol/packet/InventoryPacketsTest.java | 267 +++++--
- .../rewriter/PlayerRecipeModelTest.java       | 471 +++++++++++++
+ .../rewriter/PlayerRecipeModelTest.java       | 517 ++++++++++++++
  ...egisteredPlayerRecipeAvailabilityTest.java |   5 +-
  .../RegisteredPlayerRecipeSearchTest.java     |   3 +-
  .../storage/CreativeInventoryActionTest.java  | 262 +++++++
@@ -387,7 +399,7 @@ complete screen parity remain separate validation work.
  .../NativePlayerCreativeAuxiliaryTest.java    | 333 +++++++++
  .../storage/NativePlayerCreativePickTest.java | 138 ++++
  .../storage/NativeRecipeCraftingTest.java     | 491 +++++++++++++
- 35 files changed, 5679 insertions(+), 171 deletions(-)
+ 35 files changed, 5730 insertions(+), 171 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryResult.java
@@ -3142,10 +3154,10 @@ index 04ad1756..4a6f0c14 100644
      private void updateInventoryOptions() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 new file mode 100644
-index 00000000..da892e2c
+index 00000000..cde67af9
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
-@@ -0,0 +1,649 @@
+@@ -0,0 +1,654 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3217,6 +3229,7 @@ index 00000000..da892e2c
 +    private long opening;
 +    private PlayerRecipeContext context;
 +    private PlayerRecipeModel model;
++    private byte[] query = new byte[0];
 +    private CreativeCatalog catalog;
 +    private InventoryOptions preferences;
 +    private Inputs inputs;
@@ -3257,7 +3270,7 @@ index 00000000..da892e2c
 +        final var items = this.user().get(ItemRewriter.class);
 +        this.catalog = items.creativeCatalog();
 +        // The native player profile exists before this controller reads its filtering policy.
-+        this.model = items.playerRecipeModel(context, this.preferences.filtering(), true, new byte[0]);
++        this.model = items.playerRecipeModel(context, this.preferences.filtering(), true, this.query);
 +    }
 +
 +    public void closePlayer(final long opening) {
@@ -3774,6 +3787,10 @@ index 00000000..da892e2c
 +    }
 +
 +    private void clear() {
++        // The text survives menu closure; collections and item authority still belong to one opening.
++        if (this.model != null) {
++            this.query = this.model.query();
++        }
 +        this.opening = 0;
 +        this.lastRequest = 0;
 +        this.context = null;
@@ -5054,10 +5071,10 @@ index 19fe63ab..8cc84c93 100644
  }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
 new file mode 100644
-index 00000000..92b4e7cd
+index 00000000..df62b14f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,517 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5430,7 +5447,7 @@ index 00000000..92b4e7cd
 +    }
 +
 +    @Test
-+    void workbenchReopeningReplacesTheModelWhenTheContainerObjectIsReused() throws Exception {
++    void workbenchReopeningRetainsQueryButReplacesTheModelWhenTheContainerObjectIsReused() throws Exception {
 +        final var f = installed(false, false);
 +        final var inventory = f.context.inventory.inventory();
 +        f.screens.request(new PlayerInventoryScreenRequest(1, true));
@@ -5439,6 +5456,8 @@ index 00000000..92b4e7cd
 +        inventory.setCurrentContainer(workbench);
 +        final var retired = f.state.model();
 +        assertNotNull(retired);
++        retired.updateQuery("Honey Block");
++        retired.selectOutput(new BedrockItem(IDENTIFIER));
 +        assertThrows(IllegalStateException.class, () -> player.tick(5));
 +        f.screens.request(new PlayerInventoryScreenRequest(1, false));
 +        assertSame(retired, f.state.model());
@@ -5447,7 +5466,51 @@ index 00000000..92b4e7cd
 +        inventory.setCurrentContainer(workbench);
 +        assertNotNull(f.state.model());
 +        assertNotSame(retired, f.state.model());
++        assertArrayEquals(NbtUtf8.encode("Honey Block"), f.state.model().query());
++        assertTrue(f.state.model().selectedOutput().isEmpty());
 +        assertThrows(IllegalStateException.class, () -> retired.tick(5));
++        assertThrows(IllegalStateException.class, () -> retired.updateQuery("late edit"));
++        assertArrayEquals(NbtUtf8.encode("Honey Block"), f.state.model().query());
++    }
++
++    @Test
++    void playerAndWorkbenchOpeningsRetainTheLatestQueryAndItsExplicitClear() throws Exception {
++        final var f = installed(false, false);
++        final var inventory = f.context.inventory.inventory();
++        f.screens.request(new PlayerInventoryScreenRequest(1, true));
++        final var player = f.state.model();
++        player.updateQuery("oak planks");
++        final var workbench = new CraftingTableContainer(f.context.items.user(), (byte) 5, null, null);
++        inventory.setCurrentContainer(workbench);
++        final var table = f.state.model();
++        assertNotSame(player, table);
++        assertArrayEquals(NbtUtf8.encode("oak planks"), table.query());
++        table.updateQuery("honey block");
++        f.screens.request(new PlayerInventoryScreenRequest(1, false));
++        inventory.setCurrentContainerClosed(false);
++        f.screens.request(new PlayerInventoryScreenRequest(2, true));
++        final var replacement = f.state.model();
++        assertNotSame(table, replacement);
++        assertArrayEquals(NbtUtf8.encode("honey block"), replacement.query());
++        assertThrows(IllegalStateException.class, () -> table.updateQuery("late edit"));
++        replacement.updateQuery("");
++        f.screens.request(new PlayerInventoryScreenRequest(2, false));
++        f.screens.request(new PlayerInventoryScreenRequest(3, true));
++        assertNotSame(replacement, f.state.model());
++        assertArrayEquals(new byte[0], f.state.model().query());
++    }
++
++    @Test
++    void anotherConnectionStartsWithAnEmptyQuery() throws Exception {
++        final var first = installed(false, false);
++        first.screens.request(new PlayerInventoryScreenRequest(1, true));
++        first.state.model().updateQuery("honey block");
++        first.screens.request(new PlayerInventoryScreenRequest(1, false));
++        final var second = installed(false, false);
++        second.screens.request(new PlayerInventoryScreenRequest(1, true));
++        assertArrayEquals(new byte[0], second.state.model().query());
++        first.screens.request(new PlayerInventoryScreenRequest(2, true));
++        assertArrayEquals(NbtUtf8.encode("honey block"), first.state.model().query());
 +    }
 +
 +    private static Installed installed(final boolean instabuild, final boolean filtering) throws Exception {

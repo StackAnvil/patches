@@ -61,6 +61,11 @@ Acknowledged container identity and generation still control item actions.
 A workbench model retains its exact container generation.
 Retired openings cannot read replacement sources or retire a later workbench model.
 
+The connection retains the raw search query when an opening retires and supplies it to the next fresh model.
+Native 1.26.60.5 controls establish reopening and workbench-to-player retention.
+Lifecycle regressions cover reused containers, query replacement and clearing, connection separation, and refusal of retired-model edits.
+See the [inventory reference](../../../docs/native-player-inventory.md) for installed validation and remaining lifetime limits.
+
 The constructed player profile starts with Search, Crafting, filtering off, and automatic layouts.
 Later server packets replace all five fields, including explicit zero tabs.
 The backend reads the current profile rather than retaining the controller's transient filter flag.

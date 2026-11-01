@@ -176,6 +176,9 @@ Core publishes the retained player/workbench rows and full item previews in comp
 Commands bind to the opening, container generation, snapshot revision, and request sequence.
 The add-on buffers search edits while a command awaits its reply.
 Returning to search after a recipe click restores text input without closing the inventory.
+Search text survives player and workbench reopenings within a connection, including an explicit clear.
+Each opening starts with a fresh model and no selected output.
+Installed direct and ViaProxy controls cover retained text and matching rows, replacement queries, explicit clearing, and a server-accepted player craft.
 
 The default player and workbench graphs resolve real slots, recipe rows, and local Help views.
 Survival Help opens Your First Craft. Creative Help opens the Encyclopedia at Creative Mode.
@@ -213,7 +216,8 @@ Unchanged Java Creative slot echoes preserve the existing native stack and netwo
 Installed direct and ViaProxy controls confirm these pointer, capacity, and reopening cases through successful server responses.
 
 Recipe families beyond the captured plank, cake, and honey controls, recipes with more than two outputs, and complete installed native parity remain unfinished.
-Search text does not yet persist between player and workbench openings as it does in the native client.
+Native query lifetime across disconnects and world changes remains unverified.
+Query edits that race menu closure still need native comparison.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.
