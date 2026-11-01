@@ -61,8 +61,13 @@ Acknowledged container identity and generation still control item actions.
 A workbench model retains its exact container generation.
 Retired openings cannot read replacement sources or retire a later workbench model.
 
-Real profile settings update filtering and the selected tab.
-Missing profile preferences remain absent; the initial filtering value follows the observed current native constructor.
+The constructed player profile starts with Search, Crafting, filtering off, and automatic layouts.
+Later server packets replace all five fields, including explicit zero tabs.
+The backend reads the current profile rather than retaining the controller's transient filter flag.
+A regression opens without an options packet and observes the populated Search source.
+An explicit zero-tab packet then replaces the profile without replacing the model.
+Fresh-world direct and ViaProxy controls retain all 1,980 items across two openings, with no inventory-options packet in either journal.
+Both installed add-on hashes match the current build.
 Source, recipe, unlock, ability, rule, and preference changes invalidate the retained collections.
 Catalog replacement refreshes source collections while preserving the backend's installed policies and owned query.
 The state publishes the retained rows and full item previews through a bounded, compressed protocol-2225 snapshot.
@@ -121,4 +126,4 @@ Player and workbench graphs receive their tab and layout indices from the protoc
 The native inventory graph references these controller variables in forced toggle indices.
 Missing variables resolve to null and make category clicks request index zero.
 Screen regressions click category and layout controls through exported programs in both inventory layouts.
-These bindings preserve absent profile preferences and do not select a default tab.
+These authored control indices remain independent of the selected profile values.

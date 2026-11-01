@@ -1,4 +1,4 @@
-From f2ee5665d4139bc41970eba0d54db85f12cba349 Mon Sep 17 00:00:00 2001
+From 71ecc23b682645014a48aae03a2f3c8e913b6b1f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -382,8 +382,8 @@ native fields. Player inventory and workbench share one Java crafting book
 but own independent native layouts. Reproject on actual menu ownership
 changes; changing filtering alone must preserve the original layout, both
 tab selections and the other screen's layout, including unknown int32s.
-Keep the native None sentinel for unseen fields when Java supplies its
-first open/filter choice.
+Initialize the constructed player profile with its native tab/filter defaults
+and automatic layouts. Java filter edits preserve those profile fields.
 
 Generalize FurnaceOptionsStorage to InventoryOptionsStorage so all four
 Java books retain one connection-local snapshot. Update every consumer
@@ -833,6 +833,20 @@ The packet regression preserves potion metadata and definition identity,
 keeps an absent Block absent, and reads secondary search text. Existing
 constructor controls retain associated Blocks at runtime zero. The live
 protocol-2225 Creative search supplied the disconnect regression.
+
+Initialize the inventory profile from the original 1.26.60.5 Player
+constructor: Search5, Crafting2, filteringfalse and automatic layouts0/0.
+Original writes at1402b5b86..1402b5ba9, the named NBT loader1402c9fe0,
+controller14501f680 and packet307 producer146f59400 establish ownership.
+The packet producer's vtable identifies SetPlayerInventoryOptionsPacket.
+Four original-instruction controls preserve surrounding bytes and reproduce
+the initial fields. The native first-open recording is populated before any
+options packet. Absence of that packet is not an absent player profile.
+
+Project the native automatic layout as an open Java book initially. A
+filter-only Java edit must retain automatic layout0 and initial tabs rather
+than invent None tabs or force layout2. Later packets replace all raw fields,
+including explicit zeros and unknown saved values, through the existing path.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 +
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -5496,7 +5510,7 @@ index 73165b00..1b68e72e 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryOptionsStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryOptionsStorage.java
 new file mode 100644
-index 00000000..44131a45
+index 00000000..f13adecf
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryOptionsStorage.java
 @@ -0,0 +1,186 @@
@@ -5517,6 +5531,8 @@ index 00000000..44131a45
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.FurnaceLayout;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventoryLayout;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventoryLeftTabIndex;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventoryRightTabIndex;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.FurnaceLeftTabIndex;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SetPlayerFurnaceOptionsPacketPayload_FurnaceType;
 +import net.raphimc.viabedrock.protocol.model.FurnaceOptions;
@@ -5533,9 +5549,11 @@ index 00000000..44131a45
 +public final class InventoryOptionsStorage implements StorableObject {
 +
 +    private final Map<Integer, FurnaceOptions> options = new HashMap<>();
-+    private InventoryOptions inventoryOptions;
++    private InventoryOptions inventoryOptions = new InventoryOptions(
++            InventoryLeftTabIndex.RecipeSearch.getValue(), InventoryRightTabIndex.Crafting.getValue(), false,
++            InventoryLayout.None.getValue(), InventoryLayout.None.getValue());
 +    private final BookSettings[] javaBooks = {
-+        new BookSettings(false, false), new BookSettings(false, false),
++        new BookSettings(true, false), new BookSettings(false, false),
 +        new BookSettings(false, false), new BookSettings(false, false)
 +    };
 +
@@ -5550,9 +5568,6 @@ index 00000000..44131a45
 +
 +    /** Java uses one crafting book for two independent native screen layouts. */
 +    public boolean projectInventory(final boolean crafting) {
-+        if (this.inventoryOptions == null) {
-+            return false;
-+        }
 +        final int layout = crafting ? this.inventoryOptions.craftingLayout() : this.inventoryOptions.inventoryLayout();
 +        // Native construction maps zero and positive out-of-range layouts to its default.
 +        // Both native defaults (recipe-book and creative) show the book. Negative layouts
@@ -5566,10 +5581,9 @@ index 00000000..44131a45
 +
 +    public InventoryOptions changeJavaInventoryBook(final boolean crafting, final boolean open, final boolean filtering) {
 +        final int requestedLayout = (open ? InventoryLayout.Default : InventoryLayout.InventoryOnly).getValue();
-+        final boolean unseen = this.inventoryOptions == null;
-+        final var previous = unseen ? new InventoryOptions(0, 0, false, 0, 0) : this.inventoryOptions;
++        final var previous = this.inventoryOptions;
 +        final int oldLayout = crafting ? previous.craftingLayout() : previous.inventoryLayout();
-+        final int layout = unseen || this.javaBooks[0].open() != open ? requestedLayout : oldLayout;
++        final int layout = this.javaBooks[0].open() != open ? requestedLayout : oldLayout;
 +        this.inventoryOptions = new InventoryOptions(previous.leftTab(), previous.rightTab(), filtering,
 +                crafting ? previous.inventoryLayout() : layout, crafting ? layout : previous.craftingLayout());
 +        this.javaBooks[0] = new BookSettings(open, filtering);
@@ -9413,7 +9427,7 @@ index 00000000..d2126b57
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/FurnaceOptionsPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/FurnaceOptionsPacketTest.java
 new file mode 100644
-index 00000000..6e4f72ff
+index 00000000..f148bb80
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/FurnaceOptionsPacketTest.java
 @@ -0,0 +1,162 @@
@@ -9517,7 +9531,7 @@ index 00000000..6e4f72ff
 +        InventoryPackets.handleJavaRecipeBookSettings(crafting);
 +        assertFalse(crafting.isCancelled());
 +        assertSame(ServerboundBedrockPackets.SET_PLAYER_INVENTORY_OPTIONS, crafting.getPacketType());
-+        assertEquals(new InventoryOptions(0, 0, true, 2, 0),
++        assertEquals(new InventoryOptions(5, 2, true, 0, 0),
 +                crafting.get(BedrockTypes.INVENTORY_OPTIONS, 0));
 +        assertEquals(new FurnaceOptions(0, 0, true, 0), fixture.preferences.options(0));
 +    }
@@ -9535,7 +9549,7 @@ index 00000000..6e4f72ff
 +        }
 +        final var reopened = fixture.nativePacket(new FurnaceOptions(2, 1, false, 2));
 +        InventoryPackets.handleFurnaceOptions(reopened);
-+        assertArrayEquals(new boolean[]{false, false, false, false, true, false, false, false}, snapshot(reopened));
++        assertArrayEquals(new boolean[]{true, false, false, false, true, false, false, false}, snapshot(reopened));
 +        assertNull(new InventoryOptionsStorage().options(2));
 +    }
 +
@@ -9581,7 +9595,7 @@ index 00000000..6e4f72ff
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryOptionsPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryOptionsPacketTest.java
 new file mode 100644
-index 00000000..3560ff25
+index 00000000..590c47d4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryOptionsPacketTest.java
 @@ -0,0 +1,211 @@
@@ -9743,17 +9757,17 @@ index 00000000..3560ff25
 +    }
 +
 +    @Test
-+    void unknownLayoutsSurviveFilterChangesAndUnseenPreferencesUseOnlyTheRequestedScreen() {
++    void filterEditsPreserveNativeInitialTabsAutomaticLayoutsAndUnknownSavedValues() {
 +        final var preferences = new InventoryOptionsStorage();
 +        preferences.applyInventory(new InventoryOptions(-7, Integer.MAX_VALUE, false, -99, Integer.MIN_VALUE), false);
 +        assertEquals(new InventoryOptions(-7, Integer.MAX_VALUE, true, -99, Integer.MIN_VALUE),
-+                preferences.changeJavaInventoryBook(false, false, true));
++                preferences.changeJavaInventoryBook(false, true, true));
 +        preferences.projectInventory(true);
-+        assertEquals(new InventoryOptions(-7, Integer.MAX_VALUE, false, -99, 2),
-+                preferences.changeJavaInventoryBook(true, true, false));
-+        assertEquals(new InventoryOptions(0, 0, true, 2, 0),
++        assertEquals(new InventoryOptions(-7, Integer.MAX_VALUE, false, -99, 1),
++                preferences.changeJavaInventoryBook(true, false, false));
++        assertEquals(new InventoryOptions(5, 2, true, 0, 0),
 +                new InventoryOptionsStorage().changeJavaInventoryBook(false, true, true));
-+        assertEquals(new InventoryOptions(0, 0, false, 0, 1),
++        assertEquals(new InventoryOptions(5, 2, false, 0, 1),
 +                new InventoryOptionsStorage().changeJavaInventoryBook(true, false, false));
 +    }
 +

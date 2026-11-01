@@ -54,9 +54,11 @@ A workbench model belongs to its exact container generation.
 
 `NativePlayerRecipeState` advances the retained collections and refreshes them when sources, recipes, unlocks, rules, or preferences change.
 Catalog replacement refreshes source collections without reconstructing the backend or replacing its query and selected output.
-Missing profile preferences remain absent.
-The backend starts with the observed native filtering value, then accepts actual profile settings.
-No selected tab is inferred from Java recipe-book defaults.
+The native player profile starts with Search, Crafting, filtering off, and automatic layouts.
+The controller reads this profile before an inventory-options packet arrives.
+Server packets replace all five fields, including explicit zero tabs.
+Java filter changes retain the native tabs and automatic layouts.
+Fresh direct and ViaProxy sessions retain this state across first opening and reopening without an inventory-options packet.
 
 The same negotiated messages serve direct and ViaProxy connections.
 Late capability announcements must not duplicate a legacy opening.

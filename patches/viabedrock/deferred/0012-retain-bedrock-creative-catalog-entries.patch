@@ -1,4 +1,4 @@
-From 218b8c24c844f4fbb4689f0df1318b9616b7c773 Mon Sep 17 00:00:00 2001
+From 9a84a2a44225e2ddbdad771daad7e0f4387a0cb2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -152,8 +152,8 @@ container generations. A late player close cannot retire a workbench model.
 
 Bind progressive collection ticks to the inventory lifecycle and invalidate
 collections when source contents, recipes, unlocks, rules, abilities or actual
-profile preferences change. Missing preferences stay absent; do not derive a
-selected native tab from Java defaults. Catalog replacement rebuilds collection
+profile preferences change. Read the constructed native player-profile defaults before any server options
+packet, independently of Java book defaults. Preserve explicit packet zeros. Catalog replacement rebuilds collection
 sources while retaining the backend's captured policies, query and selection.
 
 Current 1.26.60.5/protocol2225 instruction mapping identifies derived model
@@ -251,7 +251,18 @@ preserves the official 1.26.60.5 captured unit-result/full-Take flow.
 A request-boundary regression checks stack sizes one and 64, the packet
 actions, cursor prediction and its pre-request restoration snapshot.
 
-Supply player-inventory tab and layout variables from the protocol-2225 enums. The 1.26.60 inventory graph references these controller-owned indices, just as cooking graphs reference their own indices. Without them, forced toggle indices resolve to null and mouse selection sends zero, leaving an unselected profile unable to choose Search or change layouts. Preserve absent profile preferences instead of inventing a selected tab.
+Supply player-inventory tab and layout variables from the protocol-2225 enums. The 1.26.60 inventory graph references these controller-owned indices, just as cooking graphs reference their own indices. Without them, forced toggle indices resolve to null and mouse selection sends zero, leaving an unselected profile unable to choose Search or change layouts. Keep these authored indices separate from the player profile values.
+
+The original 1.26.60.5 player constructor initializes inventory profile fields
+to Search5/Crafting2/filteringfalse/layout0/layout0 at 1402b5b86..1402b5ba9.
+The named NBT loader and SetPlayerInventoryOptionsPacket307 producer bind
+those fields to the same controller reads. Model creation must use the
+constructed profile rather than retain the controller's earlier transient
+filter flag. Later packets, including explicit zero tabs, replace the profile while
+retaining the model, query and selection. Filtering changes reinstall the
+existing policy callbacks; tab-only updates preserve their captured state.
+A regression opens without an options packet and observes the populated
+Search source, then applies an explicit zero-tab/filter update.
 ---
  .../model/NativePlayerInventoryAction.java    |  88 ++++
  .../model/NativePlayerInventoryMessage.java   | 271 ++++++++++
@@ -277,13 +288,13 @@ Supply player-inventory tab and layout variables from the protocol-2225 enums. T
  .../ui/PlayerInventoryUiTest.java             | 126 +++++
  .../protocol/model/CreativeCatalogTest.java   | 382 ++++++++++++++
  .../protocol/packet/InventoryPacketsTest.java | 267 ++++++++--
- .../rewriter/PlayerRecipeModelTest.java       | 450 +++++++++++++++++
+ .../rewriter/PlayerRecipeModelTest.java       | 471 +++++++++++++++++
  ...egisteredPlayerRecipeAvailabilityTest.java |   5 +-
  .../RegisteredPlayerRecipeSearchTest.java     |   3 +-
  .../storage/CreativeInventoryActionTest.java  | 214 ++++++++
  .../storage/InventoryRequestTrackerTest.java  |  83 +++
  .../storage/NativePlayerCreativePickTest.java |  66 +++
- 30 files changed, 4219 insertions(+), 170 deletions(-)
+ 30 files changed, 4240 insertions(+), 170 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryResult.java
@@ -2697,7 +2708,7 @@ index 04ad1756..4a6f0c14 100644
      private void updateInventoryOptions() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 new file mode 100644
-index 00000000..6bdac2db
+index 00000000..6c6230ee
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 @@ -0,0 +1,475 @@
@@ -2809,8 +2820,8 @@ index 00000000..6bdac2db
 +        this.preferences = this.user().get(InventoryOptionsStorage.class).inventoryOptions();
 +        final var items = this.user().get(ItemRewriter.class);
 +        this.catalog = items.creativeCatalog();
-+        // The 1.26.60 controller initializes filtering to true before profile callbacks arrive.
-+        this.model = items.playerRecipeModel(context, this.preferences == null || this.preferences.filtering(), true, new byte[0]);
++        // The native player profile exists before this controller reads its filtering policy.
++        this.model = items.playerRecipeModel(context, this.preferences.filtering(), true, new byte[0]);
 +    }
 +
 +    public void closePlayer(final long opening) {
@@ -2843,7 +2854,7 @@ index 00000000..6bdac2db
 +            this.model.replaceCatalog(items);
 +            this.inputs = null;
 +        }
-+        if (preferences != null && (this.preferences == null || preferences.filtering() != this.preferences.filtering())) {
++        if (preferences.filtering() != this.preferences.filtering()) {
 +            this.model.reinstallPolicies(preferences.filtering());
 +        }
 +        this.preferences = preferences;
@@ -2862,8 +2873,8 @@ index 00000000..6bdac2db
 +            this.presentationDirty = true;
 +            this.publicationFailed = false;
 +        }
-+        // None advances population without inventing a native profile's selected tab.
-+        final boolean changed = this.model.tick(preferences == null ? 0 : preferences.leftTab());
++        // Population advances against the retained native player-profile tab.
++        final boolean changed = this.model.tick(preferences.leftTab());
 +        if (changed) {
 +            this.presentationDirty = true;
 +        }
@@ -3075,7 +3086,7 @@ index 00000000..6bdac2db
 +            this.model.refresh(view, false);
 +            counts.add(this.model.collections().collection(view).snapshot().eligibleCount());
 +        }
-+        final int tab = this.preferences == null ? 0 : this.preferences.leftTab();
++        final int tab = this.preferences.leftTab();
 +        final var active = Arrays.stream(CreativeInventoryModel.View.values()).filter(view -> view.leftTab() == tab).findFirst().orElse(null);
 +        final var cells = new ArrayList<PlayerInventoryUi.Cell>();
 +        final Map<Integer, Item> previews = new HashMap<>();
@@ -3127,7 +3138,7 @@ index 00000000..6bdac2db
 +                            "#container_item_background_texture", new JsonPrimitive(texture))));
 +            }
 +        }
-+        final boolean filtering = this.preferences == null || this.preferences.filtering();
++        final boolean filtering = this.preferences.filtering();
 +        final String key = switch (tab) {
 +            case 1 -> "craftingScreen.tab.construction";
 +            case 2 -> "craftingScreen.tab.equipment";
@@ -3150,8 +3161,8 @@ index 00000000..6bdac2db
 +            }
 +        }
 +        final var state = new PlayerInventoryUi.State(this.context.workbench(), creative,
-+                this.preferences == null ? 0 : this.preferences.inventoryLayout(), this.preferences == null ? 0 : this.preferences.craftingLayout(),
-+                tab, this.preferences == null ? 0 : this.preferences.rightTab(), filtering, NbtUtf8.decode(this.model.query()),
++                this.preferences.inventoryLayout(), this.preferences.craftingLayout(),
++                tab, this.preferences.rightTab(), filtering, NbtUtf8.decode(this.model.query()),
 +                key.isEmpty() ? "" : resources.getTexts().translate(key), resources.getTexts().translate(label), counts, cells, "", -1);
 +        return new Presentation(state, previews);
 +    }
@@ -4416,10 +4427,10 @@ index 19fe63ab..8cc84c93 100644
  }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
 new file mode 100644
-index 00000000..c5f9da3a
+index 00000000..92b4e7cd
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
-@@ -0,0 +1,450 @@
+@@ -0,0 +1,471 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4739,7 +4750,7 @@ index 00000000..c5f9da3a
 +    }
 +
 +    @Test
-+    void profileArrivalAndCatalogReplacementKeepTheBackendAndItsOwnedQuery() throws Exception {
++    void openingWithoutAnOptionsPacketPopulatesTheNativeInitialSearchView() throws Exception {
 +        final var f = installed(true, false);
 +        final var options = new InventoryOptionsStorage();
 +        when(f.context.items.user().get(InventoryOptionsStorage.class)).thenReturn(options);
@@ -4748,9 +4759,30 @@ index 00000000..c5f9da3a
 +        for (int tick = 0; tick < 20; tick++) {
 +            f.state.tick();
 +        }
++        assertEquals(4, model.collections().collection(CreativeInventoryModel.View.SEARCH).snapshot().eligibleCount());
++        assertEquals(new InventoryOptions(5, 2, false, 0, 0), f.state.preferences());
++        options.applyInventory(new InventoryOptions(0, 0, true, 0, 0), false);
++        f.state.tick();
++        assertSame(model, f.state.model());
++        assertEquals(new InventoryOptions(0, 0, true, 0, 0), f.state.preferences());
++        model.refresh(CreativeInventoryModel.View.SEARCH, false);
++        assertEquals(1, model.collections().collection(CreativeInventoryModel.View.SEARCH).snapshot().eligibleCount());
++    }
++
++    @Test
++    void profileArrivalAndCatalogReplacementKeepTheBackendAndItsOwnedQuery() throws Exception {
++        final var f = installed(true, false);
++        final var options = new InventoryOptionsStorage();
++        options.applyInventory(new InventoryOptions(5, 0, true, 0, 0), false);
++        when(f.context.items.user().get(InventoryOptionsStorage.class)).thenReturn(options);
++        f.screens.request(new PlayerInventoryScreenRequest(1, true));
++        final var model = f.state.model();
++        for (int tick = 0; tick < 20; tick++) {
++            f.state.tick();
++        }
 +        model.updateQuery("on");
 +        model.selectOutput(new BedrockItem(IDENTIFIER));
-+        assertNull(f.state.preferences());
++        assertTrue(f.state.preferences().filtering());
 +        assertEquals(1, model.collections().collection(CreativeInventoryModel.View.SEARCH).snapshot().eligibleCount());
 +        options.applyInventory(new InventoryOptions(5, 0, false, 2, 2), false);
 +        f.state.tick();
