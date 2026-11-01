@@ -109,7 +109,9 @@ A normal recipe click fills the grid. Taking its output sends a separate craft r
 A workbench recipe Shift-click uses `CraftRecipeAuto` with explicit ingredient descriptors, followed by results, consumption, and placement actions.
 Core plans this request for single-output shaped and shapeless recipes.
 The planner uses the first eligible ingredient allocation.
-Requests retain concrete descriptors and use the request ID for later references to a changed slot.
+Ordinary named ingredients retain their resolved recipe metadata, including wildcard auxiliary values.
+Tag and Molang ingredients use the selected source descriptor.
+Requests use the request ID for later references to a changed slot.
 Rejected requests restore the crafting grid, inventory, and cursor.
 
 Native 1.26.60.5 plank controls convert 16 of 32 logs into 64 planks per Shift-click.
@@ -129,7 +131,12 @@ Native wooden-sword bulk crafting produces one sword despite ingredients for 32.
 Complete request fixtures preserve split placement, repeated source references, and cursor replacement.
 The matching server accepts these native requests.
 Planner tests cover these request and prediction boundaries, including rejection rollback.
-Installed direct and ViaProxy comparisons remain unverified.
+Installed direct and ViaProxy controls each complete 11 server-accepted requests.
+Both routes match the captured split-placement, cursor-replacement, and freed-slot requests after stack-ID normalization.
+Additional controls consume the player crafting grid and produce one wooden sword with repeated references to its plank source.
+Reopening retains completed output and the returned cursor stack.
+The incompatible-cursor control sends no craft request until the cursor is empty.
+Rejected requests remain unit-tested. These live controls do not induce server rejection.
 
 Admit an authored player screen only when its required collections and controls are available.
 The shared UI renderer supports the local player portrait and separate body/head rotations.
