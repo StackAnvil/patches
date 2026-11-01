@@ -1,48 +1,60 @@
-# Held trapdoor placement
+# Native held item use
 
-The Java baseline opened a trapdoor during held placement where Bedrock added a closed neighbor.
-Send the physical use lifetime and each local prediction to the core before its concluding Java packet.
-Prediction format 2 carries the result and native cursor. Core and add-on consumers require the matching contract.
-Enable the feature only when the server advertises both channels.
+Java's four-tick repeat path does not reproduce Bedrock's input timing.
+Coordinate food retries and held block placement through one client input owner.
+Inventory consumption and completion remain server-owned.
 
-Keep the first predicted facing, half, and world hit until physical release or cancellation.
-Retain this state across trapdoor materials, temporary item-family changes, server correction, and stack exhaustion.
-Apply the snap only while the player holds a trapdoor.
-Other block items use fresh hits and suppress repeated activation. Empty hands restore ordinary interaction.
-Returning to a trapdoor restores the original snap.
+Food uses a strict 200 ms monotonic deadline, checked after camera input on each frame.
+Gate fresh calls before local use or packet publication.
+Set the deadline before main-hand food air use, including a request that hunger later refuses.
+Select food from its transported component, including custom items carried as paper.
+Physical release and item changes retain this connection deadline.
+Connection replacement clears it.
+Missing optional block-use channels do not clear the food deadline.
 
-Express the retained world hit relative to each later target, including coordinates outside its unit cube.
-Keep the ordinary Java hit packet unchanged for other consumers.
-Retain each new block's water, power, open state, and material properties.
+Held placement keeps its separate 300 ms delay after the first attempt or a successful local use.
+Failed repeats do not restart that delay.
+Release, screens, and connection replacement clear the placement timer and retained trapdoor state.
+Suppress Java's parallel repeat path while the frame route owns the attempt.
+
+## Placement constraints
+
+Retain the first predicted trapdoor facing, half, and world hit through material changes, temporary item-family changes, server correction, and stack exhaustion.
+Apply that snap only while holding a trapdoor.
+Other block items use fresh hits and suppress repeated activation; empty hands restore ordinary interaction.
+Returning to a trapdoor restores the snap.
+
+Send the physical lifetime and sequence-owned prediction before the concluding Java packet.
+Prediction format 2 carries the result and native cursor; both consumers require the matching contract.
+Express the retained hit relative to each later target, including coordinates outside its unit cube.
+Keep the ordinary Java raycast packet unchanged.
+Preserve each new block's water, power, open state, and material properties.
 Separate trapdoors and the original support remain valid targets.
 
-Match the native 300 ms delay after the first attempt and each successful local use.
-Failed repeats do not restart that delay.
-Poll subsequent attempts after input movement, before the next network tick publishes rotation.
-Suppress Java's parallel four-tick repeat path for the active hold.
-Release, screens, and connection replacement clear the timer and placement state.
+Select native outlines and occlusion from the active Bedrock connection, including ViaProxy sessions with a local Java protocol target.
+Native bottom-face hits use approximately 0.8175; the earlier 0.8125 attribution came from the Java fixture.
 
 ## Evidence and validation
 
-Native 1.26.60.5 fixtures against BDS 1.26.60.6 establish the held behavior.
-Physical camera changes retain facing, upper-half state, and closed state through direct Java and ViaProxy.
-Both routes consume two items, leaving 62 from 64.
-Material changes and fresh activation after release match their native fixtures.
-The original native outline remains correct: native bottom-face hits use approximately 0.8175.
-The earlier 0.8125 attribution came from the Java fixture.
-The outline and occlusion checks now use the active Bedrock connection, including ViaProxy sessions with a local Java protocol target.
-A fresh proxy fixture confirms the 0.8175 hit, placement-only air phase, fresh Stone coordinates, and restored trapdoor snap.
+Official Bedrock 1.26.60.5 against BDS 1.26.60.6 establishes these controls on protocol 2225.
+Native runtime tracing observes the 200 ms deadline before air use and the strict check in the shared fresh-press and held-input function.
+A 2.1-second instant-food hold consumes nine items with or without the debugger.
+Frame cadence determines retry quantization, so equal counts alone do not establish timing parity.
 
-Native and direct Java retry one rejected first placement within the same held session.
-Native item-family fixtures retain the snap through Stone selection and restore it on return to a trapdoor.
-The empty-hand fixture uses fresh coordinates and activates existing trapdoors after stack exhaustion.
-Direct Java and ViaProxy pause cancellation stop the active session before physical release.
-Fresh native and ViaProxy sessions match repeated rejection followed by rotation without block consumption.
-After a preceding successful hold, both native and ViaProxy instead place a neighbor and consume one item.
-Matching session history explains the earlier apparent correction mismatch.
-The translator preserves both authoritative outcomes.
-
-All four project builds and the modpack bundle pass.
-The add-on suite passes 1,281 tests with 142 optional skips and no failures/errors.
+Installed direct and ViaProxy food controls check the deadline, rapid clicks after release, pause cancellation, admission, hunger, and settled server counts.
+The [food-use validation](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) records the current build and remaining use-cycle limits.
+A private observer logs the timing class's original decisions without changing them; this is an instrumented runtime check.
+Four timing tests cover variable input frames, released food, connection reset, independent delays, strict boundaries, and rollover.
 Five block-state tests cover retained orientation, materials, independent properties, targets, frozen hits, release, and ordinary blocks.
-Two timer tests cover successful repeats, failed repeats, cancellation, and clock rollover.
+
+Earlier installed placement fixtures match native camera changes, material changes, and fresh activation after release.
+Both routes consume two items, leaving 62 from 64.
+Native and direct Java retry a rejected first placement within the same hold.
+Both Java routes cancel the session on Pause before physical release.
+Fresh native and proxy sessions match repeated rejection followed by rotation without consumption.
+After a preceding successful hold, both instead place a neighbor and consume one item.
+
+## Remaining limits
+
+Complete food and block handoffs, competing non-food use handlers, exact input-flag phase counts, and full use-cycle timing need more native comparisons.
+The original intermittent animation-without-feeding report remains open.

@@ -15,12 +15,12 @@ Installed direct and ViaProxy controls each pass Normal → Peaceful → Normal 
 Allowed cases enter local use, receive one server completion, and settle at 15 bread.
 Full-hunger Normal cases never enter use and retain 16 bread.
 The installed add-on and proxy match the rebuilt artifacts.
-The full four-project build passes 3,282 tests, with 325 skipped and no failures or errors.
 Core packet regressions cover server-confirmed difficulty changes and food admission without inventory prediction.
 
 Core also projects installed component-food admission and consumable properties into the Java item.
 That covers the selected full-hunger DataDriven controls and local use of custom paper carriers.
 The [food-use evidence](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) records those controls and remaining limits.
 Native tracing establishes a 200 ms air-use deadline that persists across button releases and gates fresh clicks.
-Java input scheduling still needs that correction, including coordinated timer ownership across item families and screens.
+The [client input patch](0038-predict-held-trapdoor-placement.pr.md) implements that deadline and input-frame retries, with rapid-click and pause controls on both routes.
+Complete item-family handoffs still need native comparisons.
 The original intermittent food-use report remains open.

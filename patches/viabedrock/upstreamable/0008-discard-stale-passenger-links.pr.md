@@ -1,5 +1,8 @@
 Resolve links received before their actors, preserve native player seat priority, and clear passenger membership and mount state when links or actors disappear. Remounting removes the passenger from its previous vehicle; a stale unlink cannot clear a newer remote mount.
 
+Unlinking also removes a stale unique ID when its passenger actor is already gone.
+A regression retains the other live passenger and verifies the resulting vehicle update.
+
 Expose the optional finite native rider vector at metadata 56 for client adapters. Bedrock 1.26.51.1 protocol 2193 packets provide this vector on mounted actors. Two saved player/chair pairs independently place the player eye at vehicle position plus the vector rotated by negative vehicle yaw, within 1e-7 world units. The vector uses native actor-origin units; a Java adapter subtracts the passenger eye offset once.
 
 The earlier core checkpoint passed 293 tests with no failures, errors or skips. Targeted tests cover finite and absent vectors, pending links, stale unlinks, remounts and vehicle removal. Ordinary Java clients behind ViaProxy retain Java attachment placement unless a native client adapter receives the metadata.
