@@ -42,8 +42,11 @@ Crouching raises and tilts the shield. Releasing crouch restores the resting pos
 The installed add-on retains these transitions on local BDS 1.26.60.6 through NetherNet HTTP, using crouch and Use inputs.
 Read-only controller snapshots show that blocking clears and the resting transform returns after either input.
 Opening and closing the Survival inventory leaves the resting shield transform unchanged in early and later samples.
+Installed direct controls also cover forward movement, strafing, and skeleton projectile blocks.
+The packet journal contains blocked-shield and damaged-shield flags, while the projectile samples retain full health.
+Releasing the controls restores the resting shield transform.
 These controls do not reproduce the reported extreme shield pose.
-Movement, hit reactions, patterned shields, and third-party mod combinations remain open.
+Exact native movement and hit-animation timing, patterned shields, and third-party mod combinations remain open.
 
 Animation timelines retain the remaining animation when an individual Molang string has a syntax error.
 The failed script keeps a zero-valued entry at its authored time. Structural validation and resource limits still reject invalid input.
