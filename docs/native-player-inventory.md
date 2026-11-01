@@ -166,6 +166,7 @@ Use the [source guide](bedrock-development-sources.md) for versioned native refe
 Core publishes the retained player/workbench rows and full item previews in compressed snapshots.
 Commands bind to the opening, container generation, snapshot revision, and request sequence.
 The add-on buffers search edits while a command awaits its reply.
+Returning to search after a recipe click restores text input without closing the inventory.
 
 The default player and workbench graphs resolve real slots, recipe rows, and local Help views.
 Survival Help opens Your First Craft. Creative Help opens the Encyclopedia at Creative Mode.
@@ -202,7 +203,7 @@ A full inventory accepts the input without an inventory request.
 Unchanged Java Creative slot echoes preserve the existing native stack and network ID.
 Installed direct and ViaProxy controls confirm these pointer, capacity, and reopening cases through successful server responses.
 
-Recipe families beyond the captured cake and honey controls, recipes with more than two outputs, and complete installed native parity remain unfinished.
+Manual output-slot crafting with returned containers, recipe families beyond the captured bulk cake and honey controls, recipes with more than two outputs, and complete installed native parity remain unfinished.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.

@@ -1,4 +1,4 @@
-From a83ca770d78b82f6acc0214688e5838e2b6e0493 Mon Sep 17 00:00:00 2001
+From a47637bf85996556ce609de662cded209c5cc817 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -678,6 +678,18 @@ inventory layout. Bedrock 1.26.60.5 preserves the cursor and moves the
 selected stack into main inventory. Retain the real menu's quick-move
 transport while bypassing only Java's incompatible pointer classification.
 Occupied-cursor regressions cover inventory-only and recipe-book layouts.
+
+Clear the parent GUI focus owner when the player search editor loses
+focus on an outside click, disappearance or screen exit. Clearing only the
+editor flag leaves it registered as the focused child. Java26.3 skips
+reselecting that same child, so a later click cannot restore text input
+and the inventory key can close the screen while typing a new query.
+
+Installed direct controls exposed this after a recipe click. A real
+EditBox screen regression reproduces lost text input before the fix, then
+accepts another query containing the inventory key after refocusing.
+This fixes Java focus bookkeeping; it does not change native search or
+inventory action semantics.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../access/IBedrockGuiItemStyle.java          |   14 +
@@ -757,9 +769,9 @@ Occupied-cursor regressions cover inventory-only and recipe-book layouts.
  .../NativeInventoryProgressTest.java          |   83 +
  .../container/NativePlayerHelpTextTest.java   |   34 +
  .../NativePlayerPresentationTest.java         |  153 ++
- .../container/NativePlayerScreenTest.java     |  507 ++++++
+ .../container/NativePlayerScreenTest.java     |  571 +++++++
  .../PlayerInventoryScreenLifecycleTest.java   |   95 ++
- 80 files changed, 10715 insertions(+), 62 deletions(-)
+ 80 files changed, 10779 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerScreenAdmission.java
@@ -1301,7 +1313,7 @@ index 0000000..1583ce0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..5deb3b1
+index 0000000..15de47d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 @@ -0,0 +1,1330 @@
@@ -1685,7 +1697,7 @@ index 0000000..5deb3b1
 +            if (this.lifecycle != null && this.lifecycle.requestExit(this.animationTime())) {
 +                this.setDragging(false);
 +                this.scroll.release();
-+                if (this.search != null) this.search.setFocused(false);
++                this.setFocused(null);
 +                final var press = this.recipePress;
 +                this.recipePress = null;
 +                if (press != null) BedrockNativeCooking.action(this.owner, this.menu, press.recipe, press.mode, 2);
@@ -1750,7 +1762,7 @@ index 0000000..5deb3b1
 +        }
 +        if (this.search != null && this.searchBox == null) {
 +            this.search.visible = false;
-+            this.search.setFocused(false);
++            this.setFocused(null);
 +        }
 +    }
 +
@@ -2188,7 +2200,7 @@ index 0000000..5deb3b1
 +            this.setFocused(this.search);
 +            return true;
 +        }
-+        if (this.search != null) this.search.setFocused(false);
++        this.setFocused(null);
 +        final String componentSource = this.presentation instanceof NativePlayerPresentation && event.hasShiftDown()
 +                && (this.geometry.recipe(event.x(), event.y()) != null || this.geometry.hovered(event.x(), event.y()) >= 0)
 +                && (event.button() == InputConstants.MOUSE_BUTTON_LEFT || event.button() == InputConstants.MOUSE_BUTTON_RIGHT)
@@ -11536,10 +11548,10 @@ index 0000000..d3902fa
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
 new file mode 100644
-index 0000000..400b180
+index 0000000..ff0af89
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
-@@ -0,0 +1,507 @@
+@@ -0,0 +1,571 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11568,11 +11580,13 @@ index 0000000..400b180
 +import net.minecraft.client.KeyMapping;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.Options;
++import net.minecraft.client.StringSplitter;
 +import net.minecraft.client.gui.Font;
 +import net.minecraft.client.gui.Gui;
 +import net.minecraft.client.gui.screens.Screen;
 +import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 +import net.minecraft.client.input.KeyEvent;
++import net.minecraft.client.input.CharacterEvent;
 +import net.minecraft.client.input.MouseButtonEvent;
 +import net.minecraft.client.input.MouseButtonInfo;
 +import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -11614,6 +11628,68 @@ index 0000000..400b180
 +
 +    private static IntStream catalogButtons() {
 +        return IntStream.of(InputConstants.MOUSE_BUTTON_LEFT, InputConstants.MOUSE_BUTTON_RIGHT);
++    }
++
++    @Test
++    void searchAcceptsTextAgainAfterClickingARecipeWithoutClosingTheInventory() throws Exception {
++        final var game = mock(Minecraft.class);
++        final var player = mock(LocalPlayer.class);
++        final var inventory = new Inventory(player, new EntityEquipment());
++        final var menu = new InventoryMenu(inventory, true, player);
++        final var owner = mock(ClientPacketListener.class);
++        final var ordinary = mock(AbstractContainerScreen.class);
++        final var options = mock(Options.class);
++        final var font = mock(Font.class);
++        final var clock = new AtomicLong();
++        set(Minecraft.class, game, "gameMode", mock(MultiPlayerGameMode.class));
++        when(ordinary.getMenu()).thenReturn(menu);
++        when(owner.getConnection()).thenReturn(mock(Connection.class));
++        for (final String name : List.of("keyPickItem", "keyDrop", "keyInventory"))
++            set(Options.class, options, name, mock(KeyMapping.class));
++        set(Minecraft.class, game, "options", options);
++        set(Minecraft.class, game, "gui", mock(Gui.class));
++        when(options.keyInventory.matches(any(KeyEvent.class))).thenAnswer(call -> ((KeyEvent) call.getArgument(0)).key() == InputConstants.KEY_E);
++        when(font.getSplitter()).thenReturn(new StringSplitter((c, style) -> 6));
++        when(font.plainSubstrByWidth(anyString(), anyInt())).thenAnswer(call -> call.getArgument(0));
++        when(font.plainSubstrByWidth(anyString(), anyInt(), anyBoolean())).thenAnswer(call -> call.getArgument(0));
++        when(font.width(anyString())).thenAnswer(call -> ((String) call.getArgument(0)).length() * 6);
++        try (final var singleton = mockStatic(Minecraft.class);
++             final var network = mockStatic(BedrockNativePlayerInventory.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(game);
++            network.when(() -> BedrockNativePlayerInventory.action(any(), any(), anyInt(), any())).thenReturn(true);
++            final var ui = new PlayerInventoryUi(new ResourcePackStorage(List.of()).getJsonUiProgram());
++            final var cell = new PlayerInventoryUi.Cell(0, 10, -1, 0, 0, 1, false, false, "", Map.of());
++            final var state = new PlayerInventoryUi.State(false, true, 2, 2, 5, 2, false, "", "All", "Crafting",
++                    List.of(1, 0, 0, 0), List.of(cell), "", -1);
++            final var source = new NativePlayerInventoryMessage(0, 1, 8, 1, ui.exportProgram(false).toString(),
++                    GsonUtil.getGson().toJson(state), Map.of(0, new StructuredItem(320, 1, new StructuredDataContainer())));
++            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), clock::get);
++            final var screen = new BedrockNativeContainerScreen(owner, ordinary, inventory, Component.empty(), presentation,
++                    false, 1, clock::get, () -> true);
++            set(Screen.class, screen, "minecraft", game);
++            set(Screen.class, screen, "font", font);
++            try {
++                screen.prepare(font, 640, 360);
++                clock.set(1_000_000_000);
++                screen.prepare(font, 640, 360);
++                var search = pointer(screen, draw -> draw.box().node().type().equals("edit_box"));
++                assertTrue(screen.mouseClicked(search, false));
++                screen.mouseReleased(search);
++                assertTrue(screen.charTyped(new CharacterEvent('a')));
++                network.verify(() -> BedrockNativePlayerInventory.query(owner, menu, "a"));
++                final var recipe = pointer(screen, draw -> draw.box().node().properties().has("recipe_actions"));
++                assertTrue(screen.mouseClicked(recipe, false));
++                assertTrue(screen.mouseReleased(recipe));
++                search = pointer(screen, draw -> draw.box().node().type().equals("edit_box"));
++                assertTrue(screen.mouseClicked(search, false));
++                screen.mouseReleased(search);
++                assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_E, 0, 0)));
++                assertTrue(screen.charTyped(new CharacterEvent('e')));
++                network.verify(() -> BedrockNativePlayerInventory.query(owner, menu, "ae"));
++                assertFalse(screen.closing());
++                verifyNoInteractions(game.gameMode);
++            } finally { screen.discard(); }
++        }
 +    }
 +
 +    @ParameterizedTest

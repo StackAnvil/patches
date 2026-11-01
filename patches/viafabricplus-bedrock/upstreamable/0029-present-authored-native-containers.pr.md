@@ -32,6 +32,9 @@ The consumer regression keeps raw binding quantities and genuine quickcraft prev
 Player and workbench snapshots retain actual menu slots, recipe identities, and full item previews.
 Commands carry the opening, generation, snapshot revision, and request sequence.
 Buffered search edits survive an acknowledgment that advances the container generation.
+Search focus clears through the parent GUI owner when clicking elsewhere, hiding the editor, or exiting.
+A real-editor screen regression clicks a recipe, returns to search, and types the inventory key without closing the screen.
+Installed direct and ViaProxy controls craft once, enter three replacement queries in the same opening, and retain completed output after reopening. Each route records one server-accepted craft request.
 Late replies and hover exits cannot affect a replacement opening or selection.
 
 Default player and workbench graphs retain all 46 menu slots and real recipe rows.
