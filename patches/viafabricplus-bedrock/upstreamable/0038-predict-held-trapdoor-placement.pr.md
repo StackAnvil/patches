@@ -13,13 +13,17 @@ Connection replacement clears it.
 Missing optional block-use channels do not clear the air-use hold or its deadline.
 
 Keep the interaction mode until physical release or cancellation.
-A hold started by food air use continues main-hand air use after selecting a block item.
+A hold started by admitted food air use continues main-hand air use after selecting a block item.
+Initially refused food retains block mode, even without an initial block target.
+The same air deadline applies to fresh calls, while held block continuation bypasses it.
 Skip block and entity dispatch inside the use method without changing the visible raycast.
 A placement hold keeps its block route after selecting food and cannot fall through to eating.
 Retire offhand fallback while either route owns the hold.
 Release permits a fresh press to choose another interaction mode.
 
-Held placement keeps its separate 300 ms delay after the first attempt or a successful local use.
+Held placement waits 300 ms after a successful local block use.
+Trapdoor holds also retain the established first-attempt delay.
+Initially refused food retains untimed block continuation until a block use succeeds.
 Failed repeats do not restart that delay.
 Release, screens, and connection replacement clear the placement timer and retained trapdoor state.
 Suppress Java's parallel repeat path while the frame route owns the attempt.
@@ -56,7 +60,7 @@ Unattached stone and late trapdoor controls agree.
 The reverse trapdoor-to-food control retains simulation block uses and consumes no food.
 Installed direct and proxy controls check both directions and fresh placement after release or Pause.
 The previous installed client placed blocks after food use and ate food during the placement hold.
-Five input-state tests cover retained modes, hand and target routing, variable frames, release, connection reset, independent delays, strict boundaries, and rollover.
+Seven input-state tests cover retained modes, hand and target routing, variable frames, release, connection reset, independent delays, strict boundaries, and rollover.
 Five block-state tests cover retained orientation, materials, independent properties, targets, frozen hits, release, and ordinary blocks.
 
 Earlier installed placement fixtures match native camera changes, material changes, and fresh activation after release.
@@ -68,5 +72,13 @@ After a preceding successful hold, both instead place a neighbor and consume one
 
 ## Remaining limits
 
-Other initial air-use families, timed and refused-food handoffs, live entity transitions, competing use handlers, exact input-flag phase counts, and full use-cycle timing need more native comparisons.
+Other initial air-use families, live entity transitions, competing use handlers, exact input-flag phase counts, and full use-cycle timing need more native comparisons.
 The original intermittent animation-without-feeding report remains open.
+
+Timed-food controls distinguish an early switch, a switch after completion, and a held three-completion cycle.
+Initial refusal sends one air payload without `StartUsingItem`, then keeps block continuation.
+An admitted air hold keeps its route after hunger fills.
+
+Ordinary Stone placement still differs after the ray reaches another face: both installed routes place four blocks where native places two.
+The first two successes follow the 300 ms delay. The later placement selection remains unresolved.
+Do not treat these mode and timing fixes as complete held-placement parity.

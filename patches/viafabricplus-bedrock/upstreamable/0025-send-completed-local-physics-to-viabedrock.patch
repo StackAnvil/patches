@@ -1,4 +1,4 @@
-From 66c257b2fc992acf8ab7cc0b6abd49db0b6bed94 Mon Sep 17 00:00:00 2001
+From 314153e0af766210ce5a61c7054acfcb13882e81 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -664,6 +664,19 @@ impulse retains its first eight physical frames. An additional next-tick
 correction still occurs, and direct translation can emit input before
 client application catches up with receipt. These scheduling gaps and
 complete native trajectories remain open. Raw captures stay private.
+
+Retain native item definition identity when Java updates or releases the
+local active stack. Custom definitions can share the same paper carrier.
+Comparing only that carrier lets a timed food cycle adopt an instant
+food while retaining the old duration, producing a non-finite hand pose.
+Use the shared cached native metadata, and keep count or unrelated
+component changes on the same definition within the current use cycle.
+
+Official Bedrock 1.26.60.5/protocol 2225 cancels the old timed cycle on
+this hotbar change and consumes the new instant food. It sends no release
+transaction for that change. Preserve Java's local stop path without an
+extra release packet. Tests cover distinct definitions sharing a carrier,
+same-definition updates and absent-metadata Java identity fallback.
 ---
  build.gradle.kts                              |   2 +-
  .../bedrock/ViaFabricPlusBedrock.java         |  14 +
@@ -688,7 +701,7 @@ complete native trajectories remain open. Raw captures stay private.
  .../movement/MixinGameModePhysicsReplay.java  |  29 +
  .../movement/MixinHorsePhysicsState.java      |  63 +++
  .../movement/MixinLevelPhysicsReplay.java     |  25 +
- .../features/movement/MixinLivingEntity.java  | 142 +++++
+ .../features/movement/MixinLivingEntity.java  | 150 +++++
  .../movement/MixinLivingPhysicsState.java     | 145 +++++
  .../features/movement/MixinLocalPlayer.java   | 378 ++++++++++++-
  .../movement/MixinMobEffectPhysicsState.java  |  18 +
@@ -707,6 +720,7 @@ complete native trajectories remain open. Raw captures stay private.
  .../bedrock/input/BedrockPhysicalReplay.java  | 535 ++++++++++++++++++
  .../input/BedrockPlayerCorrections.java       |  64 +++
  .../bedrock/input/BedrockPlayerModes.java     | 176 ++++++
+ .../bedrock/input/BedrockUsedItem.java        |  23 +
  .../input/BedrockVehiclePredictions.java      |  48 ++
  .../bedrock/input/FlightMovementPayload.java  |  24 +
  .../bedrock/input/MovementEffectPayload.java  |  24 +
@@ -745,6 +759,7 @@ complete native trajectories remain open. Raw captures stay private.
  .../viafabricplus-bedrock.mixins.json         |  25 +
  .../BedrockPhysicalMotionLifecycleTest.java   | 190 +++++++
  .../bedrock/input/BedrockPlayerModesTest.java | 168 ++++++
+ .../bedrock/input/BedrockUsedItemTest.java    |  66 +++
  .../input/BedrockVehiclePredictionsTest.java  | 155 +++++
  .../input/VehiclePredictionPayloadTest.java   |  75 +++
  .../input/VehiclePredictionSessionTest.java   | 284 ++++++++++
@@ -768,7 +783,7 @@ complete native trajectories remain open. Raw captures stay private.
  .../replay/PhysicalWorldCollisionTest.java    | 111 ++++
  .../render/PhysicalColliderSourcesTest.java   | 151 +++++
  .../render/PhysicalReplayLifetimeTest.java    | 151 +++++
- 103 files changed, 8276 insertions(+), 74 deletions(-)
+ 105 files changed, 8373 insertions(+), 74 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockTeleportTravel.java
@@ -802,6 +817,7 @@ complete native trajectories remain open. Raw captures stay private.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalReplay.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerCorrections.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerModes.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItem.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictions.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/FlightMovementPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/MovementEffectPayload.java
@@ -837,6 +853,7 @@ complete native trajectories remain open. Raw captures stay private.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalStateAccess.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalMotionLifecycleTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerModesTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItemTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictionsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionPayloadTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionSessionTest.java
@@ -2019,10 +2036,10 @@ index 0000000..b6ee81c
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index cb89991..81b514b 100644
+index cb89991..afc332f 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-@@ -21,27 +21,169 @@
+@@ -21,27 +21,177 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -2034,6 +2051,7 @@ index cb89991..81b514b 100644
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
++import com.viaversion.viafabricplus.bedrock.input.BedrockUsedItem;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockGeyserPhysics;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockClimbingPhysics;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockFlightPhysics;
@@ -2047,6 +2065,7 @@ index cb89991..81b514b 100644
  import net.minecraft.world.effect.MobEffects;
 +import net.minecraft.world.entity.EquipmentSlot;
  import net.minecraft.world.entity.LivingEntity;
++import net.minecraft.world.item.ItemStack;
 +import net.minecraft.world.item.enchantment.EnchantmentHelper;
 +import net.minecraft.world.item.enchantment.Enchantments;
  import net.minecraft.world.phys.Vec3;
@@ -2175,6 +2194,12 @@ index cb89991..81b514b 100644
 +        final Position3f nativeMotion = GlideMovement.calculate(new Position3f((float) movement.x, (float) movement.y, (float) movement.z),
 +                player.getXRot(), player.getYRot(), player.xRotO, player.yRotO, this.getEffect(MobEffects.SLOW_FALLING) != null, BedrockMovementEffects.hasGlideBoost(player.getId()));
 +        cir.setReturnValue(new Vec3(nativeMotion.x(), nativeMotion.y(), nativeMotion.z()));
++    }
++
++    @WrapOperation(method = {"updatingUsingItem", "releaseUsingItem"}, at = @At(value = "INVOKE", target = "Lnet/minecraft/world/item/ItemStack;isSameItem(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/item/ItemStack;)Z"))
++    private boolean retainNativeUseIdentity(final ItemStack held, final ItemStack active, final Operation<Boolean> original) {
++        return (Object) this instanceof LocalPlayer && BedrockInputPermissions.isBedrockConnection()
++                ? BedrockUsedItem.matches(held, active) : original.call(held, active);
 +    }
 +
 +    @WrapOperation(method = "updateUsingItem", at = @At(value = "FIELD", target = "Lnet/minecraft/world/entity/LivingEntity;useItemRemaining:I", opcode = Opcodes.PUTFIELD))
@@ -4391,6 +4416,35 @@ index 0000000..2f9f49a
 +    }
 +
 +    private enum Field { NATIVE_MODE }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItem.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItem.java
+new file mode 100644
+index 0000000..8b10c88
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItem.java
+@@ -0,0 +1,23 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockItemMetadata;
++import java.util.Objects;
++import net.minecraft.core.component.DataComponents;
++import net.minecraft.world.item.ItemStack;
++
++/** Keeps a native use cycle attached to its definition, rather than its Java carrier. */
++public final class BedrockUsedItem {
++    private BedrockUsedItem() {
++    }
++
++    public static boolean matches(final ItemStack held, final ItemStack active) {
++        return ItemStack.isSameItem(held, active) && Objects.equals(
++                BedrockItemMetadata.get(held.get(DataComponents.CUSTOM_DATA)).identifier(),
++                BedrockItemMetadata.get(active.get(DataComponents.CUSTOM_DATA)).identifier());
++    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictions.java
 new file mode 100644
@@ -7206,6 +7260,78 @@ index 0000000..e925d06
 +            physics.run();
 +            this.history.complete(frame);
 +        }
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItemTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItemTest.java
+new file mode 100644
+index 0000000..7da63b1
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItemTest.java
+@@ -0,0 +1,66 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.SharedConstants;
++import net.minecraft.core.component.DataComponentMap;
++import net.minecraft.core.component.DataComponents;
++import net.minecraft.nbt.CompoundTag;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.item.Item;
++import net.minecraft.world.item.ItemStack;
++import net.minecraft.world.item.Items;
++import net.minecraft.world.item.component.CustomData;
++import net.raphimc.viabedrock.protocol.rewriter.ItemDataRewriter;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockUsedItemTest {
++    @BeforeAll
++    static void initializeGame() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++        for (final var item : new Item[]{Items.PAPER, Items.STONE}) {
++            if (!item.builtInRegistryHolder().areComponentsBound()) {
++                item.builtInRegistryHolder().bindComponents(DataComponentMap.EMPTY);
++            }
++        }
++    }
++
++    @Test
++    void differentNativeDefinitionsCannotContinueTheSameCarrierUseCycle() {
++        final var timed = food("fixture:timed", 32);
++        final var instant = food("fixture:instant", 0);
++        assertFalse(BedrockUsedItem.matches(instant, timed));
++        assertFalse(BedrockUsedItem.matches(new ItemStack(Items.PAPER), timed));
++    }
++
++    @Test
++    void countAndComponentUpdatesKeepTheSameNativeUseCycle() {
++        final var active = food("fixture:food", 32);
++        final var updated = food("fixture:food", 32);
++        updated.setCount(12);
++        updated.set(DataComponents.CUSTOM_DATA, updated.get(DataComponents.CUSTOM_DATA).update(tag -> tag.putInt("network_id", 42)));
++        assertTrue(BedrockUsedItem.matches(updated, active));
++    }
++
++    @Test
++    void absentNativeMetadataRetainsJavaItemIdentity() {
++        assertTrue(BedrockUsedItem.matches(new ItemStack(Items.PAPER), new ItemStack(Items.PAPER, 2)));
++        assertFalse(BedrockUsedItem.matches(new ItemStack(Items.STONE), new ItemStack(Items.PAPER)));
++    }
++
++    private static ItemStack food(final String identifier, final int duration) {
++        final var tag = new CompoundTag();
++        tag.putString(ItemDataRewriter.BEDROCK_IDENTIFIER_TAG, identifier);
++        tag.putInt(ItemDataRewriter.BEDROCK_USE_DURATION_TAG, duration);
++        final var stack = new ItemStack(Items.PAPER, 64);
++        stack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
++        return stack;
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictionsTest.java

@@ -1,4 +1,4 @@
-From 1f0dd8cc6bc1782cd6a3fcee3a597eff7242f6d8 Mon Sep 17 00:00:00 2001
+From 173f2b1402f8b56343dce93e6856de849613851b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] fix(interaction): signal sustained Bedrock item use
@@ -25,11 +25,11 @@ acknowledgments cannot complete a valid active use. Boundary packet tests
 cover negative values, 16, 17, and signed integer extremes. This does not
 resolve local prediction or late acknowledgments for a new same-item use.
 
-Admit food use with the advertised native food component and current
-hunger limits before emitting a transaction or StartUsingItem input. Java
-sends USE_ITEM before its local food predicate, while BDS accepts those
-transactions even after ordinary food reaches full hunger. A target-build
-fixture consumes an extra apple at full hunger without this client gate.
+Use the advertised native food component and current hunger limits to
+admit StartUsingItem input. Preserve the air-use transaction when hunger
+refuses food. Native 1.26.60.5/protocol 2225 sends that transaction without
+the start flag, including bread and component food at full hunger.
+The earlier interpretation incorrectly suppressed the transaction too.
 
 Retain ordered food component updates by connection registry identity.
 Preserve can_always_eat and creative use; do not infer food behavior from
@@ -38,8 +38,8 @@ food data on their existing route. The captured 1.26.51.1 registry contains
 this property for component and legacy foods, including apple, honey,
 chorus fruit and both golden apple variants.
 
-Targeted model and real packet controls verify full-hunger rejection before
-input flags and inventory writes, changed native hunger maxima, always
+Targeted model and real packet controls verify refused-use transactions
+without input flags or inventory writes, changed hunger maxima, always
 edible food, creative use and omitted/replaced registry definitions.
 The source format is also documented by Microsoft's minecraft:food item
 component reference. Full custom item use-cycle and rejection/prediction
@@ -72,7 +72,7 @@ hunger refuses it, so another installed handler can still start use.
 Retain the advertised can_always_eat flag independently of that composed
 admission. Transport effective full-hunger eligibility through Java FOOD,
 including native nutrition and final saturation, so Java's local predicate
-and the outgoing transaction gate agree. Project component-food use
+and outgoing use admission agree. Project component-food use
 animation and network duration into CONSUMABLE, including zero duration,
 so custom paper carriers also enter the local use cycle. Consume effects
 remain server-owned. Preserve initial and current Peaceful exceptions and
@@ -85,17 +85,23 @@ constructor-specific admission, full/hungry transitions and FOOD wire
 properties without predicting stack consumption. Competing non-food use
 handlers, complete custom consumable behavior, exact cycle timing, and the
 original intermittent eating report remain separate requirements.
+
+Official 1.26.60.5/BDS 1.26.60.6 held-use controls preserve the refused
+air payload and continue block mode. Already admitted air mode still
+sends retries after hunger becomes full. Registered packet regressions
+cover both payload presence and absent StartUsingItem without changing
+the canonical held count or offhand resynchronization.
 ---
  .../model/ItemDefinitionProperties.java       |   6 +
  .../protocol/model/ItemFoodProperties.java    |  57 ++++++
  .../protocol/model/ItemRegistry.java          |   6 +
- .../protocol/packet/InteractionPackets.java   |  59 +++++-
+ .../protocol/packet/InteractionPackets.java   |  55 +++++-
  .../protocol/rewriter/ItemRewriter.java       |  20 +-
- .../model/ItemFoodPropertiesTest.java         | 122 +++++++++++++
+ .../model/ItemFoodPropertiesTest.java         | 122 ++++++++++++
  .../packet/CompletedItemUsePacketTest.java    |  98 ++++++++++
- .../packet/FoodUseAdmissionPacketTest.java    | 172 ++++++++++++++++++
- .../packet/InteractionPacketsTest.java        |  31 ++++
- 9 files changed, 567 insertions(+), 4 deletions(-)
+ .../packet/FoodUseAdmissionPacketTest.java    | 183 ++++++++++++++++++
+ .../packet/InteractionPacketsTest.java        |  31 +++
+ 9 files changed, 574 insertions(+), 4 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemFoodProperties.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemFoodPropertiesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java
@@ -214,7 +220,7 @@ index a906b932..03ebaf51 100644
          return this.definitions.definitions().stream().filter(definition -> definition.receiver().component())
                  .map(NativeItemDefinitions.Definition::identifier).collect(Collectors.toUnmodifiableSet());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index 081338cb..5cc1d6f5 100644
+index 081338cb..203cd594 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 @@ -46,10 +46,14 @@ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
@@ -258,35 +264,24 @@ index 081338cb..5cc1d6f5 100644
              if (javaHand < 0 || javaHand >= InteractionHand.values().length) {
                  wrapper.cancel();
                  return;
-@@ -278,8 +288,16 @@ public final class InteractionPackets {
+@@ -278,8 +288,15 @@ public final class InteractionPackets {
                  openBook.send(BedrockProtocol.class);
                  return;
              }
 +            final ItemFoodProperties food = itemRewriter.foodProperties(usedItem);
-+            if (hand == InteractionHand.MAIN_HAND && !canStartFoodUse(clientPlayer, food, wrapper.user().get(GameSessionStorage.class))) {
-+                // Java sends USE_ITEM before its local food check. Native clients admit eating before sending.
-+                wrapper.cancel();
-+                return;
-+            }
++            // Native still sends refused food use; only admission controls StartUsingItem.
++            final boolean startUsingItem = food.food()
++                    ? canStartFoodUse(clientPlayer, food, wrapper.user().get(GameSessionStorage.class))
++                    : isContinuousUseItem(itemIdentifier, itemIdentifier == null ? Set.of()
++                            : BedrockProtocol.MAPPINGS.getBedrockItemTags().getOrDefault(itemIdentifier, Set.of()));
              final BedrockInventoryTransaction transaction = beginItemUse(clientPlayer, hand,
 -                    inventoryContainer.getSelectedHotbarSlot(), usedItem, itemIdentifier);
 +                    inventoryContainer.getSelectedHotbarSlot(), usedItem, itemIdentifier,
-+                    itemIdentifier == null ? Set.of()
-+                            : BedrockProtocol.MAPPINGS.getBedrockItemTags().getOrDefault(itemIdentifier, Set.of()));
++                    startUsingItem);
              if (transaction == null) {
                  wrapper.cancel();
                  if (hand == InteractionHand.OFF_HAND && !"minecraft:shield".equals(itemIdentifier)) {
-@@ -287,6 +305,9 @@ public final class InteractionPackets {
-                 }
-                 return;
-             }
-+            if (food.food()) {
-+                clientPlayer.addAuthInputData(PlayerAuthInputData.StartUsingItem);
-+            }
-             wrapper.write(inventoryTransactionRewriter.getInventoryTransactionType(), transaction);
-         });
- 
-@@ -371,6 +392,24 @@ public final class InteractionPackets {
+@@ -371,6 +388,24 @@ public final class InteractionPackets {
                  }
              }
          });
@@ -311,7 +306,7 @@ index 081338cb..5cc1d6f5 100644
          protocol.registerClientbound(ClientboundBedrockPackets.SET_ENTITY_LINK, null, wrapper -> {
              wrapper.cancel();
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-@@ -380,6 +419,17 @@ public final class InteractionPackets {
+@@ -380,6 +415,17 @@ public final class InteractionPackets {
  
      }
  
@@ -329,20 +324,20 @@ index 081338cb..5cc1d6f5 100644
      static void sendPassengerUpdates(final PacketWrapper source, final EntityTracker entityTracker) {
          for (Entity vehicle : entityTracker.drainPassengerUpdates()) {
              final PacketWrapper passengersPacket = PacketWrapper.create(ClientboundPackets26_3.SET_PASSENGERS,
-@@ -401,7 +451,7 @@ public final class InteractionPackets {
+@@ -401,7 +447,7 @@ public final class InteractionPackets {
  
      static BedrockInventoryTransaction beginItemUse(final ClientPlayerEntity player,
              final InteractionHand hand, final int hotbarSlot, final BedrockItem item,
 -            final String identifier) {
-+            final String identifier, final Set<String> tags) {
++            final String identifier, final boolean startUsingItem) {
          if (item.isEmpty()) {
              return null;
          }
-@@ -413,6 +463,9 @@ public final class InteractionPackets {
+@@ -413,6 +459,9 @@ public final class InteractionPackets {
              return null;
          }
          player.setShieldBlockingHand(null);
-+        if (isContinuousUseItem(identifier, tags)) {
++        if (startUsingItem) {
 +            player.addAuthInputData(PlayerAuthInputData.StartUsingItem);
 +        }
          return new BedrockInventoryTransaction(
@@ -644,10 +639,10 @@ index 00000000..45f4a6a3
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/FoodUseAdmissionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/FoodUseAdmissionPacketTest.java
 new file mode 100644
-index 00000000..50acebde
+index 00000000..8ff80429
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/FoodUseAdmissionPacketTest.java
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,183 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -697,7 +692,7 @@ index 00000000..50acebde
 +
 +    @ParameterizedTest
 +    @EnumSource(InteractionHand.class)
-+    void rejectsFullHungerUseWithoutLosingOffhandResynchronization(final InteractionHand hand) throws Exception {
++    void sendsRefusedFoodWithoutStartingUseAndKeepsOffhandResynchronization(final InteractionHand hand) throws Exception {
 +        final Map<Class<?>, Object> stores = new HashMap<>();
 +        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
 +                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> method.getName().equals("get") ? stores.get(args[0]) : null);
@@ -712,14 +707,16 @@ index 00000000..50acebde
 +        });
 +        final var inventory = new InventoryTracker(user);
 +        stores.put(InventoryTracker.class, inventory);
-+        final var held = new BedrockItem(1);
++        final var held = new BedrockItem(261);
 +        held.setAmount(8);
 +        inventory.getInventoryContainer().setItem(0, held);
 +        inventory.getOffhandContainer().setItem(0, held);
 +        final var items = mock(ItemRewriter.class);
-+        when(items.getItems()).thenReturn(hand == InteractionHand.MAIN_HAND ? ImmutableBiMap.of("test:food", 1) : ImmutableBiMap.of());
++        when(items.getItems()).thenReturn(hand == InteractionHand.MAIN_HAND ? ImmutableBiMap.of("minecraft:bread", 261) : ImmutableBiMap.of());
 +        when(items.foodProperties(held)).thenReturn(new ItemFoodProperties(true, false, false, 0, 0F, "none"));
 +        stores.put(ItemRewriter.class, items);
++        final var transactions = new InventoryTransactionRewriter(user);
++        stores.put(InventoryTransactionRewriter.class, transactions);
 +        final var input = Unpooled.buffer();
 +        try (var packets = mockStatic(PacketFactory.class)) {
 +            Types.VAR_INT.writePrimitive(input, hand.ordinal());
@@ -727,7 +724,16 @@ index 00000000..50acebde
 +            input.writeFloat(0F).writeFloat(0F);
 +            final var packet = new PacketWrapperImpl(ServerboundPackets26_3.USE_ITEM, input, user);
 +            new TestProtocol().translate(packet);
-+            assertTrue(packet.isCancelled());
++            assertEquals(hand == InteractionHand.OFF_HAND, packet.isCancelled());
++            if (hand == InteractionHand.MAIN_HAND) {
++                final var transaction = packet.get(transactions.getInventoryTransactionType(), 0);
++                final var use = assertInstanceOf(InventoryTransactionData.UseItemTransactionData.class, transaction.transactionData());
++                assertEquals(261, use.itemInHand().identifier());
++                assertEquals(8, use.itemInHand().amount());
++                assertEquals(0, use.hotbarSlot());
++                assertEquals(0, transaction.legacyRequestId());
++                assertTrue(transaction.actions() == null || transaction.actions().isEmpty());
++            }
 +            assertFalse(input.isReadable());
 +            assertTrue(player.authInputData().isEmpty());
 +            assertEquals(8, held.amount());
@@ -782,14 +788,14 @@ index 00000000..50acebde
 +                    input.writeFloat(0F).writeFloat(0F);
 +                    final var packet = new PacketWrapperImpl(ServerboundPackets26_3.USE_ITEM, input, user);
 +                    protocol.translate(packet);
-+                    assertEquals(difficulty != Difficulty.Peaceful && !useModifiers, packet.isCancelled());
++                    assertFalse(packet.isCancelled());
 +                    if (!packet.isCancelled()) {
 +                        final var transaction = packet.get(transactions.getInventoryTransactionType(), 0);
 +                        final var use = assertInstanceOf(InventoryTransactionData.UseItemTransactionData.class, transaction.transactionData());
 +                        assertEquals(8, use.itemInHand().amount());
 +                    }
 +                    assertEquals(8, held.amount());
-+                    assertEquals(!packet.isCancelled(), entities.getClientPlayer().authInputData().contains(PlayerAuthInputData.StartUsingItem));
++                    assertEquals(difficulty == Difficulty.Peaceful || useModifiers, entities.getClientPlayer().authInputData().contains(PlayerAuthInputData.StartUsingItem));
 +                    assertFalse(input.isReadable());
 +                } finally {
 +                    update.release();
