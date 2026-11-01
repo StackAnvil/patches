@@ -33,6 +33,13 @@ The existing independent actor material-coverage path remains separate.
 Fixed collection grids retain their full logical height while layout positions each instantiated cell by its original source index.
 Regressions compare complete and windowed geometry, distant scroll positions, resize, final rows, and offscreen keyboard neighbors.
 Overlapping windows retain animation clocks by source identity.
+
+The scene lifecycle tracks authored pop exits through their completion events.
+It waits for all participating tracks, including a shorter size track alongside a longer fade.
+Binding refresh retains pending completions by control identity.
+Tests cover different durations, repeated requests, successor chains, missing completion paths, and refresh during an exit.
+Native Bedrock 1.26.60.5 Escape frames retain the fade after the size track finishes.
+This mechanism does not establish complete native host policy or exact frame timing.
 These controls do not establish identical native pooling or frame timing.
 Broader viewports, complete inventory pixels, entrance timing, and TrueType comparisons remain open.
 

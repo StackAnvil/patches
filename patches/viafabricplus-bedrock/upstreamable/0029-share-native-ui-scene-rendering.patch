@@ -1,4 +1,4 @@
-From 55346089df868c4570df108b271c0e477e671ca2 Mon Sep 17 00:00:00 2001
+From 4e6e998fbb1c31e39eac4bdc1df8bb67dca0ae45 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -721,6 +721,27 @@ Expose an opacity revision that advances when an alpha sample changes.
 Retained scene consumers can reuse painter traversal between visual
 changes while preserving fades and event-driven alpha resets. Layout
 changes and control replacement retain their separate invalidation.
+
+Expose completed authored animation events to the scene lifecycle. A pop
+exit starts once and waits for its screen.exit_end tracks; a scene without a
+reachable completion event retires immediately instead of hanging. Follow
+unblocked next-track chains, retain monotonic clocks, and avoid invoking
+screen mutations from an animation callback.
+
+Bedrock 1.26.60.5 authors container pop offsets and alpha tracks that emit
+screen.exit_end. Native Escape captures show the scene slide and fade
+before removal. The lifecycle tests cover elapsed play time, repeated
+close requests, chained completion, and missing or blocked exit tracks.
+This establishes the shared host mechanism, not complete native screen
+policy or frame timing parity.
+
+Retain all participating completion tracks by control identity, including
+through binding refresh. The target inventory has a shorter size track
+alongside its longer alpha and offset tracks. Native Escape frames retain
+the fading scene after that short track finishes. Removing the screen on
+the first completion truncates that visible exit. Wait for the remaining
+participating tracks, and release removed controls during reconciliation.
+The regression combines different durations and a mid-exit root refresh.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    2 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -759,8 +780,8 @@ changes and control replacement retain their separate invalidation.
  .../bedrock/screen/ui/NativeHudResources.java |   21 +
  .../screen/ui/NativeUiActorCamera.java        |   60 +
  .../screen/ui/NativeUiActorPortraits.java     |  258 +++++
- .../screen/ui/NativeUiAnimationLifecycle.java |  131 +++
- .../bedrock/screen/ui/NativeUiAnimations.java |  406 +++++++
+ .../screen/ui/NativeUiAnimationLifecycle.java |  165 +++
+ .../bedrock/screen/ui/NativeUiAnimations.java |  455 ++++++++
  .../bedrock/screen/ui/NativeUiAseprite.java   |   54 +
  .../bedrock/screen/ui/NativeUiButton.java     |  167 +++
  .../screen/ui/NativeUiCollectionWindow.java   |   92 ++
@@ -812,7 +833,7 @@ changes and control replacement retain their separate invalidation.
  .../screen/ui/NativeHudOverlayStateTest.java  |  153 +++
  .../screen/ui/NativeUiActorCameraTest.java    |  102 ++
  .../screen/ui/NativeUiActorPortraitsTest.java |  164 +++
- .../ui/NativeUiAnimationLifecycleTest.java    |  155 +++
+ .../ui/NativeUiAnimationLifecycleTest.java    |  222 ++++
  .../screen/ui/NativeUiAnimationsTest.java     |  301 +++++
  .../screen/ui/NativeUiAsepriteTest.java       |  108 ++
  .../bedrock/screen/ui/NativeUiButtonTest.java |  127 +++
@@ -838,7 +859,7 @@ changes and control replacement retain their separate invalidation.
  .../ui/NativeUiTextureAnimationTest.java      |  108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |   86 ++
  .../screen/ui/NativeUiViewportTest.java       |   95 ++
- 116 files changed, 13242 insertions(+), 36 deletions(-)
+ 116 files changed, 13392 insertions(+), 36 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -3512,10 +3533,10 @@ index 0000000..286546d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationLifecycle.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationLifecycle.java
 new file mode 100644
-index 0000000..687730c
+index 0000000..2a1c763
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationLifecycle.java
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,165 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3536,6 +3557,9 @@ index 0000000..687730c
 +public final class NativeUiAnimationLifecycle {
 +    private NativeUiScene.Node root;
 +    private final NativeUiAnimations animations;
++    private boolean exiting;
++    private boolean exitComplete;
++    private Map<NativeUiScene.Node, Set<Integer>> pendingExit = new IdentityHashMap<>();
 +    private final Map<NativeUiScene.Node, List<NativeUiScene.Node>> paths = new IdentityHashMap<>();
 +    private final Set<NativeUiScene.Node> destroyed = Collections.newSetFromMap(new IdentityHashMap<>());
 +
@@ -3548,6 +3572,13 @@ index 0000000..687730c
 +            control.properties().addProperty("ignored", true);
 +            this.destroyed.add(control);
 +            return true;
++        }, completion -> {
++            if (!this.exiting || !completion.event().equals("screen.exit_end")) return;
++            final var tracks = this.pendingExit.get(completion.node());
++            if (tracks == null) return;
++            tracks.remove(completion.track());
++            if (tracks.isEmpty()) this.pendingExit.remove(completion.node());
++            this.exitComplete = this.pendingExit.isEmpty();
 +        });
 +    }
 +
@@ -3556,6 +3587,20 @@ index 0000000..687730c
 +    }
 +
 +    public NativeUiAnimations animations() { return this.animations; }
++
++    /** Returns whether an authored pop exit must finish before its host removes the scene. */
++    public boolean requestExit(final long elapsedNanos) {
++        if (this.exiting) return !this.exitComplete;
++        this.advance(elapsedNanos);
++        this.exiting = true;
++        this.pendingExit = this.animations.completions(this.root, "screen.exit_pop", "screen.exit_end");
++        this.exitComplete = this.pendingExit.isEmpty();
++        this.animations.event(this.root, "screen.exit_pop", elapsedNanos);
++        return !this.exitComplete;
++    }
++
++    public boolean exiting() { return this.exiting; }
++    public boolean exitComplete() { return this.exitComplete; }
 +
 +    /** Binding refreshes retain control clocks; new controls start at the refresh time. */
 +    public void replaceRoot(final NativeUiScene.Node root, final long elapsedNanos) {
@@ -3577,6 +3622,16 @@ index 0000000..687730c
 +            replacements.put(old == null ? node : old, node);
 +        }
 +        this.animations.reconcile(replacements, elapsedNanos);
++        if (this.exiting) {
++            final Map<NativeUiScene.Node, Set<Integer>> retainedExit = new IdentityHashMap<>();
++            replacements.forEach((previousNode, currentNode) -> {
++                final var pending = this.pendingExit.get(previousNode);
++                if (pending != null && Objects.equals(previousNode.properties().get("animation_program"), currentNode.properties().get("animation_program")))
++                    retainedExit.put(currentNode, pending);
++            });
++            this.pendingExit = retainedExit;
++            this.exitComplete = retainedExit.isEmpty();
++        }
 +        this.destroyed.clear();
 +        this.destroyed.addAll(retainedDestroyed);
 +        this.root = root;
@@ -3649,10 +3704,10 @@ index 0000000..687730c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java
 new file mode 100644
-index 0000000..0c2c738
+index 0000000..b7aadf0
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java
-@@ -0,0 +1,406 @@
+@@ -0,0 +1,455 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3664,9 +3719,12 @@ index 0000000..0c2c738
 +import com.google.gson.JsonObject;
 +import java.util.ArrayDeque;
 +import java.util.ArrayList;
++import java.util.HashSet;
 +import java.util.IdentityHashMap;
 +import java.util.List;
 +import java.util.Map;
++import java.util.Set;
++import java.util.function.Consumer;
 +import java.util.function.BiPredicate;
 +import net.raphimc.viabedrock.api.model.CameraEase;
 +
@@ -3674,6 +3732,7 @@ index 0000000..0c2c738
 +public final class NativeUiAnimations {
 +    private final Map<NativeUiScene.Node, Entry> entries = new IdentityHashMap<>();
 +    private final BiPredicate<NativeUiScene.Node, String> destroy;
++    private final Consumer<Completion> completed;
 +    private NativeUiScene.Node indexedRoot;
 +    private List<Entry> managers = List.of();
 +    private long layoutRevision;
@@ -3735,7 +3794,31 @@ index 0000000..0c2c738
 +
 +    public NativeUiAnimations() { this((node, name) -> false); }
 +
-+    NativeUiAnimations(final BiPredicate<NativeUiScene.Node, String> destroy) { this.destroy = destroy; }
++    NativeUiAnimations(final BiPredicate<NativeUiScene.Node, String> destroy) { this(destroy, event -> { }); }
++
++    NativeUiAnimations(final BiPredicate<NativeUiScene.Node, String> destroy,
++                       final Consumer<Completion> completed) {
++        this.destroy = destroy;
++        this.completed = completed;
++    }
++
++    record Completion(NativeUiScene.Node node, int track, String event) {}
++
++    Map<NativeUiScene.Node, Set<Integer>> completions(final NativeUiScene.Node node, final String play, final String completion) {
++        final Map<NativeUiScene.Node, Set<Integer>> result = new IdentityHashMap<>();
++        this.collectCompletions(node, play, completion, result);
++        return result;
++    }
++
++    private void collectCompletions(final NativeUiScene.Node node, final String play, final String completion,
++                                    final Map<NativeUiScene.Node, Set<Integer>> result) {
++        final var entry = this.entries.get(node);
++        if (entry != null) {
++            final var tracks = entry.completions(play, completion);
++            if (!tracks.isEmpty()) result.put(node, tracks);
++        }
++        for (final var child : node.children()) this.collectCompletions(child, play, completion, result);
++    }
 +
 +    public NativeUiPresentation.Opacity opacity(final NativeUiScene.Node node, final long now) {
 +        final Entry entry = this.entries.computeIfAbsent(node, value -> new Entry(value, now));
@@ -3853,6 +3936,24 @@ index 0000000..0c2c738
 +            }
 +        }
 +
++        Set<Integer> completions(final String play, final String completion) {
++            final Set<Integer> result = new HashSet<>();
++            for (final int root : this.active) {
++                if (!this.definitions.get(root).play.equals(play)) continue;
++                int index = root;
++                for (int visited = 0; visited < this.definitions.size(); visited++) {
++                    final var definition = this.definitions.get(index);
++                    if (index != root && !definition.play.isEmpty()) break;
++                    if (definition.next < 0) {
++                        if (definition.end.equals(completion)) result.add(index);
++                        break;
++                    }
++                    index = definition.next;
++                }
++            }
++            return result;
++        }
++
 +        void advance(final long now) {
 +            // Java partial ticks can retreat during a pause; native frame deltas never rewind.
 +            if (now < this.last || this.advanced && now == this.last) return;
@@ -3861,7 +3962,7 @@ index 0000000..0c2c738
 +            this.last = now;
 +            if (this.active.isEmpty()) return;
 +            final var next = new ArrayDeque<Step>();
-+            final var events = new ArrayList<String>();
++            final var events = new ArrayList<Completion>();
 +            // Native managers update all current tracks before processing their queued successors.
 +            for (final int index : List.copyOf(this.active)) update(index, delta, next, events);
 +            int transitions = 0;
@@ -3871,10 +3972,13 @@ index 0000000..0c2c738
 +                this.active.add(step.index);
 +                update(step.index, step.delta, next, events);
 +            }
-+            for (final var event : events) event(event);
++            for (final var event : events) {
++                event(event.event());
++                NativeUiAnimations.this.completed.accept(event);
++            }
 +        }
 +
-+        void update(final int index, final float delta, final ArrayDeque<Step> next, final List<String> events) {
++        void update(final int index, final float delta, final ArrayDeque<Step> next, final List<Completion> events) {
 +            if (this.states[index] != State.PLAYING) return;
 +            final var definition = this.definitions.get(index);
 +            // Image tracks finish without consuming time when the control has no image component.
@@ -3910,13 +4014,13 @@ index 0000000..0c2c738
 +            this.active.remove(Integer.valueOf(index));
 +            if (!definition.destroy.isEmpty() && NativeUiAnimations.this.destroy.test(this.node, definition.destroy)) {
 +                NativeUiAnimations.this.layoutRevision++;
-+                if (!definition.end.isEmpty()) events.add(definition.end);
++                if (!definition.end.isEmpty()) events.add(new Completion(this.node, index, definition.end));
 +                return;
 +            }
 +            if (definition.next >= 0) {
 +                this.times[definition.next] = 0;
 +                next.addLast(new Step(definition.next, Math.max(0, elapsed - definition.track.delay - definition.track.duration)));
-+            } else if (!definition.end.isEmpty()) events.add(definition.end);
++            } else if (!definition.end.isEmpty()) events.add(new Completion(this.node, index, definition.end));
 +        }
 +
 +        void sample(final int index, final Definition definition, final float elapsed, final boolean reset) {
@@ -10510,10 +10614,10 @@ index 0000000..835f559
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationLifecycleTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationLifecycleTest.java
 new file mode 100644
-index 0000000..e407bbc
+index 0000000..55565c7
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationLifecycleTest.java
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,222 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -10641,6 +10745,73 @@ index 0000000..e407bbc
 +        lifecycle.advance(500_000_000);
 +        assertEquals(.5F, lifecycle.animations().opacityAt(rebound, 500_000_000).current());
 +        assertEquals(.25F, lifecycle.animations().opacityAt(inserted, 500_000_000).current());
++    }
++
++    @Test
++    void popExitWaitsForAllAuthoredCompletionsAcrossRepeatedRequestsAndRefresh() {
++        final var root = node("container", List.of());
++        final var track = new JsonObject();
++        track.addProperty("anim_type", "alpha");
++        track.addProperty("from", 1);
++        track.addProperty("to", 0);
++        track.addProperty("duration", .4);
++        track.addProperty("play_event", "screen.exit_pop");
++        track.addProperty("end_event", "screen.exit_end");
++        final var tracks = new JsonArray();
++        tracks.add(track);
++        final var size = track.deepCopy();
++        size.addProperty("anim_type", "wait");
++        size.addProperty("duration", .25);
++        tracks.add(size);
++        AnimationPrograms.attach(root.properties(), tracks, false);
++        final var lifecycle = new NativeUiAnimationLifecycle(root);
++        lifecycle.advance(2_000_000_000L);
++        assertFalse(lifecycle.exitComplete());
++        assertTrue(lifecycle.requestExit(2_000_000_000L));
++        assertTrue(lifecycle.exiting());
++        lifecycle.advance(2_200_000_000L);
++        assertEquals(.5F, lifecycle.animations().opacityAt(root, 2_200_000_000L).current(), .00001F);
++        assertTrue(lifecycle.requestExit(2_200_000_000L));
++        lifecycle.advance(2_260_000_000L);
++        assertFalse(lifecycle.exitComplete());
++        final var rebound = new NativeUiScene.Node(root.name(), root.type(), root.properties().deepCopy(), root.children(), root.action());
++        lifecycle.replaceRoot(rebound, 2_260_000_000L);
++        lifecycle.advance(2_399_000_000L);
++        assertFalse(lifecycle.exitComplete());
++        lifecycle.advance(2_401_000_000L);
++        assertTrue(lifecycle.exitComplete());
++        assertFalse(lifecycle.requestExit(3_000_000_000L));
++    }
++
++    @Test
++    void popExitFollowsSuccessorsButDoesNotWaitForAnUnrelatedPlayEvent() {
++        final var root = node("container", List.of());
++        final var first = new JsonObject();
++        first.addProperty("anim_type", "wait");
++        first.addProperty("duration", .1);
++        first.addProperty("play_event", "screen.exit_pop");
++        final var last = new JsonObject();
++        last.addProperty("anim_type", "wait");
++        last.addProperty("duration", .2);
++        last.addProperty("end_event", "screen.exit_end");
++        final var tracks = new JsonArray();
++        tracks.add(first);
++        tracks.add(last);
++        AnimationPrograms.attach(root.properties(), tracks, true);
++        final var lifecycle = new NativeUiAnimationLifecycle(root);
++        assertTrue(lifecycle.requestExit(0));
++        lifecycle.advance(299_000_000L);
++        assertFalse(lifecycle.exitComplete());
++        lifecycle.advance(301_000_000L);
++        assertTrue(lifecycle.exitComplete());
++
++        last.addProperty("play_event", "other.event");
++        final var blocked = new NativeUiAnimationLifecycle(root);
++        assertFalse(blocked.requestExit(0));
++        assertTrue(blocked.exitComplete());
++        final var absent = new NativeUiAnimationLifecycle(node("plain", List.of()));
++        assertFalse(absent.requestExit(0));
++        assertTrue(absent.exitComplete());
 +    }
 +
 +    private static NativeUiScene.Node animatedCollection(final int index) {

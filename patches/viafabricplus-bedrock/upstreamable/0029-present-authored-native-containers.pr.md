@@ -74,7 +74,14 @@ Live direct checks cover pickup, drag distribution, return to the hotbar, and re
 Bedrock accepts every observed stack request, and the client and server retain matching item totals.
 Authored containers suppress gameplay HUD extraction while they are the current screen.
 Official Bedrock 1.26.60.5 keeps the held log and shield visible behind the Survival inventory but hides the gameplay HUD.
-An installed control checks open, close, and reopen. The HUD returns on close, the local visibility setting stays unchanged, and every slot remains intact.
+Escape starts the authored pop exit and shows the gameplay HUD behind the outgoing scene.
+The host consumes input until all participating completion tracks finish.
+Repeated close requests retain the clock. Completion cannot close a replacement screen or retired menu.
+Tests cover those ownership boundaries and input retirement.
+Installed player-inventory controls show the slide and fade before removal and retain every slot after reopening.
+Native Bedrock 1.26.60.5 Escape frames provide the visual reference; exact frame timing and complete pixels remain unverified.
+Generic storage resolves selected content without its complete host shell, so its default exit animations remain absent.
+Closing on hurt still needs complete native pending-state controls. The cooking host-policy guard remains.
 Broader modpack timing, the reported menu overlap, and shield presentation still need verification.
 
 The [owning patch](0029-present-authored-native-containers.patch) retains implementation rationale and versioned evidence.

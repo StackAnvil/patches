@@ -1,4 +1,4 @@
-From 004276ee1b70ed7773feab999fb4685e5768e1d7 Mon Sep 17 00:00:00 2001
+From d4b47610b67aefa54a002c02d4de4130fc9dcdcf Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -615,6 +615,25 @@ ordinary Java controls. Gate storage, cooking and player presentation before
 scene construction and recheck delayed installation. Keep the default
 enabled for server resource packs that depend on authored layouts. This
 changes presentation only; core retains inventory and request authority.
+
+Run authored screen.exit_pop tracks before removing a container, then
+close only on screen.exit_end while the same screen and menu still own
+the client. Repeated close requests do not restart the animation. Scenes
+without an authored completion path keep immediate closing.
+
+Consume pointer, keyboard, drag and slot mutations during the outgoing
+scene. Stop a held recipe request and deactivate native actions when the
+exit starts, while retaining presentation resources until removal. Show
+the gameplay HUD behind that scene, as in the target Bedrock 1.26.60.5
+Escape controls. The default authored container tracks provide the exit
+duration; no host timeout substitutes for their completion event.
+
+Tests cover deferred closure, input retirement, one-time completion,
+replacement screens and retired menu ownership. The separately observed
+native hurt policy uses a cause filter and a queued 100-count gate. Keep
+the cooking host-policy guard until that complete policy and required
+bindings are implemented and compared; do not replace it with raw health
+sampling or unconditional hurt closing.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../access/IBedrockGuiItemStyle.java          |   14 +
@@ -628,7 +647,7 @@ changes presentation only; core retains inventory and request authority.
  .../render/MixinNativeGuiItemState.java       |   20 +
  .../render/MixinNativeGuiOversizedItem.java   |   31 +
  .../container/BedrockFurnacePreferences.java  |   60 +
- .../BedrockNativeContainerScreen.java         | 1257 +++++++++++++++
+ .../BedrockNativeContainerScreen.java         | 1302 +++++++++++++++
  .../container/BedrockNativeContainers.java    |  282 ++++
  .../container/BedrockNativeCooking.java       |  147 ++
  .../BedrockNativePlayerInventory.java         |  157 ++
@@ -675,7 +694,7 @@ changes presentation only; core retains inventory and request authority.
  .../settings/impl/BedrockSettings.java        |    4 +
  .../viafabricplus-bedrock/lang/en_us.json     |    1 +
  .../viafabricplus-bedrock.mixins.json         |    9 +-
- .../BedrockNativeContainerScreenTest.java     |  605 +++++++
+ .../BedrockNativeContainerScreenTest.java     |  676 ++++++++
  .../container/NativeContainerButtonTest.java  |  280 ++++
  .../container/NativeContainerDrawsTest.java   |   70 +
  .../NativeContainerGeometryTest.java          |  389 +++++
@@ -696,7 +715,7 @@ changes presentation only; core retains inventory and request authority.
  .../NativePlayerPresentationTest.java         |  153 ++
  .../container/NativePlayerScreenTest.java     |  269 ++++
  .../PlayerInventoryScreenLifecycleTest.java   |   95 ++
- 80 files changed, 10315 insertions(+), 62 deletions(-)
+ 80 files changed, 10431 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerScreenAdmission.java
@@ -971,7 +990,7 @@ index 1349cd6..0000000
 -}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerHud.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerHud.java
 new file mode 100644
-index 0000000..1933bb3
+index 0000000..127d925
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerHud.java
 @@ -0,0 +1,28 @@
@@ -1000,7 +1019,7 @@ index 0000000..1933bb3
 +    @WrapWithCondition(method = "extractRenderState", at = @At(value = "INVOKE", target =
 +            "Lnet/minecraft/client/gui/Hud;extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/DeltaTracker;)V"))
 +    private boolean showGameplayHud(final Hud hud, final GuiGraphicsExtractor graphics, final DeltaTracker delta) {
-+        return !(this.screen() instanceof BedrockNativeContainerScreen);
++        return !(this.screen() instanceof BedrockNativeContainerScreen container) || container.closing();
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerPresentation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeContainerPresentation.java
@@ -1238,10 +1257,10 @@ index 0000000..1583ce0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..0ffea5d
+index 0000000..30893c2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
-@@ -0,0 +1,1257 @@
+@@ -0,0 +1,1302 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1337,6 +1356,7 @@ index 0000000..0ffea5d
 +    private NativeUiScene.Node scene;
 +    private NativeUiAnimationLifecycle lifecycle;
 +    private long animationStarted;
++    private boolean exitFinished;
 +    private long layoutRevision;
 +    private long nativeInputRevision;
 +    private NativeUiLayout.Box root;
@@ -1601,12 +1621,34 @@ index 0000000..0ffea5d
 +        return mapping == null ? null : mapping.getTranslatedKeyMessage().getString();
 +    }
 +
++    public boolean closing() { return this.lifecycle != null && this.lifecycle.exiting(); }
++
 +    @Override
 +    public void onClose() {
-+        if (this.current() && this.presentation instanceof NativePlayerPresentation player && player.closeHelp()) {
++        if (!this.current() || this.closing() || this.exitFinished) return;
++        if (this.presentation instanceof NativePlayerPresentation player && player.closeHelp()) {
 +            this.refreshSafely();
 +            return;
 +        }
++        try {
++            if (this.lifecycle != null && this.lifecycle.requestExit(this.animationTime())) {
++                this.setDragging(false);
++                this.scroll.release();
++                if (this.search != null) this.search.setFocused(false);
++                final var press = this.recipePress;
++                this.recipePress = null;
++                if (press != null) BedrockNativeCooking.action(this.owner, this.menu, press.recipe, press.mode, 2);
++                this.capturedButtons.clear();
++                this.nativeButtons.clear();
++                this.keyboardPressed = false;
++                this.deactivate();
++                return;
++            }
++        } catch (final RuntimeException error) {
++            this.fallback(error);
++            return;
++        }
++        this.exitFinished = true;
 +        super.onClose();
 +    }
 +
@@ -1662,6 +1704,7 @@ index 0000000..0ffea5d
 +
 +    @Override
 +    public boolean charTyped(final CharacterEvent event) {
++        if (this.closing()) return true;
 +        if (this.current() && this.search != null && this.search.isFocused()) return this.search.charTyped(event);
 +        return super.charTyped(event);
 +    }
@@ -1823,6 +1866,18 @@ index 0000000..0ffea5d
 +                this.fallback(new IllegalStateException("Native cooking presentation retired"));
 +            return;
 +        }
++        if (this.closing()) {
++            try {
++                this.lifecycle.advance(this.animationTime());
++                if (!this.exitFinished && this.lifecycle.exitComplete() && this.minecraft.gui.screen() == this) {
++                    this.exitFinished = true;
++                    super.onClose();
++                }
++            } catch (final RuntimeException error) {
++                this.fallback(error);
++            }
++            return;
++        }
 +        if (this.activationPending && ++this.activationTicks >= 100) {
 +            this.fallback(new IllegalStateException("Native inventory activation timed out"));
 +            return;
@@ -1854,13 +1909,13 @@ index 0000000..0ffea5d
 +    }
 +
 +    public Slot nativeHoveredSlot(final double x, final double y) {
-+        if (!this.current() || this.geometry == null) return null;
++        if (!this.current() || this.closing() || this.geometry == null) return null;
 +        final int index = this.geometry.hovered(x, y);
 +        return index >= 0 && this.menu.slots.get(index).isActive() ? this.menu.slots.get(index) : null;
 +    }
 +
 +    public boolean nativeIsHovering(final Slot slot, final double x, final double y) {
-+        return this.current() && this.geometry != null && this.geometry.contains(slot.index, x, y);
++        return this.current() && !this.closing() && this.geometry != null && this.geometry.contains(slot.index, x, y);
 +    }
 +
 +    @Override
@@ -1875,14 +1930,14 @@ index 0000000..0ffea5d
 +                    || this.nativeInput.visualRevision() != this.nativeInputRevision) {
 +                this.layout(now, mouseX, mouseY);
 +            }
-+            if (this.updateWindows()) this.refresh();
++            if (!this.closing() && this.updateWindows()) this.refresh();
 +            final var previousDraws = this.draws;
 +            this.draws = this.presentationDraws.update(this.root, mouseX, mouseY, this.lifecycle.animations(), this.nativeInput, now);
 +            if (this.draws != previousDraws) {
 +                if (this.authoredController()) this.nativeInput.layout(this.root, this.draws, this.width, this.height);
 +                this.updateGeometry();
 +            }
-+            this.hoveredSlot = this.nativeHoveredSlot(mouseX, mouseY);
++            this.hoveredSlot = this.closing() ? null : this.nativeHoveredSlot(mouseX, mouseY);
 +            if (this.hoveredSlot != null) NativeInventoryItemPresentation.requireTooltip(this.hoveredSlot.getItem());
 +            this.previews.clear();
 +            float layer = Float.NaN;
@@ -2028,6 +2083,7 @@ index 0000000..0ffea5d
 +
 +    @Override
 +    protected void slotClicked(final Slot slot, final int index, final int button, final ContainerInput input) {
++        if (this.closing()) return;
 +        if (!this.current()) return;
 +        if (this.actionScope.subset()) return;
 +        if (this.presentation instanceof NativePlayerPresentation && input == ContainerInput.QUICK_MOVE
@@ -2056,6 +2112,7 @@ index 0000000..0ffea5d
 +
 +    @Override
 +    public boolean mouseScrolled(final double x, final double y, final double horizontal, final double vertical) {
++        if (this.closing()) return true;
 +        if (!this.current()) return false;
 +        if (this.waitingForPreference()) return true;
 +        if (!this.scroll.wheel(this.root, x, y, horizontal, vertical)) return super.mouseScrolled(x, y, horizontal, vertical);
@@ -2066,6 +2123,7 @@ index 0000000..0ffea5d
 +
 +    @Override
 +    public boolean mouseClicked(final MouseButtonEvent event, final boolean doubleClick) {
++        if (this.closing()) return true;
 +        if (!this.current()) return false;
 +        this.consumedReleases.remove(event.button());
 +        if (this.search != null && this.search.visible && this.searchBox != null
@@ -2149,6 +2207,7 @@ index 0000000..0ffea5d
 +
 +    @Override
 +    public void mouseMoved(final double x, final double y) {
++        if (this.closing()) return;
 +        this.pointerX = x;
 +        this.pointerY = y;
 +        if (this.current() && this.authoredController()) {
@@ -2234,6 +2293,7 @@ index 0000000..0ffea5d
 +
 +    @Override
 +    public boolean mouseDragged(final MouseButtonEvent event, final double dx, final double dy) {
++        if (this.closing()) return true;
 +        if (this.authoredController()) this.mouseMoved(event.x(), event.y());
 +        if (this.capturedButtons.contains(event.button()) || this.nativeButtons.contains(event.button())) return true;
 +        if (!this.current()) return false;
@@ -2247,6 +2307,7 @@ index 0000000..0ffea5d
 +
 +    @Override
 +    public boolean mouseReleased(final MouseButtonEvent event) {
++        if (this.closing()) return true;
 +        if (this.current() && this.authoredController()) {
 +            if (this.helpView) this.inventoryInput.button(source(event.button()), false, 1, this.clock.getAsLong(), false);
 +            final var hover = this.nativeInput.pointer(event.x(), event.y(), 1, this.clock.getAsLong(), this.componentEnabled());
@@ -2277,6 +2338,7 @@ index 0000000..0ffea5d
 +
 +    @Override
 +    public boolean keyPressed(final KeyEvent event) {
++        if (this.closing()) return true;
 +        if (!this.current()) return false;
 +        if (this.presentation instanceof NativePlayerPresentation && !this.helpView && this.geometry != null
 +                && this.geometry.recipe(this.pointerX, this.pointerY) != null && Minecraft.getInstance().options.keyDrop.matches(event)) {
@@ -2427,6 +2489,7 @@ index 0000000..0ffea5d
 +
 +    @Override
 +    public boolean keyReleased(final KeyEvent event) {
++        if (this.closing()) return true;
 +        final String source = keyboardSource(event.key());
 +        if (this.current() && this.authoredController() && source != null) {
 +            if (this.helpView) this.inventoryInput.button(source, false, 1, this.clock.getAsLong(), false);
@@ -2483,6 +2546,7 @@ index 0000000..0ffea5d
 +
 +    @Override
 +    public void removed() {
++        this.exitFinished = true;
 +        try {
 +            this.deactivate();
 +            this.retireCooking();
@@ -6424,10 +6488,10 @@ index fef5b3f..241b180 100644
      "features.render.MixinNativeActorPickingEntity",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreenTest.java
 new file mode 100644
-index 0000000..261962c
+index 0000000..247ce99
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreenTest.java
-@@ -0,0 +1,605 @@
+@@ -0,0 +1,676 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6440,19 +6504,26 @@ index 0000000..261962c
 +
 +import com.google.gson.JsonArray;
 +import com.google.gson.JsonObject;
++import com.mojang.blaze3d.platform.InputConstants;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiLayout;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiPresentation;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiScene;
 +import java.util.List;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.atomic.AtomicLong;
 +import net.minecraft.SharedConstants;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.gui.Font;
++import net.minecraft.client.gui.Gui;
 +import net.minecraft.client.gui.screens.Screen;
 +import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 +import net.minecraft.client.gui.screens.inventory.ContainerScreen;
 +import net.minecraft.client.gui.screens.inventory.DispenserScreen;
 +import net.minecraft.client.gui.screens.inventory.HopperScreen;
 +import net.minecraft.client.gui.screens.inventory.ShulkerBoxScreen;
++import net.minecraft.client.input.KeyEvent;
++import net.minecraft.client.input.MouseButtonEvent;
++import net.minecraft.client.input.MouseButtonInfo;
 +import net.minecraft.client.multiplayer.ClientPacketListener;
 +import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 +import net.minecraft.client.player.LocalPlayer;
@@ -6472,6 +6543,63 @@ index 0000000..261962c
 +import org.junit.jupiter.api.Test;
 +
 +final class BedrockNativeContainerScreenTest {
++    private enum ExitOwner { CURRENT, REPLACED_SCREEN, RETIRED_MENU }
++
++    @Test
++    void authoredPopExitBlocksInputAndClosesOnlyTheStillOwnedScreenOnce() throws Exception {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++        for (final var state : ExitOwner.values()) {
++            final var player = mock(LocalPlayer.class);
++            final var inventory = new Inventory(player, new EntityEquipment());
++            final var menu = ChestMenu.threeRows(7, inventory);
++            player.containerMenu = menu;
++            final var game = mock(Minecraft.class);
++            game.player = player;
++            game.gameMode = mock(MultiPlayerGameMode.class);
++            final var gui = mock(Gui.class);
++            final var guiField = Minecraft.class.getField("gui");
++            guiField.setAccessible(true);
++            guiField.set(game, gui);
++            final var clock = new AtomicLong();
++            final var current = new AtomicBoolean(true);
++            try (final var singleton = mockStatic(Minecraft.class)) {
++                singleton.when(Minecraft::getInstance).thenReturn(game);
++                final var screen = new BedrockNativeContainerScreen(mock(ClientPacketListener.class),
++                    new ContainerScreen(menu, inventory, Component.empty()), inventory, Component.empty(),
++                    new NativeContainerPresentation(program(null, true), ContainerUi.Kind.CHEST_3_ROWS, List.of()),
++                    false, 1, clock::get, current::get);
++                final var minecraft = Screen.class.getDeclaredField("minecraft");
++                minecraft.setAccessible(true);
++                minecraft.set(screen, game);
++                when(gui.screen()).thenReturn(screen);
++                screen.prepare(mock(Font.class), 640, 320);
++                clock.set(2_000_000_000L);
++                screen.onClose();
++                assertTrue(screen.closing());
++                verify(player, never()).closeContainer();
++                final var mouse = new MouseButtonEvent(110, 60, new MouseButtonInfo(0, 0));
++                assertTrue(screen.mouseClicked(mouse, false));
++                assertTrue(screen.mouseDragged(mouse, 5, 5));
++                assertTrue(screen.mouseReleased(mouse));
++                assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0)));
++                screen.slotClicked(menu.slots.getFirst(), 0, 0, ContainerInput.PICKUP);
++                verifyNoInteractions(game.gameMode);
++                clock.set(2_200_000_000L);
++                screen.onClose();
++                screen.containerTick();
++                verify(player, never()).closeContainer();
++                if (state == ExitOwner.REPLACED_SCREEN) when(gui.screen()).thenReturn(mock(Screen.class));
++                if (state == ExitOwner.RETIRED_MENU) current.set(false);
++                clock.set(2_401_000_000L);
++                screen.containerTick();
++                screen.containerTick();
++                verify(player, times(state == ExitOwner.CURRENT ? 1 : 0)).closeContainer();
++                screen.discard();
++            }
++        }
++    }
++
 +    @Test
 +    void inventoryPointerEventsDoNotDispatchTheirCancelBinding() throws Exception {
 +        SharedConstants.tryDetectVersion();
@@ -6955,6 +7083,13 @@ index 0000000..261962c
 +            definitions.add("chest.move", animationDefinition);
 +            final var animations = new com.viaversion.viaversion.libs.gson.JsonArray();
 +            animations.add("@chest.move");
++            final var exitDefinition = animationDefinition.deepCopy();
++            final var exit = exitDefinition.getAsJsonObject("value");
++            exit.addProperty("duration", .4);
++            exit.addProperty("play_event", "screen.exit_pop");
++            exit.addProperty("end_event", "screen.exit_end");
++            definitions.add("chest.exit", exitDefinition);
++            animations.add("@chest.exit");
 +            root.add("anims", animations);
 +        }
 +        final var cell =

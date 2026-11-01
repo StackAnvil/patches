@@ -28,6 +28,13 @@ Bind clicks, data, and closes to the connection, menu object, menu ID, and openi
 A stale reply must not operate on a replacement screen.
 Keep global player-inventory reconciliation independent of a retired temporary menu.
 
+Escape starts the authored pop exit before the screen closes.
+The gameplay HUD appears behind the outgoing scene.
+The host consumes input and waits for all participating `screen.exit_end` tracks.
+A repeated close request does not restart the exit.
+Completion can close only the same screen and menu.
+A scene without a completion path closes immediately.
+
 The installed opening also owns a read-only recipe context while the native acknowledgment is pending.
 It reads the real cached crafting grid, hotbar, inventory, and cursor.
 The acknowledgment retains this model and its captured search policy.
@@ -129,3 +136,6 @@ An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.
 The original inventory-background, rollback, food-use, and locator-bar reports remain unresolved.
 Native registry probes and local model tests do not establish complete live inventory parity.
+Generic storage scenes currently expand selected content without the complete host shell.
+Their default host animations remain absent from the resolved scene.
+The native cause filter and pending-state counter for closing on hurt still need complete runtime controls.
