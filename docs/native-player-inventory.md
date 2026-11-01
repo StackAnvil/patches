@@ -130,7 +130,7 @@ An empty cursor admits that same craft. Output can then use the freed source slo
 Native wooden-sword bulk crafting produces one sword despite ingredients for 32.
 The primary output stack limit caps the craft count. Returned containers do not reduce it.
 Recipe data includes returned buckets and bottles, so core does not need a separate remainder mapping.
-For two-output recipes, native selects the secondary output before the primary output with `Create` actions.
+For two-output catalog recipes, native selects the secondary output before the primary output with `Create` actions.
 Each created stack chunk starts another merge pass before using empty inventory slots.
 Six cakes return 18 buckets as stacks of 16 and 2.
 When inventory is full, returned bottles drop directly from created-output slot 50.
@@ -147,6 +147,15 @@ Separate installed direct and ViaProxy controls verify bucket chunks, returned b
 The three craft requests per route match the native cake and honey captures after stack-ID normalization.
 Authoritative responses confirm inventory and cursor quantities. Reopening retains completed output.
 Rejected requests remain unit-tested. These live controls do not induce server rejection.
+
+Direct output-slot clicks craft once onto the cursor, including right-click.
+Manual crafting selects the primary output before returned containers and places returns in inventory, with overflow dropped from created output.
+Manual Shift-click leaves the cursor unchanged and uses combined inventory capacity.
+It sends the remaining stack-sized craft requests in one packet, with each request referring to earlier predicted stack identities.
+The native 20-millisecond click control crafts 128 planks through two requests of 64.
+State regressions cover both grids, returned containers, capacity across partial stacks, linked requests, and partial rejection.
+Installed direct and ViaProxy controls each match nine native craft requests and their authoritative response quantities across eight player/workbench cases.
+The controls cover right-click, linked Shift-click requests, returned containers, full inventory, partial bottle stacks, and retained output after reopening.
 
 Admit an authored player screen only when its required collections and controls are available.
 The shared UI renderer supports the local player portrait and separate body/head rotations.
@@ -203,7 +212,8 @@ A full inventory accepts the input without an inventory request.
 Unchanged Java Creative slot echoes preserve the existing native stack and network ID.
 Installed direct and ViaProxy controls confirm these pointer, capacity, and reopening cases through successful server responses.
 
-Manual output-slot crafting with returned containers, recipe families beyond the captured bulk cake and honey controls, recipes with more than two outputs, and complete installed native parity remain unfinished.
+Recipe families beyond the captured plank, cake, and honey controls, recipes with more than two outputs, and complete installed native parity remain unfinished.
+Search text does not yet persist between player and workbench openings as it does in the native client.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.

@@ -10,7 +10,14 @@ Resolve native ingredient descriptors and connection-owned item definitions befo
 
 ## Validation and remaining limits
 
-Regression coverage includes `NativeFurnaceOptionsTest`, `CookingRecipeAvailabilityTest`, `CookingRecipeInputsTest`, `CookingRecipeSourcesTest`.
+Regression coverage includes `NativeFurnaceOptionsTest`, `CookingRecipeAvailabilityTest`, `CookingRecipeInputsTest`, `CookingRecipeSourcesTest`, `CraftingCursorTest`, and `InventoryTransferBatchTest`.
+
+Official Bedrock 1.26.60.5/BDS 1.26.60.6 captures establish manual output pickup and Shift-click behavior for planks, cake, and honey blocks.
+Manual requests keep CraftResults times one, select primary output before returned containers, and use Take for cursor output.
+Right-click crafts once. Shift-click fills inventory through linked stack-sized requests in one packet.
+Capacity sums compatible inventory stacks. Returned containers merge before empty slots and drop from created output when they do not fit.
+Player and workbench tests exercise the shared handler, predicted identities, returned-container placement, cursor preservation, and rollback.
+Installed direct and ViaProxy checks match the native manual requests and authoritative quantities for the [documented controls](../../../docs/native-player-inventory.md).
 
 Controlled native recipe and naming references cover their declared boundaries. Complete installed player/cooking controllers and arbitrary recipe admission remain unfinished.
 

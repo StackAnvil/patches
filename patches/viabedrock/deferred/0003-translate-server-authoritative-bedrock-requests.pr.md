@@ -10,9 +10,10 @@ Own predictions and responses by request, container object, and opening lifetime
 
 ## Validation and remaining limits
 
-Regression coverage includes `ContainerTest`, `HorseContainerTest`, `NativeArmorPermissionsTest`, `NativeContainerActionSessionTest`.
+Regression coverage includes `ContainerTest`, `HorseContainerTest`, `NativeArmorPermissionsTest`, `NativeContainerActionSessionTest`, and `InventoryTransferBatchTest`.
 
-Late replies and replacement menus have targeted regressions. Complete native response-manager behavior, live transactions, and every container remain unfinished.
+Late replies and replacement menus have targeted regressions.
+Scoped manual crafting batches reuse ordered prediction and response reconciliation. Native-shaped regressions cover reordered responses, rejection of a later craft, whole-batch rejection, and refusal of unrelated operations. Complete native response-manager behavior, live transactions, and every container remain unfinished.
 
 Installed direct and ViaProxy checks accept bundle insertion, extraction, and reinsertion requests and retain the contents after reopening.
 See the [inventory reference](../../../docs/native-player-inventory.md) for the control path and remaining native comparison limit.
