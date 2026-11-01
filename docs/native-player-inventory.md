@@ -107,7 +107,10 @@ A fallback acknowledgment must not consume a newer menu's request.
 Native 1.26.60.5 classic-screen controls distinguish recipe selection from crafting.
 A normal recipe click fills the grid. Taking its output sends a separate craft request.
 A workbench recipe Shift-click uses `CraftRecipeAuto` with explicit ingredient descriptors, followed by results, consumption, and placement actions.
-The request codec supports this format. Installed authored recipe actions remain unfinished.
+Core plans this request for single-output shaped and shapeless recipes.
+The planner uses the first eligible ingredient allocation.
+Requests retain concrete descriptors and use the request ID for later references to a changed slot.
+Rejected requests restore the crafting grid, inventory, and cursor.
 
 Native 1.26.60.5 plank controls convert 16 of 32 logs into 64 planks per Shift-click.
 Output merges existing stacks and can use a slot freed by consumption.
@@ -117,9 +120,16 @@ Held logs increase displayed availability, but bulk crafting leaves them unchang
 With full inventory, a full compatible cursor or an incompatible held stack prevents the craft request.
 A partially filled compatible cursor instead drops its held stack and receives the full crafted stack.
 Captured requests cover cursors with 60 and 63 planks; both produce 64 new planks.
+With one free inventory item-space, native crafting places one plank, drops any held stack, and takes the remaining 63.
+This behavior also applies to an incompatible cursor or a full compatible cursor.
+The initial capacity check precedes consumption.
+A full inventory and incompatible cursor prevent crafting even when consumption can free a source slot.
+An empty cursor admits that same craft. Output can then use the freed source slot.
 Native wooden-sword bulk crafting produces one sword despite ingredients for 32.
 Complete request fixtures preserve split placement, repeated source references, and cursor replacement.
-The matching server accepts these requests. These fixtures do not implement the Survival bulk planner.
+The matching server accepts these native requests.
+Planner tests cover these request and prediction boundaries, including rejection rollback.
+Installed direct and ViaProxy comparisons remain unverified.
 
 Admit an authored player screen only when its required collections and controls are available.
 The shared UI renderer supports the local player portrait and separate body/head rotations.
@@ -175,7 +185,7 @@ A full inventory accepts the input without an inventory request.
 Unchanged Java Creative slot echoes preserve the existing native stack and network ID.
 Installed direct and ViaProxy controls confirm these pointer, capacity, and reopening cases through successful server responses.
 
-Bulk Survival recipe actions and complete installed native parity remain unfinished.
+Multiple recipe outputs, ingredient remainders, and complete installed native parity remain unfinished.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.
