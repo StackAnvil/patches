@@ -1,4 +1,4 @@
-From 9a84a2a44225e2ddbdad771daad7e0f4387a0cb2 Mon Sep 17 00:00:00 2001
+From 88096082e58da0146e473ea426bc3994bb3bc799 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -195,8 +195,9 @@ Use retained collection identities for header expansion and recipe
 selection; never authorize from the Java preview item. Native Creative
 left-click produces the catalog's unit result before taking a full stack
 to the empty cursor. Ordinary Survival selection uses the existing grid
-placement and reconciliation path. Bulk selection, cursor replacement,
-full native cache timing and exact background selection remain unfinished.
+placement and reconciliation path. Bulk selection, secondary Creative
+actions, full native cache timing and exact background selection remain
+unfinished.
 
 Export the versioned How to Play graph with the player program. Resolve
 its real topic toggles, named view aliases, section titles, translated
@@ -263,15 +264,23 @@ retaining the model, query and selection. Filtering changes reinstall the
 existing policy callbacks; tab-only updates preserve their captured state.
 A regression opens without an options packet and observes the populated
 Search source, then applies an explicit zero-tab/filter update.
+
+Match official Bedrock 1.26.60.5 primary catalog clicks with an occupied
+cursor. Native local-world controls clear a full held stack for both the
+same and a different catalog item, leave inventory empty, and pick the new
+stack only on the next click. Send one Destroy for the actual cursor
+network ID, retain native discard admission, and snapshot the cursor before
+prediction so rejection restores its identity and count. This observation
+establishes visible behavior, not original native request-byte parity.
 ---
  .../model/NativePlayerInventoryAction.java    |  88 ++++
  .../model/NativePlayerInventoryMessage.java   | 271 ++++++++++
  .../model/NativePlayerInventoryResult.java    |  47 ++
  .../model/container/NativeRecipeCounter.java  |  74 +++
- .../resourcepack/ui/PlayerInventoryUi.java    | 397 +++++++++++++++
+ .../resourcepack/ui/PlayerInventoryUi.java    | 397 ++++++++++++++
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/model/CreativeCatalog.java       | 266 ++++++++++
- .../model/CreativeInventoryModel.java         | 198 ++++++++
+ .../model/CreativeInventoryModel.java         | 198 +++++++
  .../protocol/model/PlayerRecipeContext.java   |  96 ++++
  .../protocol/model/PlayerRecipeModel.java     | 125 +++++
  .../protocol/packet/InventoryPackets.java     | 209 +++++---
@@ -280,7 +289,7 @@ Search source, then applies an explicit zero-tab/filter update.
  .../protocol/storage/CraftingDataTracker.java | 129 ++++-
  .../storage/InventoryRequestTracker.java      |  24 +
  .../protocol/storage/InventoryTracker.java    |  21 +
- .../storage/NativePlayerRecipeState.java      | 475 ++++++++++++++++++
+ .../storage/NativePlayerRecipeState.java      | 490 ++++++++++++++++++
  .../storage/PlayerInventoryScreenTracker.java |  40 +-
  .../NativePlayerInventoryMessageTest.java     | 160 ++++++
  .../container/NativeRecipeCounterTest.java    |  27 +
@@ -293,8 +302,8 @@ Search source, then applies an explicit zero-tab/filter update.
  .../RegisteredPlayerRecipeSearchTest.java     |   3 +-
  .../storage/CreativeInventoryActionTest.java  | 214 ++++++++
  .../storage/InventoryRequestTrackerTest.java  |  83 +++
- .../storage/NativePlayerCreativePickTest.java |  66 +++
- 30 files changed, 4240 insertions(+), 170 deletions(-)
+ .../storage/NativePlayerCreativePickTest.java | 138 +++++
+ 30 files changed, 4327 insertions(+), 170 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryResult.java
@@ -2708,10 +2717,10 @@ index 04ad1756..4a6f0c14 100644
      private void updateInventoryOptions() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 new file mode 100644
-index 00000000..6c6230ee
+index 00000000..ab42d899
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
-@@ -0,0 +1,475 @@
+@@ -0,0 +1,490 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3037,31 +3046,46 @@ index 00000000..6c6230ee
 +        return false;
 +    }
 +
-+    /** Native Creative left-click requests a unit result then takes the stack to the empty cursor. */
++    /** Native Creative left-click clears an occupied cursor, or picks a stack into an empty one. */
 +    private boolean pickCreative(final CreativeCatalog.CollectionEntry entry) {
 +        final var inventory = this.user().get(InventoryTracker.class);
 +        final var hud = inventory.getHudContainer();
-+        if (entry.catalogEntry() == null || !hud.getItem(0).isEmpty()) {
++        if (entry.catalogEntry() == null) {
 +            return false;
 +        }
-+        final var result = entry.catalogEntry().bedrockItem().copy();
-+        final int count = Math.min(255, this.user().get(ItemRewriter.class).maxStackSize(result));
-+        if (count <= 0) {
-+            return false;
-+        }
-+        final var cursor = result.copy();
-+        cursor.setAmount(count);
-+        if (!hud.canPlaceItem(0, cursor, count)) {
-+            return false;
-+        }
++        final var previous = hud.getItem(0);
 +        final var requests = this.user().get(InventoryRequestTracker.class);
-+        final int id = requests.nextRequestId();
-+        final var request = new ItemStackRequestInfo(id, List.of(
-+                new ItemStackRequestAction.CraftCreativeAction(entry.catalogEntry().netId(), 1),
-+                new ItemStackRequestAction.CraftResultsDeprecatedAction(List.of(result.copy()), 1),
-+                new ItemStackRequestAction.TakeAction(count,
-+                        new ItemStackRequestSlotInfo(new FullContainerName(ContainerEnumName.CreatedOutputContainer, null), (byte) 50, id),
-+                        hud.requestSlotInfo(0, 0))), List.of(), TextProcessingEventOrigin.unknown);
++        final int id;
++        final BedrockItem cursor;
++        final List<ItemStackRequestAction> actions;
++        if (!previous.isEmpty()) {
++            if (previous.netId() == null || !hud.canDiscardItem(0, previous.amount())) {
++                return false;
++            }
++            id = requests.nextRequestId();
++            cursor = BedrockItem.empty();
++            actions = List.of(new ItemStackRequestAction.DestroyAction(previous.amount(),
++                    hud.requestSlotInfo(0, previous.netId())));
++        } else {
++            final var result = entry.catalogEntry().bedrockItem().copy();
++            final int count = Math.min(255, this.user().get(ItemRewriter.class).maxStackSize(result));
++            if (count <= 0) {
++                return false;
++            }
++            cursor = result.copy();
++            cursor.setAmount(count);
++            if (!hud.canPlaceItem(0, cursor, count)) {
++                return false;
++            }
++            id = requests.nextRequestId();
++            actions = List.of(
++                    new ItemStackRequestAction.CraftCreativeAction(entry.catalogEntry().netId(), 1),
++                    new ItemStackRequestAction.CraftResultsDeprecatedAction(List.of(result.copy()), 1),
++                    new ItemStackRequestAction.TakeAction(count,
++                            new ItemStackRequestSlotInfo(new FullContainerName(ContainerEnumName.CreatedOutputContainer, null), (byte) 50, id),
++                            hud.requestSlotInfo(0, 0)));
++        }
++        final var request = new ItemStackRequestInfo(id, actions, List.of(), TextProcessingEventOrigin.unknown);
 +        requests.addRequest(new InventoryRequestStorage(request, 0, hud.copy(), List.of()));
 +        requests.setPredictingClick(true);
 +        try {
@@ -5269,10 +5293,10 @@ index b69f1868..037328f2 100644
          final BedrockItem current = new BedrockItem(276);
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativePlayerCreativePickTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativePlayerCreativePickTest.java
 new file mode 100644
-index 00000000..746f0b54
+index 00000000..92759c0c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativePlayerCreativePickTest.java
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,138 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5280,6 +5304,7 @@ index 00000000..746f0b54
 + */
 +package net.raphimc.viabedrock.protocol.storage;
 +
++import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import net.raphimc.viabedrock.api.model.container.player.HudContainer;
 +import net.raphimc.viabedrock.api.util.PacketFactory;
@@ -5289,6 +5314,7 @@ index 00000000..746f0b54
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
 +import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.params.ParameterizedTest;
 +import org.junit.jupiter.params.provider.ValueSource;
 +import org.mockito.ArgumentCaptor;
@@ -5297,6 +5323,76 @@ index 00000000..746f0b54
 +import static org.mockito.Mockito.*;
 +
 +class NativePlayerCreativePickTest {
++
++    @ParameterizedTest
++    @ValueSource(ints = {66, 67})
++    void clearsTheOccupiedCursorForEitherCatalogItemAndRestoresItOnRejection(final int heldId) throws Exception {
++        final var user = mock(UserConnection.class);
++        final var inventory = mock(InventoryTracker.class);
++        final var requests = new InventoryRequestTracker(user);
++        when(user.get(InventoryTracker.class)).thenReturn(inventory);
++        when(user.get(InventoryRequestTracker.class)).thenReturn(requests);
++        final var hud = new HudContainer(user);
++        when(inventory.getHudContainer()).thenReturn(hud);
++        final var held = new BedrockItem(heldId, (short) 0, (byte) 64);
++        held.setNetId(23);
++        hud.setItem(0, held);
++        final var sample = new BedrockItem(66, (short) 0, (byte) 1);
++        final var catalog = new CreativeCatalog.Entry(1808, 0, sample, null, false, true);
++        final var state = new NativePlayerRecipeState(user);
++        final var pick = NativePlayerRecipeState.class.getDeclaredMethod("pickCreative", CreativeCatalog.CollectionEntry.class);
++        pick.setAccessible(true);
++        try (var packets = mockStatic(PacketFactory.class)) {
++            assertEquals(true, pick.invoke(state, new CreativeCatalog.CollectionEntry(sample.copy(), catalog)));
++            final var sent = ArgumentCaptor.forClass(ItemStackRequestInfo[].class);
++            packets.verify(() -> PacketFactory.sendBedrockInventoryRequest(eq(user), sent.capture()));
++            final var request = sent.getValue()[0];
++            assertEquals(1, request.actions().size());
++            final var destroy = assertInstanceOf(ItemStackRequestAction.DestroyAction.class, request.actions().getFirst());
++            assertEquals(64, destroy.count());
++            assertEquals(ContainerEnumName.CursorContainer, destroy.item().container().name());
++            assertEquals(0, destroy.item().slot());
++            assertEquals(23, destroy.item().stackNetworkId());
++            assertTrue(hud.getItem(0).isEmpty());
++            assertFalse(requests.isPredictingClick());
++            final var saved = requests.getRequest(request.requestId());
++            saved.capturePrediction(inventory);
++            requests.restoreRejectedRequest(saved);
++            assertEquals(held, hud.getItem(0));
++            assertEquals(64, held.amount());
++            assertEquals(1, sample.amount());
++        }
++    }
++
++    @Test
++    void preservesAnUnconfirmedOrLockedCursorWithoutDestroyingIt() throws Exception {
++        final var user = mock(UserConnection.class);
++        final var inventory = mock(InventoryTracker.class);
++        final var requests = new InventoryRequestTracker(user);
++        when(user.get(InventoryTracker.class)).thenReturn(inventory);
++        when(user.get(InventoryRequestTracker.class)).thenReturn(requests);
++        final var hud = new HudContainer(user);
++        when(inventory.getHudContainer()).thenReturn(hud);
++        final var held = new BedrockItem(67, (short) 0, (byte) 64);
++        hud.setItem(0, held);
++        final var sample = new BedrockItem(66, (short) 0, (byte) 1);
++        final var catalog = new CreativeCatalog.Entry(1808, 0, sample, null, false, true);
++        final var state = new NativePlayerRecipeState(user);
++        final var pick = NativePlayerRecipeState.class.getDeclaredMethod("pickCreative", CreativeCatalog.CollectionEntry.class);
++        pick.setAccessible(true);
++        try (var packets = mockStatic(PacketFactory.class)) {
++            assertEquals(false, pick.invoke(state, new CreativeCatalog.CollectionEntry(sample.copy(), catalog)));
++            held.setNetId(23);
++            final var tag = new CompoundTag();
++            tag.putByte("minecraft:item_lock", (byte) 2);
++            held.setTag(tag);
++            assertEquals(false, pick.invoke(state, new CreativeCatalog.CollectionEntry(sample.copy(), catalog)));
++            assertSame(held, hud.getItem(0));
++            assertEquals(64, held.amount());
++            assertFalse(requests.hasPending());
++            packets.verify(() -> PacketFactory.sendBedrockInventoryRequest(eq(user), any()), never());
++        }
++    }
 +
 +    @ParameterizedTest
 +    @ValueSource(ints = {1, 64})
