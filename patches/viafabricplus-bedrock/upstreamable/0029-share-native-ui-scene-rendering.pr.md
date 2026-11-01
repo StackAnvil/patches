@@ -16,6 +16,10 @@ Prerequisites:
 
 ## Validation and remaining limits
 
+Opacity revisions let container screens reuse their draw lists between visual changes.
+Alpha samples and reset events invalidate retained opacity.
+Layout changes retain a separate revision.
+
 Regression coverage includes `BedrockBitmapFontResourcesTest`, `BedrockGuiActorAppearanceTest`, `BedrockGuiActorContextTest`, `BedrockResourceLibraryTest`.
 
 At 1280 × 720, all 16 current-font labels match native 26.60 at UI scales 1 and 2. All 16 legacy labels match at UI scale 2. Direct and ViaProxy controls pass Java GUI scale changes and resource reloads. The point-sampling GPU regression fails before the correction and passes on Intel and software rendering.

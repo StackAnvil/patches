@@ -14,7 +14,7 @@ Prerequisites:
 
 ## Validation and remaining limits
 
-Regression coverage includes `BedrockNativeContainerScreenTest`, `NativeContainerButtonTest`, `NativeContainerGeometryTest`, `NativeContainerInputTest`.
+Regression coverage includes `BedrockNativeContainerScreenTest`, `NativeContainerButtonTest`, `NativeContainerGeometryTest`, `NativeContainerInputTest`, and `NativeContainerDrawsTest`.
 
 Authored slot labels use [shared native count text](../../viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.pr.md).
 The consumer regression keeps raw binding quantities and genuine quickcraft preview text independent of display capping.
@@ -48,14 +48,20 @@ Passive hover notifications do not trigger the fallback for unsupported recipe a
 Full Creative catalog expansion, initial bundle insertion, bulk recipe actions, and Creative cursor replacement remain unresolved.
 Complete cooking integration, live transfers, and filled-bundle pixels also remain unresolved.
 
-Stable frames reuse parsed hit regions and input ancestor geometry.
+Stable frames reuse the draw list, parsed hit regions, and input ancestor geometry.
+Changed pointer coordinates, component state, or animated opacity refresh the draw list.
+Toggle changes include keyboard tab selection.
+Regressions preserve fades, alpha resets, and a toggle change with a stationary pointer.
 Relayout, changed painter order, enablement, or a zero-opacity transition rebuilds the affected regions.
 Collection windows rescan after layout or keyboard focus changes, and rendering uses the shared draw order directly.
 Input, scrolling, focus, and screen regressions cover these boundaries. A hit-region regression checks hidden, disabled, moved, and removed controls.
 Cumulative authored layers use separate Java GUI strata to bound overlap-ordering work.
-A same-session check preserves static recipe, slot-grid, and crafting-background pixels across this change.
+Matched installed scene profiles preserve static recipe, slot-grid, and crafting-background pixels.
+The optimized profile no longer samples repeated draw-list traversal.
+These profiles do not establish stable FPS or native frame-time parity.
 The installed Survival screen retains the translucent backdrop after its entrance animation.
-Live direct checks cover pickup, drag distribution, and return to the hotbar. The client and Bedrock server retain matching item totals.
+Live direct checks cover pickup, drag distribution, return to the hotbar, and reopening.
+Bedrock accepts every observed stack request, and the client and server retain matching item totals.
 Authored containers suppress gameplay HUD extraction while they are the current screen.
 Official Bedrock 1.26.60.5 keeps the held log and shield visible behind the Survival inventory but hides the gameplay HUD.
 An installed control checks open, close, and reopen. The HUD returns on close, the local visibility setting stays unchanged, and every slot remains intact.
