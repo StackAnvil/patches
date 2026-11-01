@@ -95,7 +95,7 @@ The current native callback selects How to Play topic 5 for Survival and Encyclo
 A physical 1.26.60.5 capture confirms the Survival Your First Craft topic.
 Translated Help paragraphs replace both plain text and rendered components, preserving the native color palette.
 Program round trips retain these components and navigation labels from authored topic and category variables. Full installed Help lifetimes and glyph appearance remain unverified.
-Bulk recipe selection, secondary Creative actions, and complete installed action parity remain unfinished.
+Bulk Survival recipe selection and complete installed action parity remain unfinished.
 
 The retained model exposes output quantity separately from availability and action admission.
 Candidate recipes share source consumption in priority order. Count reads retain the native crafting-input, cursor, and player-inventory order.
@@ -117,19 +117,21 @@ A snapshot regression checks active Creative cells without ingredients and resto
 A live add-on check removes the red disabled backgrounds.
 The picker validates the full cursor stack before transfer admission while preserving the unit-sized native craft result.
 Request regressions cover stack sizes one and 64, cursor prediction, and the restoration snapshot.
-Official Bedrock 1.26.60.5 local-world controls show that a primary catalog click clears an occupied cursor.
-Both the same-item and different-item controls clear 64 items and leave inventory empty.
-A second click picks the selected stack. The implementation sends one cursor Destroy with the current stack network ID.
-Request regressions cover both identities, rejection rollback, and locked or unconfirmed cursor admission.
-The native control establishes visible behavior, not original native request bytes.
-Installed direct and ViaProxy controls reproduce both cases with rails and powered rails.
-All four requests on each route succeed. Cursor responses contain 64, zero, 64, then zero items.
-Each clear sends only Destroy with the preceding confirmed cursor network ID.
-Both routes retain an empty cursor and inventory after reopening.
-An installed add-on test selects 64 rails and places them in the hotbar; BDS accepts both requests.
-Installed direct and ViaProxy controls select 64 rails and place them in separate hotbar slots; BDS accepts the requests.
-The ViaProxy screen retains both stacks after reopening.
-Secondary Creative actions, bulk actions, and complete native screen parity remain unfinished.
+Official Bedrock 1.26.60.5 local-world controls establish primary stack take/discard and secondary one-item take/discard.
+Both held-item cases cover same and different catalog identities.
+Shift-left-click and Shift-right-click preserve the cursor and add a full stack through inventory destinations.
+Native controls establish global merge priority, ascending hotbar then main-inventory order, partial capacity, and a full-inventory no-op.
+These controls establish visible behavior, not original native request bytes.
+Regressions cover quantities, split destinations, cursor preservation, unconfirmed stacks, discard admission, capacity, and rejection rollback.
+Unchanged Java Creative slot echoes retain the original stack and network ID instead of creating a replacement.
+The comparison includes count and the complete native wire snapshot.
+Regressions cover open and closed inventory contexts, and retain real replacements for changed counts or user data.
+
+Installed direct and ViaProxy controls each complete 14 server-accepted requests for these catalog actions.
+The controls cover one-item quantities, cursor preservation, split bulk placement, partial capacity, and full-inventory no-op.
+Reopening preserves both stacks without Creative replacement requests.
+Both installed add-ons and the running proxy match the rebuilt artifact hashes.
+Bulk Survival actions and complete native screen parity remain unfinished.
 
 Player and workbench graphs receive their tab and layout indices from the protocol-2225 enums.
 The native inventory graph references these controller variables in forced toggle indices.

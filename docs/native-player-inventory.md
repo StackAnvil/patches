@@ -148,10 +148,18 @@ Creative hotbar destruction restores ordinary controls before item changes or re
 Installed direct and ViaProxy controls retain the complete 1,980-item catalog from a local protocol-2225 server.
 Tab and layout controls use the target inventory indices.
 Both routes search for rails and place a server-accepted stack of 64 in the hotbar.
-A primary Creative catalog click clears an occupied cursor. The next click picks the requested stack.
-Official Bedrock 1.26.60.5 controls cover both same-item and different-item clicks.
-Installed direct and ViaProxy controls reproduce both cases with successful server responses and an empty inventory after reopening.
-Bulk recipe actions, Creative secondary actions, and complete installed native parity remain unfinished.
+
+Official Bedrock 1.26.60.5 controls establish the Creative catalog pointer actions.
+Primary click takes a full stack into an empty cursor or discards the entire held stack.
+Secondary click takes one item into an empty cursor or discards one held item.
+Shift-left-click and Shift-right-click place a full stack in inventory without changing the cursor.
+Bulk placement merges existing stacks before filling empty hotbar and main-inventory slots, then stops at the available capacity.
+A full inventory accepts the input without an inventory request.
+
+Unchanged Java Creative slot echoes preserve the existing native stack and network ID.
+Installed direct and ViaProxy controls confirm these pointer, capacity, and reopening cases through successful server responses.
+
+Bulk Survival recipe actions and complete installed native parity remain unfinished.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.

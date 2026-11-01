@@ -57,11 +57,19 @@ Creative hotbar destruction restores ordinary controls before item changes or re
 Passive hover notifications do not trigger the fallback for unsupported recipe actions.
 Installed direct and ViaProxy controls retain all 1,980 catalog entries from a local protocol-2225 server.
 Physical category and layout changes preserve their native indices through exported programs.
+Physical Shift-left and Shift-right catalog controls bind the authored menu_auto_place source to the bulk action.
+Mouse release retains the pressed source even after Shift is released.
+Screen regressions repeat both chords and then perform an ordinary click through the exported player program.
 Both routes search for rails and place a server-accepted stack of 64 in the hotbar.
 ViaProxy retains both stacks after reopening.
 Installed direct and ViaProxy controls cover initial bundle insertion, extraction, reinsertion, and retention after reopening through ordinary Java controls.
 The [inventory reference](../../../docs/native-player-inventory.md) states the verified input behavior and remaining native comparison limit.
-Bulk recipe actions and Creative cursor replacement remain unresolved.
+
+Installed direct and ViaProxy controls each complete 14 server-accepted requests for these catalog actions.
+The controls cover one-item quantities, cursor preservation, split bulk placement, partial capacity, and full-inventory no-op.
+Reopening preserves both stacks without Creative replacement requests.
+Both installed add-ons and the running proxy match the rebuilt artifact hashes.
+Bulk Survival recipe actions remain unresolved.
 Complete cooking integration, live transfers, and filled-bundle pixels also remain unresolved.
 
 Stable frames reuse the draw list, parsed hit regions, and input ancestor geometry.

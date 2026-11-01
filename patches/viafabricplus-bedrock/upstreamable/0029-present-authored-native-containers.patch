@@ -1,4 +1,4 @@
-From a6ebd0524d0aced090eeb17b9dc2dd6380ebd80c Mon Sep 17 00:00:00 2001
+From ec51af5aa8ca0b7815564b9ca471b5c26672f2f4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -649,6 +649,14 @@ both negotiated policy admission and ordinary fallback without the core
 contract, before any inventory input is dispatched.
 
 Exercise physical category and layout selection through exported player-inventory programs in both recipe-book and Creative layouts. The regression rejects index-zero preference commands when the authored controls require Construction or a different layout, retaining unrelated tabs and crafting preferences.
+
+Map Shift-left and Shift-right catalog clicks to menu_auto_place for the
+retained player inventory. The versioned 1.26.60 graph maps that source to
+recipe_tertiary; official local-world controls confirm full-stack auto-place
+with an unchanged cursor. Retain the pressed source through mouse release
+so releasing Shift first cannot leave the authored input pressed. Physical
+regressions cover both buttons, repeated clicks, modifier release and the
+following ordinary click through the exported player program.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../access/IBedrockGuiItemStyle.java          |   14 +
@@ -662,7 +670,7 @@ Exercise physical category and layout selection through exported player-inventor
  .../render/MixinNativeGuiItemState.java       |   20 +
  .../render/MixinNativeGuiOversizedItem.java   |   31 +
  .../container/BedrockFurnacePreferences.java  |   60 +
- .../BedrockNativeContainerScreen.java         | 1307 +++++++++++++++
+ .../BedrockNativeContainerScreen.java         | 1312 +++++++++++++++
  .../container/BedrockNativeContainers.java    |  282 ++++
  .../container/BedrockNativeCooking.java       |  147 ++
  .../BedrockNativePlayerInventory.java         |  157 ++
@@ -728,9 +736,9 @@ Exercise physical category and layout selection through exported player-inventor
  .../NativeInventoryProgressTest.java          |   83 +
  .../container/NativePlayerHelpTextTest.java   |   34 +
  .../NativePlayerPresentationTest.java         |  153 ++
- .../container/NativePlayerScreenTest.java     |  286 ++++
+ .../container/NativePlayerScreenTest.java     |  347 ++++
  .../PlayerInventoryScreenLifecycleTest.java   |   95 ++
- 80 files changed, 10463 insertions(+), 62 deletions(-)
+ 80 files changed, 10529 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerScreenAdmission.java
@@ -1272,10 +1280,10 @@ index 0000000..1583ce0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..ccec3da
+index 0000000..b54fa19
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
-@@ -0,0 +1,1307 @@
+@@ -0,0 +1,1312 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1383,6 +1391,7 @@ index 0000000..ccec3da
 +    private long previousPresentationRevision = -1;
 +    private Map<Integer, ItemStack> recipePreviews = Map.of();
 +    private Map<Integer, Set<String>> recipeActions = Map.of();
++    private final Map<Integer, String> pointerSources = new HashMap<>();
 +    private long cookingUpdate = -1;
 +    private double pointerX = -1, pointerY = -1;
 +    private final Set<Integer> capturedButtons = new HashSet<>();
@@ -1660,6 +1669,7 @@ index 0000000..ccec3da
 +                if (press != null) BedrockNativeCooking.action(this.owner, this.menu, press.recipe, press.mode, 2);
 +                this.capturedButtons.clear();
 +                this.nativeButtons.clear();
++                this.pointerSources.clear();
 +                this.keyboardPressed = false;
 +                this.deactivate();
 +                return;
@@ -2152,7 +2162,11 @@ index 0000000..ccec3da
 +            return true;
 +        }
 +        if (this.search != null) this.search.setFocused(false);
-+        final String componentSource = source(event.button());
++        final String componentSource = this.presentation instanceof NativePlayerPresentation && event.hasShiftDown()
++                && this.geometry.recipe(event.x(), event.y()) != null
++                && (event.button() == InputConstants.MOUSE_BUTTON_LEFT || event.button() == InputConstants.MOUSE_BUTTON_RIGHT)
++                ? "button.menu_auto_place" : source(event.button());
++        this.pointerSources.put(event.button(), componentSource);
 +        NativeContainerInput.Result componentEvent = null;
 +        if (this.authoredController()) {
 +            final var hover = this.nativeInput.pointer(event.x(), event.y(), 1, this.clock.getAsLong(), this.componentEnabled());
@@ -2172,11 +2186,7 @@ index 0000000..ccec3da
 +            this.refreshSafely();
 +            return true;
 +        }
-+        final String input = switch (event.button()) {
-+            case InputConstants.MOUSE_BUTTON_LEFT -> "button.menu_select";
-+            case InputConstants.MOUSE_BUTTON_RIGHT -> "button.menu_secondary_select";
-+            default -> "";
-+        };
++        final String input = componentSource;
 +        if (componentEvent != null && this.componentEvents(componentEvent)) {
 +            this.nativeButtons.add(event.button());
 +            return true;
@@ -2328,10 +2338,12 @@ index 0000000..ccec3da
 +    @Override
 +    public boolean mouseReleased(final MouseButtonEvent event) {
 +        if (this.closing()) return true;
++        final String pressedSource = this.pointerSources.remove(event.button());
++        final String componentSource = pressedSource == null ? source(event.button()) : pressedSource;
 +        if (this.current() && this.authoredController()) {
-+            if (this.helpView) this.inventoryInput.button(source(event.button()), false, 1, this.clock.getAsLong(), false);
++            if (this.helpView) this.inventoryInput.button(componentSource, false, 1, this.clock.getAsLong(), false);
 +            final var hover = this.nativeInput.pointer(event.x(), event.y(), 1, this.clock.getAsLong(), this.componentEnabled());
-+            final var released = this.nativeInput.button(source(event.button()), false, 1, this.clock.getAsLong(), this.componentEnabled());
++            final var released = this.nativeInput.button(componentSource, false, 1, this.clock.getAsLong(), this.componentEnabled());
 +            if (!this.waitingForPreference()) { this.componentEvents(hover); this.componentEvents(released); }
 +        }
 +        if (this.nativeButtons.remove(event.button())) {
@@ -2553,6 +2565,7 @@ index 0000000..ccec3da
 +    private void retireCooking() {
 +        this.capturedButtons.clear();
 +        this.nativeButtons.clear();
++        this.pointerSources.clear();
 +        this.keyboardPressed = false;
 +        this.consumedReleases.clear();
 +        this.recipePress = null;
@@ -11476,10 +11489,10 @@ index 0000000..d3902fa
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
 new file mode 100644
-index 0000000..2f7e81d
+index 0000000..7804780
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,347 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11529,6 +11542,7 @@ index 0000000..2f7e81d
 +import net.minecraft.world.item.Items;
 +import net.minecraft.world.item.component.CustomData;
 +import net.raphimc.viabedrock.api.model.NativePlayerInventoryMessage;
++import net.raphimc.viabedrock.api.model.NativePlayerInventoryAction;
 +import net.raphimc.viabedrock.api.model.NativeItemStorageData;
 +import net.raphimc.viabedrock.api.resourcepack.ui.PlayerInventoryUi;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -11538,6 +11552,7 @@ index 0000000..2f7e81d
 +import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.params.ParameterizedTest;
 +import org.junit.jupiter.params.provider.ValueSource;
++import org.junit.jupiter.params.provider.MethodSource;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.mockito.Mockito.*;
@@ -11546,6 +11561,65 @@ index 0000000..2f7e81d
 +    @BeforeAll
 +    static void bootstrap() throws Exception {
 +        NativePlayerPresentationTest.bootstrap();
++    }
++
++    private static IntStream catalogButtons() {
++        return IntStream.of(InputConstants.MOUSE_BUTTON_LEFT, InputConstants.MOUSE_BUTTON_RIGHT);
++    }
++
++    @ParameterizedTest
++    @MethodSource("catalogButtons")
++    void shiftCatalogClicksUseBulkAndReleaseTheirOriginalInputAfterShiftChanges(final int button) throws Exception {
++        final var game = mock(Minecraft.class);
++        final var player = mock(LocalPlayer.class);
++        final var inventory = new Inventory(player, new EntityEquipment());
++        final var menu = new InventoryMenu(inventory, true, player);
++        final var owner = mock(ClientPacketListener.class);
++        final var ordinary = mock(AbstractContainerScreen.class);
++        final var options = mock(Options.class);
++        final var font = mock(Font.class);
++        final var clock = new AtomicLong();
++        set(Minecraft.class, game, "gameMode", mock(MultiPlayerGameMode.class));
++        when(ordinary.getMenu()).thenReturn(menu);
++        when(owner.getConnection()).thenReturn(mock(Connection.class));
++        for (final String name : List.of("keyPickItem", "keyDrop", "keyInventory"))
++            set(Options.class, options, name, mock(KeyMapping.class));
++        set(Minecraft.class, game, "options", options);
++        set(Minecraft.class, game, "gui", mock(Gui.class));
++        try (final var singleton = mockStatic(Minecraft.class);
++             final var network = mockStatic(BedrockNativePlayerInventory.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(game);
++            network.when(() -> BedrockNativePlayerInventory.action(any(), any(), anyInt(), any())).thenReturn(true);
++            final var ui = new PlayerInventoryUi(new ResourcePackStorage(List.of()).getJsonUiProgram());
++            final var cell = new PlayerInventoryUi.Cell(0, 10, -1, 0, 0, 1, false, false, "", Map.of());
++            final var state = new PlayerInventoryUi.State(false, true, 2, 2, 5, 2, false, "", "All", "Crafting",
++                    List.of(1, 0, 0, 0), List.of(cell), "", -1);
++            final var source = new NativePlayerInventoryMessage(0, 1, 8, 1, ui.exportProgram(false).toString(),
++                    GsonUtil.getGson().toJson(state), Map.of(0, new StructuredItem(320, 1, new StructuredDataContainer())));
++            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), clock::get);
++            final var screen = new BedrockNativeContainerScreen(owner, ordinary, inventory, Component.empty(), presentation,
++                    false, 1, clock::get, () -> true);
++            set(Screen.class, screen, "minecraft", game);
++            set(Screen.class, screen, "font", font);
++            try {
++                screen.prepare(font, 640, 360);
++                clock.set(1_000_000_000);
++                screen.prepare(font, 640, 360);
++                final var target = pointer(screen, draw -> draw.box().node().properties().has("recipe_actions"));
++                final var pressed = new MouseButtonEvent(target.x(), target.y(), new MouseButtonInfo(button, InputConstants.MOD_SHIFT));
++                final var released = new MouseButtonEvent(target.x(), target.y(), new MouseButtonInfo(button, 0));
++                for (int click = 0; click < 2; click++) {
++                    assertTrue(screen.mouseClicked(pressed, false));
++                    assertTrue(screen.mouseReleased(released));
++                }
++                network.verify(() -> BedrockNativePlayerInventory.action(owner, menu, 0, NativePlayerInventoryAction.Kind.BULK), times(2));
++                assertTrue(screen.mouseClicked(released, false));
++                assertTrue(screen.mouseReleased(released));
++                final var plain = button == InputConstants.MOUSE_BUTTON_LEFT ? NativePlayerInventoryAction.Kind.PRIMARY : NativePlayerInventoryAction.Kind.SECONDARY;
++                network.verify(() -> BedrockNativePlayerInventory.action(owner, menu, 0, plain));
++                verifyNoInteractions(game.gameMode);
++            } finally { screen.discard(); }
++        }
 +    }
 +
 +    @Test
