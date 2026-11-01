@@ -15,9 +15,10 @@ Installed direct and ViaProxy controls each pass Normal → Peaceful → Normal 
 Allowed cases enter local use, receive one server completion, and settle at 15 bread.
 Full-hunger Normal cases never enter use and retain 16 bread.
 The installed add-on and proxy match the rebuilt artifacts.
-The full four-project build passes 3,281 tests, with 325 skipped and no failures or errors.
+The full four-project build passes 3,282 tests, with 325 skipped and no failures or errors.
 Core packet regressions cover server-confirmed difficulty changes and food admission without inventory prediction.
 
-The separate DataDriven food admission discrepancy and the original intermittent food-use report remain open.
-Native full-hunger Normal controls consume both `always` and `if_first` foods with `can_always_eat=false`.
-The [food-use evidence](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) describes the controls and remaining dispatch limits.
+Core also projects installed component-food admission and consumable properties into the Java item.
+That covers the selected full-hunger DataDriven controls and local use of custom paper carriers.
+The [food-use evidence](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) records those controls and remaining limits.
+Held instant-food repeat timing and the original intermittent food-use report remain open.
