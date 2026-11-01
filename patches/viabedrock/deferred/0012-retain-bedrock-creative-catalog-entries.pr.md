@@ -95,7 +95,7 @@ The current native callback selects How to Play topic 5 for Survival and Encyclo
 A physical 1.26.60.5 capture confirms the Survival Your First Craft topic.
 Translated Help paragraphs replace both plain text and rendered components, preserving the native color palette.
 Program round trips retain these components and navigation labels from authored topic and category variables. Full installed Help lifetimes and glyph appearance remain unverified.
-Bulk Survival recipe selection and complete installed action parity remain unfinished.
+Complete installed action and screen parity remain unfinished. The Survival bulk validation below covers selected recipe boundaries.
 
 The retained model exposes output quantity separately from availability and action admission.
 Candidate recipes share source consumption in priority order. Count reads retain the native crafting-input, cursor, and player-inventory order.
@@ -142,8 +142,8 @@ Installed direct and ViaProxy controls each complete seven server-accepted reque
 Both routes preserve the occupied cursor, leave empty slots unchanged, and retain the resulting inventory after reopening without Creative replacement requests.
 The installed add-ons and proxy match the rebuilt artifact hashes.
 
-Survival catalog bulk actions now plan single-output shaped and shapeless requests.
-The planner uses the first ingredient allocation round and caps each request at one output stack.
+Survival catalog bulk actions plan shaped and shapeless requests from the server recipe results, including returned containers.
+The planner uses the first ingredient allocation round and caps each request at one primary output stack.
 Native 1.26.60.5 and BDS 1.26.60.6 controls establish capacity admission before consumption, split placement, and cursor replacement.
 With one free inventory item-space, native drops an incompatible or full held stack after partial placement and takes the remainder.
 Request/state regressions cover descriptors, changed-slot references, grid sources, capacity, cursor preservation, and rejection rollback.
@@ -153,7 +153,10 @@ Installed direct and ViaProxy controls each complete 11 server-accepted requests
 Three requests per route match the native fixtures field for field after stack-ID normalization.
 Both routes also consume player grid slot 28, craft one wooden sword, and retain output after reopening.
 Installed add-on and proxy hashes match the rebuilt artifacts. Both recordings and their owned cleanup finish normally.
-Multiple outputs, ingredient remainders, broader recipe families, live rejection controls, and complete native screen parity remain unfinished.
+Native 1.26.60.5 controls cover cake and honey recipes with two outputs. Secondary outputs are selected before the primary output, split into stack-sized chunks, and merged before using empty slots for each chunk. Returned bottles drop directly from created-output slot 50 when inventory is full. Primary output keeps the cursor fallback.
+Request/state regressions cover six cakes returning 18 buckets, merging across bucket chunks, bottle overflow, and rejection rollback.
+Installed direct and ViaProxy remainder controls each complete six server-accepted requests. Three craft requests per route match the native cake and honey captures field for field after stack-ID normalization. Authoritative responses confirm returned-container placement and primary cursor output. Both routes retain the completed output after reopening. Installed artifact hashes match the full rebuild.
+Broader recipe families, more than two outputs, live rejection controls, and complete native screen parity remain unfinished.
 
 Player and workbench graphs receive their tab and layout indices from the protocol-2225 enums.
 The native inventory graph references these controller variables in forced toggle indices.

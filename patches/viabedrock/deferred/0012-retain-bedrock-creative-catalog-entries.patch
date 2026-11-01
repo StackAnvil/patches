@@ -1,4 +1,4 @@
-From 42aecdaf77ae0032d29fbe02bc1f94ce607bbc5a Mon Sep 17 00:00:00 2001
+From 90aea9d9b603a5dab3e2446356d90ebd9788c300 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -323,10 +323,6 @@ incompatible cursor refuses even when consumption would free a source slot.
 An empty cursor admits that same craft and output uses the freed source slot.
 Targeted request/state tests preserve these boundaries and rejection rollback.
 
-This planner handles single-output shaped/shapeless candidates. Multiple
-outputs, native ingredient remainder production and installed direct/proxy
-parity remain separate validation work; do not claim complete inventory parity.
-
 Build ordinary auto-craft ingredients from their retained resolved recipe
 descriptors, including wildcard auxiliary32767. Resolve tag/Molang inputs
 from the selected source instead. Native protocol2225 CraftingData declares
@@ -335,12 +331,32 @@ as tags. The official client emits32767 for the former and concrete0 for
 planks. A direct installed control exposed source-only metadata0; BDS
 accepted it, but acceptance did not establish native request parity.
 A real registered-recipe/item-registry regression now preserves both paths.
+
+Read all shaped/shapeless outputs from CraftingData, including returned
+buckets and bottles, instead of maintaining Java remainder mappings.
+Official 1.26.60.5/protocol2225 controls select secondary output1 before
+primary0 with Create actions. Select each created stack chunk separately,
+restart inventory merging for each chunk, and use the current request ID
+for destinations changed by consumption or earlier output placement.
+
+Six cakes return18 buckets as stacks16+2 without reducing craft count.
+With15 existing buckets, the second chunk merges into the first newly
+created stack before using another freed slot. Honey-block controls show
+returned bottles using the consumed source slot, while the primary output
+falls back to the cursor. When all inventory slots remain occupied, drop
+secondary output directly from CreatedOutput50 with randomly=false.
+Preserve single-output requests without Create actions and snapshot every
+predicted grid, inventory and cursor mutation for rejection rollback.
+
+Native capture and byte fixtures cover two-output cake and honey recipes.
+Broader recipe families, more than two outputs, live rejection controls and
+complete screen parity remain separate validation work.
 ---
  .../model/NativePlayerInventoryAction.java    |  94 +++
  .../model/NativePlayerInventoryMessage.java   | 271 ++++++++
  .../model/NativePlayerInventoryResult.java    |  47 ++
  .../model/container/NativeRecipeCounter.java  |  74 ++
- .../model/container/NativeRecipeCrafting.java | 245 +++++++
+ .../model/container/NativeRecipeCrafting.java | 276 ++++++++
  .../container/NativeRecipeDescriptor.java     |  10 +
  .../block/CraftingTableContainer.java         |   2 +-
  .../resourcepack/ui/PlayerInventoryUi.java    | 397 +++++++++++
@@ -370,8 +386,8 @@ A real registered-recipe/item-registry regression now preserves both paths.
  .../storage/InventoryRequestTrackerTest.java  |  83 +++
  .../NativePlayerCreativeAuxiliaryTest.java    | 333 +++++++++
  .../storage/NativePlayerCreativePickTest.java | 138 ++++
- .../storage/NativeRecipeCraftingTest.java     | 371 ++++++++++
- 35 files changed, 5528 insertions(+), 171 deletions(-)
+ .../storage/NativeRecipeCraftingTest.java     | 491 +++++++++++++
+ 35 files changed, 5679 insertions(+), 171 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryResult.java
@@ -916,10 +932,10 @@ index fe874172..3ccb1532 100644
      /** A captured native collection. Slots in results are relative to this collection. */
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCrafting.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCrafting.java
 new file mode 100644
-index 00000000..8fae6f47
+index 00000000..07562ce6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCrafting.java
-@@ -0,0 +1,245 @@
+@@ -0,0 +1,276 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -951,10 +967,19 @@ index 00000000..8fae6f47
 +
 +    public static Plan plan(final int recipeId, final NativeRecipeCounter.Recipe recipe,
 +                            final List<NativeRecipeCounter.Source> sources, final Container owner,
-+                            final InventoryTracker inventory, final BedrockItem result, final ItemRewriter items,
++                            final InventoryTracker inventory, final List<BedrockItem> results, final ItemRewriter items,
 +                            final BiFunction<Integer, ItemRecipeDescriptor, ItemRecipeDescriptor> craftDescriptor) {
++        if (recipeId == 0 || recipe.ingredientCount() == 0 || results.isEmpty() || results.size() > 256) {
++            return null;
++        }
++        for (final var output : results) {
++            if (output.isEmpty() || items.maxStackSize(output) <= 0) {
++                return null;
++            }
++        }
++        final var result = results.getFirst();
 +        final int maximum = Math.min(255, items.maxStackSize(result));
-+        if (recipeId == 0 || recipe.ingredientCount() == 0 || result.isEmpty() || result.amount() > maximum) {
++        if (result.amount() > maximum) {
 +            return null;
 +        }
 +        final var player = inventory.getInventoryContainer();
@@ -1042,41 +1067,55 @@ index 00000000..8fae6f47
 +            }
 +        }
 +
-+        final var placements = new ArrayList<Transfer>();
-+        int remaining = crafts * result.amount();
-+        for (final boolean merge : new boolean[] {true, false}) {
-+            for (int index = 0; index < player.size() && remaining > 0; index++) {
-+                final var slot = new Slot(player, index);
-+                final var previous = changes.getOrDefault(slot, slot.item());
-+                if (merge ? previous.isEmpty() || previous.netId() == null || !items.canMerge(stack, previous)
-+                        : !previous.isEmpty()) {
-+                    continue;
++        final var outputs = new ArrayList<Output>();
++        // Native 1.26.60 selects secondary results before the primary result.
++        for (int resultSlot = results.size() - 1; resultSlot >= 0; resultSlot--) {
++            final var output = results.get(resultSlot);
++            final int outputMaximum = Math.min(255, items.maxStackSize(output));
++            final var outputStack = output.copy();
++            outputStack.setAmount(outputMaximum);
++            int pending = crafts * output.amount();
++            while (pending > 0) {
++                int remaining = Math.min(pending, outputMaximum);
++                pending -= remaining;
++                final var placements = new ArrayList<Transfer>();
++                for (final boolean merge : new boolean[] {true, false}) {
++                    for (int index = 0; index < player.size() && remaining > 0; index++) {
++                        final var slot = new Slot(player, index);
++                        final var previous = changes.getOrDefault(slot, slot.item());
++                        if (merge ? previous.isEmpty() || previous.netId() == null && !changes.containsKey(slot)
++                                || !items.canMerge(outputStack, previous) : !previous.isEmpty()) {
++                            continue;
++                        }
++                        final int count = Math.min(remaining, outputMaximum - previous.amount());
++                        if (count <= 0 || !player.canPlaceItem(index, outputStack, count)) {
++                            continue;
++                        }
++                        final var next = previous.isEmpty() ? output.copy() : previous.copy();
++                        next.setAmount(previous.amount() + count);
++                        changes.put(slot, next);
++                        placements.add(new Transfer(slot, count));
++                        remaining -= count;
++                    }
 +                }
-+                final int count = Math.min(remaining, maximum - previous.amount());
-+                if (count <= 0 || !player.canPlaceItem(index, stack, count)) {
-+                    continue;
++                if (resultSlot == 0 && remaining > 0) {
++                    if (!cursor.isEmpty() && (cursor.netId() == null
++                            || !cursorSlot.container.canDiscardItem(0, cursor.amount()))) {
++                        return null;
++                    }
++                    if (!cursorSlot.container.canPlaceItem(0, outputStack, remaining)) {
++                        return null;
++                    }
++                    final var next = output.copy();
++                    next.setAmount(remaining);
++                    changes.put(cursorSlot, next);
 +                }
-+                final var next = previous.isEmpty() ? result.copy() : previous.copy();
-+                next.setAmount(previous.amount() + count);
-+                changes.put(slot, next);
-+                placements.add(new Transfer(slot, count));
-+                remaining -= count;
++                outputs.add(new Output(resultSlot, List.copyOf(placements), resultSlot == 0 ? 0 : remaining,
++                        resultSlot == 0 ? remaining : 0));
 +            }
 +        }
-+        if (remaining > 0) {
-+            if (!cursor.isEmpty() && (cursor.netId() == null
-+                    || !cursorSlot.container.canDiscardItem(0, cursor.amount()))) {
-+                return null;
-+            }
-+            if (!cursorSlot.container.canPlaceItem(0, stack, remaining)) {
-+                return null;
-+            }
-+            final var next = result.copy();
-+            next.setAmount(remaining);
-+            changes.put(cursorSlot, next);
-+        }
-+        return new Plan(recipeId, crafts, result.copy(), List.copyOf(descriptors), List.copyOf(consumption),
-+                List.copyOf(placements), cursorSlot, remaining, new LinkedHashMap<>(changes));
++        return new Plan(recipeId, crafts, results.stream().map(BedrockItem::copy).toList(), List.copyOf(descriptors),
++                List.copyOf(consumption), List.copyOf(outputs), cursorSlot, new LinkedHashMap<>(changes));
 +    }
 +
 +    private static Slot source(final NativeRecipeCounter.Location location, final Container owner,
@@ -1102,30 +1141,30 @@ index 00000000..8fae6f47
 +
 +    private record Transfer(Slot slot, int count) { }
 +
++    private record Output(int resultSlot, List<Transfer> placements, int dropped, int cursorOutput) { }
++
 +    public static final class Plan {
 +
 +        private final int recipeId;
 +        private final int crafts;
-+        private final BedrockItem result;
++        private final List<BedrockItem> results;
 +        private final List<ItemDescriptor> ingredients;
 +        private final List<Transfer> consumption;
-+        private final List<Transfer> placements;
++        private final List<Output> outputs;
 +        private final Slot cursor;
-+        private final int cursorOutput;
 +        private final Map<Slot, BedrockItem> changes;
 +
-+        private Plan(final int recipeId, final int crafts, final BedrockItem result,
++        private Plan(final int recipeId, final int crafts, final List<BedrockItem> results,
 +                     final List<ItemDescriptor> ingredients, final List<Transfer> consumption,
-+                     final List<Transfer> placements, final Slot cursor, final int cursorOutput,
++                     final List<Output> outputs, final Slot cursor,
 +                     final Map<Slot, BedrockItem> changes) {
 +            this.recipeId = recipeId;
 +            this.crafts = crafts;
-+            this.result = result;
++            this.results = results;
 +            this.ingredients = ingredients;
 +            this.consumption = consumption;
-+            this.placements = placements;
++            this.outputs = outputs;
 +            this.cursor = cursor;
-+            this.cursorOutput = cursorOutput;
 +            this.changes = changes;
 +        }
 +
@@ -1133,7 +1172,7 @@ index 00000000..8fae6f47
 +            final var actions = new ArrayList<ItemStackRequestAction>();
 +            final var mutated = new HashSet<Slot>();
 +            actions.add(new ItemStackRequestAction.CraftRecipeAutoAction(this.recipeId, this.crafts, this.ingredients));
-+            actions.add(new ItemStackRequestAction.CraftResultsDeprecatedAction(List.of(this.result.copy()), this.crafts));
++            actions.add(new ItemStackRequestAction.CraftResultsDeprecatedAction(this.results.stream().map(BedrockItem::copy).toList(), this.crafts));
 +            for (final var transfer : this.consumption) {
 +                final var slot = transfer.slot;
 +                actions.add(new ItemStackRequestAction.ConsumeAction(transfer.count,
@@ -1142,19 +1181,27 @@ index 00000000..8fae6f47
 +            }
 +            final var output = new ItemStackRequestSlotInfo(new FullContainerName(ContainerEnumName.CreatedOutputContainer, null),
 +                    (byte) 50, requestId);
-+            for (final var transfer : this.placements) {
-+                final var slot = transfer.slot;
-+                actions.add(new ItemStackRequestAction.PlaceAction(transfer.count, output,
-+                        slot.reference(mutated.contains(slot) ? requestId : slot.item().isEmpty() ? 0 : slot.item().netId())));
-+                mutated.add(slot);
-+            }
-+            if (this.cursorOutput != 0) {
-+                final var previous = this.cursor.item();
-+                if (!previous.isEmpty()) {
-+                    actions.add(new ItemStackRequestAction.DropAction(previous.amount(), this.cursor.reference(previous.netId()), false));
++            for (final var result : this.outputs) {
++                if (this.results.size() > 1) {
++                    actions.add(new ItemStackRequestAction.CreateAction(result.resultSlot));
 +                }
-+                actions.add(new ItemStackRequestAction.TakeAction(this.cursorOutput, output,
-+                        this.cursor.reference(previous.isEmpty() ? 0 : requestId)));
++                for (final var transfer : result.placements) {
++                    final var slot = transfer.slot;
++                    actions.add(new ItemStackRequestAction.PlaceAction(transfer.count, output,
++                            slot.reference(mutated.contains(slot) ? requestId : slot.item().isEmpty() ? 0 : slot.item().netId())));
++                    mutated.add(slot);
++                }
++                if (result.dropped != 0) {
++                    actions.add(new ItemStackRequestAction.DropAction(result.dropped, output, false));
++                }
++                if (result.cursorOutput != 0) {
++                    final var previous = this.cursor.item();
++                    if (!previous.isEmpty()) {
++                        actions.add(new ItemStackRequestAction.DropAction(previous.amount(), this.cursor.reference(previous.netId()), false));
++                    }
++                    actions.add(new ItemStackRequestAction.TakeAction(result.cursorOutput, output,
++                            this.cursor.reference(previous.isEmpty() ? 0 : requestId)));
++                }
 +            }
 +            return List.copyOf(actions);
 +        }
@@ -3095,7 +3142,7 @@ index 04ad1756..4a6f0c14 100644
      private void updateInventoryOptions() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 new file mode 100644
-index 00000000..f910fdc6
+index 00000000..da892e2c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 @@ -0,0 +1,649 @@
@@ -3454,11 +3501,11 @@ index 00000000..f910fdc6
 +                case ShapelessRecipe shapeless -> shapeless.getResults();
 +                default -> List.of();
 +            };
-+            if (results.size() != 1) {
++            if (results.isEmpty()) {
 +                continue;
 +            }
 +            final var plan = NativeRecipeCrafting.plan(data.networkId(), candidate.recipe(), this.context.sources(false),
-+                    owner, inventory, results.getFirst(), items, (index, source) -> recipes.craftDescriptor(data, index, source));
++                    owner, inventory, results, items, (index, source) -> recipes.craftDescriptor(data, index, source));
 +            if (plan == null) {
 +                continue;
 +            }
@@ -6380,10 +6427,10 @@ index 00000000..247e1993
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeRecipeCraftingTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeRecipeCraftingTest.java
 new file mode 100644
-index 00000000..dd813af3
+index 00000000..8879b595
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeRecipeCraftingTest.java
-@@ -0,0 +1,371 @@
+@@ -0,0 +1,491 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -6399,15 +6446,18 @@ index 00000000..dd813af3
 +import net.raphimc.viabedrock.api.model.container.NativeRecipeCounter;
 +import net.raphimc.viabedrock.api.model.container.NativeRecipeCrafting;
 +import net.raphimc.viabedrock.api.model.container.block.CraftingTableContainer;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.BaseGameVersion;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
 +import net.raphimc.viabedrock.protocol.model.NativeItemDefinitions;
 +import net.raphimc.viabedrock.protocol.model.ItemEntry;
 +import net.raphimc.viabedrock.protocol.model.ItemRegistry;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestSlotInfo;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeDescriptor;
 +import net.raphimc.viabedrock.protocol.model.recipe.ItemRecipeKey;
@@ -6460,7 +6510,7 @@ index 00000000..dd813af3
 +        inventory.getInventoryContainer().setItem(0, log);
 +        assertEquals(0, context.items().recipeDescriptor(log).metadata());
 +        final var plankPlan = NativeRecipeCrafting.plan(3587, context.tracker().playerRecipeCandidate(plankRecipe).recipe(),
-+                inventory.craftingSources(table, false), table, inventory, planks, context.items(),
++                inventory.craftingSources(table, false), table, inventory, List.of(planks), context.items(),
 +                (index, source) -> context.tracker().craftDescriptor(plankRecipe, index, source));
 +        assertEquals(new ItemStackRequestAction.CraftRecipeAutoAction(3587, 16,
 +                List.of(new ItemDescriptor.ItemNameDescriptor("minecraft:oak_log", 32767))), plankPlan.actions(-3).getFirst());
@@ -6470,7 +6520,7 @@ index 00000000..dd813af3
 +        inventory.getInventoryContainer().setItem(0, sourcePlanks);
 +        inventory.getInventoryContainer().setItem(1, stick);
 +        final var swordPlan = NativeRecipeCrafting.plan(4603, context.tracker().playerRecipeCandidate(swordRecipe).recipe(),
-+                inventory.craftingSources(table, false), table, inventory, sword, context.items(),
++                inventory.craftingSources(table, false), table, inventory, List.of(sword), context.items(),
 +                (index, source) -> context.tracker().craftDescriptor(swordRecipe, index, source));
 +        assertNotNull(swordPlan, () -> "Source descriptor " + context.items().recipeDescriptor(sourcePlanks)
 +                + ", tags " + registry.tags(sourcePlanks));
@@ -6639,7 +6689,7 @@ index 00000000..dd813af3
 +        table.setItem(40, item(1, 2, 9));
 +        f.set(0, item(1, 2, 10));
 +        final var plan = NativeRecipeCrafting.plan(3587, recipe(1), f.inventory.craftingSources(table, false),
-+                table, f.inventory, item(2, 4, null), f.items, (index, source) -> source);
++                table, f.inventory, List.of(item(2, 4, null)), f.items, (index, source) -> source);
 +        final var actions = plan.actions(-3);
 +        assertEquals(new ItemStackRequestAction.ConsumeAction(2, table.requestSlotInfo(40, 9)), actions.get(2));
 +        final var request = new ItemStackRequestInfo(-3, actions, List.of(), TextProcessingEventOrigin.unknown);
@@ -6668,6 +6718,113 @@ index 00000000..dd813af3
 +        f.set(0, source);
 +        assertNull(f.plan(recipe(1), item(2, 4, null)));
 +        assertSame(source, f.player().getItem(0));
++    }
++
++    @Test
++    void returnsSixCakesWorthOfBucketsInChunksAndMergesAgainBeforeUsingAnotherFreedSlot() {
++        final var f = new Fixture();
++        when(f.items.maxStackSize(any())).thenAnswer(call -> ((BedrockItem) call.getArgument(0)).identifier() == 13 ? 16 : 64);
++        for (int slot = 0; slot < 18; slot++) {
++            f.set(slot, item(8, 1, slot + 100));
++        }
++        f.set(18, item(9, 12, 118));
++        f.set(19, item(10, 6, 119));
++        f.set(20, item(11, 18, 120));
++        f.set(21, item(13, 15, 121));
++        final var results = List.of(item(12, 1, null), item(13, 3, null));
++        final var plan = NativeRecipeCrafting.plan(3415, recipe(8, 8, 8, 9, 10, 9, 11, 11, 11),
++                f.inventory.craftingSources(f.player(), false), f.player(), f.inventory, results, f.items, (index, source) -> source);
++        final var actions = plan.actions(-3);
++        assertEquals(6, assertInstanceOf(ItemStackRequestAction.CraftRecipeAutoAction.class, actions.getFirst()).numberOfRequestedCrafts());
++        assertEquals(new ItemStackRequestAction.CraftResultsDeprecatedAction(results, 6), actions.get(1));
++        final var created = createdOutput(-3);
++        assertEquals(List.of(
++                new ItemStackRequestAction.CreateAction(1),
++                new ItemStackRequestAction.PlaceAction(1, created, f.player().requestSlotInfo(21, 121)),
++                new ItemStackRequestAction.PlaceAction(15, created, f.player().requestSlotInfo(0, -3)),
++                new ItemStackRequestAction.CreateAction(1),
++                new ItemStackRequestAction.PlaceAction(1, created, f.player().requestSlotInfo(0, -3)),
++                new ItemStackRequestAction.PlaceAction(1, created, f.player().requestSlotInfo(1, -3)),
++                new ItemStackRequestAction.CreateAction(0),
++                new ItemStackRequestAction.PlaceAction(6, created, f.player().requestSlotInfo(2, -3))),
++                actions.subList(actions.size() - 8, actions.size()));
++        f.apply(plan);
++        assertEquals(item(13, 16, null), f.player().getItem(0));
++        assertEquals(item(13, 1, null), f.player().getItem(1));
++        assertEquals(item(12, 6, null), f.player().getItem(2));
++        assertEquals(16, f.player().getItem(21).amount());
++        f.reject();
++        for (int slot = 0; slot < 18; slot++) {
++            assertEquals(item(8, 1, slot + 100), f.player().getItem(slot));
++        }
++        assertEquals(12, f.player().getItem(18).amount());
++        assertEquals(6, f.player().getItem(19).amount());
++        assertEquals(18, f.player().getItem(20).amount());
++        assertEquals(item(13, 15, 121), f.player().getItem(21));
++    }
++
++    @Test
++    void dropsReturnedBottlesFromCreatedOutputWhenInventoryIsFullAndTakesOnlyHoneyBlocksOnCursor() {
++        final var f = new Fixture();
++        f.fill();
++        f.inventory.setCurrentContainerClosed(false);
++        final var table = new CraftingTableContainer(f.user, (byte) 5, null, null);
++        f.inventory.setCurrentContainer(table);
++        for (final int slot : new int[] {32, 33, 35, 36}) {
++            table.setItem(slot, item(14, 4, slot + 100));
++        }
++        final var plan = NativeRecipeCrafting.plan(4239, recipe(14, 14, 14, 14),
++                f.inventory.craftingSources(table, false), table, f.inventory,
++                List.of(item(15, 1, null), item(16, 4, null)), f.items, (index, source) -> source);
++        final var actions = plan.actions(-3);
++        final var created = createdOutput(-3);
++        assertEquals(List.of(
++                new ItemStackRequestAction.CreateAction(1),
++                new ItemStackRequestAction.DropAction(16, created, false),
++                new ItemStackRequestAction.CreateAction(0),
++                new ItemStackRequestAction.TakeAction(4, created, f.inventory.getHudContainer().requestSlotInfo(0, 0))),
++                actions.subList(actions.size() - 4, actions.size()));
++        f.apply(plan, table);
++        for (final int slot : new int[] {32, 33, 35, 36}) {
++            assertTrue(table.getItem(slot).isEmpty());
++        }
++        for (int slot = 0; slot < 36; slot++) {
++            assertEquals(item(3, 64, slot + 100), f.player().getItem(slot));
++        }
++        assertEquals(item(15, 4, null), f.inventory.getHudContainer().getItem(0));
++        f.reject();
++        for (final int slot : new int[] {32, 33, 35, 36}) {
++            assertEquals(item(14, 4, slot + 100), table.getItem(slot));
++        }
++        assertTrue(f.inventory.getHudContainer().getItem(0).isEmpty());
++    }
++
++    @Test
++    void returnedBottlesUseTheConsumedInventorySlotBeforeHoneyBlocksOverflowOntoCursor() {
++        final var f = new Fixture();
++        f.fill();
++        f.set(0, item(14, 16, 10));
++        final var plan = NativeRecipeCrafting.plan(4239, recipe(14, 14, 14, 14),
++                f.inventory.craftingSources(f.player(), false), f.player(), f.inventory,
++                List.of(item(15, 1, null), item(16, 4, null)), f.items, (index, source) -> source);
++        final var actions = plan.actions(-3);
++        final var created = createdOutput(-3);
++        assertEquals(List.of(
++                new ItemStackRequestAction.CreateAction(1),
++                new ItemStackRequestAction.PlaceAction(16, created, f.player().requestSlotInfo(0, -3)),
++                new ItemStackRequestAction.CreateAction(0),
++                new ItemStackRequestAction.TakeAction(4, created, f.inventory.getHudContainer().requestSlotInfo(0, 0))),
++                actions.subList(actions.size() - 4, actions.size()));
++        f.apply(plan);
++        assertEquals(item(16, 16, null), f.player().getItem(0));
++        assertEquals(item(15, 4, null), f.inventory.getHudContainer().getItem(0));
++        f.reject();
++        assertEquals(item(14, 16, 10), f.player().getItem(0));
++        assertTrue(f.inventory.getHudContainer().getItem(0).isEmpty());
++    }
++
++    private static ItemStackRequestSlotInfo createdOutput(final int id) {
++        return new ItemStackRequestSlotInfo(new FullContainerName(ContainerEnumName.CreatedOutputContainer, null), (byte) 50, id);
 +    }
 +
 +    private static NativeRecipeCounter.Recipe recipe(final int... ingredients) {
@@ -6717,6 +6874,11 @@ index 00000000..dd813af3
 +                    case 1 -> "minecraft:oak_log";
 +                    case 2 -> "minecraft:oak_planks";
 +                    case 4 -> "minecraft:stick";
++                    case 8 -> "minecraft:milk_bucket";
++                    case 9 -> "minecraft:sugar";
++                    case 10 -> "minecraft:egg";
++                    case 11 -> "minecraft:wheat";
++                    case 14 -> "minecraft:honey_bottle";
 +                    default -> "minecraft:stone";
 +                });
 +                return new ItemRecipeDescriptor(definition, (short) (id == 2 ? 0 : 32767));
@@ -6739,12 +6901,17 @@ index 00000000..dd813af3
 +
 +        NativeRecipeCrafting.Plan plan(final NativeRecipeCounter.Recipe recipe, final BedrockItem output) {
 +            return NativeRecipeCrafting.plan(3587, recipe, this.inventory.craftingSources(this.player(), false),
-+                    this.player(), this.inventory, output, this.items, (index, source) -> source);
++                    this.player(), this.inventory, List.of(output), this.items, (index, source) -> source);
 +        }
 +
 +        void apply(final NativeRecipeCrafting.Plan plan) {
++            this.apply(plan, this.player());
++        }
++
++        void apply(final NativeRecipeCrafting.Plan plan, final Container owner) {
 +            final var request = new ItemStackRequestInfo(-3, plan.actions(-3), List.of(), TextProcessingEventOrigin.unknown);
-+            this.requests.addRequest(new InventoryRequestStorage(request, 0, this.inventory.getHudContainer().copy(), List.of(this.player().copy())));
++            this.requests.addRequest(new InventoryRequestStorage(request, 0, this.inventory.getHudContainer().copy(),
++                    owner == this.player() ? List.of(this.player().copy()) : List.of(owner.copy(), this.player().copy())));
 +            plan.apply();
 +            this.requests.getRequest(-3).capturePrediction(this.inventory);
 +        }

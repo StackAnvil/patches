@@ -107,7 +107,7 @@ A fallback acknowledgment must not consume a newer menu's request.
 Native 1.26.60.5 classic-screen controls distinguish recipe selection from crafting.
 A normal recipe click fills the grid. Taking its output sends a separate craft request.
 A workbench recipe Shift-click uses `CraftRecipeAuto` with explicit ingredient descriptors, followed by results, consumption, and placement actions.
-Core plans this request for single-output shaped and shapeless recipes.
+Core plans this request for shaped and shapeless recipes from their server-supplied results.
 The planner uses the first eligible ingredient allocation.
 Ordinary named ingredients retain their resolved recipe metadata, including wildcard auxiliary values.
 Tag and Molang ingredients use the selected source descriptor.
@@ -128,6 +128,13 @@ The initial capacity check precedes consumption.
 A full inventory and incompatible cursor prevent crafting even when consumption can free a source slot.
 An empty cursor admits that same craft. Output can then use the freed source slot.
 Native wooden-sword bulk crafting produces one sword despite ingredients for 32.
+The primary output stack limit caps the craft count. Returned containers do not reduce it.
+Recipe data includes returned buckets and bottles, so core does not need a separate remainder mapping.
+For two-output recipes, native selects the secondary output before the primary output with `Create` actions.
+Each created stack chunk starts another merge pass before using empty inventory slots.
+Six cakes return 18 buckets as stacks of 16 and 2.
+When inventory is full, returned bottles drop directly from created-output slot 50.
+The primary honey blocks still use the cursor fallback.
 Complete request fixtures preserve split placement, repeated source references, and cursor replacement.
 The matching server accepts these native requests.
 Planner tests cover these request and prediction boundaries, including rejection rollback.
@@ -136,6 +143,9 @@ Both routes match the captured split-placement, cursor-replacement, and freed-sl
 Additional controls consume the player crafting grid and produce one wooden sword with repeated references to its plank source.
 Reopening retains completed output and the returned cursor stack.
 The incompatible-cursor control sends no craft request until the cursor is empty.
+Separate installed direct and ViaProxy controls verify bucket chunks, returned bottles using a freed source slot, and bottle drops with a full inventory.
+The three craft requests per route match the native cake and honey captures after stack-ID normalization.
+Authoritative responses confirm inventory and cursor quantities. Reopening retains completed output.
 Rejected requests remain unit-tested. These live controls do not induce server rejection.
 
 Admit an authored player screen only when its required collections and controls are available.
@@ -192,7 +202,7 @@ A full inventory accepts the input without an inventory request.
 Unchanged Java Creative slot echoes preserve the existing native stack and network ID.
 Installed direct and ViaProxy controls confirm these pointer, capacity, and reopening cases through successful server responses.
 
-Multiple recipe outputs, ingredient remainders, and complete installed native parity remain unfinished.
+Recipe families beyond the captured cake and honey controls, recipes with more than two outputs, and complete installed native parity remain unfinished.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.
