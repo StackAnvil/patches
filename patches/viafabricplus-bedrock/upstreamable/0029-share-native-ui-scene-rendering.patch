@@ -1,4 +1,4 @@
-From 32187ea25a2a8b6dee0474803ff6b84c8ac1e7dd Mon Sep 17 00:00:00 2001
+From a40914495edf5de66e2a919bb1ccf3dd4152e224 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -760,6 +760,19 @@ Target Bedrock 1.26.60.5 hardware watchpoints establish pending writes,
 next-update consumption, selected causes and the 100-count gate. False
 player-inventory policy still starts that gate. This bridge preserves the
 original cause instead of deriving it from a merged Java damage type.
+
+Submit native text color with per-channel single-precision multiplication
+by 255, truncation and byte clamping, including opacity. Target Bedrock
+1.26.60.5 cached-glyph instructions 140e6d97f..140e6da3c establish this
+conversion independently of image tint. All 140 original instruction
+controls cover fractional byte boundaries and independent RGBA channels.
+Fresh native hopper glyph writes bind that path to visible UI labels and
+convert authored 0.3 to byte 76. Rounding produces 77 and changes settled
+container captions. Keep image component color conversion independent.
+
+The renderer regression fails with the previous rounding and checks mixed
+channels, missing-channel defaults and opacity bounds. Full text material,
+image tint and native frame timing parity remain separate requirements.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -822,7 +835,7 @@ original cause instead of deriving it from a merged Java damage type.
  .../screen/ui/NativeUiMultilineInput.java     |  267 +++++
  .../screen/ui/NativeUiPlayerCamera.java       |   72 ++
  .../screen/ui/NativeUiPresentation.java       |  162 +++
- .../bedrock/screen/ui/NativeUiRenderer.java   |  153 +++
+ .../bedrock/screen/ui/NativeUiRenderer.java   |  157 +++
  .../bedrock/screen/ui/NativeUiScene.java      |  107 ++
  .../screen/ui/NativeUiSceneScreen.java        |  823 ++++++++++++++
  .../bedrock/screen/ui/NativeUiScreen.java     |   13 +
@@ -872,7 +885,7 @@ original cause instead of deriving it from a merged Java damage type.
  .../screen/ui/NativeUiMultilineInputTest.java |  210 ++++
  .../screen/ui/NativeUiPlayerCameraTest.java   |  132 +++
  .../screen/ui/NativeUiPresentationTest.java   |  258 +++++
- .../screen/ui/NativeUiRendererTest.java       |   71 ++
+ .../screen/ui/NativeUiRendererTest.java       |   85 ++
  .../NativeUiSceneScreenInteractionTest.java   |  359 ++++++
  .../bedrock/screen/ui/NativeUiSceneTest.java  |   40 +
  .../bedrock/screen/ui/NativeUiSliderTest.java |  120 ++
@@ -880,7 +893,7 @@ original cause instead of deriving it from a merged Java damage type.
  .../ui/NativeUiTextureAnimationTest.java      |  108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |   86 ++
  .../screen/ui/NativeUiViewportTest.java       |   95 ++
- 119 files changed, 13556 insertions(+), 36 deletions(-)
+ 119 files changed, 13574 insertions(+), 36 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -7411,10 +7424,10 @@ index 0000000..99d79fd
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
 new file mode 100644
-index 0000000..0d033a4
+index 0000000..0480b87
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,157 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7561,10 +7574,14 @@ index 0000000..0d033a4
 +    }
 +
 +    public static int color(final NativeUiScene.Node node, final float alpha) {
-+        final int red = Math.round(Math.clamp(NativeUiLayout.vector(node, "color", 0, 1), 0, 1) * 255);
-+        final int green = Math.round(Math.clamp(NativeUiLayout.vector(node, "color", 1, 1), 0, 1) * 255);
-+        final int blue = Math.round(Math.clamp(NativeUiLayout.vector(node, "color", 2, 1), 0, 1) * 255);
-+        return Math.round(alpha * 255) << 24 | red << 16 | green << 8 | blue;
++        final int red = textChannel(NativeUiLayout.vector(node, "color", 0, 1));
++        final int green = textChannel(NativeUiLayout.vector(node, "color", 1, 1));
++        final int blue = textChannel(NativeUiLayout.vector(node, "color", 2, 1));
++        return textChannel(alpha) << 24 | red << 16 | green << 8 | blue;
++    }
++
++    private static int textChannel(final float value) {
++        return Math.clamp((int) (value * 255), 0, 255);
 +    }
 +
 +}
@@ -14724,10 +14741,10 @@ index 0000000..d8bc9ec
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java
 new file mode 100644
-index 0000000..a69a064
+index 0000000..f38690b
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,85 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -14736,6 +14753,7 @@ index 0000000..a69a064
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
 +import java.util.List;
 +import java.util.UUID;
 +import net.minecraft.SharedConstants;
@@ -14791,6 +14809,19 @@ index 0000000..a69a064
 +        renderer.reset();
 +        renderer.constrained(root, 50);
 +        verify(font, times(2)).split(any(FormattedText.class), eq(50));
++    }
++
++    @Test
++    void truncatesNativeTextChannelsAndClampsOpacityAtSubmission() {
++        final var node = label("A");
++        node.properties().add("color", JsonParser.parseString("[0.3,0.5,0.75]"));
++        // Bedrock 1.26.60.5 cached-glyph writes truncate each scaled RGBA channel.
++        assertEquals(0x7F4C7FBF, NativeUiRenderer.color(node, .5F));
++        node.properties().add("color", JsonParser.parseString("[0.25]"));
++        assertEquals(0xFF3FFFFF, NativeUiRenderer.color(node, 1));
++        node.properties().add("color", JsonParser.parseString("[-0.01,1.01,0.1]"));
++        assertEquals(0xFF00FF19, NativeUiRenderer.color(node, 1.2F));
++        assertEquals(0x0000FF19, NativeUiRenderer.color(node, -.1F));
 +    }
 +
 +    private static NativeUiScene.Node label(final String value) {

@@ -22,6 +22,15 @@ Layout changes retain a separate revision.
 
 Regression coverage includes `BedrockBitmapFontResourcesTest`, `BedrockGuiActorAppearanceTest`, `BedrockGuiActorContextTest`, `BedrockResourceLibraryTest`.
 
+Text channels follow the native cached-glyph conversion: multiply by 255, truncate, then clamp to a byte.
+Bedrock 1.26.60.5 original instructions cover 140 cases, including fractional byte boundaries and independent RGBA channels.
+Fresh native hopper glyph writes use that path and convert authored 0.3 to byte 76.
+The renderer regression fails with the previous rounding and covers mixed channels, defaults, and opacity bounds.
+Image component tint retains its separate conversion path.
+At 1280 × 720 and native UI scale 2, both installed Java routes match all 672 glyph pixels in two chest labels.
+The complete title and inventory-label rectangles also match, including their panel backgrounds.
+Other controls, world pixels, items, and frame timing remain outside that comparison.
+
 At 1280 × 720, all 16 current-font labels match native 26.60 at UI scales 1 and 2. All 16 legacy labels match at UI scale 2. Direct and ViaProxy controls pass Java GUI scale changes and resource reloads. The point-sampling GPU regression fails before the correction and passes on Intel and software rendering.
 
 Unanchored manual-grid cells use their grid origins.

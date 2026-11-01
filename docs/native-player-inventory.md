@@ -153,4 +153,5 @@ Damage controls cover accepted and excluded causes, gated events, a false invent
 Native Bedrock 1.26.60.5 runtime controls establish the pending-state and counter order for server-delivered hurt events.
 Client-predicted damage, the live producer for actor event 81, and exact frame timing remain unverified.
 The historic hurt-and-heal nonclosure with a 5.6-millisecond packet gap remains unexplained.
-Matched chest geometry retains a one-byte label-shade difference. Complete screen pixels remain unverified.
+Text channels use native byte truncation and clamping, including opacity.
+Complete screen pixels remain unverified.

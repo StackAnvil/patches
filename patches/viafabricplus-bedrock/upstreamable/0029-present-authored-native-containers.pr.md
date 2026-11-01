@@ -90,7 +90,8 @@ Programs without the versioned core contract retain ordinary controls when the s
 The separate cooking binding and visible-control checks remain.
 Client-predicted damage, the live producer for actor event 81, and exact native frame timing remain unverified.
 The historic hurt-and-heal nonclosure with a 5.6-millisecond packet gap remains unexplained.
-Matched chest geometry retains a one-byte label-shade difference. Complete screen pixels remain unverified.
+Shared text conversion corrects the measured one-byte label-shade difference.
+Complete screen pixels remain unverified.
 Broader modpack timing, the reported menu overlap, and shield presentation still need verification.
 
 The [owning patch](0029-present-authored-native-containers.patch) retains implementation rationale and versioned evidence.
