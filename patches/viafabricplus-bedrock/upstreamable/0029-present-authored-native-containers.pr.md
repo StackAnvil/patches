@@ -8,6 +8,11 @@ Bind authored container geometry to authoritative Java menus, slots and cursor s
 
 Bind authored geometry and controls to the actual menu, cursor, slots, connection, and opening token. Keep request ownership in core and use ordinary screens when required components are unavailable.
 
+The **Bedrock inventory screens** setting retains ordinary Java screens when disabled.
+It gates storage, cooking, and player presentations before scene construction, including presentations that wait for container contents.
+The default remains enabled for server packs that depend on authored layouts.
+The setting does not disable forms or change inventory request ownership.
+
 Prerequisites:
 
 - viafabricplus-bedrock/0029-share-native-ui-scene-rendering.patch: Land shared scene and GUI actor rendering before container presentation.
@@ -15,6 +20,11 @@ Prerequisites:
 ## Validation and remaining limits
 
 Regression coverage includes `BedrockNativeContainerScreenTest`, `NativeContainerButtonTest`, `NativeContainerGeometryTest`, `NativeContainerInputTest`, and `NativeContainerDrawsTest`.
+
+An installed BDS control with Bedrock inventory screens disabled retains Java inventory, chest, furnace, and crafting screens.
+Pickup, return, and reopening preserve all 64 logs.
+BDS accepts both observed inventory requests without a synchronization timeout.
+The production cooking test also retains ordinary controls when a ready presentation encounters the disabled setting.
 
 Authored slot labels use [shared native count text](../../viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.pr.md).
 The consumer regression keeps raw binding quantities and genuine quickcraft preview text independent of display capping.

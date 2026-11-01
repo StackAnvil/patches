@@ -3,6 +3,17 @@
 Use this reference when changing the E-key inventory, creative catalogs, or authored player-screen integration.
 The [compatibility status](bedrock-coverage.md) lists unresolved reports.
 
+## Use Java inventory screens
+
+In the ViaFabricPlus Bedrock settings, turn off **Bedrock inventory screens**.
+Then reopen the inventory or container.
+This setting covers player inventory, crafting, cooking, and storage screens on direct and ViaProxy connections.
+It leaves server forms, HUD rendering, and inventory protocol handling unchanged.
+
+Bedrock inventory screens are enabled by default.
+Server resource packs can depend on their layouts and controls.
+Java screens do not reproduce those custom layouts.
+
 ## Screen lifetime
 
 Open the Bedrock inventory only after Java installs the actual screen.
