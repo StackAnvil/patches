@@ -12,7 +12,12 @@ Dimension bounds also use the earlier native Hive fixture.
 The native BDS 1.26.60.6 inventory fixture establishes the 57-entry capacity.
 Experimental fallbacks do not establish complete native parity.
 
+The optional server presence configuration contains one `richPresenceId` string.
+Current Dimension Clash and Treasure Hunt StartGame captures expose an overread from the former two-string decoder.
+A boundary regression retains the following telemetry fields with presence both absent and present.
+The captured Dimension Clash payload consumes exactly with the corrected layout. Live gameplay remains a separate check.
+
 The first patch applies independently to the pinned upstream base without StackAnvil setup or deferred inventory patches.
-Its standalone build, Checkstyle tasks, and all 22 packet-boundary and compatibility tests pass.
+Its standalone build, Checkstyle tasks, and the packet-boundary and compatibility tests pass.
 
 The complete four-project build and modpack bundle also pass against the rebased pins.

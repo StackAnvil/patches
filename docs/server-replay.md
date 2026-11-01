@@ -25,7 +25,10 @@ For another public server, use its current address from the in-game catalog or t
 bun run server-replay record public --target play.example.org:19132 --client addon --seconds 240
 ```
 
-Public targets also accept `nethernet://host:port`. The private manifest records the selected endpoint.
+Public targets also accept `nethernet://host:port`.
+Hosted Xbox JSON-RPC experiences use `nethernet-xbox-json-rpc://network-id` with `--client addon` or `--client proxy`.
+Resolve a fresh network ID through the catalog before connecting. These IDs have no port.
+The private manifest records the selected endpoint.
 Catalog experiences can use temporary endpoints, so resolve the address again before a later run.
 Named targets retain their configured address. Local targets still require loopback.
 The Hive guard also applies to its hostnames supplied through `record public`.
@@ -168,6 +171,11 @@ These assertions cover asset installation and model resolution. They cannot prov
 Private `camera-audit.jsonl` observations include frame time, world clocks, player light levels, gamma, and Java’s skylight factor. They also record sky, fog, cloud, and sunrise environment colors. When the native lightmap is active, the audit records its actual render-state sky factor, gamma, darkness pulse, night vision, and sunrise color. They also cover scenes that omit the local-player skin. Match world time and camera position when comparing lighting. A running world clock continues after the recorded scene ends. A later `doDayLightCycle` change pauses or resumes the legacy day clock at its current time. Explicit `SyncWorldClocks` updates retain their own rates.
 
 Private `held-item-light-audit.jsonl` observations record actual first-person submissions. They include packed light, quad normals, tint layers, material emission, and the selected pipeline. Observations do not change the item or camera. Compare them with the screenshot timestamp; startup light values can change while chunks load.
+
+Private `movement-audit.jsonl` observations record position, velocity, item use, held item, and selected hotbar slot at each observed movement phase.
+The `epochMillis` timestamp aligns those observations with external input markers.
+Use the item and slot fields to distinguish a changed selection from a missing movement impulse.
+Check the packet journal for the actual teleport, correction, and motion commands before judging a combined-mechanics trial.
 
 The native Hive recording sends `SetTime` 12445, then `GameRulesChanged` with `dodaylightcycle=false`. Java previously stored that rule without updating its running clock rate. The clock patch now sends the pause to Java. This fixes the lobby's drift into night. Legacy `SetTime` still advances while daylight is enabled.
 

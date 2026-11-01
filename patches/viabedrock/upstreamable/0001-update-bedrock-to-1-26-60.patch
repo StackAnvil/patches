@@ -1,4 +1,4 @@
-From 790b42ad4a12ed7a67fa2918c7c9aae7a49cde0d Mon Sep 17 00:00:00 2001
+From b9abcca849ef45026fa63238149f14e56b19c166 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 27 Oct 2026 19:53:57 +0100
 Subject: [PATCH] fix(protocol): complete Bedrock 1.26.60 compatibility
@@ -23,6 +23,16 @@ including tests for the passenger codec now supplied by upstream.
 Sources: Mojang/bedrock-protocol-docs v1.26.60 (protocol 2225), the matching
 1.26.60.5 GDK archive, and the native BDS 1.26.60.6 inventory fixture.
 Data Asset Sources records the archive hashes and experimental-data limits.
+
+Decode the optional server presence configuration as one richPresenceId
+string. Mojang protocol-2225 presenceConfig metadata has one optional
+field. Fresh current Dimension Clash and Treasure Hunt StartGame packets
+include that configuration; reading a second string consumes the first
+telemetry field and then overruns the packet at ownerId. A boundary
+regression preserves the four following telemetry strings with presence
+both absent and present. The captured Dimension Clash payload consumes
+exactly when decoded with the single presence string. Raw captures remain
+private.
 ---
  Data Asset Sources.md                         |  19 ++++
  build.gradle                                  |  11 ++
@@ -39,7 +49,7 @@ Data Asset Sources records the archive hashes and experimental-data limits.
  .../data/generated/java/RegistryKeys.java     |   3 +
  .../protocol/model/DimensionDefinition.java   |  33 ++++++
  .../protocol/packet/ClientPlayerPackets.java  |   8 +-
- .../protocol/packet/JoinPackets.java          |  27 +++--
+ .../protocol/packet/JoinPackets.java          |  90 ++++++++--------
  .../packet/ResourcePackClientResponse.java    |  52 ++++++++++
  .../protocol/packet/ResourcePackPackets.java  |  18 ++--
  .../protocol/packet/UnhandledPackets.java     |   2 +
@@ -56,12 +66,13 @@ Data Asset Sources records the archive hashes and experimental-data limits.
  .../data/JavaDimensionRegistryTest.java       |  55 ++++++++++
  .../packet/DimensionDataPacketTest.java       |  96 ++++++++++++++++++
  .../ResourcePackClientResponseTest.java       |  74 ++++++++++++++
+ .../StartGameServerConfigurationTest.java     |  48 +++++++++
  .../types/entitydata/EntityDataTypeTest.java  |  55 ++++++++++
  .../entitydata/PassengerOfBlocksTypeTest.java |  69 +++++++++++++
  .../model/FullContainerNameTypeTest.java      |  49 +++++++++
  .../BedrockDataEnumGeneratorTest.java         |  73 +++++++++++++
  .../generator/BedrockDataEnumGenerator.java   |  55 +++++++++-
- 37 files changed, 1017 insertions(+), 64 deletions(-)
+ 38 files changed, 1098 insertions(+), 94 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/ConnectionBlockStateUpgradeSchema.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/ActorSwingPacketFactory.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/DimensionDefinition.java
@@ -73,6 +84,7 @@ Data Asset Sources records the archive hashes and experimental-data limits.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/JavaDimensionRegistryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/DimensionDataPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponseTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/StartGameServerConfigurationTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/entitydata/EntityDataTypeTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/entitydata/PassengerOfBlocksTypeTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/model/FullContainerNameTypeTest.java
@@ -488,7 +500,7 @@ index 49145e9d..d7c69522 100644
              if (clientPlayer.blockBreakingInfo() != null) {
                  if (!gameSession.isBlockBreakingServerAuthoritative()) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 4f9cc6a8..2e456cd7 100644
+index 4f9cc6a8..25599875 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -31,7 +31,6 @@ import com.viaversion.viaversion.api.protocol.remapper.PacketHandler;
@@ -507,7 +519,45 @@ index 4f9cc6a8..2e456cd7 100644
  import net.raphimc.viabedrock.protocol.model.*;
  import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
-@@ -434,16 +434,9 @@ public final class JoinPackets {
+@@ -293,36 +293,7 @@ public final class JoinPackets {
+                 wrapper.read(Types.BOOLEAN); // client side generation
+                 final boolean hashedRuntimeBlockIds = wrapper.read(Types.BOOLEAN); // use hashed block runtime ids
+                 wrapper.read(Types.BOOLEAN); // server authoritative sounds
+-                if (wrapper.read(Types.BOOLEAN)) { // has server join information
+-                    if (wrapper.read(Types.BOOLEAN)) { // has gathering join information
+-                        wrapper.read(BedrockTypes.UUID); // experience id
+-                        wrapper.read(BedrockTypes.STRING); // experience name
+-                        if (wrapper.read(Types.BOOLEAN)) { // has experience world id
+-                            wrapper.read(BedrockTypes.UUID); // experience world id
+-                        }
+-                        if (wrapper.read(Types.BOOLEAN)) { // has experience world name
+-                            wrapper.read(BedrockTypes.STRING); // experience world name
+-                        }
+-                        wrapper.read(BedrockTypes.STRING); // creator id
+-                        if (wrapper.read(Types.BOOLEAN)) { // has target id
+-                            wrapper.read(BedrockTypes.UUID); // target id
+-                        }
+-                        if (wrapper.read(Types.BOOLEAN)) {
+-                            wrapper.read(BedrockTypes.STRING); // scenario id
+-                        }
+-                        if (wrapper.read(Types.BOOLEAN)) { // has server id
+-                            wrapper.read(BedrockTypes.STRING); // server id
+-                        }
+-                    }
+-                    if (wrapper.read(Types.BOOLEAN)) { // has store entry point info
+-                        wrapper.read(BedrockTypes.STRING); // store id
+-                        wrapper.read(BedrockTypes.STRING); // store name
+-                    }
+-                    if (wrapper.read(Types.BOOLEAN)) { // has presence info
+-                        wrapper.read(BedrockTypes.STRING); // experience name
+-                        wrapper.read(BedrockTypes.STRING); // world name
+-                    }
+-                }
++                readServerConfiguration(wrapper);
+                 wrapper.read(BedrockTypes.STRING); // server id
+                 wrapper.read(BedrockTypes.STRING); // scenario id
+                 wrapper.read(BedrockTypes.STRING); // world id
+@@ -434,16 +405,9 @@ public final class JoinPackets {
                  final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // entry count
                  for (int i = 0; i < count; i++) {
                      final String dimensionIdentifier = wrapper.read(BedrockTypes.STRING); // dimension identifier
@@ -527,10 +577,42 @@ index 4f9cc6a8..2e456cd7 100644
                      }
                  }
              }, State.PLAY, (PacketHandler) PacketWrapper::cancel // Bedrock client ignores dimension data after start game
-@@ -636,6 +629,18 @@ public final class JoinPackets {
+@@ -636,6 +600,50 @@ public final class JoinPackets {
          setTime.send(BedrockProtocol.class, false);
      }
  
++    static void readServerConfiguration(final PacketWrapper wrapper) {
++        if (wrapper.read(Types.BOOLEAN)) { // has server join information
++            if (wrapper.read(Types.BOOLEAN)) { // has gathering join information
++                wrapper.read(BedrockTypes.UUID); // experience id
++                wrapper.read(BedrockTypes.STRING); // experience name
++                if (wrapper.read(Types.BOOLEAN)) { // has experience world id
++                    wrapper.read(BedrockTypes.UUID); // experience world id
++                }
++                if (wrapper.read(Types.BOOLEAN)) { // has experience world name
++                    wrapper.read(BedrockTypes.STRING); // experience world name
++                }
++                wrapper.read(BedrockTypes.STRING); // creator id
++                if (wrapper.read(Types.BOOLEAN)) { // has target id
++                    wrapper.read(BedrockTypes.UUID); // target id
++                }
++                if (wrapper.read(Types.BOOLEAN)) {
++                    wrapper.read(BedrockTypes.STRING); // scenario id
++                }
++                if (wrapper.read(Types.BOOLEAN)) { // has server id
++                    wrapper.read(BedrockTypes.STRING); // server id
++                }
++            }
++            if (wrapper.read(Types.BOOLEAN)) { // has store entry point info
++                wrapper.read(BedrockTypes.STRING); // store id
++                wrapper.read(BedrockTypes.STRING); // store name
++            }
++            if (wrapper.read(Types.BOOLEAN)) { // has presence info
++                wrapper.read(BedrockTypes.STRING); // rich presence id
++            }
++        }
++    }
++
 +    static DimensionDefinition readDimensionDefinition(final PacketWrapper wrapper) {
 +        final int minimumY = wrapper.read(BedrockTypes.VAR_INT);
 +        final int heightRange = wrapper.read(BedrockTypes.VAR_INT);
@@ -1770,6 +1852,60 @@ index 00000000..e00a7083
 +            } finally {
 +                buffer.release();
 +            }
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/StartGameServerConfigurationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/StartGameServerConfigurationTest.java
+new file mode 100644
+index 00000000..98233f20
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/StartGameServerConfigurationTest.java
+@@ -0,0 +1,48 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class StartGameServerConfigurationTest {
++
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void optionalPresenceLeavesTheFollowingTelemetryFieldsAligned(final boolean presence) {
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            buffer.writeBoolean(true); // server configuration
++            buffer.writeBoolean(false); // gathering
++            buffer.writeBoolean(false); // store entry point
++            buffer.writeBoolean(presence);
++            if (presence) {
++                BedrockTypes.STRING.write(buffer, "override");
++            }
++            final String[] telemetry = {"server", "scenario", "world", "owner"};
++            for (final String field : telemetry) {
++                BedrockTypes.STRING.write(buffer, field);
++            }
++
++            final var wrapper = new PacketWrapperImpl(ClientboundBedrockPackets.START_GAME, buffer, null);
++            JoinPackets.readServerConfiguration(wrapper);
++            for (final String field : telemetry) {
++                assertEquals(field, wrapper.read(BedrockTypes.STRING));
++            }
++            assertFalse(buffer.isReadable());
++        } finally {
++            buffer.release();
 +        }
 +    }
 +

@@ -61,11 +61,19 @@ Acknowledged container identity and generation still control item actions.
 A workbench model retains its exact container generation.
 Retired openings cannot read replacement sources or retire a later workbench model.
 
-Real profile settings update filtering and the selected tab.
-Missing profile preferences remain absent; the initial filtering value follows the observed current native constructor.
+The constructed player profile starts with Search, Crafting, filtering off, and automatic layouts.
+Later server packets replace all five fields, including explicit zero tabs.
+The backend reads the current profile rather than retaining the controller's transient filter flag.
+A regression opens without an options packet and observes the populated Search source.
+An explicit zero-tab packet then replaces the profile without replacing the model.
+Fresh-world direct and ViaProxy controls retain all 1,980 items across two openings, with no inventory-options packet in either journal.
+Both installed add-on hashes match the current build.
 Source, recipe, unlock, ability, rule, and preference changes invalidate the retained collections.
 Catalog replacement refreshes source collections while preserving the backend's installed policies and owned query.
 The state publishes the retained rows and full item previews through a bounded, compressed protocol-2225 snapshot.
+The view adapter can expand a fixed recipe-grid window while retaining every source row and item preview.
+Local windows preserve original recipe IDs, all real menu slots, and the authoritative snapshot revision.
+A 2,000-row Creative regression covers distant windows and exported-program round trips.
 Each snapshot carries its opening, container generation, revision, and both independent native layouts.
 Search and preference commands can use a pending opening. Item requests require the acknowledged generation.
 
@@ -87,7 +95,7 @@ The current native callback selects How to Play topic 5 for Survival and Encyclo
 A physical 1.26.60.5 capture confirms the Survival Your First Craft topic.
 Translated Help paragraphs replace both plain text and rendered components, preserving the native color palette.
 Program round trips retain these components and navigation labels from authored topic and category variables. Full installed Help lifetimes and glyph appearance remain unverified.
-Bulk recipe selection, Creative cursor replacement, and complete installed action parity remain unfinished.
+Bulk Survival recipe selection and complete installed action parity remain unfinished.
 
 The retained model exposes output quantity separately from availability and action admission.
 Candidate recipes share source consumption in priority order. Count reads retain the native crafting-input, cursor, and player-inventory order.
@@ -99,3 +107,45 @@ These controls do not execute the complete native cache wrapper or establish ins
 
 Five lifecycle regression cases exercise pending source changes, retained search policies, stale acknowledgments, profile/catalog updates, and same-object workbench reopening.
 These tests establish Java ownership and observable collection state; they do not establish complete native screen parity.
+
+Creative catalog cells use the current effective game mode for permission.
+They remain active without recipe ingredients, while retained availability and captured search policies stay unchanged.
+The Bedrock 1.26.60.5 background callback bypasses recipe-disabled colors in Creative.
+A protocol-2225 native capture selects a trapped chest through CraftCreative and takes the resulting stack to the cursor.
+Current native background controls cover explicit and inherited Creative modes.
+A snapshot regression checks active Creative cells without ingredients and restores recipe restrictions in Survival.
+A live add-on check removes the red disabled backgrounds.
+The picker validates the full cursor stack before transfer admission while preserving the unit-sized native craft result.
+Request regressions cover stack sizes one and 64, cursor prediction, and the restoration snapshot.
+Official Bedrock 1.26.60.5 local-world controls establish primary stack take/discard and secondary one-item take/discard.
+Both held-item cases cover same and different catalog identities.
+Shift-left-click and Shift-right-click preserve the cursor and add a full stack through inventory destinations.
+Native controls establish global merge priority, ascending hotbar then main-inventory order, partial capacity, and a full-inventory no-op.
+These controls establish visible behavior, not original native request bytes.
+Regressions cover quantities, split destinations, cursor preservation, unconfirmed stacks, discard admission, capacity, and rejection rollback.
+Unchanged Java Creative slot echoes retain the original stack and network ID instead of creating a replacement.
+The comparison includes count and the complete native wire snapshot.
+Regressions cover open and closed inventory contexts, and retain real replacements for changed counts or user data.
+
+Installed direct and ViaProxy controls each complete 14 server-accepted requests for these catalog actions.
+The controls cover one-item quantities, cursor preservation, split bulk placement, partial capacity, and full-inventory no-op.
+Reopening preserves both stacks without Creative replacement requests.
+Both installed add-ons and the running proxy match the rebuilt artifact hashes.
+The catalog-only toolbar also accepts full-stack destruction through a separately advertised optional channel.
+Official Bedrock 1.26.60.5 local-world controls cover Shift-left, Shift-right, an occupied cursor, and an empty hotbar slot.
+The same input moves the stack into main inventory in the inventory-only layout.
+The matching `inventory_screen.json` maps the Creative toolbar auto-place input to `button.container_auto_destroy`.
+The backend requires the current acknowledged opening, generation, revision, Creative toolbar layout, network ID, and discard permission.
+Regressions cover rollback, cursor preservation, pending requests, layout restrictions, typed locks, and stale generation rejection.
+These native controls establish visible behavior; original native request bytes remain unverified.
+Installed direct and ViaProxy controls each complete seven server-accepted requests for hotbar destruction and inventory-only transfer.
+Both routes preserve the occupied cursor, leave empty slots unchanged, and retain the resulting inventory after reopening without Creative replacement requests.
+The installed add-ons and proxy match the rebuilt artifact hashes.
+
+Bulk Survival actions and complete native screen parity remain unfinished.
+
+Player and workbench graphs receive their tab and layout indices from the protocol-2225 enums.
+The native inventory graph references these controller variables in forced toggle indices.
+Missing variables resolve to null and make category clicks request index zero.
+Screen regressions click category and layout controls through exported programs in both inventory layouts.
+These authored control indices remain independent of the selected profile values.

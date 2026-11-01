@@ -1,4 +1,4 @@
-From e56cea5adcaa3f058d32dd44d5bc0c552e0e4606 Mon Sep 17 00:00:00 2001
+From 2c433b2d3bf45713a802c3aba3e9694505db5bbe Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(bedrock): add featured server browser
@@ -13,24 +13,46 @@ Friends remains separate because it also works while connected. Create
 browser screens only on activation and retain the caller's parent screen.
 This prepares the destinations for VFP's server-list popup without adding
 a dependency on its currently unavailable successful Jenkins artifact.
+
+Read hosted NetherNet destinations from the service netherNetId field.
+Current protocol-2225 creator joins return NetherNet_JsonRpc and a network
+ID without ipV4Address or port; requiring a socket address rejects those
+valid responses before connection. Retain the address as a transport-bound
+string so Xbox network IDs are never suffixed with a port. Socket joins
+continue to use their advertised host and port. The captured current
+Dimension Clash response passes the parser with its exact network ID.
+Add boundary regressions for creator metadata, ordinary socket metadata,
+and a missing network ID; keep raw service responses private.
+
+Resolve every catalog selection through Gatherings, including entries with
+static display addresses. Current 1.26.60 Mineville and CubeCraft join
+responses select NetherNet with an HTTP signaling host and port, while
+hosted SoulSteel uses NetherNet_JsonRpc with an opaque network ID. Keep
+these destinations separate. A catalog display address does not establish
+that the selected experience still accepts RakNet. The Mineville display
+endpoint times out over RakNet before any game packet. HTTP destinations
+use the existing explicit NetherNet URI connection path. This is transport
+selection evidence, not a claim of complete server gameplay parity.
 ---
  .../integration/MixinServerListsScreen.java   |  18 +-
  .../mixin/core/integration/MixinVFPPopup.java |   2 +-
  .../screen/BedrockServerDetailsScreen.java    | 211 +++++++++
  .../bedrock/screen/BedrockServerList.java     |  46 ++
  .../bedrock/screen/BedrockServersScreen.java  | 399 ++++++++++++++++++
- .../bedrock/servers/BedrockServerCatalog.java | 261 ++++++++++++
- .../servers/BedrockServerConnection.java      |  53 +++
+ .../bedrock/servers/BedrockServerCatalog.java | 271 ++++++++++++
+ .../servers/BedrockServerConnection.java      |  49 +++
  .../bedrock/servers/BedrockServerStatus.java  | 116 +++++
  .../bedrock/visual/BedrockImageCache.java     |   3 +-
  .../viafabricplus-bedrock/lang/en_us.json     |  20 +
- 10 files changed, 1121 insertions(+), 8 deletions(-)
+ .../servers/BedrockServerCatalogTest.java     |  52 +++
+ 11 files changed, 1179 insertions(+), 8 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServerDetailsScreen.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServerList.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServersScreen.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalog.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerConnection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerStatus.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalogTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinServerListsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinServerListsScreen.java
 index caf35d9..f76e762 100644
@@ -760,10 +782,10 @@ index 0000000..4c799cb
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalog.java
 new file mode 100644
-index 0000000..8be88e4
+index 0000000..5320244
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalog.java
-@@ -0,0 +1,261 @@
+@@ -0,0 +1,271 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2023-2026 ViaVersion and contributors
@@ -790,6 +812,7 @@ index 0000000..8be88e4
 +import java.util.Map;
 +import java.util.concurrent.CompletableFuture;
 +import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
++import net.raphimc.minecraftauth.extra.realms.model.RealmsJoinInformation;
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +import org.jetbrains.annotations.Nullable;
 +
@@ -865,17 +888,31 @@ index 0000000..8be88e4
 +                    .timeout(Duration.ofSeconds(20))
 +                    .header("Content-Type", "application/json")
 +                    .POST(HttpRequest.BodyPublishers.ofString(body.toString())).build());
-+                final JsonObject data = object(response, "result");
-+                final String host = string(data, "ipV4Address");
-+                final int port = data == null ? 0 : number(data, "port", 0);
-+                if (host.isBlank() || port < 1 || port > 65535) {
-+                    throw new IOException("Bedrock experience returned no usable server address");
-+                }
-+                return new JoinAddress(host, port, string(data, "networkProtocol"));
++                return parseJoin(response);
 +            } catch (Exception exception) {
 +                throw new IllegalStateException("Could not join Bedrock experience", exception);
 +            }
 +        });
++    }
++
++    static JoinAddress parseJoin(final JsonObject response) throws IOException {
++        final JsonObject data = object(response, "result");
++        final String protocol = string(data, "networkProtocol");
++        if (protocol.equalsIgnoreCase(RealmsJoinInformation.PROTOCOL_NETHERNET_JSONRPC)) {
++            final String id = string(data, "netherNetId");
++            if (id.isBlank()) throw new IOException("Bedrock experience returned no usable NetherNet ID");
++            return new JoinAddress(id, protocol);
++        }
++        final boolean http = protocol.equalsIgnoreCase(RealmsJoinInformation.PROTOCOL_NETHERNET);
++        if (!protocol.isBlank() && !protocol.equalsIgnoreCase(RealmsJoinInformation.PROTOCOL_DEFAULT) && !http) {
++            throw new IOException("Bedrock experience returned an unsupported transport");
++        }
++        final String host = string(data, "ipV4Address");
++        final int port = data == null ? 0 : number(data, "port", 0);
++        if (host.isBlank() || port < 1 || port > 65535) {
++            throw new IOException("Bedrock experience returned no usable server address");
++        }
++        return new JoinAddress((http ? "nethernet://" : "") + host + ':' + port, protocol);
 +    }
 +
 +    private static URI service() throws IOException, InterruptedException {
@@ -1017,20 +1054,15 @@ index 0000000..8be88e4
 +    public record Activity(String title, String subtitle, String description, String image) {
 +    }
 +
-+    public record JoinAddress(String host, int port, String networkProtocol) {
-+
-+        public String address() {
-+            return this.host + ':' + this.port;
-+        }
-+    }
++    public record JoinAddress(String address, String networkProtocol) { }
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerConnection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerConnection.java
 new file mode 100644
-index 0000000..5d34485
+index 0000000..50ab35b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerConnection.java
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,49 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2023-2026 ViaVersion and contributors
@@ -1049,7 +1081,6 @@ index 0000000..5d34485
 +import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
 +import net.raphimc.minecraftauth.extra.realms.model.RealmsJoinInformation;
 +import net.raphimc.viabedrock.api.BedrockProtocolVersion;
-+import org.cloudburstmc.netty.channel.nethernet.config.NetherNetAddress;
 +
 +/** Resolves hosted experiences and connects through the transport requested by Gatherings. */
 +public final class BedrockServerConnection {
@@ -1058,18 +1089,15 @@ index 0000000..5d34485
 +    }
 +
 +    public static CompletableFuture<Void> join(final BedrockAuthManager account, final Server server) {
-+        final CompletableFuture<JoinAddress> destination = server.hasAddress()
-+            ? CompletableFuture.completedFuture(new JoinAddress(server.host(), server.port(), RealmsJoinInformation.PROTOCOL_DEFAULT))
-+            : BedrockServerCatalog.join(account, server);
++        final CompletableFuture<JoinAddress> destination = BedrockServerCatalog.join(account, server);
 +        return destination.thenCompose(address -> {
 +            final CompletableFuture<Void> result = new CompletableFuture<>();
 +            Minecraft.getInstance().execute(() -> {
 +                try {
 +                    final String protocol = address.networkProtocol();
-+                    if (protocol.isBlank() || protocol.equalsIgnoreCase(RealmsJoinInformation.PROTOCOL_DEFAULT)) {
++                    if (protocol.isBlank() || protocol.equalsIgnoreCase(RealmsJoinInformation.PROTOCOL_DEFAULT)
++                        || protocol.equalsIgnoreCase(RealmsJoinInformation.PROTOCOL_NETHERNET)) {
 +                        ConnectionUtil.connect(address.address(), BedrockProtocolVersion.BEDROCK_LATEST);
-+                    } else if (protocol.equalsIgnoreCase(RealmsJoinInformation.PROTOCOL_NETHERNET)) {
-+                        BedrockConnectionUtil.connectNetherNet(new NetherNetAddress(address.address()));
 +                    } else if (protocol.equalsIgnoreCase(RealmsJoinInformation.PROTOCOL_NETHERNET_JSONRPC)) {
 +                        BedrockConnectionUtil.connectNetherNet(new NetherNetJsonRpcAddress(address.address()));
 +                    } else {
@@ -1251,5 +1279,63 @@ index fa7eff9..6e1452c 100644
    "bedrock_lan.viafabricplus.button": "Bedrock LAN Worlds",
    "bedrock_lan.viafabricplus.join": "Join world",
    "bedrock_lan.viafabricplus.refresh": "Refresh",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalogTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalogTest.java
+new file mode 100644
+index 0000000..051a151
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalogTest.java
+@@ -0,0 +1,52 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.servers;
++
++import com.google.gson.JsonParser;
++import java.io.IOException;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockServerCatalogTest {
++
++    @Test
++    void creatorNetherNetJoinsKeepTheNetworkIdWithoutAnIpAddressOrPort() throws Exception {
++        final var response = JsonParser.parseString("""
++            {"result":{"networkProtocol":"NetherNet_JsonRpc","netherNetId":"12345678-1234-1234-1234-123456789abc",
++              "destinationInfo":{"experienceName":"Example"}}}
++            """).getAsJsonObject();
++        final var join = BedrockServerCatalog.parseJoin(response);
++        assertEquals("12345678-1234-1234-1234-123456789abc", join.address());
++        assertEquals("NetherNet_JsonRpc", join.networkProtocol());
++    }
++
++    @Test
++    void httpNetherNetJoinsUseTheSignalingHostAndPort() throws Exception {
++        final var response = JsonParser.parseString("""
++            {"result":{"networkProtocol":"NetherNet","ipV4Address":"example.test","port":19132}}
++            """).getAsJsonObject();
++        final var join = BedrockServerCatalog.parseJoin(response);
++        assertEquals("nethernet://example.test:19132", join.address());
++        assertEquals("NetherNet", join.networkProtocol());
++    }
++
++    @Test
++    void socketJoinsRetainTheirAdvertisedPort() throws Exception {
++        final var response = JsonParser.parseString("""
++            {"result":{"ipV4Address":"127.0.0.1","port":19132}}
++            """).getAsJsonObject();
++        assertEquals("127.0.0.1:19132", BedrockServerCatalog.parseJoin(response).address());
++    }
++
++    @Test
++    void aNetherNetJoinCannotUseAnIpFallbackWhenTheNetworkIdIsMissing() {
++        final var response = JsonParser.parseString("""
++            {"result":{"networkProtocol":"NetherNet_JsonRpc","ipV4Address":"127.0.0.1","port":19132}}
++            """).getAsJsonObject();
++        assertThrows(IOException.class, () -> BedrockServerCatalog.parseJoin(response));
++    }
++
++}
 -- 
 2.56.0

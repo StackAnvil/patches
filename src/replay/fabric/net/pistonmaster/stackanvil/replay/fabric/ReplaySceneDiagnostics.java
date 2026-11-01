@@ -1,6 +1,10 @@
 package net.pistonmaster.stackanvil.replay.fabric;
 
 import com.viaversion.viaversion.libs.gson.Gson;
+import com.viaversion.viaversion.api.Via;
+import net.raphimc.viabedrock.api.model.BedrockBlockState;
+import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import net.pistonmaster.stackanvil.replay.PrivateFiles;
@@ -83,6 +87,12 @@ final class ReplaySceneDiagnostics {
                     Object below = world.getClass().getMethod("getBlockState", blockPosition).invoke(world, call(position, "below"));
                     state.put("footIsAir", call(foot, "isAir"));
                     state.put("belowIsAir", call(below, "isAir"));
+                    state.put("footBlockState", foot.toString());
+                    state.put("belowBlockState", below.toString());
+                    Object above = call(position, "above");
+                    state.put("headBlockState", world.getClass().getMethod("getBlockState", blockPosition).invoke(world, above).toString());
+                    nativeBlocks(position, state);
+                    nativePalette(state);
                     int entities = 0;
                     for (Object ignored : (Iterable<?>) call(world, "entitiesForRendering")) entities++;
                     state.put("loadedEntities", entities);
@@ -98,6 +108,36 @@ final class ReplaySceneDiagnostics {
 
     private static Object call(Object target, String name) throws ReflectiveOperationException {
         return target.getClass().getMethod(name).invoke(target);
+    }
+
+    private static void nativeBlocks(Object position, Map<String, Object> state) throws ReflectiveOperationException {
+        Class<?> blocks;
+        try {
+            blocks = Class.forName("com.viaversion.viafabricplus.bedrock.appearance.BedrockNativeBlocks");
+        } catch (ClassNotFoundException ignored) {
+            return;
+        }
+        int x = ((Number) call(position, "getX")).intValue();
+        int y = ((Number) call(position, "getY")).intValue();
+        int z = ((Number) call(position, "getZ")).intValue();
+        var lookup = blocks.getMethod("state", int.class, int.class, int.class, int.class);
+        state.put("nativeFootPrimary", String.valueOf(lookup.invoke(null, x, y, z, 0)));
+        state.put("nativeFootSecondary", String.valueOf(lookup.invoke(null, x, y, z, 1)));
+        state.put("nativeHeadPrimary", String.valueOf(lookup.invoke(null, x, y + 1, z, 0)));
+    }
+
+    private static void nativePalette(Map<String, Object> state) {
+        for (var connection : Via.getManager().getConnectionManager().getConnections()) {
+            if (!connection.getChannel().isActive()
+                    || !connection.getProtocolInfo().getPipeline().contains(BedrockProtocol.class)) continue;
+            BlockStateRewriter blocks = connection.get(BlockStateRewriter.class);
+            if (blocks == null) continue;
+            state.put("nativeAirRuntimeId", blocks.bedrockId(BedrockBlockState.AIR));
+            state.put("nativeVanillaPaletteSize", BedrockProtocol.MAPPINGS.getBedrockBlockStates().size());
+            state.put("coreCodeSource", BedrockProtocol.class.getProtectionDomain().getCodeSource().getLocation().toString());
+            state.put("corePaletteResource", String.valueOf(BedrockProtocol.class.getResource("/assets/viabedrock/data/bedrock/block_palette.nbt")));
+            break;
+        }
     }
 
     private static void nativeLightmap(Object renderer, Map<String, Object> state) throws ReflectiveOperationException {

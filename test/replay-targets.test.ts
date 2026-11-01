@@ -27,14 +27,29 @@ test("recognizes Hive targets without matching unrelated suffixes", () => {
     "geo.hivebedrock.cloud:19132",
     "GEO.HIVEBEDROCK.CLOUD:19132",
     "nethernet://hivebedrock.network:443",
+    "nethernet.playhive.com:19132",
   ])
     expect(hiveTarget(publicTarget(address))).toBe(true);
   for (const address of [
     "play.cubecraft.net:19132",
     "hivebedrock.cloud.example.org:19132",
     "nothivebedrock.cloud:19132",
+    "notplayhive.com:19132",
   ])
     expect(hiveTarget(publicTarget(address))).toBe(false);
+});
+
+test("keeps hosted experience network IDs separate from socket endpoints", () => {
+  const target = "nethernet-xbox-json-rpc://12345678-1234-1234-1234-123456789abc";
+  expect(publicTarget(target)).toBe(target);
+  expect(viaProxyTarget(publicTarget(target))).toBe(target);
+  for (const invalid of [
+    `${target}:19132`,
+    `${target}/path`,
+    `${target}?token=secret`,
+    "nethernet-xbox-json-rpc://user:secret@network-id",
+  ])
+    expect(() => publicTarget(invalid)).toThrow();
 });
 
 test("passes NetherNet hosts and ports to ViaProxy as socket addresses", () => {

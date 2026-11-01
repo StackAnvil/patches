@@ -1,4 +1,4 @@
-From 45de91564ec7d9b22c07ad52c786ca8e4e77f656 Mon Sep 17 00:00:00 2001
+From 31342db079f065bf10d1bd43811017b3ac965a88 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] fix(models): export complete asset pairs and empty item
@@ -97,19 +97,40 @@ is actually selected. The rendering gate recognizes that warning, so an
 actively missing custom icon remains a failed rendering control. Use the
 existing empty-definition schema when no variant resolves; no substitute
 camera pixels or camera-specific exclusion is introduced.
+
+Compile actor model/texture pairs reachable from declared render controllers
+instead of every geometry alias crossed with every texture alias. Keep
+independent selectors independent. Equal stable query reads over arrays
+of equal length select paired entries; random or unsupported expressions
+and unresolved controllers retain conservative combinations. Preserve the
+existing model keys and all referenced source geometry and textures.
+
+A current protocol-2225 OneBlockOnline capture exhausts a 4 GiB heap during
+actor resource conversion. Four furniture preview actors each declare 720
+geometry and texture aliases. Their three controllers select corresponding
+240-entry arrays with the same named property. Each actor needs 720 pairs,
+not 518,400. The actual captured controllers produce that bounded set with
+this projection. Regressions cover correlated properties, independent
+queries, repeated random expressions, and unresolved-controller fallback.
+Raw server packs and packet captures remain private. This reduces unreachable
+conversion work; it does not establish full native actor rendering parity.
 ---
  .../api/model/entity/CustomEntity.java        |   9 +
  .../definition/AttachableDefinitions.java     |  41 ++-
  .../protocol/rewriter/ItemRewriter.java       |   8 +-
  .../CustomAttachableResourceRewriter.java     |  77 +++--
- .../CustomEntityResourceRewriter.java         |  37 +--
+ .../CustomEntityResourceRewriter.java         |  43 ++-
  .../CustomItemTextureResourceRewriter.java    |  20 +-
+ .../resourcepack/EntityModelBindings.java     | 138 +++++++++
  .../ItemModelResourceRewriter.java            | 127 +++++++-
  ...CustomItemTextureResourceRewriterTest.java | 112 +++++++
+ .../resourcepack/EntityModelBindingsTest.java |  68 ++++
  .../ItemModelResourceRewriterTest.java        | 123 ++++++++
  .../resourcepack/ModelResourceAssetsTest.java | 290 ++++++++++++++++++
- 10 files changed, 776 insertions(+), 68 deletions(-)
+ 12 files changed, 985 insertions(+), 71 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/EntityModelBindings.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriterTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/EntityModelBindingsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 
@@ -373,7 +394,7 @@ index 40083952..fcc26eee 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
-index 60070350..e68258a9 100644
+index 60070350..9c15e9f5 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
 @@ -19,16 +19,15 @@ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
@@ -395,7 +416,7 @@ index 60070350..e68258a9 100644
  import java.util.function.Consumer;
  import java.util.function.Supplier;
  
-@@ -46,31 +45,29 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
+@@ -46,32 +45,30 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
  
      @Override
      public void submitTasks(final ResourcePackStorage resourcePackStorage, final Consumer<Supplier<Content>> submitter) {
@@ -419,29 +440,33 @@ index 60070350..e68258a9 100644
 -                }
 -            }
 -        }
-+        final Set<String> textures = this.copyTextures(resourcePackStorage, entityDefinition.entityData().getTextures().values(), javaContent);
-         for (Map.Entry<String, String> modelEntry : entityDefinition.entityData().getGeometries().entrySet()) {
-             final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
+-        for (Map.Entry<String, String> modelEntry : entityDefinition.entityData().getGeometries().entrySet()) {
+-            final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
 -            if (bedrockGeometry != null) {
 -                for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
 -                    final String modelKey = modelEntry.getKey() + "_" + textureEntry.getKey();
 -                    final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + this.getJavaTexturePath(textureEntry.getValue()), RotationType.POST_1_21_11);
 -                    javaContent.putModel(modelKey, itemModelData.compile());
 -                    resourcePackStorage.getConverterData().put("ce_" + entityDefinition.identifier() + '_' + modelKey + "_scale", itemModelData.getScale());
-+            for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
-+                final String modelKey = modelEntry.getKey() + "_" + textureEntry.getKey();
-+                final boolean hasTexture = textures.contains(textureEntry.getValue());
-+                this.recordMissingAssets(resourcePackStorage, entityDefinition.identifier(), modelKey, modelEntry.getValue(), textureEntry.getValue(), bedrockGeometry != null, hasTexture);
-+                if (bedrockGeometry == null || !hasTexture) {
-+                    continue;
-                 }
-+                final CompiledGeometry geometry = geometries.computeIfAbsent(bedrockGeometry, CompiledGeometry::compile);
-+                javaContent.putGeometry(geometry);
-+                javaContent.putModel(modelKey, geometry.withTexture("viabedrock:" + this.getJavaTexturePath(textureEntry.getValue())));
-+                resourcePackStorage.getConverterData().put("ce_" + entityDefinition.identifier() + '_' + modelKey + "_scale", geometry.scale());
+-                }
++        final Set<String> textures = this.copyTextures(resourcePackStorage, entityDefinition.entityData().getTextures().values(), javaContent);
++        for (final var binding : EntityModelBindings.collect(entityDefinition.entityData(), resourcePackStorage.getRenderControllers()::get)) {
++            final String geometryName = entityDefinition.entityData().getGeometries().get(binding.geometry());
++            final String textureName = entityDefinition.entityData().getTextures().get(binding.texture());
++            final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(geometryName);
++            final String modelKey = binding.geometry() + "_" + binding.texture();
++            final boolean hasTexture = textures.contains(textureName);
++            this.recordMissingAssets(resourcePackStorage, entityDefinition.identifier(), modelKey, geometryName, textureName, bedrockGeometry != null, hasTexture);
++            if (bedrockGeometry == null || !hasTexture) {
++                continue;
              }
++            final CompiledGeometry geometry = geometries.computeIfAbsent(bedrockGeometry, CompiledGeometry::compile);
++            javaContent.putGeometry(geometry);
++            javaContent.putModel(modelKey, geometry.withTexture("viabedrock:" + this.getJavaTexturePath(textureName)));
++            resourcePackStorage.getConverterData().put("ce_" + entityDefinition.identifier() + '_' + modelKey + "_scale", geometry.scale());
          }
          javaContent.generateItemDefinition();
+         return javaContent;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriter.java
 index a1e27de2..474640e6 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriter.java
@@ -489,6 +514,150 @@ index a1e27de2..474640e6 100644
              }
              final JsonObject itemModel = new JsonObject();
              itemModel.addProperty("parent", "minecraft:item/generated");
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/EntityModelBindings.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/EntityModelBindings.java
+new file mode 100644
+index 00000000..ddda2ab6
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/EntityModelBindings.java
+@@ -0,0 +1,138 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import org.cube.converter.data.bedrock.BedrockEntityData;
++import org.cube.converter.data.bedrock.controller.BedrockRenderController;
++
++import java.util.ArrayList;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.Set;
++import java.util.function.Function;
++import java.util.regex.Pattern;
++
++/** Conservative model and texture pairs reachable through an actor's render controllers. */
++final class EntityModelBindings {
++
++    private static final Pattern ARRAY = Pattern.compile("(?i)(array\\.[a-z0-9_.]+)\\[(.+)]");
++    private static final Pattern QUERY = Pattern.compile("(?i)(?:query|q)\\.(variant|skin_id|mark_variant)");
++    private static final Pattern PROPERTY = Pattern.compile("(?i)(?:query|q)\\.property\\((['\"])([a-z0-9_:.-]+)\\1\\)");
++
++    static Set<Binding> collect(final BedrockEntityData entity, final Function<String, BedrockRenderController> controllers) {
++        final Set<Binding> result = new LinkedHashSet<>();
++        if (entity.getControllers().isEmpty()) {
++            return all(entity);
++        }
++        for (final var reference : entity.getControllers()) {
++            final BedrockRenderController controller = controllers.apply(reference.identifier());
++            if (controller == null || controller.textureExpressions().isEmpty()) {
++                return all(entity);
++            }
++            final Selection geometry = select(controller.geometryExpression(), "geometry.", controller.geometries(), entity.getGeometries());
++            if (geometry == null) {
++                return all(entity);
++            }
++            for (final String expression : controller.textureExpressions()) {
++                final Selection texture = select(expression, "texture.", controller.textures(), entity.getTextures());
++                if (texture == null) {
++                    return all(entity);
++                }
++                if (geometry.query != null && geometry.query.equals(texture.query) && geometry.aliases.size() == texture.aliases.size()) {
++                    // Only stable query reads correlate. Equal random or stateful expressions need independent combinations.
++                    for (int index = 0; index < geometry.aliases.size(); index++) {
++                        result.add(new Binding(geometry.aliases.get(index), texture.aliases.get(index)));
++                    }
++                } else {
++                    addAll(result, geometry.aliases, texture.aliases);
++                }
++            }
++        }
++        return result;
++    }
++
++    private static Selection select(final String expression, final String prefix, final List<BedrockRenderController.Array> arrays,
++                                    final Map<String, String> aliases) {
++        final String value = expression.trim();
++        final String direct = alias(value, prefix, aliases);
++        if (direct != null) {
++            return new Selection(List.of(direct), null);
++        }
++        final var match = ARRAY.matcher(value);
++        if (!match.matches()) {
++            return null;
++        }
++        for (final var array : arrays) {
++            if (!array.name().equalsIgnoreCase(match.group(1)) || array.values().isEmpty()) {
++                continue;
++            }
++            final List<String> selected = new ArrayList<>();
++            for (final String element : array.values()) {
++                final String name = alias(element.trim(), prefix, aliases);
++                if (name == null) {
++                    return null;
++                }
++                selected.add(name);
++            }
++            return new Selection(selected, stableQuery(match.group(2)));
++        }
++        return null;
++    }
++
++    private static String alias(final String value, final String prefix, final Map<String, String> aliases) {
++        if (!value.regionMatches(true, 0, prefix, 0, prefix.length())) {
++            return null;
++        }
++        final String name = value.substring(prefix.length());
++        String selected = null;
++        for (final String key : aliases.keySet()) {
++            if (key.equalsIgnoreCase(name)) {
++                if (selected != null) {
++                    return null;
++                }
++                selected = key;
++            }
++        }
++        return selected;
++    }
++
++    private static String stableQuery(final String expression) {
++        final String value = expression.replaceAll("\\s+", "");
++        final var query = QUERY.matcher(value);
++        if (query.matches()) {
++            return query.group(1).toLowerCase(Locale.ROOT);
++        }
++        final var property = PROPERTY.matcher(value);
++        // Preserve the property name's case, even though Molang identifiers are case-insensitive.
++        return property.matches() ? "property:" + property.group(2) : null;
++    }
++
++    private static Set<Binding> all(final BedrockEntityData entity) {
++        final Set<Binding> result = new LinkedHashSet<>();
++        addAll(result, entity.getGeometries().keySet(), entity.getTextures().keySet());
++        return result;
++    }
++
++    private static void addAll(final Set<Binding> result, final Iterable<String> geometries, final Iterable<String> textures) {
++        for (final String geometry : geometries) {
++            for (final String texture : textures) {
++                result.add(new Binding(geometry, texture));
++            }
++        }
++    }
++
++    private EntityModelBindings() {
++    }
++
++    record Binding(String geometry, String texture) {
++    }
++
++    private record Selection(List<String> aliases, String query) {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
 index 799413e5..4deef2b9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
@@ -776,6 +945,80 @@ index 00000000..a488f7d4
 +        final var result = new InMemoryContent();
 +        new CustomItemTextureResourceRewriter().submitTasks(storage, task -> result.putAll(task.get()));
 +        return result;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/EntityModelBindingsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/EntityModelBindingsTest.java
+new file mode 100644
+index 00000000..16d9d113
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/EntityModelBindingsTest.java
+@@ -0,0 +1,68 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import org.cube.converter.data.bedrock.BedrockEntityData;
++import org.cube.converter.data.bedrock.controller.BedrockRenderController;
++import org.cube.converter.parser.bedrock.controller.BedrockControllerParser;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class EntityModelBindingsTest {
++
++    @Test
++    void matchingPropertySelectorsRetainOnlyTheirPairedModelsAndTextures() {
++        final var controller = controller("query.property('example:index')", "q.property('example:index')");
++        final var bindings = EntityModelBindings.collect(entity(), _ -> controller);
++        assertEquals(Set.of(new EntityModelBindings.Binding("small", "red"),
++                new EntityModelBindings.Binding("large", "blue")), bindings);
++    }
++
++    @Test
++    void independentQueriesPreserveCrossedModelAndTextureSelections() {
++        final var controller = controller("query.variant", "query.mark_variant");
++        final var bindings = EntityModelBindings.collect(entity(), _ -> controller);
++        assertEquals(4, bindings.size());
++        assertTrue(bindings.contains(new EntityModelBindings.Binding("small", "blue")));
++        assertTrue(bindings.contains(new EntityModelBindings.Binding("large", "red")));
++    }
++
++    @Test
++    void equalRandomExpressionsStillPermitIndependentSelections() {
++        final var controller = controller("math.random(0,1)", "math.random(0,1)");
++        assertEquals(4, EntityModelBindings.collect(entity(), _ -> controller).size());
++    }
++
++    @Test
++    void anUnresolvedControllerPreservesTheConservativeAliasCombinations() {
++        final var bindings = EntityModelBindings.collect(entity(), _ -> null);
++        assertEquals(9, bindings.size());
++        assertTrue(bindings.contains(new EntityModelBindings.Binding("unused", "unused")));
++    }
++
++    private static BedrockEntityData entity() {
++        return new BedrockEntityData("example:actor", null,
++                List.of(new BedrockEntityData.RenderController("controller.render.example", "")), Map.of(), Map.of(),
++                Map.of("red", "textures/red", "blue", "textures/blue", "unused", "textures/unused"),
++                Map.of("small", "geometry.small", "large", "geometry.large", "unused", "geometry.unused"));
++    }
++
++    private static BedrockRenderController controller(final String geometryIndex, final String textureIndex) {
++        return BedrockControllerParser.parse("""
++                {"render_controllers":{"controller.render.example":{
++                  "geometry":"Array.geometries[%s]","textures":["Array.textures[%s]"],
++                  "arrays":{"geometries":{"Array.geometries":["Geometry.small","Geometry.large"]},
++                            "textures":{"Array.textures":["Texture.red","Texture.blue"]}}
++                }}}
++                """.formatted(geometryIndex, textureIndex)).getFirst();
 +    }
 +
 +}

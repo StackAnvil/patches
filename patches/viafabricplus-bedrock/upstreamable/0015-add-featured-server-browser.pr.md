@@ -1,19 +1,17 @@
-# Featured Bedrock server browser
+# Featured and creator server browser
 
-Show the live Gatherings catalog with server details, artwork, status and hosted-experience address resolution.
-Use the existing Bedrock connection path to join a selected experience.
+Show the live Gatherings catalog with server details, artwork, status, and hosted experience resolution.
+Use the existing Bedrock connection path for the advertised transport.
 
-Keep Realms, LAN and featured-server launch policies in `BedrockServerList`.
-The main footer uses these destinations and creates each browser only when its button is pressed.
-Realms requires an account. All three browsers require a disconnected client.
-Friends stays separate because it also works while connected.
-Button order, labels, account tooltips and return navigation stay the same.
+Hosted Xbox JSON-RPC joins read `netherNetId` instead of requiring an IP address and port.
+Keep the network ID unchanged when selecting Xbox JSON-RPC signaling.
+HTTP NetherNet joins use the signaling host and port. Socket joins retain their advertised port.
+Every catalog selection resolves its current destination through Gatherings, including entries with static display addresses.
+The captured current Dimension Clash response passes this parser. Regression cases cover both destination types and missing network IDs.
+A fresh browser join reaches SoulSteel pack negotiation over Xbox JSON-RPC. The transport then disconnects before StartGame.
+This verifies catalog resolution and initial admission. SoulSteel gameplay remains unverified.
+The current Mineville response selects HTTP NetherNet. Its RakNet endpoint times out before any game packet.
+A live add-on recording through that HTTP destination reaches a visible lobby and completes its scene.
+The browser transport choice has targeted parser coverage. Full native appearance remains unverified.
 
-The new upstream VFP server-list popup can host these destinations after a successful dependency build is available.
-[VFP Jenkins build 2285](https://ci.viaversion.com/job/ViaFabricPlus/2285/) fails because Loom requires Java 25 and Jenkins uses Java 21.
-Keep the verified VFP pin until the required Jenkins artifact and checksums can be verified.
-The popup migration is still pending.
-
-All four projects build with 2,995 passing tests, 152 optional skips and no failures or errors.
-All 38 add-on patches replay, and all 1,193 compiled client classes match the packaged JAR.
-No live popup migration or new visual layout is claimed by this refactor.
+Keep raw service responses, server endpoints, account data, and captures private.

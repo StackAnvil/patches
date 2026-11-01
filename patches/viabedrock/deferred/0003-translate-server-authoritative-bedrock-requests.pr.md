@@ -14,4 +14,7 @@ Regression coverage includes `ContainerTest`, `HorseContainerTest`, `NativeArmor
 
 Late replies and replacement menus have targeted regressions. Complete native response-manager behavior, live transactions, and every container remain unfinished.
 
+Installed direct and ViaProxy checks accept bundle insertion, extraction, and reinsertion requests and retain the contents after reopening.
+See the [inventory reference](../../../docs/native-player-inventory.md) for the control path and remaining native comparison limit.
+
 The [owning patch](0003-translate-server-authoritative-bedrock-requests.patch) retains implementation rationale and versioned evidence.

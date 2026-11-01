@@ -331,7 +331,7 @@ async function launchJava(
     await cp(join(source, file), join(instance, file));
   const cfgPath = join(instance, "instance.cfg");
   await rebindReplayJavaConfig(cfgPath, prismData, prism);
-  if (address.startsWith("nethernet://")) {
+  if (address.includes("://")) {
     // Prism's host/port launcher option appends a Java port to URI addresses.
     const pack = JSON.parse(await readFile(join(instance, "mmc-pack.json"), "utf8")) as {
       components: { uid: string; version: string }[];
@@ -461,7 +461,7 @@ async function launchJava(
       prism,
       "--launch",
       name,
-      ...(address.startsWith("nethernet://") ? [] : ["--server", address]),
+      ...(address.includes("://") ? [] : ["--server", address]),
     ],
     root,
     launcherLog,
@@ -751,6 +751,8 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   } else if (mode === "record" && input === "public") {
     target = publicTarget(option("--target"));
   } else if (mode === "record" && !target) throw new Error("Unknown server.");
+  if (client === "native" && target?.startsWith("nethernet-xbox-json-rpc://"))
+    throw new Error("Xbox JSON-RPC recordings require --client addon or --client proxy.");
   const hive = mode === "record" && hiveTarget(target!);
   if (hive && client !== "native" && !args.includes("--allow-hive"))
     throw new Error(
