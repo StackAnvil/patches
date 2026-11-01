@@ -144,7 +144,11 @@ Filled-bundle bars still need installed native comparison.
 Unknown storage snapshots restore ordinary controls.
 Hovering or carrying storage items also restores ordinary controls until native tooltips and selection are complete.
 Unsupported visible Help glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
-Creative hotbar destruction restores ordinary controls before item changes or requests.
+The Creative catalog-only toolbar binds Shift-left-click and Shift-right-click to full-stack destruction.
+The action preserves the cursor, requires a current acknowledged opening, and leaves empty slots unchanged.
+Inventory-only and recipe-book layouts use the authored quick-move command to preserve an occupied cursor during stack transfer.
+Backends without the separate destruction capability restore ordinary controls before item changes or requests.
+Installed direct and ViaProxy controls confirm destruction and occupied-cursor transfer through successful server responses and retained inventory after reopening.
 Installed direct and ViaProxy controls retain the complete 1,980-item catalog from a local protocol-2225 server.
 Tab and layout controls use the target inventory indices.
 Both routes search for rails and place a server-accepted stack of 64 in the hotbar.

@@ -1,4 +1,4 @@
-From 210863f8610c43bb08177ec80b97f85f616bc9cf Mon Sep 17 00:00:00 2001
+From 06e3909613c2025b9a5c5881942c649a2e04508b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -290,15 +290,30 @@ wire snapshots, including NBT, block state, restrictions and blocking
 ticks, while excluding transient network identity. Genuine count or native
 user-data changes retain replacement requests. Preserve drop permission,
 foreign-container rejection and pending-close ownership checks.
+
+Support the Creative catalog-only toolbar's container_auto_destroy action.
+Official Bedrock 1.26.60.5/protocol 2225 local-world controls discard the
+entire selected hotbar stack on Shift-left and Shift-right, preserve the
+held cursor, and leave empty slots unchanged. The same Shift input moves
+the stack to main inventory in the inventory-only layout. The matching
+inventory_screen.json creative_hotbar_container_slot_button overrides
+button_auto_place with button.container_auto_destroy.
+
+Advertise this destructive command on a separate optional channel. Bind it
+to the current opening, generation and revision, require Creative toolbar
+layout and confirmed discard permission, and predict only the selected
+permanent hotbar slot. Preserve cursor and inventory snapshots for rejected
+requests. These native controls establish visible behavior, not equality
+with original-client request bytes.
 ---
- .../model/NativePlayerInventoryAction.java    |  88 +++
- .../model/NativePlayerInventoryMessage.java   | 271 +++++++++
+ .../model/NativePlayerInventoryAction.java    |  94 +++
+ .../model/NativePlayerInventoryMessage.java   | 271 ++++++++
  .../model/NativePlayerInventoryResult.java    |  47 ++
  .../model/container/NativeRecipeCounter.java  |  74 +++
- .../resourcepack/ui/PlayerInventoryUi.java    | 397 +++++++++++++
+ .../resourcepack/ui/PlayerInventoryUi.java    | 397 ++++++++++++
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
- .../protocol/model/CreativeCatalog.java       | 266 +++++++++
- .../model/CreativeInventoryModel.java         | 198 +++++++
+ .../protocol/model/CreativeCatalog.java       | 266 ++++++++
+ .../model/CreativeInventoryModel.java         | 198 ++++++
  .../protocol/model/PlayerRecipeContext.java   |  96 +++
  .../protocol/model/PlayerRecipeModel.java     | 125 ++++
  .../protocol/packet/InventoryPackets.java     | 213 +++++--
@@ -307,22 +322,22 @@ foreign-container rejection and pending-close ownership checks.
  .../protocol/storage/CraftingDataTracker.java | 129 +++-
  .../storage/InventoryRequestTracker.java      |  24 +
  .../protocol/storage/InventoryTracker.java    |  21 +
- .../storage/NativePlayerRecipeState.java      | 559 ++++++++++++++++++
+ .../storage/NativePlayerRecipeState.java      | 593 ++++++++++++++++++
  .../storage/PlayerInventoryScreenTracker.java |  40 +-
- .../NativePlayerInventoryMessageTest.java     | 160 +++++
+ .../NativePlayerInventoryMessageTest.java     | 179 ++++++
  .../container/NativeRecipeCounterTest.java    |  27 +
  .../container/NativeRecipeQuantityTest.java   |  61 ++
  .../ui/PlayerInventoryUiTest.java             | 126 ++++
- .../protocol/model/CreativeCatalogTest.java   | 382 ++++++++++++
- .../protocol/packet/InventoryPacketsTest.java | 267 +++++++--
- .../rewriter/PlayerRecipeModelTest.java       | 471 +++++++++++++++
+ .../protocol/model/CreativeCatalogTest.java   | 382 +++++++++++
+ .../protocol/packet/InventoryPacketsTest.java | 267 ++++++--
+ .../rewriter/PlayerRecipeModelTest.java       | 471 ++++++++++++++
  ...egisteredPlayerRecipeAvailabilityTest.java |   5 +-
  .../RegisteredPlayerRecipeSearchTest.java     |   3 +-
  .../storage/CreativeInventoryActionTest.java  | 262 ++++++++
  .../storage/InventoryRequestTrackerTest.java  |  83 +++
- .../NativePlayerCreativeAuxiliaryTest.java    | 211 +++++++
- .../storage/NativePlayerCreativePickTest.java | 138 +++++
- 31 files changed, 4659 insertions(+), 170 deletions(-)
+ .../NativePlayerCreativeAuxiliaryTest.java    | 333 ++++++++++
+ .../storage/NativePlayerCreativePickTest.java | 138 ++++
+ 31 files changed, 4840 insertions(+), 170 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryResult.java
@@ -343,10 +358,10 @@ foreign-container rejection and pending-close ownership checks.
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java b/src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
 new file mode 100644
-index 00000000..62fb4706
+index 00000000..b3a09f75
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,94 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -365,9 +380,10 @@ index 00000000..62fb4706
 +
 +/** Commands bind to one displayed snapshot, independently of Java menu-zero reuse. */
 +public record NativePlayerInventoryAction(int menuId, long opening, long generation, long revision, long request,
-+                                         Kind kind, int cell, String query, InventoryOptions options) {
++                                         Kind kind, int target, String query, InventoryOptions options) {
 +
 +    public static final String CHANNEL = "viabedrock:native_player_input";
++    public static final String AUTO_DESTROY_CHANNEL = "viabedrock:native_player_auto_destroy";
 +    public static final Type<NativePlayerInventoryAction> TYPE = new Type<>(NativePlayerInventoryAction.class) {
 +        @Override
 +        public NativePlayerInventoryAction read(final ByteBuf buffer) {
@@ -384,13 +400,13 @@ index 00000000..62fb4706
 +            if (kind >= Kind.values().length) {
 +                throw new IllegalArgumentException("Unknown player inventory command");
 +            }
-+            final int cell = Types.VAR_INT.readPrimitive(buffer);
++            final int target = Types.VAR_INT.readPrimitive(buffer);
 +            final String query = Types.STRING.read(buffer);
 +            final InventoryOptions options = kind == Kind.PREFERENCES.ordinal() ? BedrockTypes.INVENTORY_OPTIONS.read(buffer) : null;
 +            if (buffer.isReadable()) {
 +                throw new IllegalArgumentException("Trailing player inventory input");
 +            }
-+            return new NativePlayerInventoryAction(menu, opening, generation, revision, request, Kind.values()[kind], cell, query, options);
++            return new NativePlayerInventoryAction(menu, opening, generation, revision, request, Kind.values()[kind], target, query, options);
 +        }
 +
 +        @Override
@@ -403,7 +419,7 @@ index 00000000..62fb4706
 +            Types.VAR_LONG.writePrimitive(buffer, value.revision);
 +            Types.VAR_LONG.writePrimitive(buffer, value.request);
 +            buffer.writeByte(value.kind.ordinal());
-+            Types.VAR_INT.writePrimitive(buffer, value.cell);
++            Types.VAR_INT.writePrimitive(buffer, value.target);
 +            Types.STRING.write(buffer, value.query);
 +            if (value.kind == Kind.PREFERENCES) {
 +                BedrockTypes.INVENTORY_OPTIONS.write(buffer, value.options);
@@ -413,9 +429,10 @@ index 00000000..62fb4706
 +
 +    public NativePlayerInventoryAction {
 +        if (menuId < 0 || menuId > 255 || opening < 0 || generation < 0 || revision <= 0 || request <= 0
-+                || kind == null || query == null || query.length() > 8192 || !StandardCharsets.UTF_8.newEncoder().canEncode(query) || cell < -1
++                || kind == null || query == null || query.length() > 8192 || !StandardCharsets.UTF_8.newEncoder().canEncode(query) || target < -1
 +                || (kind == Kind.PREFERENCES) != (options != null)
-+                || (kind == Kind.PRIMARY || kind == Kind.SECONDARY || kind == Kind.BULK) != (cell >= 0)
++                || (kind == Kind.PRIMARY || kind == Kind.SECONDARY || kind == Kind.BULK || kind == Kind.AUTO_DESTROY) != (target >= 0)
++                || kind == Kind.AUTO_DESTROY && (target < 36 || target > 44)
 +                || kind != Kind.SEARCH && !query.isEmpty()) {
 +            throw new IllegalArgumentException("Invalid player inventory input");
 +        }
@@ -425,13 +442,17 @@ index 00000000..62fb4706
 +        }
 +    }
 +
++    public String channel() {
++        return this.kind == Kind.AUTO_DESTROY ? AUTO_DESTROY_CHANNEL : CHANNEL;
++    }
++
 +    public boolean belongsTo(final NativePlayerInventoryMessage message, final long lastRequest) {
 +        return message != null && this.menuId == message.menuId() && this.opening == message.opening()
 +                && this.generation == message.generation() && this.revision == message.revision() && this.request > lastRequest;
 +    }
 +
 +    public enum Kind {
-+        PREFERENCES, SEARCH, PRIMARY, SECONDARY, BULK
++        PREFERENCES, SEARCH, PRIMARY, SECONDARY, BULK, AUTO_DESTROY
 +    }
 +
 +}
@@ -2268,7 +2289,7 @@ index c7461506..64053175 100644
  
      public static boolean handleLegacyOffhandClick(final UserConnection user, final Container container,
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index f5cbbaf0..243134d5 100644
+index f5cbbaf0..a3e297da 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 @@ -17,6 +17,9 @@
@@ -2285,12 +2306,12 @@ index f5cbbaf0..243134d5 100644
              }
              return;
          }
-+        if (channel.equals(NativePlayerInventoryAction.CHANNEL)) {
++        if (channel.equals(NativePlayerInventoryAction.CHANNEL) || channel.equals(NativePlayerInventoryAction.AUTO_DESTROY_CHANNEL)) {
 +            final var state = wrapper.user().get(NativePlayerRecipeState.class);
 +            if (state != null && state.actionsEnabled()) {
 +                try {
 +                    final var action = wrapper.read(NativePlayerInventoryAction.TYPE);
-+                    final boolean accepted = state.handleAction(action);
++                    final boolean accepted = action.channel().equals(channel) && state.handleAction(action);
 +                    state.tick();
 +                    final var message = state.publication();
 +                    final var result = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, wrapper.user());
@@ -2748,10 +2769,10 @@ index 04ad1756..4a6f0c14 100644
      private void updateInventoryOptions() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 new file mode 100644
-index 00000000..64c72344
+index 00000000..99f28e02
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
-@@ -0,0 +1,559 @@
+@@ -0,0 +1,593 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2983,7 +3004,7 @@ index 00000000..64c72344
 +        }
 +        final var packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
 +        packet.write(Types.STRING, available ? "minecraft:register" : "minecraft:unregister");
-+        packet.write(Types.REMAINING_BYTES, NativePlayerInventoryAction.CHANNEL.getBytes(StandardCharsets.UTF_8));
++        packet.write(Types.REMAINING_BYTES, (NativePlayerInventoryAction.CHANNEL + "\0" + NativePlayerInventoryAction.AUTO_DESTROY_CHANNEL).getBytes(StandardCharsets.UTF_8));
 +        packet.send(BedrockProtocol.class);
 +        this.actionsAdvertised = available;
 +    }
@@ -3012,8 +3033,12 @@ index 00000000..64c72344
 +            return true;
 +        }
 +        final var state = message.state();
-+        if (action.cell() >= state.cells().size() || state.cells().get(action.cell()).id() != action.cell()
-+                || state.cells().get(action.cell()).disabled()) {
++        if (action.kind() == NativePlayerInventoryAction.Kind.AUTO_DESTROY) {
++            return state.creative() && !state.workbench() && state.effectiveLayout() == 3 && this.canRequest(message)
++                    && this.destroyCreativeHotbar(action.target() - 36);
++        }
++        if (action.target() >= state.cells().size() || state.cells().get(action.target()).id() != action.target()
++                || state.cells().get(action.target()).disabled()) {
 +            return false;
 +        }
 +        final var view = Arrays.stream(CreativeInventoryModel.View.values()).filter(value -> value.leftTab() == state.leftTab()).findFirst().orElse(null);
@@ -3021,10 +3046,10 @@ index 00000000..64c72344
 +            return false;
 +        }
 +        final var collection = this.model.collections().collection(view);
-+        if (action.cell() >= collection.snapshot().rows().size()) {
++        if (action.target() >= collection.snapshot().rows().size()) {
 +            return false;
 +        }
-+        final var row = collection.snapshot().rows().get(action.cell());
++        final var row = collection.snapshot().rows().get(action.target());
 +        if (row instanceof RecipeCollection.Header<CreativeCatalog.CollectionEntry, CreativeCatalog.Group> header) {
 +            if (action.kind() != NativePlayerInventoryAction.Kind.PRIMARY) {
 +                return false;
@@ -3036,15 +3061,10 @@ index 00000000..64c72344
 +        final var entry = row instanceof RecipeCollection.Item<CreativeCatalog.CollectionEntry, CreativeCatalog.Group> item
 +                ? item.entry() : ((RecipeCollection.Member<CreativeCatalog.CollectionEntry, CreativeCatalog.Group>) row).entry();
 +        final var inventory = this.user().get(InventoryTracker.class);
-+        final var requests = this.user().get(InventoryRequestTracker.class);
-+        if (message.generation() == 0 || inventory.currentContainerGeneration() != message.generation()
-+                || !requests.canStartRecipePlacement() || requests.isPredictingClick()) {
++        if (!this.canRequest(message)) {
 +            return false;
 +        }
 +        final var owner = inventory.getCurrentContainer();
-+        if (!this.context.workbench() && this.user().get(PlayerInventoryScreenTracker.class).acknowledgedContainer(this.opening) != owner) {
-+            return false;
-+        }
 +        if (action.kind() == NativePlayerInventoryAction.Kind.BULK && !state.creative()) {
 +            return false;
 +        }
@@ -3076,6 +3096,41 @@ index 00000000..64c72344
 +            }
 +        }
 +        return false;
++    }
++
++    private boolean canRequest(final NativePlayerInventoryMessage message) {
++        final var inventory = this.user().get(InventoryTracker.class);
++        final var requests = this.user().get(InventoryRequestTracker.class);
++        return message.generation() != 0 && inventory.currentContainerGeneration() == message.generation()
++                && requests.canStartRecipePlacement() && !requests.isPredictingClick()
++                && (this.context.workbench() || this.user().get(PlayerInventoryScreenTracker.class).acknowledgedContainer(this.opening) == inventory.getCurrentContainer());
++    }
++
++    /** The catalog-only toolbar discards its selected stack without touching the held item. */
++    private boolean destroyCreativeHotbar(final int slot) {
++        final var tracker = this.user().get(InventoryTracker.class);
++        final var inventory = tracker.getInventoryContainer();
++        final var previous = inventory.getItem(slot);
++        if (previous.isEmpty()) {
++            return true;
++        }
++        if (previous.netId() == null || !inventory.canDiscardItem(slot, previous.amount())) {
++            return false;
++        }
++        final var requests = this.user().get(InventoryRequestTracker.class);
++        final int id = requests.nextRequestId();
++        final var action = new ItemStackRequestAction.DestroyAction(previous.amount(), inventory.requestSlotInfo(slot, previous.netId()));
++        final var request = new ItemStackRequestInfo(id, List.of(action), List.of(), TextProcessingEventOrigin.unknown);
++        requests.addRequest(new InventoryRequestStorage(request, 0, tracker.getHudContainer().copy(), List.of(inventory.copy())));
++        requests.setPredictingClick(true);
++        try {
++            inventory.setItem(slot, BedrockItem.empty());
++        } finally {
++            requests.setPredictingClick(false);
++        }
++        PacketFactory.sendBedrockInventoryRequest(this.user(), new ItemStackRequestInfo[] {request});
++        PacketFactory.sendJavaContainerSetContent(this.user(), inventory);
++        return true;
 +    }
 +
 +    /** Primary takes/discards a stack; secondary takes/discards one item. */
@@ -3425,10 +3480,10 @@ index e7a9d17d..d3356aa9 100644
      }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessageTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessageTest.java
 new file mode 100644
-index 00000000..4cdb4cc6
+index 00000000..ab5e2214
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessageTest.java
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,179 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3567,6 +3622,25 @@ index 00000000..4cdb4cc6
 +            assertFalse(wire.isReadable());
 +        } finally {
 +            wire.release();
++        }
++    }
++
++    @Test
++    void hotbarDestroyRoundTripsOnlyPermanentJavaHotbarSlots() {
++        for (final int target : List.of(36, 44)) {
++            final var action = new NativePlayerInventoryAction(0, 1, 2, 3, 4, NativePlayerInventoryAction.Kind.AUTO_DESTROY, target, "", null);
++            final var wire = Unpooled.buffer();
++            try {
++                NativePlayerInventoryAction.TYPE.write(wire, action);
++                assertEquals(action, NativePlayerInventoryAction.TYPE.read(wire));
++                assertFalse(wire.isReadable());
++            } finally {
++                wire.release();
++            }
++        }
++        for (final int target : List.of(-1, 0, 35, 45)) {
++            assertThrows(IllegalArgumentException.class, () -> new NativePlayerInventoryAction(0, 1, 2, 3, 4,
++                    NativePlayerInventoryAction.Kind.AUTO_DESTROY, target, "", null));
 +        }
 +    }
 +
@@ -5441,10 +5515,10 @@ index b69f1868..037328f2 100644
          final BedrockItem current = new BedrockItem(276);
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativePlayerCreativeAuxiliaryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativePlayerCreativeAuxiliaryTest.java
 new file mode 100644
-index 00000000..c9f73ab3
+index 00000000..1d7a8938
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativePlayerCreativeAuxiliaryTest.java
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,333 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5452,9 +5526,16 @@ index 00000000..c9f73ab3
 + */
 +package net.raphimc.viabedrock.protocol.storage;
 +
++import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.util.GsonUtil;
++import net.raphimc.viabedrock.api.model.NativePlayerInventoryAction;
++import net.raphimc.viabedrock.api.model.NativePlayerInventoryMessage;
++import net.raphimc.viabedrock.api.resourcepack.ui.PlayerInventoryUi;
++import net.raphimc.viabedrock.protocol.model.PlayerRecipeContext;
 +import java.util.ArrayList;
 +import java.util.List;
++import java.util.Map;
 +import net.raphimc.viabedrock.api.util.PacketFactory;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.CreativeCatalog;
@@ -5585,6 +5666,94 @@ index 00000000..c9f73ab3
 +        }
 +    }
 +
++    @ParameterizedTest
++    @CsvSource({"0,1", "0,64", "8,1", "8,64"})
++    void hotbarDestroyPreservesOtherSlotsAndCursorAndRestoresRejectedStack(final int slot, final int count) throws Exception {
++        try (var f = new Fixture()) {
++            final var held = item(67, 7, 24);
++            final var previous = item(66, count, 23);
++            f.inventory.getHudContainer().setItem(0, held);
++            f.set(slot, previous);
++            f.set(4, item(68, 32, 25));
++            f.presentation(true, false, 3);
++            final var action = f.destroyAction(slot, 1);
++            assertTrue(f.state.handleAction(action));
++            assertFalse(f.state.handleAction(action));
++            assertFalse(f.state.handleAction(f.destroyAction(4, 2)));
++            assertEquals(1, f.sent.size());
++            final var destroy = assertInstanceOf(ItemStackRequestAction.DestroyAction.class, f.sent.getFirst().actions().getFirst());
++            assertEquals(1, f.sent.getFirst().actions().size());
++            assertEquals(count, destroy.count());
++            assertEquals(f.inventory.getInventoryContainer().requestSlotInfo(slot, 23), destroy.item());
++            assertTrue(f.inventory.getInventoryContainer().getItem(slot).isEmpty());
++            assertEquals(32, f.inventory.getInventoryContainer().getItem(4).amount());
++            assertSame(held, f.inventory.getHudContainer().getItem(0));
++            f.reject();
++            assertEquals(previous, f.inventory.getInventoryContainer().getItem(slot));
++            assertEquals(held, f.inventory.getHudContainer().getItem(0));
++        }
++    }
++
++    @Test
++    void emptyHotbarDestroyDoesNotCreateRequestsOrChangeTheCursor() throws Exception {
++        try (var f = new Fixture()) {
++            final var held = item(67, 7, 24);
++            f.inventory.getHudContainer().setItem(0, held);
++            f.presentation(true, false, 0);
++            assertTrue(f.state.handleAction(f.destroyAction(1, 1)));
++            assertTrue(f.sent.isEmpty());
++            assertSame(held, f.inventory.getHudContainer().getItem(0));
++        }
++    }
++
++    @ParameterizedTest
++    @CsvSource({"false,false,3", "true,false,1", "true,false,2", "true,true,3"})
++    void hotbarDestroyCannotDiscardOutsideTheCreativeToolbar(final boolean creative, final boolean workbench, final int layout) throws Exception {
++        try (var f = new Fixture()) {
++            final var previous = item(66, 64, 23);
++            f.set(0, previous);
++            f.presentation(creative, workbench, layout);
++            assertFalse(f.state.handleAction(f.destroyAction(0, 1)));
++            assertTrue(f.sent.isEmpty());
++            assertSame(previous, f.inventory.getInventoryContainer().getItem(0));
++        }
++    }
++
++    @ParameterizedTest
++    @ValueSource(ints = {-1, 1, 2})
++    void hotbarDestroyRejectsUnconfirmedOrLockedStacks(final int lock) throws Exception {
++        try (var f = new Fixture()) {
++            final var previous = item(66, 64, lock == -1 ? null : 23);
++            if (lock >= 0) {
++                final var tag = new CompoundTag();
++                tag.putByte("minecraft:item_lock", (byte) lock);
++                previous.setTag(tag);
++            }
++            f.set(0, previous);
++            f.presentation(true, false, 3);
++            assertFalse(f.state.handleAction(f.destroyAction(0, 1)));
++            assertTrue(f.sent.isEmpty());
++            assertSame(previous, f.inventory.getInventoryContainer().getItem(0));
++        }
++    }
++
++    @Test
++    void hotbarDestroyRequiresTheAcknowledgedOpeningAndCurrentGeneration() throws Exception {
++        try (var f = new Fixture()) {
++            final var previous = item(66, 64, 23);
++            f.set(0, previous);
++            f.presentation(true, false, 3);
++            when(f.screens.acknowledgedContainer(1)).thenReturn(null);
++            assertFalse(f.state.handleAction(f.destroyAction(0, 1)));
++            when(f.screens.acknowledgedContainer(1)).thenReturn(f.inventory.getInventoryContainer());
++            f.inventory.setCurrentContainerClosed(false);
++            f.inventory.setCurrentContainer(f.inventory.getInventoryContainer());
++            assertFalse(f.state.handleAction(f.destroyAction(0, 2)));
++            assertTrue(f.sent.isEmpty());
++            assertSame(previous, f.inventory.getInventoryContainer().getItem(0));
++        }
++    }
++
 +    private static BedrockItem item(final int id, final int count, final Integer networkId) {
 +        final var item = new BedrockItem(id);
 +        item.setAmount(count);
@@ -5597,7 +5766,9 @@ index 00000000..c9f73ab3
 +        private final InventoryTracker inventory = new InventoryTracker(this.user);
 +        private final InventoryRequestTracker requests = new InventoryRequestTracker(this.user);
 +        private final ItemRewriter items = mock(ItemRewriter.class);
-+        private final NativePlayerRecipeState state = new NativePlayerRecipeState(this.user);
++        private final NativePlayerRecipeState state = spy(new NativePlayerRecipeState(this.user));
++        private final PlayerInventoryScreenTracker screens = mock(PlayerInventoryScreenTracker.class);
++        private NativePlayerInventoryMessage message;
 +        private final MockedStatic<PacketFactory> packets = mockStatic(PacketFactory.class);
 +        private final List<ItemStackRequestInfo> sent = new ArrayList<>();
 +        private final BedrockItem sample = item(66, 1, null);
@@ -5617,6 +5788,31 @@ index 00000000..c9f73ab3
 +                this.requests.getRequest(request.requestId()).capturePrediction(this.inventory);
 +                return null;
 +            });
++        }
++
++        private void presentation(final boolean creative, final boolean workbench, final int layout) throws Exception {
++            this.inventory.setCurrentContainer(this.inventory.getInventoryContainer());
++            when(this.user.get(PlayerInventoryScreenTracker.class)).thenReturn(this.screens);
++            when(this.screens.acknowledgedContainer(1)).thenReturn(this.inventory.getInventoryContainer());
++            final var context = NativePlayerRecipeState.class.getDeclaredField("context");
++            context.setAccessible(true);
++            context.set(this.state, PlayerRecipeContext.forContainer(this.user, this.inventory.getInventoryContainer()));
++            final var opening = NativePlayerRecipeState.class.getDeclaredField("opening");
++            opening.setAccessible(true);
++            opening.setLong(this.state, 1);
++            final var snapshot = new PlayerInventoryUi.State(workbench, creative, layout, 2, 5, 2, false, "", "All", "Crafting",
++                    List.of(0, 0, 0, 0), List.of(), "", -1);
++            final var ui = new PlayerInventoryUi(new ResourcePackStorage(List.of()).getJsonUiProgram());
++            this.message = new NativePlayerInventoryMessage(workbench ? 1 : 0, workbench ? 0 : 1, this.inventory.currentContainerGeneration(), 1,
++                    ui.exportProgram(workbench).toString(), GsonUtil.getGson().toJson(snapshot), Map.of());
++            doNothing().when(this.state).tick();
++            doReturn(true).when(this.state).actionsEnabled();
++            doReturn(this.message).when(this.state).publication();
++        }
++
++        private NativePlayerInventoryAction destroyAction(final int slot, final long request) {
++            return new NativePlayerInventoryAction(this.message.menuId(), this.message.opening(), this.message.generation(), this.message.revision(),
++                    request, NativePlayerInventoryAction.Kind.AUTO_DESTROY, slot + 36, "", null);
 +        }
 +
 +        private boolean pick() throws Exception {

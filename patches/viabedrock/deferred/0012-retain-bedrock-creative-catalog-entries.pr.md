@@ -131,6 +131,17 @@ Installed direct and ViaProxy controls each complete 14 server-accepted requests
 The controls cover one-item quantities, cursor preservation, split bulk placement, partial capacity, and full-inventory no-op.
 Reopening preserves both stacks without Creative replacement requests.
 Both installed add-ons and the running proxy match the rebuilt artifact hashes.
+The catalog-only toolbar also accepts full-stack destruction through a separately advertised optional channel.
+Official Bedrock 1.26.60.5 local-world controls cover Shift-left, Shift-right, an occupied cursor, and an empty hotbar slot.
+The same input moves the stack into main inventory in the inventory-only layout.
+The matching `inventory_screen.json` maps the Creative toolbar auto-place input to `button.container_auto_destroy`.
+The backend requires the current acknowledged opening, generation, revision, Creative toolbar layout, network ID, and discard permission.
+Regressions cover rollback, cursor preservation, pending requests, layout restrictions, typed locks, and stale generation rejection.
+These native controls establish visible behavior; original native request bytes remain unverified.
+Installed direct and ViaProxy controls each complete seven server-accepted requests for hotbar destruction and inventory-only transfer.
+Both routes preserve the occupied cursor, leave empty slots unchanged, and retain the resulting inventory after reopening without Creative replacement requests.
+The installed add-ons and proxy match the rebuilt artifact hashes.
+
 Bulk Survival actions and complete native screen parity remain unfinished.
 
 Player and workbench graphs receive their tab and layout indices from the protocol-2225 enums.

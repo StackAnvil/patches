@@ -53,7 +53,16 @@ Fixed recipe grids expand visible cells and retained keyboard neighbors over the
 Local window changes preserve the menu opening and authoritative revision.
 Screen regressions use 2,000 retained items in the recipe-book and Creative layouts.
 They cover distant scrolling, resize, original action IDs, and keyboard navigation.
-Creative hotbar destruction restores ordinary controls before item changes or requests.
+The Creative catalog-only toolbar binds the authored `container_auto_destroy` command to a separate optional backend capability.
+Shift-left and Shift-right preserve the cursor and discard the selected stack.
+Inventory-only and recipe-book layouts dispatch the authored quick-move command directly, including with an occupied cursor.
+This avoids Java pointer handling that swaps the held and selected stacks.
+Screen regressions cover both layouts and preserve the cursor.
+Backends without that capability restore ordinary controls before item changes or requests.
+The reference is official Bedrock 1.26.60.5, protocol 2225, and its matching inventory UI declarations.
+Installed direct and ViaProxy controls each complete seven server-accepted requests for hotbar destruction and inventory-only transfer.
+Both routes preserve the occupied cursor, leave empty slots unchanged, and retain the resulting inventory after reopening without Creative replacement requests.
+The installed add-ons and proxy match the rebuilt artifact hashes.
 Passive hover notifications do not trigger the fallback for unsupported recipe actions.
 Installed direct and ViaProxy controls retain all 1,980 catalog entries from a local protocol-2225 server.
 Physical category and layout changes preserve their native indices through exported programs.
