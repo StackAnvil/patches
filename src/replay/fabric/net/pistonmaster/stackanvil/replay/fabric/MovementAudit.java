@@ -29,6 +29,7 @@ public final class MovementAudit {
                 Runtime.getRuntime().addShutdownHook(new Thread(MovementAudit::close, "movement-audit-close"));
             }
             Map<String, Object> row = new LinkedHashMap<>();
+            row.put("epochMillis", System.currentTimeMillis());
             row.put("phase", phase);
             row.put("tick", player.getClass().getField("tickCount").getInt(player));
             row.put("position", Map.of("x", call(player, "getX"), "y", call(player, "getY"), "z", call(player, "getZ")));
@@ -54,7 +55,10 @@ public final class MovementAudit {
             Object usedItem = call(player, "getUseItem");
             row.put("usedItem", call(call(usedItem, "getItem"), "getDescriptionId"));
             row.put("usedItemCount", call(usedItem, "getCount"));
-            row.put("heldItemCount", call(call(player, "getMainHandItem"), "getCount"));
+            Object heldItem = call(player, "getMainHandItem");
+            row.put("heldItem", call(call(heldItem, "getItem"), "getDescriptionId"));
+            row.put("heldItemCount", call(heldItem, "getCount"));
+            row.put("selectedHotbarSlot", call(call(player, "getInventory"), "getSelectedSlot"));
             output.write(JSON.toJson(row));
             output.newLine();
             if (++samples % 40 == 0) output.flush();

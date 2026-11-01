@@ -172,6 +172,11 @@ Private `camera-audit.jsonl` observations include frame time, world clocks, play
 
 Private `held-item-light-audit.jsonl` observations record actual first-person submissions. They include packed light, quad normals, tint layers, material emission, and the selected pipeline. Observations do not change the item or camera. Compare them with the screenshot timestamp; startup light values can change while chunks load.
 
+Private `movement-audit.jsonl` observations record position, velocity, item use, held item, and selected hotbar slot at each observed movement phase.
+The `epochMillis` timestamp aligns those observations with external input markers.
+Use the item and slot fields to distinguish a changed selection from a missing movement impulse.
+Check the packet journal for the actual teleport, correction, and motion commands before judging a combined-mechanics trial.
+
 The native Hive recording sends `SetTime` 12445, then `GameRulesChanged` with `dodaylightcycle=false`. Java previously stored that rule without updating its running clock rate. The clock patch now sends the pause to Java. This fixes the lobby's drift into night. Legacy `SetTime` still advances while daylight is enabled.
 
 Use `--client proxy --transport-only` to check the separate Java → ViaProxy route. An accepted converted server pack carries versioned Bedrock rendering metadata. The add-on uses this metadata to activate the native lightmap and disable Java's low-light vignette on the proxy route. Local packs and unsupported metadata cannot activate this context. Resource reload and disconnect clear it. Stale reload completion cannot restore it.
