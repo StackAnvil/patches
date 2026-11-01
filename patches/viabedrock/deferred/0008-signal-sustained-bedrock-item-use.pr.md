@@ -35,8 +35,9 @@ Controlled component foods distinguish food admission from another installed han
 - A timed food consumes one item and raises hunger from ten to fourteen and saturation from zero to 2.4.
 - Admitted custom foods send `StartUsingItem` even without the optional food tag.
 
-The matching native food callback leaves its result unchanged when hunger refuses use.
-That permits another installed handler to start the tested component items.
+Executable inspection found a food callback that leaves its result unchanged when hunger refuses use.
+The traced DataDriven fixture does not call that inspected callback, so its complete dispatch path remains unverified.
+The combined controls establish the admission outcomes that this patch transports.
 The [food component reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/itemreference/examples/itemcomponents/minecraft_food?view=minecraft-bedrock-stable) describes the advertised `can_always_eat` flag.
 The [26.30 update reference](https://github.com/MicrosoftDocs/minecraft-creator/blob/main/creator/Documents/Update1.26.30.md) describes use-handler ordering.
 Native controls establish the combined behavior for these fixtures; they do not establish every competing handler combination.
@@ -55,7 +56,15 @@ Installed artifacts match the build checksums; core classes match both packaged 
 ## Remaining limits
 
 Held instant-food repeat timing still differs: the 2.1-second always-edible control consumes eleven items through Java and nine through native Bedrock.
-Native input-tick intervals vary, so this evidence does not justify a fixed replacement delay.
+Runtime tracing establishes a 200 ms monotonic deadline before air use, with retries checked from the input loop after that deadline.
+The deadline persists across button releases and gates fresh clicks.
+A fresh native hold consumes nine items both with and without the debugger.
+Three 80 ms clicks consume two items when the second starts about 131 ms after the first and the third starts about 616 ms after it.
+
+Java still uses its four-tick repeat path.
+The correction needs the native deadline, fresh-click gate, and input-frame scheduling; native tick intervals do not establish a fixed five-tick delay.
+Counts depend on frame cadence, so equal final counts alone would not establish timing parity.
+Timer ownership across item families, screens, and connection replacement also needs verification.
 Presence of `StartUsingItem` is verified; exact packet phase counts and complete cycle timing remain open.
 
 Competing non-food use handlers, other consumable animations and effects, ability exceptions, and all inventory authority modes need further comparison.

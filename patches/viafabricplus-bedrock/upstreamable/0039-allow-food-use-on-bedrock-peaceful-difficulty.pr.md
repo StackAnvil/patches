@@ -21,4 +21,6 @@ Core packet regressions cover server-confirmed difficulty changes and food admis
 Core also projects installed component-food admission and consumable properties into the Java item.
 That covers the selected full-hunger DataDriven controls and local use of custom paper carriers.
 The [food-use evidence](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) records those controls and remaining limits.
-Held instant-food repeat timing and the original intermittent food-use report remain open.
+Native tracing establishes a 200 ms air-use deadline that persists across button releases and gates fresh clicks.
+Java input scheduling still needs that correction, including coordinated timer ownership across item families and screens.
+The original intermittent food-use report remains open.
