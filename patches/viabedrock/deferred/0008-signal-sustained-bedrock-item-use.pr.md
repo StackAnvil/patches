@@ -46,7 +46,7 @@ Native controls establish the combined behavior for these fixtures; they do not 
 
 Seventeen focused tests cover installed component retention, constructor-specific admission, Java component wire properties, difficulty changes, food-use flags, offhand resynchronization, and completion boundaries.
 Admission tests retain the held quantity and verify that rejected uses leave `StartUsingItem` clear.
-The full four-project build passes 3,285 tests, with 325 skipped and no failures or errors.
+The full four-project build passes 3,286 tests, with 325 skipped and no failures or errors.
 
 Installed direct and ViaProxy controls cover eleven cases each.
 Both routes match the selected native admission, hunger, timed consumption, and zero-duration outcomes.
@@ -57,14 +57,14 @@ Installed artifacts match the build checksums; core classes match both packaged 
 
 The [client input patch](../../viafabricplus-bedrock/upstreamable/0038-predict-held-trapdoor-placement.pr.md) now replaces the food four-tick repeat path with the native strict 200 ms deadline.
 Fresh calls share that gate, release retains the deadline, and held retries run from input frames.
-Direct and ViaProxy controls verify rapid clicks and pause cancellation alongside the eleven food cases.
-A private timing observer checks each original admission decision and confirms that eligible input frames lead to use.
-The installed JAR checksums match the build; observation adds logging to the running timing class.
+Direct and ViaProxy controls cover the eleven food cases, retained interaction modes, release, and pause cancellation.
+Food-started air holds do not place newly selected blocks; trapdoor-started placement holds do not eat newly selected food.
+The installed JAR checksums match the build.
 
 Native tracing establishes the deadline before air use and its check in the shared input function.
 Native's 2.1-second instant-food control consumes nine items; the direct Java control consumes eleven at its different frame cadence.
 Counts alone do not establish or refute the scheduling rule.
-Complete handoffs between food and other item families still need native comparisons.
+Other initial use families, timed and refused-food handoffs, and live entity transitions still need native comparisons.
 Presence of `StartUsingItem` is verified; exact packet phase counts and complete cycle timing remain open.
 
 Competing non-food use handlers, other consumable animations and effects, ability exceptions, and all inventory authority modes need further comparison.

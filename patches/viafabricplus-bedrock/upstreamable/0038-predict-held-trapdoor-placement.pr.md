@@ -10,7 +10,14 @@ Set the deadline before main-hand food air use, including a request that hunger 
 Select food from its transported component, including custom items carried as paper.
 Physical release and item changes retain this connection deadline.
 Connection replacement clears it.
-Missing optional block-use channels do not clear the food deadline.
+Missing optional block-use channels do not clear the air-use hold or its deadline.
+
+Keep the interaction mode until physical release or cancellation.
+A hold started by food air use continues main-hand air use after selecting a block item.
+Skip block and entity dispatch inside the use method without changing the visible raycast.
+A placement hold keeps its block route after selecting food and cannot fall through to eating.
+Retire offhand fallback while either route owns the hold.
+Release permits a fresh press to choose another interaction mode.
 
 Held placement keeps its separate 300 ms delay after the first attempt or a successful local use.
 Failed repeats do not restart that delay.
@@ -43,8 +50,13 @@ Frame cadence determines retry quantization, so equal counts alone do not establ
 
 Installed direct and ViaProxy food controls check the deadline, rapid clicks after release, pause cancellation, admission, hunger, and settled server counts.
 The [food-use validation](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) records the current build and remaining use-cycle limits.
-A private observer logs the timing class's original decisions without changing them; this is an instrumented runtime check.
-Four timing tests cover variable input frames, released food, connection reset, independent delays, strict boundaries, and rollover.
+Native tracing observes fresh flags 176 followed by held air-only flag 16 across a food-to-trapdoor change.
+Only the initial call visits block use; later frames retry air use after the deadline.
+Unattached stone and late trapdoor controls agree.
+The reverse trapdoor-to-food control retains simulation block uses and consumes no food.
+Installed direct and proxy controls check both directions and fresh placement after release or Pause.
+The previous installed client placed blocks after food use and ate food during the placement hold.
+Five input-state tests cover retained modes, hand and target routing, variable frames, release, connection reset, independent delays, strict boundaries, and rollover.
 Five block-state tests cover retained orientation, materials, independent properties, targets, frozen hits, release, and ordinary blocks.
 
 Earlier installed placement fixtures match native camera changes, material changes, and fresh activation after release.
@@ -56,5 +68,5 @@ After a preceding successful hold, both instead place a neighbor and consume one
 
 ## Remaining limits
 
-Complete food and block handoffs, competing non-food use handlers, exact input-flag phase counts, and full use-cycle timing need more native comparisons.
+Other initial air-use families, timed and refused-food handoffs, live entity transitions, competing use handlers, exact input-flag phase counts, and full use-cycle timing need more native comparisons.
 The original intermittent animation-without-feeding report remains open.

@@ -22,5 +22,6 @@ That covers the selected full-hunger DataDriven controls and local use of custom
 The [food-use evidence](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) records those controls and remaining limits.
 Native tracing establishes a 200 ms air-use deadline that persists across button releases and gates fresh clicks.
 The [client input patch](0038-predict-held-trapdoor-placement.pr.md) implements that deadline and input-frame retries, with rapid-click and pause controls on both routes.
-Complete item-family handoffs still need native comparisons.
+Selected instant-food and block transitions retain the native held interaction mode.
+Other initial use families and complete timed-item handoffs still need native comparisons.
 The original intermittent food-use report remains open.
