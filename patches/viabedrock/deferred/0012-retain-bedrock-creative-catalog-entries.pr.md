@@ -113,4 +113,12 @@ A live add-on check removes the red disabled backgrounds.
 The picker validates the full cursor stack before transfer admission while preserving the unit-sized native craft result.
 Request regressions cover stack sizes one and 64, cursor prediction, and the restoration snapshot.
 An installed add-on test selects 64 rails and places them in the hotbar; BDS accepts both requests.
-Proxy validation of this quantity fix remains open. Cursor replacement, bulk actions, and complete native screen parity remain unfinished.
+Installed direct and ViaProxy controls select 64 rails and place them in separate hotbar slots; BDS accepts the requests.
+The ViaProxy screen retains both stacks after reopening.
+Cursor replacement, bulk actions, and complete native screen parity remain unfinished.
+
+Player and workbench graphs receive their tab and layout indices from the protocol-2225 enums.
+The native inventory graph references these controller variables in forced toggle indices.
+Missing variables resolve to null and make category clicks request index zero.
+Screen regressions click category and layout controls through exported programs in both inventory layouts.
+These bindings preserve absent profile preferences and do not select a default tab.

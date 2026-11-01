@@ -140,7 +140,9 @@ Unknown storage snapshots restore ordinary controls.
 Hovering or carrying storage items also restores ordinary controls until native tooltips and selection are complete.
 Unsupported visible Help glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
 Creative hotbar destruction restores ordinary controls before item changes or requests.
-Large Creative catalogs exceed the current scene work budget. Viewport expansion remains unfinished.
+Installed direct and ViaProxy controls retain the complete 1,980-item catalog from a local protocol-2225 server.
+Tab and layout controls use the target inventory indices.
+Both routes search for rails and place a server-accepted stack of 64 in the hotbar.
 Initial bundle insertion, bulk recipe actions, Creative cursor replacement, and complete installed native parity remain unfinished.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.

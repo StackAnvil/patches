@@ -55,7 +55,11 @@ Screen regressions use 2,000 retained items in the recipe-book and Creative layo
 They cover distant scrolling, resize, original action IDs, and keyboard navigation.
 Creative hotbar destruction restores ordinary controls before item changes or requests.
 Passive hover notifications do not trigger the fallback for unsupported recipe actions.
-Full Creative catalog expansion, initial bundle insertion, bulk recipe actions, and Creative cursor replacement remain unresolved.
+Installed direct and ViaProxy controls retain all 1,980 catalog entries from a local protocol-2225 server.
+Physical category and layout changes preserve their native indices through exported programs.
+Both routes search for rails and place a server-accepted stack of 64 in the hotbar.
+ViaProxy retains both stacks after reopening.
+Initial bundle insertion, bulk recipe actions, and Creative cursor replacement remain unresolved.
 Complete cooking integration, live transfers, and filled-bundle pixels also remain unresolved.
 
 Stable frames reuse the draw list, parsed hit regions, and input ancestor geometry.
