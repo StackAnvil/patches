@@ -136,7 +136,10 @@ Both routes return from Help with a carried stack and confirm its placement thro
 Inactive item icons use separate lighting and opacity. The default disabled light multiplier is 0.25.
 Typed overrides and RGB conversion match selected native instruction controls. Complete material and pixel parity remain unverified.
 Storage bars read a native weight snapshot independently of Java bundle contents.
-Installed direct and ViaProxy controls retain a server-issued empty bundle in the Survival menu after reopening.
+Installed direct and ViaProxy controls insert eight logs into a server-issued empty bundle, extract them, and insert them again.
+Both routes retain the filled bundle after reopening, with server responses that accept each request.
+These checks use ordinary Java 26.3 controls after the storage-tooltip fallback. Left-click inserts items; right-click extracts them.
+The first insertion request from the official Bedrock client remains unverified.
 Filled-bundle bars still need installed native comparison.
 Unknown storage snapshots restore ordinary controls.
 Hovering or carrying storage items also restores ordinary controls until native tooltips and selection are complete.
@@ -145,7 +148,7 @@ Creative hotbar destruction restores ordinary controls before item changes or re
 Installed direct and ViaProxy controls retain the complete 1,980-item catalog from a local protocol-2225 server.
 Tab and layout controls use the target inventory indices.
 Both routes search for rails and place a server-accepted stack of 64 in the hotbar.
-Initial bundle insertion, bulk recipe actions, Creative cursor replacement, and complete installed native parity remain unfinished.
+Bulk recipe actions, Creative cursor replacement, and complete installed native parity remain unfinished.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.

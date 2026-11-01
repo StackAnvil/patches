@@ -59,7 +59,9 @@ Installed direct and ViaProxy controls retain all 1,980 catalog entries from a l
 Physical category and layout changes preserve their native indices through exported programs.
 Both routes search for rails and place a server-accepted stack of 64 in the hotbar.
 ViaProxy retains both stacks after reopening.
-Initial bundle insertion, bulk recipe actions, and Creative cursor replacement remain unresolved.
+Installed direct and ViaProxy controls cover initial bundle insertion, extraction, reinsertion, and retention after reopening through ordinary Java controls.
+The [inventory reference](../../../docs/native-player-inventory.md) states the verified input behavior and remaining native comparison limit.
+Bulk recipe actions and Creative cursor replacement remain unresolved.
 Complete cooking integration, live transfers, and filled-bundle pixels also remain unresolved.
 
 Stable frames reuse the draw list, parsed hit regions, and input ancestor geometry.
