@@ -35,6 +35,17 @@ A repeated close request does not restart the exit.
 Completion can close only the same screen and menu.
 A scene without a completion path closes immediately.
 
+Storage scenes retain the complete authored host, including the backdrop, close button, and exit tracks.
+Server-delivered hurt events retain the original damage cause and local actor lifetime.
+The shared player state applies the native cause filter and pending-event check before the screen policy.
+At a zero counter, a pending event starts the 100-update gate even when the current screen stays open.
+Events during that gate are consumed rather than deferred.
+Health changes alone do not trigger this policy.
+
+Programs advertise this behavior through the versioned core hurt contract.
+Without that contract, screens that require the hurt policy retain ordinary controls.
+Separate admission checks still exclude unfinished cooking bindings.
+
 The installed opening also owns a read-only recipe context while the native acknowledgment is pending.
 It reads the real cached crafting grid, hotbar, inventory, and cursor.
 The acknowledgment retains this model and its captured search policy.
@@ -136,6 +147,10 @@ An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.
 The original inventory-background, rollback, food-use, and locator-bar reports remain unresolved.
 Native registry probes and local model tests do not establish complete live inventory parity.
-Generic storage scenes currently expand selected content without the complete host shell.
-Their default host animations remain absent from the resolved scene.
-The native cause filter and pending-state counter for closing on hurt still need complete runtime controls.
+Installed direct and ViaProxy controls cover complete chest, hopper, brewing, and large-chest hosts, including exits and the close button.
+Both routes retain 64 logs after server-accepted pickup and return requests.
+Damage controls cover accepted and excluded causes, gated events, a false inventory policy, and remote actors.
+Native Bedrock 1.26.60.5 runtime controls establish the pending-state and counter order for server-delivered hurt events.
+Client-predicted damage, the live producer for actor event 81, and exact frame timing remain unverified.
+The historic hurt-and-heal nonclosure with a 5.6-millisecond packet gap remains unexplained.
+Matched chest geometry retains a one-byte label-shade difference. Complete screen pixels remain unverified.

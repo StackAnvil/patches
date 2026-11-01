@@ -14,6 +14,18 @@ Prerequisites:
 
 ## Validation and remaining limits
 
+Storage programs export and resolve the complete host graph, including backdrop, close controls, and animation tracks.
+Synthetic screen fixtures declare their content controls explicitly.
+The bundled-family regression retains authoritative slots and the host hurt policy across program transport.
+
+The versioned hurt payload retains the original cause and local actor lifetime before Java damage translation.
+Native Bedrock 1.26.60.5 runtime controls establish the cause filter, pending-state consumption, and 100-update gate.
+A false screen policy still starts the gate. Gated events do not become delayed closures.
+Regressions cover that order, both hurt event IDs, strict decoding, and unknown causes.
+Programs without the core contract cannot advertise supported hurt policy.
+Installed direct and ViaProxy controls preserve item totals and the shared gate across screen changes.
+Client-predicted damage and the live producer for event 81 remain unverified.
+
 Grid factories populate each collection once and respect the bound maximum item count. Relative cell templates use the defining namespace.
 The captured Lifeboat Navigator now resolves eight main cells, matching native Bedrock 1.26.60.5, instead of 46 duplicated cells.
 Reduced regressions cover factory ownership, template lookup, and item limits.

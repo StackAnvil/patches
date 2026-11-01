@@ -80,8 +80,17 @@ Repeated close requests retain the clock. Completion cannot close a replacement 
 Tests cover those ownership boundaries and input retirement.
 Installed player-inventory controls show the slide and fade before removal and retain every slot after reopening.
 Native Bedrock 1.26.60.5 Escape frames provide the visual reference; exact frame timing and complete pixels remain unverified.
-Generic storage resolves selected content without its complete host shell, so its default exit animations remain absent.
-Closing on hurt still needs complete native pending-state controls. The cooking host-policy guard remains.
+Storage resolves its complete host shell with the backdrop, close button, and default exit tracks.
+Installed direct and ViaProxy controls cover chest, hopper, brewing, and large-chest screens, including exits and the close button.
+Both routes retain 64 logs after accepted pickup and return requests.
+The native hurt policy uses the original server cause, local actor lifetime, pending-event consumption, and a shared 100-update gate.
+Controls cover excluded fire damage, accepted magic damage, gated events, a false inventory policy, and remote actors.
+Native Bedrock 1.26.60.5 runtime controls establish that a false policy still starts the gate.
+Programs without the versioned core contract retain ordinary controls when the scene requires this policy.
+The separate cooking binding and visible-control checks remain.
+Client-predicted damage, the live producer for actor event 81, and exact native frame timing remain unverified.
+The historic hurt-and-heal nonclosure with a 5.6-millisecond packet gap remains unexplained.
+Matched chest geometry retains a one-byte label-shade difference. Complete screen pixels remain unverified.
 Broader modpack timing, the reported menu overlap, and shield presentation still need verification.
 
 The [owning patch](0029-present-authored-native-containers.patch) retains implementation rationale and versioned evidence.

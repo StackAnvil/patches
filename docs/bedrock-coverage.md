@@ -39,6 +39,7 @@ No complete area has verified Bedrock parity.
 Retain these reports until a matching reproduction establishes the result:
 
 - WildFFA inventory opened with E shows items without the expected background.
+- An update from 0.3.61 to 0.4.2 caused reported inventory lag spikes, overlapping menus, and an extreme shield pose.
 - An ender pearl followed by a wind charge can cause repeated rollbacks.
 - Food can repeat its use animation without feeding the player.
 - The locator bar can be absent.

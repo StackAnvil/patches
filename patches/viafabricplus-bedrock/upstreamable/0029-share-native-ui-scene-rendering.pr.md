@@ -39,9 +39,17 @@ It waits for all participating tracks, including a shorter size track alongside 
 Binding refresh retains pending completions by control identity.
 Tests cover different durations, repeated requests, successor chains, missing completion paths, and refresh during an exit.
 Native Bedrock 1.26.60.5 Escape frames retain the fade after the size track finishes.
-This mechanism does not establish complete native host policy or exact frame timing.
+This mechanism does not establish exact native frame timing.
 These controls do not establish identical native pooling or frame timing.
 Broader viewports, complete inventory pixels, entrance timing, and TrueType comparisons remain open.
+
+The shared hurt receiver binds queued events to the connection and local actor lifetime.
+It consumes pending events against the current scene and retains the counter across ordinary screen changes.
+Accepted events use the existing screen exit lifecycle.
+Regressions reject stale connections and actor lifetimes and retain scene selection at consumption.
+Installed direct and ViaProxy controls cover cause filtering, gated events, a false inventory policy, and remote actor damage.
+Native Bedrock 1.26.60.5 runtime controls establish the server-event policy order.
+Client-predicted damage and exact native frame timing remain unverified.
 
 Alpha tracks honor `scale_from_starting_alpha` and retain their initial scale across scene refreshes.
 Native Bedrock 1.26.60.5 captures ImageComponent alpha when creating the track and multiplies the interpolated value by that scale.
