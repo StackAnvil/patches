@@ -109,6 +109,13 @@ A normal recipe click fills the grid. Taking its output sends a separate craft r
 A workbench recipe Shift-click uses `CraftRecipeAuto` with explicit ingredient descriptors, followed by results, consumption, and placement actions.
 The request codec supports this format. Installed authored recipe actions remain unfinished.
 
+Native 1.26.60.5 plank controls convert 16 of 32 logs into 64 planks per Shift-click.
+Output merges existing stacks and can use a slot freed by consumption.
+An unrelated held apple stays unchanged while output fits inventory.
+When inventory is full, an empty cursor receives the output.
+Held logs increase displayed availability, but bulk crafting leaves them unchanged.
+Full occupied cursors and nonstackable outputs still need native packet controls.
+
 Admit an authored player screen only when its required collections and controls are available.
 The shared UI renderer supports the local player portrait and separate body/head rotations.
 Portrait rendering alone does not establish a complete native inventory.
